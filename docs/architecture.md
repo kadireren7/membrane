@@ -22,6 +22,11 @@ A standalone, dependency-free C11 library (`membrane_core`) plus a CLI
 - Ships two placeholder codec IDs (`LZ4`, `BITPACK`) that are registered in
   the codec table but return "unimplemented" — reserved for later phases,
   not wired into anything yet.
+- Makes its first per-block decision: if a codec's output is not
+  smaller than the input, the block is stored RAW instead, so
+  incompressible data never expands. (Measured on a 1 GiB 50/50
+  zero/random dataset, this alone moves blind RLE from ~1.0x to ~2.0x
+  effective compression.)
 - Verifies every block round-trips to the original bytes via a CRC32
   checksum computed over the uncompressed data.
 - Benchmarks compression ratio and throughput (GB/s) via

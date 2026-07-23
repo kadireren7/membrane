@@ -21,6 +21,9 @@ typedef enum e_membrane_state
 /*
  * data points to block-owned storage holding the (possibly compressed)
  * bytes; checksum is the CRC32 of the original, uncompressed bytes.
+ * requested_codec is the caller's preference and is retried on every
+ * write; stored_codec records how the current data is actually stored
+ * (it becomes MEMBRANE_CODEC_RAW when the requested codec did not pay).
  */
 typedef struct s_membrane_block
 {
@@ -31,7 +34,8 @@ typedef struct s_membrane_block
 	uint64_t			access_count;
 	uint64_t			last_access_ns;
 	membrane_state_t	state;
-	membrane_codec_t	codec;
+	membrane_codec_t	requested_codec;
+	membrane_codec_t	stored_codec;
 	uint32_t			checksum;
 }	membrane_block_t;
 
@@ -49,7 +53,11 @@ void				membrane_block_destroy(membrane_block_t *block);
 /*
  * Compresses `in` (in_len bytes) via the block's codec into
  * block-owned storage, updating original_size, stored_size, checksum,
- * and access metadata.
+ * and access metadata. Compression is attempted with requested_codec
+ * on every write; if it does not actually shrink the data, the block
+ * falls back to RAW storage (recorded in stored_codec), so
+ * incompressible data never expands. The fallback never sticks: a
+ * later write with compressible data compresses again automatically.
  */
 membrane_status_t	membrane_block_write(membrane_block_t *block,
 						const uint8_t *in, size_t in_len);

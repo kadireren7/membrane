@@ -20,7 +20,9 @@ static void	test_lifecycle(void)
 	block = membrane_block_create(7, MEMBRANE_CODEC_RAW);
 	TEST_ASSERT(block != NULL, "block allocates");
 	TEST_ASSERT(block->id == 7, "block keeps its id");
-	TEST_ASSERT(block->codec == MEMBRANE_CODEC_RAW, "block keeps its codec");
+	TEST_ASSERT(block->requested_codec == MEMBRANE_CODEC_RAW
+		&& block->stored_codec == MEMBRANE_CODEC_RAW,
+		"block keeps its codec");
 	TEST_ASSERT(block->data == NULL && block->stored_size == 0,
 		"fresh block owns no storage");
 	TEST_ASSERT(block->state == MEMBRANE_BLOCK_HOT, "fresh block starts hot");
@@ -120,6 +122,35 @@ static void	test_invalid_args(void)
 	membrane_block_destroy(block);
 }
 
+static void	test_raw_fallback(void)
+{
+	enum { N = 4096 };
+	membrane_block_t	*block;
+	uint8_t				in[N];
+	uint8_t				out[N];
+	size_t				out_len;
+
+	block = membrane_block_create(8, MEMBRANE_CODEC_RLE);
+	TEST_ASSERT(block != NULL, "block allocates");
+	test_fill_random(in, N, 7);
+	TEST_ASSERT(membrane_block_write(block, in, N) == MEMBRANE_OK,
+		"incompressible write succeeds");
+	TEST_ASSERT(block->stored_codec == MEMBRANE_CODEC_RAW
+		&& block->requested_codec == MEMBRANE_CODEC_RLE
+		&& block->stored_size == N,
+		"incompressible block stores RAW, preference stays RLE");
+	TEST_ASSERT(membrane_block_read(block, out, N, &out_len) == MEMBRANE_OK
+		&& out_len == N && memcmp(in, out, N) == 0,
+		"fallback block round-trips bit-identically");
+	memset(in, 0, N);
+	TEST_ASSERT(membrane_block_write(block, in, N) == MEMBRANE_OK,
+		"compressible rewrite succeeds");
+	TEST_ASSERT(block->stored_codec == MEMBRANE_CODEC_RLE
+		&& block->stored_size < N,
+		"rewrite compresses again without manual codec reset");
+	membrane_block_destroy(block);
+}
+
 static void	fill_mixed_content(uint8_t *buf, size_t len)
 {
 	size_t	off;
@@ -166,6 +197,7 @@ int	main(void)
 	test_corrupt_detection();
 	test_alloc_failure();
 	test_invalid_args();
+	test_raw_fallback();
 	test_large_buffer();
 	return (0);
 }

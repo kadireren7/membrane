@@ -60,7 +60,8 @@ membrane_block_t	*membrane_block_create(uint64_t id, membrane_codec_t codec)
 	if (block == NULL)
 		return (NULL);
 	block->id = id;
-	block->codec = codec;
+	block->requested_codec = codec;
+	block->stored_codec = codec;
 	block->state = MEMBRANE_BLOCK_HOT;
 	return (block);
 }
@@ -85,9 +86,24 @@ static membrane_status_t	block_write_empty(membrane_block_t *block)
 	block->data = NULL;
 	block->original_size = 0;
 	block->stored_size = 0;
+	block->stored_codec = block->requested_codec;
 	block->checksum = membrane_block_checksum(NULL, 0);
 	block_touch(block);
 	return (MEMBRANE_OK);
+}
+
+static void	block_adopt(membrane_block_t *block, uint8_t *buf, size_t stored,
+				membrane_codec_t stored_codec)
+{
+	uint8_t	*shrunk;
+
+	shrunk = realloc(buf, stored);
+	if (shrunk != NULL)
+		buf = shrunk;
+	free(block->data);
+	block->data = buf;
+	block->stored_size = stored;
+	block->stored_codec = stored_codec;
 }
 
 static membrane_status_t	block_compress(membrane_block_t *block,
@@ -95,7 +111,6 @@ static membrane_status_t	block_compress(membrane_block_t *block,
 				const uint8_t *in, size_t in_len)
 {
 	uint8_t				*buf;
-	uint8_t				*shrunk;
 	size_t				bound;
 	size_t				stored;
 	membrane_status_t	status;
@@ -112,12 +127,13 @@ static membrane_status_t	block_compress(membrane_block_t *block,
 		free(buf);
 		return (status);
 	}
-	shrunk = realloc(buf, stored);
-	if (shrunk != NULL)
-		buf = shrunk;
-	free(block->data);
-	block->data = buf;
-	block->stored_size = stored;
+	if (stored >= in_len && codec->id != MEMBRANE_CODEC_RAW)
+	{
+		memcpy(buf, in, in_len);
+		block_adopt(block, buf, in_len, MEMBRANE_CODEC_RAW);
+	}
+	else
+		block_adopt(block, buf, stored, codec->id);
 	return (MEMBRANE_OK);
 }
 
@@ -129,7 +145,7 @@ membrane_status_t	membrane_block_write(membrane_block_t *block,
 
 	if (block == NULL || (in == NULL && in_len > 0))
 		return (MEMBRANE_ERR_INVALID_ARG);
-	codec = membrane_codec_get(block->codec);
+	codec = membrane_codec_get(block->requested_codec);
 	if (codec == NULL)
 		return (MEMBRANE_ERR_INVALID_ARG);
 	if (in_len == 0)
@@ -152,7 +168,7 @@ membrane_status_t	membrane_block_read(membrane_block_t *block,
 
 	if (block == NULL || out_len == NULL || (out == NULL && out_cap > 0))
 		return (MEMBRANE_ERR_INVALID_ARG);
-	codec = membrane_codec_get(block->codec);
+	codec = membrane_codec_get(block->stored_codec);
 	if (codec == NULL)
 		return (MEMBRANE_ERR_INVALID_ARG);
 	if (out_cap < block->original_size)
