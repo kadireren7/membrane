@@ -1,5 +1,3 @@
-/* Stub: implemented separately. */
-
 #include <string.h>
 
 #include "membrane/codec.h"
@@ -72,7 +70,17 @@ const membrane_codec_vtable_t *membrane_codec_get(membrane_codec_t id)
 
 int membrane_codec_from_name(const char *name, membrane_codec_t *out_id)
 {
-    (void)name;
-    (void)out_id;
+    if (name == NULL || out_id == NULL)
+        return 0;
+    for (int id = 0; id < MEMBRANE_CODEC_COUNT; id++)
+    {
+        const membrane_codec_vtable_t *codec = membrane_codec_get((membrane_codec_t)id);
+
+        if (codec != NULL && strcmp(codec->name, name) == 0)
+        {
+            *out_id = (membrane_codec_t)id;
+            return 1;
+        }
+    }
     return 0;
 }
