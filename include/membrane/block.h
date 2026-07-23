@@ -33,6 +33,8 @@ typedef struct s_membrane_block
 	size_t				stored_size;
 	uint64_t			access_count;
 	uint64_t			last_access_ns;
+	/* DEPRECATED: tier state moves to the Phase 1 store's entries;
+	 * the block layer never reads or updates this field. */
 	membrane_state_t	state;
 	membrane_codec_t	requested_codec;
 	membrane_codec_t	stored_codec;
@@ -64,10 +66,22 @@ membrane_status_t	membrane_block_write(membrane_block_t *block,
 
 /*
  * Decompresses the block's stored data into caller-provided `out`
- * (out_cap bytes), verifies the result against the stored checksum,
- * and updates access metadata. Returns MEMBRANE_ERR_CORRUPT_DATA if
- * the checksum does not match.
+ * (out_cap bytes) and verifies the result against the stored checksum.
+ * Pure with respect to the block: no metadata is modified, so
+ * concurrent decodes of the same block are safe. Returns
+ * MEMBRANE_ERR_CORRUPT_DATA if the checksum does not match.
  */
+membrane_status_t	membrane_block_decode(const membrane_block_t *block,
+						uint8_t *out, size_t out_cap, size_t *out_len);
+
+/*
+ * Records an access: increments access_count and refreshes
+ * last_access_ns. Callers that share a block across threads must
+ * serialize this themselves (the Phase 1 store does it under its lock).
+ */
+void				membrane_block_touch(membrane_block_t *block);
+
+/* Convenience wrapper: decode, then touch on success. Not thread-safe. */
 membrane_status_t	membrane_block_read(membrane_block_t *block,
 						uint8_t *out, size_t out_cap, size_t *out_len);
 

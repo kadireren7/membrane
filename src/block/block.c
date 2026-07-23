@@ -3,43 +3,13 @@
 
 #include "membrane/block.h"
 #include "membrane/stats.h"
-
-/* CRC32, poly 0xEDB88320 (reflected), table built lazily on first use. */
-static uint32_t	g_crc_table[256];
-static int		g_crc_table_ready = 0;
-
-static void	crc32_init_table(void)
-{
-	uint32_t	c;
-	uint32_t	i;
-	int			k;
-
-	i = 0;
-	while (i < 256)
-	{
-		c = i;
-		k = 0;
-		while (k < 8)
-		{
-			if (c & 1)
-				c = 0xEDB88320u ^ (c >> 1);
-			else
-				c >>= 1;
-			k++;
-		}
-		g_crc_table[i] = c;
-		i++;
-	}
-	g_crc_table_ready = 1;
-}
+#include "crc32_table.h"
 
 uint32_t	membrane_block_checksum(const uint8_t *buf, size_t len)
 {
 	uint32_t	crc;
 	size_t		i;
 
-	if (!g_crc_table_ready)
-		crc32_init_table();
 	crc = 0xFFFFFFFFu;
 	i = 0;
 	while (i < len)
@@ -74,8 +44,10 @@ void	membrane_block_destroy(membrane_block_t *block)
 	free(block);
 }
 
-static void	block_touch(membrane_block_t *block)
+void	membrane_block_touch(membrane_block_t *block)
 {
+	if (block == NULL)
+		return ;
 	block->access_count++;
 	block->last_access_ns = membrane_now_ns();
 }
@@ -88,7 +60,7 @@ static membrane_status_t	block_write_empty(membrane_block_t *block)
 	block->stored_size = 0;
 	block->stored_codec = block->requested_codec;
 	block->checksum = membrane_block_checksum(NULL, 0);
-	block_touch(block);
+	membrane_block_touch(block);
 	return (MEMBRANE_OK);
 }
 
@@ -155,11 +127,11 @@ membrane_status_t	membrane_block_write(membrane_block_t *block,
 		return (status);
 	block->original_size = in_len;
 	block->checksum = membrane_block_checksum(in, in_len);
-	block_touch(block);
+	membrane_block_touch(block);
 	return (MEMBRANE_OK);
 }
 
-membrane_status_t	membrane_block_read(membrane_block_t *block,
+membrane_status_t	membrane_block_decode(const membrane_block_t *block,
 				uint8_t *out, size_t out_cap, size_t *out_len)
 {
 	const membrane_codec_vtable_t	*codec;
@@ -181,6 +153,16 @@ membrane_status_t	membrane_block_read(membrane_block_t *block,
 		|| membrane_block_checksum(out, produced) != block->checksum)
 		return (MEMBRANE_ERR_CORRUPT_DATA);
 	*out_len = produced;
-	block_touch(block);
 	return (MEMBRANE_OK);
+}
+
+membrane_status_t	membrane_block_read(membrane_block_t *block,
+				uint8_t *out, size_t out_cap, size_t *out_len)
+{
+	membrane_status_t	status;
+
+	status = membrane_block_decode(block, out, out_cap, out_len);
+	if (status == MEMBRANE_OK)
+		membrane_block_touch(block);
+	return (status);
 }

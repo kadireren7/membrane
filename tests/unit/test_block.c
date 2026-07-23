@@ -13,6 +13,67 @@ static void	test_checksum_known_vector(void)
 		"CRC32 of empty input is zero");
 }
 
+static void	test_crc_regression(void)
+{
+	const uint8_t	one[] = "a";
+	const uint8_t	name[] = "MEMBRANE";
+	uint8_t			zeros[32];
+
+	memset(zeros, 0, sizeof(zeros));
+	TEST_ASSERT(membrane_block_checksum(one, 1) == 0xE8B7BE43u,
+		"CRC32 of \"a\" matches zlib reference");
+	TEST_ASSERT(membrane_block_checksum(zeros, 32) == 0x190A55ADu,
+		"CRC32 of 32 zero bytes matches zlib reference");
+	TEST_ASSERT(membrane_block_checksum(name, 8) == 0x286CB75Au,
+		"CRC32 of \"MEMBRANE\" matches zlib reference");
+}
+
+static void	test_decode_no_mutation(void)
+{
+	enum { N = 4096 };
+	membrane_block_t	*block;
+	membrane_block_t	before;
+	uint8_t				in[N];
+	uint8_t				out[N];
+	size_t				out_len;
+
+	block = membrane_block_create(9, MEMBRANE_CODEC_RLE);
+	TEST_ASSERT(block != NULL, "block allocates");
+	memset(in, 0x42, N);
+	TEST_ASSERT(membrane_block_write(block, in, N) == MEMBRANE_OK,
+		"block write");
+	before = *block;
+	TEST_ASSERT(membrane_block_decode(block, out, N, &out_len) == MEMBRANE_OK
+		&& out_len == N && memcmp(in, out, N) == 0,
+		"decode round-trips");
+	TEST_ASSERT(memcmp(&before, block, sizeof(before)) == 0,
+		"decode leaves every metadata field untouched");
+	TEST_ASSERT(membrane_block_read(block, out, N, &out_len) == MEMBRANE_OK
+		&& block->access_count == before.access_count + 1,
+		"read wrapper still updates access metadata");
+	membrane_block_destroy(block);
+}
+
+static void	test_unsupported_codec(void)
+{
+	membrane_block_t	*block;
+	uint8_t				buf[16];
+
+	memset(buf, 0x11, sizeof(buf));
+	block = membrane_block_create(10, MEMBRANE_CODEC_LZ4);
+	TEST_ASSERT(block != NULL, "unimplemented codec block still allocates");
+	TEST_ASSERT(membrane_block_write(block, buf, sizeof(buf))
+		== MEMBRANE_ERR_UNIMPLEMENTED,
+		"LZ4 write reports UNIMPLEMENTED, not INVALID_ARG");
+	membrane_block_destroy(block);
+	block = membrane_block_create(11, MEMBRANE_CODEC_BITPACK);
+	TEST_ASSERT(block != NULL, "unimplemented codec block still allocates");
+	TEST_ASSERT(membrane_block_write(block, buf, sizeof(buf))
+		== MEMBRANE_ERR_UNIMPLEMENTED,
+		"BITPACK write reports UNIMPLEMENTED, not INVALID_ARG");
+	membrane_block_destroy(block);
+}
+
 static void	test_lifecycle(void)
 {
 	membrane_block_t	*block;
@@ -191,6 +252,9 @@ static void	test_large_buffer(void)
 int	main(void)
 {
 	test_checksum_known_vector();
+	test_crc_regression();
+	test_decode_no_mutation();
+	test_unsupported_codec();
 	test_lifecycle();
 	test_write_read_roundtrip();
 	test_empty_write();

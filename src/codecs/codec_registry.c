@@ -27,10 +27,14 @@ static membrane_status_t	unimpl_decompress(const uint8_t *in, size_t in_len,
 	return (MEMBRANE_ERR_UNIMPLEMENTED);
 }
 
+/*
+ * Returns in_len so callers pass the bound sanity check and reach
+ * compress(), which reports MEMBRANE_ERR_UNIMPLEMENTED — the honest
+ * error for a registered-but-unimplemented codec.
+ */
 static size_t	unimpl_bound(size_t in_len)
 {
-	(void)in_len;
-	return (0);
+	return (in_len);
 }
 
 static const membrane_codec_vtable_t	g_membrane_codec_lz4 = {
