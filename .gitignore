@@ -74,6 +74,7 @@ benchmarks/cache/
 *.trace.bin
 *.trace.raw
 *.kvtrace
+*.kvdump
 *.memtrace
 
 # --------------------------------------------------

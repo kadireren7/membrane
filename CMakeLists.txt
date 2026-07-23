@@ -15,6 +15,9 @@ option(MEMBRANE_ENABLE_ASAN
     "Deprecated alias for MEMBRANE_ENABLE_SANITIZERS"
     OFF)
 option(MEMBRANE_BUILD_TESTS "Build unit tests" ON)
+option(MEMBRANE_ENABLE_LLAMA
+    "Build the llama.cpp KV capture adapter (needs the submodule)"
+    OFF)
 
 if(MEMBRANE_ENABLE_ASAN)
   message(DEPRECATION
@@ -78,12 +81,29 @@ add_library(membrane_core
   src/store/store_index.c
   src/backends/backend.c
   src/backends/backend_file.c
+  src/kvdump/kvdump.c
+  src/kvdump/kvmetrics.c
 )
 target_include_directories(membrane_core PUBLIC include)
-target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads)
+target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m)
 
 add_subdirectory(tools/membrane-bench)
 add_subdirectory(tools/membrane-store-bench)
+add_subdirectory(tools/membrane-kv-analyze)
+
+if(MEMBRANE_ENABLE_LLAMA)
+  enable_language(CXX)
+  if(NOT EXISTS ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/CMakeLists.txt)
+    message(FATAL_ERROR "llama.cpp submodule missing; run: "
+      "git submodule update --init third_party/llama.cpp")
+  endif()
+  set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+  set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+  add_subdirectory(third_party/llama.cpp EXCLUDE_FROM_ALL)
+  add_subdirectory(tools/membrane-kv-capture)
+endif()
 
 if(MEMBRANE_BUILD_TESTS)
   enable_testing()
