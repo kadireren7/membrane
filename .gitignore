@@ -1,0 +1,181 @@
+# --------------------------------------------------
+# Build outputs
+# --------------------------------------------------
+build/
+build-*/
+out/
+bin/
+lib/
+dist/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+install_manifest.txt
+
+# --------------------------------------------------
+# Compiled objects and binaries
+# --------------------------------------------------
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.elf
+*.hex
+
+# --------------------------------------------------
+# Debug and profiling
+# --------------------------------------------------
+*.dSYM/
+*.pdb
+*.ilk
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+*.profdata
+gmon.out
+perf.data
+perf.data.old
+callgrind.out.*
+massif.out.*
+cachegrind.out.*
+
+# --------------------------------------------------
+# Sanitizer and crash output
+# --------------------------------------------------
+asan.log*
+ubsan.log*
+tsan.log*
+lsan.log*
+core
+core.*
+vgcore.*
+crash-*.log
+
+# --------------------------------------------------
+# Generated benchmark data
+# --------------------------------------------------
+benchmarks/results/*
+!benchmarks/results/README.md
+benchmarks/tmp/
+benchmarks/cache/
+*.benchmark.json
+*.trace.bin
+*.trace.raw
+*.kvtrace
+*.memtrace
+
+# --------------------------------------------------
+# Large model and tensor files
+# Never commit model weights or raw KV dumps
+# --------------------------------------------------
+*.gguf
+*.ggml
+*.safetensors
+*.binmodel
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.tensor
+*.npy
+*.npz
+models/
+weights/
+datasets/raw/
+datasets/private/
+
+# --------------------------------------------------
+# Runtime storage
+# --------------------------------------------------
+membrane.store
+membrane.swap
+membrane.cache
+*.store
+*.swap
+*.cache
+*.page
+*.block
+
+# --------------------------------------------------
+# Logs and reports
+# --------------------------------------------------
+*.log
+logs/
+reports/generated/
+coverage/
+coverage.xml
+lcov.info
+htmlcov/
+
+# --------------------------------------------------
+# Python tooling used for benchmarks
+# --------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# --------------------------------------------------
+# Editors and IDEs
+# --------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.cproject
+.settings/
+.cache/
+.clangd/
+.vs/
+
+# --------------------------------------------------
+# Operating systems
+# --------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+
+# --------------------------------------------------
+# Secrets and local configuration
+# --------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+local.config
+config.local.*
+
+# --------------------------------------------------
+# Packaging
+# --------------------------------------------------
+*.deb
+*.rpm
+*.tar
+*.tar.gz
+*.zip
