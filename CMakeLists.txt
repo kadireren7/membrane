@@ -81,6 +81,7 @@ target_include_directories(membrane_core PUBLIC include)
 target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads)
 
 add_subdirectory(tools/membrane-bench)
+add_subdirectory(tools/membrane-store-bench)
 
 if(MEMBRANE_BUILD_TESTS)
   enable_testing()

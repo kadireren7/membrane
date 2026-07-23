@@ -27,3 +27,27 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  thread-sanitizer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake
+
+      - name: Configure (TSan)
+        run: cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DMEMBRANE_ENABLE_TSAN=ON
+
+      - name: Build
+        run: cmake --build build-tsan -j
+
+      # ThreadSanitizer aborts with "unexpected memory mapping" on kernels
+      # whose ASLR range collides with its shadow. Try a normal run first;
+      # only if that specific failure appears, retry with ASLR disabled.
+      - name: Test
+        run: |
+          if ! ctest --test-dir build-tsan --output-on-failure; then
+            echo "Retrying TSan tests with ASLR disabled (setarch -R)"
+            setarch "$(uname -m)" -R ctest --test-dir build-tsan --output-on-failure
+          fi

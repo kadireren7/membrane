@@ -67,6 +67,7 @@ crash-*.log
 # --------------------------------------------------
 benchmarks/results/*
 !benchmarks/results/README.md
+!benchmarks/results/phase1-store-summary.md
 benchmarks/tmp/
 benchmarks/cache/
 *.benchmark.json
