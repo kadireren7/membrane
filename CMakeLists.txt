@@ -24,6 +24,7 @@ add_library(membrane_core
   src/codecs/raw.c
   src/codecs/rle.c
   src/codecs/codec_registry.c
+  src/stats.c
 )
 target_include_directories(membrane_core PUBLIC include)
 
