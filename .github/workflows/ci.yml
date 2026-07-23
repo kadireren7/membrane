@@ -1,0 +1,29 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_type: [Debug, ASan]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake
+
+      - name: Configure (Debug)
+        if: matrix.build_type == 'Debug'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Configure (ASan)
+        if: matrix.build_type == 'ASan'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DMEMBRANE_ENABLE_ASAN=ON
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
