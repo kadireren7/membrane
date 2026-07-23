@@ -12,6 +12,7 @@ static membrane_store_t	*make_store(size_t budget)
 	cfg.budget_bytes = budget;
 	cfg.default_codec = MEMBRANE_CODEC_RLE;
 	cfg.index_capacity = 64;
+	cfg.backend = NULL;
 	return (membrane_store_create(&cfg));
 }
 

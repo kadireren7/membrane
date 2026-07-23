@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "membrane/backend.h"
 #include "membrane/store.h"
 #include "membrane/stats.h"
 
@@ -14,6 +15,8 @@ typedef struct s_bench_opts
 	double				compressible_ratio;
 	membrane_codec_t	codec;
 	const char			*codec_name;
+	const char			*backend_kind;
+	const char			*backend_path;
 	unsigned int		seed;
 }	bench_opts_t;
 
@@ -129,18 +132,22 @@ static int	verify_block(membrane_store_t *s, const bench_opts_t *o,
 	return (free(want), free(got), 0);
 }
 
+/* Visits every block exactly once but in a scrambled order (an odd stride
+ * is coprime to any block count), so read order differs from write order. */
 static void	run_verify(membrane_store_t *s, const bench_opts_t *o,
 				uint64_t nblocks, bench_result_t *r)
 {
+	uint64_t	k;
 	uint64_t	id;
 	int			rc;
 
 	r->integrity_ok = 1;
 	r->verified_blocks = 0;
 	r->evicted_blocks = 0;
-	id = 0;
-	while (id < nblocks)
+	k = 0;
+	while (k < nblocks)
 	{
+		id = (k * 2654435761u + 12289u) % nblocks;
 		rc = verify_block(s, o, id, nblocks);
 		if (rc == 1)
 			r->evicted_blocks += 1;
@@ -148,7 +155,7 @@ static void	run_verify(membrane_store_t *s, const bench_opts_t *o,
 			r->verified_blocks += 1;
 		else
 			r->integrity_ok = 0;
-		id++;
+		k++;
 	}
 }
 
@@ -240,6 +247,8 @@ static void	usage(FILE *out)
 		"  --block-size N          block size (default 64K)\n"
 		"  --compressible-ratio F  fraction of blocks that compress (0..1)\n"
 		"  --codec NAME            raw or rle (default rle)\n"
+		"  --backend KIND          none or file (default none)\n"
+		"  --backend-path DIR      directory for the file backend\n"
 		"  --seed N                PRNG seed (default 1)\n");
 }
 
@@ -261,9 +270,26 @@ static int	opt_apply(bench_opts_t *o, int c)
 			return (-1);
 		o->codec_name = optarg;
 	}
+	else if (c == 'k')
+		o->backend_kind = optarg;
+	else if (c == 'p')
+		o->backend_path = optarg;
 	else
 		return (-1);
 	return (0);
+}
+
+static void	opts_defaults(bench_opts_t *o)
+{
+	o->logical_size = 0;
+	o->memory_budget = 0;
+	o->block_size = 64 * 1024;
+	o->compressible_ratio = 0.5;
+	o->codec = MEMBRANE_CODEC_RLE;
+	o->codec_name = "rle";
+	o->backend_kind = NULL;
+	o->backend_path = NULL;
+	o->seed = 1;
 }
 
 static int	parse_opts(int argc, char **argv, bench_opts_t *o)
@@ -274,23 +300,19 @@ static int	parse_opts(int argc, char **argv, bench_opts_t *o)
 	{"block-size", required_argument, 0, 'b'},
 	{"compressible-ratio", required_argument, 0, 'r'},
 	{"codec", required_argument, 0, 'c'},
+	{"backend", required_argument, 0, 'k'},
+	{"backend-path", required_argument, 0, 'p'},
 	{"seed", required_argument, 0, 's'},
 	{0, 0, 0, 0}};
 	int						c;
 
-	o->logical_size = 0;
-	o->memory_budget = 0;
-	o->block_size = 64 * 1024;
-	o->compressible_ratio = 0.5;
-	o->codec = MEMBRANE_CODEC_RLE;
-	o->codec_name = "rle";
-	o->seed = 1;
-	c = getopt_long(argc, argv, "l:m:b:r:c:s:", lo, NULL);
+	opts_defaults(o);
+	c = getopt_long(argc, argv, "l:m:b:r:c:k:p:s:", lo, NULL);
 	while (c != -1)
 	{
 		if (opt_apply(o, c) != 0)
 			return (-1);
-		c = getopt_long(argc, argv, "l:m:b:r:c:s:", lo, NULL);
+		c = getopt_long(argc, argv, "l:m:b:r:c:k:p:s:", lo, NULL);
 	}
 	return (0);
 }
@@ -312,14 +334,47 @@ static int	validate_opts(const bench_opts_t *o)
 	return (0);
 }
 
-static membrane_store_t	*make_store(const bench_opts_t *o)
+static membrane_backend_t	*make_backend(const bench_opts_t *o)
+{
+	if (o->backend_kind == NULL || strcmp(o->backend_kind, "none") == 0)
+		return (NULL);
+	if (strcmp(o->backend_kind, "file") != 0 || o->backend_path == NULL)
+		return (NULL);
+	return (membrane_backend_file_create(o->backend_path));
+}
+
+static membrane_store_t	*make_store(const bench_opts_t *o,
+							membrane_backend_t *be)
 {
 	membrane_store_config_t	cfg;
 
 	cfg.budget_bytes = o->memory_budget;
 	cfg.default_codec = o->codec;
 	cfg.index_capacity = 0;
+	cfg.backend = be;
 	return (membrane_store_create(&cfg));
+}
+
+static int	backend_requested(const bench_opts_t *o)
+{
+	return (o->backend_kind != NULL && strcmp(o->backend_kind, "none") != 0);
+}
+
+static int	run_all(const bench_opts_t *o, membrane_store_t *store,
+				bench_result_t *r)
+{
+	uint64_t	nblocks;
+
+	nblocks = (o->logical_size + o->block_size - 1) / o->block_size;
+	memset(r, 0, sizeof(*r));
+	if (run_ingest(store, o, nblocks, r) != MEMBRANE_OK)
+	{
+		fprintf(stderr, "ingest failed (budget too small?)\n");
+		return (-1);
+	}
+	run_verify(store, o, nblocks, r);
+	membrane_store_get_stats(store, &r->stats);
+	return (0);
 }
 
 int	main(int argc, char **argv)
@@ -327,22 +382,24 @@ int	main(int argc, char **argv)
 	bench_opts_t		o;
 	bench_result_t		r;
 	membrane_store_t	*store;
-	uint64_t			nblocks;
+	membrane_backend_t	*be;
+	int					rc;
 
 	if (parse_opts(argc, argv, &o) != 0 || validate_opts(&o) != 0)
 		return (usage(stderr), 2);
-	store = make_store(&o);
+	be = make_backend(&o);
+	if (be == NULL && backend_requested(&o))
+		return (fprintf(stderr, "backend create failed\n"), 2);
+	store = make_store(&o, be);
 	if (store == NULL)
-		return (fprintf(stderr, "store create failed\n"), 2);
-	nblocks = (o.logical_size + o.block_size - 1) / o.block_size;
-	memset(&r, 0, sizeof(r));
-	if (run_ingest(store, &o, nblocks, &r) != MEMBRANE_OK)
-		return (fprintf(stderr, "ingest failed (budget too small?)\n"),
-			membrane_store_destroy(store), 1);
-	run_verify(store, &o, nblocks, &r);
-	membrane_store_get_stats(store, &r.stats);
-	print_human(&r);
-	print_json(&o, &r);
+		return (membrane_backend_destroy(be),
+			fprintf(stderr, "store create failed\n"), 2);
+	rc = run_all(&o, store, &r);
+	if (rc == 0)
+		(print_human(&r), print_json(&o, &r));
 	membrane_store_destroy(store);
+	membrane_backend_destroy(be);
+	if (rc != 0)
+		return (1);
 	return (r.integrity_ok ? 0 : 1);
 }

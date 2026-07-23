@@ -76,6 +76,8 @@ add_library(membrane_core
   src/stats.c
   src/store/store.c
   src/store/store_index.c
+  src/backends/backend.c
+  src/backends/backend_file.c
 )
 target_include_directories(membrane_core PUBLIC include)
 target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads)

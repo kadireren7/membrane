@@ -126,9 +126,54 @@ blocks stay resident. Design decisions:
   `effective_capacity_ratio` — the headline number for "more logical
   data than physical budget."
 
-Deliberately deferred (flagged as premature for this cut): file/NVMe and
-CXL/FPGA backends, async compression workers, prefetch, a pluggable
-eviction-policy vtable, and hash-index resizing.
+Deliberately deferred (flagged as premature for this cut): async
+compression workers, prefetch, a pluggable eviction-policy vtable, and
+hash-index resizing.
+
+## Persistent backend and promotion (Phase 1.4)
+
+Evicted blocks are no longer dropped: with a backend configured, the store
+writes them to a cold tier and loads them back on demand. This is what
+pushes effective capacity *beyond* the RAM budget.
+
+- **Backend seam.** `membrane_backend_t` (`include/membrane/backend.h`) is
+  an opaque handle over an internal vtable (`store`/`load`/`remove`/
+  `contains`/`used_bytes`/`destroy`), mirroring the codec vtable. All state
+  lives in the handle — no globals. The only backend today is the file
+  backend; RAM/CXL/FPGA backends would implement the same vtable. The store
+  references but does not own the backend (the caller destroys it after).
+- **File format.** One file per block, named only from the numeric id
+  (16 hex digits — no caller string reaches the path, so there is no
+  traversal surface). A 48-byte little-endian header carries a magic,
+  version, id, sizes, both codecs, the payload checksum, and a CRC32 over
+  the header itself; the payload follows. Writes go to a `.tmp` file that
+  is `fsync`ed and atomically `rename`d into place. On load, a bad magic/
+  version/header-CRC, an id mismatch, or a `stored_size` exceeding the file
+  is rejected as `CORRUPT_DATA`; a corrupted payload is caught later by the
+  block's own checksum at decode. Truncation fails the header read or the
+  size check.
+- **Eviction / promotion with I/O off the lock.** Entries gain a state:
+  RESIDENT, EVICTING, EVICTED, LOADING. The heavy backend read/write runs
+  with the store lock released; the entry is parked in a transient state
+  (EVICTING/LOADING) that its owning thread holds exclusively. Any other
+  thread that finds a transient entry waits on a condition variable and
+  retries, so per-entry I/O is serialized without holding the lock across
+  it, while different entries evict/promote concurrently. `get` on an
+  evicted block loads it, decodes (verifying the checksum) *before*
+  committing, then promotes it resident — evicting other LRU blocks to make
+  room, or serving without promoting if the budget is fully pinned. Backend
+  deletes (unlink) for `remove`/overwrite are done under the lock since they
+  are cheap metadata operations; only the block payload read/write is moved
+  off the lock.
+- **Error safety.** A failed eviction write leaves the block resident
+  (rolled back, counted as `backend_write_failures`). A failed load or a
+  checksum mismatch never yields corrupt data — `get` returns the error and
+  the block stays evicted. `remove` clears both the resident and backend
+  copies; `destroy` removes every record and `.tmp` file. Validated by
+  `membrane-store-bench`: 256 MiB logical held in a 64 MiB budget with a
+  file backend keeps `resident_bytes` pinned to 64 MiB across thousands of
+  evict/promote cycles, every block read back (in scrambled order) with
+  integrity PASS, and no files left behind.
 
 ## Memory safety
 

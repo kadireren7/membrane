@@ -4,6 +4,7 @@
 # include <stddef.h>
 # include <stdint.h>
 
+# include "membrane/backend.h"
 # include "membrane/block.h"
 # include "membrane/codec.h"
 
@@ -17,12 +18,16 @@ typedef struct s_membrane_store	membrane_store_t;
  * budget_bytes:    hard cap on resident (compressed) bytes; never exceeded.
  * default_codec:   codec attempted for every put (RAW fallback still applies).
  * index_capacity:  hash bucket count hint; 0 selects a built-in default.
+ * backend:         cold tier for evicted blocks; NULL drops them instead.
+ *                  The store references it but does not own it: the caller
+ *                  destroys the backend after the store.
  */
 typedef struct s_membrane_store_config
 {
 	size_t				budget_bytes;
 	membrane_codec_t	default_codec;
 	size_t				index_capacity;
+	membrane_backend_t	*backend;
 }	membrane_store_config_t;
 
 typedef struct s_membrane_store_stats
@@ -32,12 +37,20 @@ typedef struct s_membrane_store_stats
 	size_t		peak_resident_bytes;
 	uint64_t	logical_bytes;
 	uint64_t	stored_bytes;
+	uint64_t	backend_bytes;
 	uint64_t	block_count;
 	uint64_t	puts;
 	uint64_t	gets;
 	uint64_t	hits;
 	uint64_t	misses;
 	uint64_t	evictions;
+	uint64_t	promotions;
+	uint64_t	eviction_bytes;
+	uint64_t	promotion_bytes;
+	uint64_t	backend_writes;
+	uint64_t	backend_reads;
+	uint64_t	backend_write_failures;
+	uint64_t	backend_read_failures;
 	uint64_t	raw_blocks;
 	uint64_t	compressed_blocks;
 	double		effective_capacity_ratio;

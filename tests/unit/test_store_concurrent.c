@@ -1,10 +1,12 @@
-/* rand_r is POSIX; expose it under strict -std=c11. */
+/* rand_r/mkdtemp are POSIX; expose them under strict -std=c11. */
 #define _DEFAULT_SOURCE
 
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
+#include "membrane/backend.h"
 #include "store_internal.h"
 #include "test_helpers.h"
 
@@ -129,20 +131,50 @@ static int	run_phase(membrane_store_t *s, int mixed)
 	return (failures);
 }
 
-int	main(void)
+static membrane_store_t	*make_store(size_t budget, membrane_backend_t *be)
 {
 	membrane_store_config_t	cfg;
-	membrane_store_t		*s;
 
-	cfg.budget_bytes = NBLOCKS * BLK;
+	cfg.budget_bytes = budget;
 	cfg.default_codec = MEMBRANE_CODEC_RLE;
 	cfg.index_capacity = 64;
-	s = membrane_store_create(&cfg);
+	cfg.backend = be;
+	return (membrane_store_create(&cfg));
+}
+
+/* Tiny budget + backend: constant evict/promote churn across threads,
+ * exercising concurrent promotion of the same evicted block and get/remove
+ * races. Content is all-one-byte so any successful get is verifiable. */
+static void	run_backend_phase(void)
+{
+	char				dir[] = "/tmp/membrane-cc-XXXXXX";
+	membrane_backend_t	*be;
+	membrane_store_t	*s;
+
+	TEST_ASSERT(mkdtemp(dir) != NULL, "temp dir");
+	be = membrane_backend_file_create(dir);
+	TEST_ASSERT(be != NULL, "file backend");
+	s = make_store(64, be);
+	TEST_ASSERT(s != NULL, "backed store creates");
+	seed_store(s);
+	TEST_ASSERT(run_phase(s, 0) == 0, "concurrent promotes all verify");
+	TEST_ASSERT(run_phase(s, 1) == 0, "concurrent promote/remove stays sane");
+	membrane_store_destroy(s);
+	membrane_backend_destroy(be);
+	rmdir(dir);
+}
+
+int	main(void)
+{
+	membrane_store_t	*s;
+
+	s = make_store(NBLOCKS * BLK, NULL);
 	TEST_ASSERT(s != NULL, "store creates");
 	seed_store(s);
 	TEST_ASSERT(run_phase(s, 0) == 0, "concurrent gets all verify");
 	TEST_ASSERT(run_phase(s, 1) == 0,
 		"concurrent get/put/remove mix stays consistent");
 	membrane_store_destroy(s);
+	run_backend_phase();
 	return (0);
 }

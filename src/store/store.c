@@ -1,5 +1,6 @@
 #include <stdlib.h>
 
+#include "membrane/backend.h"
 #include "store_internal.h"
 
 # define STORE_DEFAULT_BUCKETS 1024
@@ -37,10 +38,10 @@ static void	lru_move_front(struct s_membrane_store *s, store_entry_t *e)
 	lru_push_front(s, e);
 }
 
-static void	account_add(struct s_membrane_store *s, const membrane_block_t *b)
+/* Accounts a newly resident block (fresh put). */
+static void	acct_insert(struct s_membrane_store *s, const membrane_block_t *b)
 {
 	s->resident_bytes += b->stored_size;
-	s->stored_bytes += b->stored_size;
 	s->logical_bytes += b->original_size;
 	s->block_count += 1;
 	if (b->stored_codec == MEMBRANE_CODEC_RAW)
@@ -51,10 +52,9 @@ static void	account_add(struct s_membrane_store *s, const membrane_block_t *b)
 		s->peak_resident_bytes = s->resident_bytes;
 }
 
-static void	account_sub(struct s_membrane_store *s, const membrane_block_t *b)
+/* Drops a block's contribution to logical/count/codec tallies. */
+static void	acct_forget(struct s_membrane_store *s, const membrane_block_t *b)
 {
-	s->resident_bytes -= b->stored_size;
-	s->stored_bytes -= b->stored_size;
 	s->logical_bytes -= b->original_size;
 	s->block_count -= 1;
 	if (b->stored_codec == MEMBRANE_CODEC_RAW)
@@ -69,52 +69,98 @@ static void	entry_free(store_entry_t *e)
 	free(e);
 }
 
-/* Logically removes `e`; frees now, or defers to the last unpin. */
+/*
+ * Fully removes a stable (RESIDENT or EVICTED) entry from the store,
+ * deleting its backend copy when evicted. Frees now, or defers to the
+ * last unpin if a decoder still holds it.
+ */
 static void	entry_detach(struct s_membrane_store *s, store_entry_t *e)
 {
 	store_index_remove(s, e);
-	lru_unlink(s, e);
-	account_sub(s, e->block);
+	if (e->state == ENTRY_RESIDENT)
+	{
+		lru_unlink(s, e);
+		s->resident_bytes -= e->block->stored_size;
+	}
+	else
+	{
+		s->backend_bytes -= e->block->stored_size;
+		if (s->backend != NULL)
+			membrane_backend_remove(s->backend, e->id);
+	}
+	acct_forget(s, e->block);
 	if (e->pin_count > 0)
 		e->pending_remove = 1;
 	else
 		entry_free(e);
 }
 
-static store_entry_t	*evictable_lru(struct s_membrane_store *s,
-							const store_entry_t *protect)
+static int	store_fits(const struct s_membrane_store *s, size_t need)
 {
-	store_entry_t	*e;
+	return (need <= s->budget_bytes - s->resident_bytes);
+}
 
-	e = s->lru_tail;
-	while (e != NULL)
+static int	evict_finish(struct s_membrane_store *s, store_entry_t *v,
+				size_t size, membrane_status_t st)
+{
+	if (st != MEMBRANE_OK)
 	{
-		if (e->pin_count == 0 && e != protect)
-			return (e);
-		e = e->lru_prev;
+		s->resident_bytes += size;
+		v->state = ENTRY_RESIDENT;
+		lru_push_front(s, v);
+		s->backend_write_failures += 1;
+		pthread_cond_broadcast(&s->cond);
+		return (-1);
 	}
-	return (NULL);
+	free(v->block->data);
+	v->block->data = NULL;
+	v->state = ENTRY_EVICTED;
+	s->backend_bytes += size;
+	s->backend_writes += 1;
+	s->evictions += 1;
+	s->eviction_bytes += size;
+	pthread_cond_broadcast(&s->cond);
+	return (1);
 }
 
-/* Overflow-safe: all terms are <= budget, no addition is performed. */
-static int	store_fits(const struct s_membrane_store *s, size_t need,
-				size_t old_size)
+/*
+ * Evicts the LRU resident block. With a backend the payload is written out
+ * (lock released for the I/O) and the entry stays EVICTED; without one it
+ * is dropped. Returns 1 on success, 0 if nothing is evictable, -1 if the
+ * backend write failed (the block is kept resident).
+ */
+static int	evict_one(struct s_membrane_store *s)
 {
-	return (need <= s->budget_bytes - (s->resident_bytes - old_size));
+	store_entry_t		*v;
+	size_t				size;
+	membrane_status_t	st;
+
+	v = s->lru_tail;
+	while (v != NULL && v->pin_count != 0)
+		v = v->lru_prev;
+	if (v == NULL)
+		return (0);
+	if (s->backend == NULL)
+		return (entry_detach(s, v), s->evictions += 1, 1);
+	size = v->block->stored_size;
+	v->state = ENTRY_EVICTING;
+	lru_unlink(s, v);
+	s->resident_bytes -= size;
+	pthread_mutex_unlock(&s->lock);
+	st = membrane_backend_store(s->backend, v->block);
+	pthread_mutex_lock(&s->lock);
+	return (evict_finish(s, v, size, st));
 }
 
-static int	store_make_room(struct s_membrane_store *s, size_t need,
-				size_t old_size, const store_entry_t *protect)
+static int	store_make_room(struct s_membrane_store *s, size_t need)
 {
-	store_entry_t	*victim;
+	int	r;
 
-	while (!store_fits(s, need, old_size))
+	while (!store_fits(s, need))
 	{
-		victim = evictable_lru(s, protect);
-		if (victim == NULL)
+		r = evict_one(s);
+		if (r <= 0)
 			return (0);
-		entry_detach(s, victim);
-		s->evictions += 1;
 	}
 	return (1);
 }
@@ -127,42 +173,47 @@ static membrane_block_t	*store_compress_block(struct s_membrane_store *s,
 
 	block = membrane_block_create(id, s->default_codec);
 	if (block == NULL)
-	{
-		*status = MEMBRANE_ERR_ALLOC_FAILED;
-		return (NULL);
-	}
+		return (*status = MEMBRANE_ERR_ALLOC_FAILED, (membrane_block_t *)NULL);
 	*status = membrane_block_write(block, bytes, len);
 	if (*status != MEMBRANE_OK)
-	{
-		membrane_block_destroy(block);
-		return (NULL);
-	}
+		return (membrane_block_destroy(block), (membrane_block_t *)NULL);
 	return (block);
+}
+
+/* Waits until any transient (EVICTING/LOADING) entry for `id` settles. */
+static store_entry_t	*find_settled(struct s_membrane_store *s, uint64_t id)
+{
+	store_entry_t	*e;
+
+	e = store_index_find(s, id);
+	while (e != NULL
+		&& (e->state == ENTRY_EVICTING || e->state == ENTRY_LOADING))
+	{
+		pthread_cond_wait(&s->cond, &s->lock);
+		e = store_index_find(s, id);
+	}
+	return (e);
 }
 
 static membrane_status_t	store_insert(struct s_membrane_store *s,
 								store_entry_t *entry)
 {
 	store_entry_t	*old;
-	size_t			old_size;
 
 	pthread_mutex_lock(&s->lock);
 	s->puts += 1;
-	old = store_index_find(s, entry->id);
-	old_size = 0;
-	if (old != NULL)
-		old_size = old->block->stored_size;
-	if (!store_make_room(s, entry->block->stored_size, old_size, old))
-	{
-		pthread_mutex_unlock(&s->lock);
-		entry_free(entry);
-		return (MEMBRANE_ERR_BUDGET_FULL);
-	}
+	old = find_settled(s, entry->id);
 	if (old != NULL)
 		entry_detach(s, old);
+	if (!store_make_room(s, entry->block->stored_size))
+	{
+		pthread_mutex_unlock(&s->lock);
+		return (entry_free(entry), MEMBRANE_ERR_BUDGET_FULL);
+	}
 	store_index_insert(s, entry);
 	lru_push_front(s, entry);
-	account_add(s, entry->block);
+	acct_insert(s, entry->block);
+	pthread_cond_broadcast(&s->cond);
 	pthread_mutex_unlock(&s->lock);
 	return (MEMBRANE_OK);
 }
@@ -181,67 +232,132 @@ membrane_status_t	membrane_store_put(membrane_store_t *store, uint64_t id,
 		return (status);
 	entry = calloc(1, sizeof(*entry));
 	if (entry == NULL)
-	{
-		membrane_block_destroy(block);
-		return (MEMBRANE_ERR_ALLOC_FAILED);
-	}
+		return (membrane_block_destroy(block), MEMBRANE_ERR_ALLOC_FAILED);
 	entry->id = id;
 	entry->block = block;
+	entry->state = ENTRY_RESIDENT;
 	return (store_insert(store, entry));
 }
 
-static store_entry_t	*store_get_pin(struct s_membrane_store *s, uint64_t id,
-							size_t out_cap, size_t *out_len,
-							membrane_status_t *status)
+/* Serves a resident entry: pin, drop the lock, decode, unpin. */
+static membrane_status_t	get_resident(struct s_membrane_store *s,
+								store_entry_t *e, uint8_t *out, size_t cap,
+								size_t *out_len)
 {
-	store_entry_t	*entry;
+	membrane_status_t	status;
 
-	pthread_mutex_lock(&s->lock);
-	s->gets += 1;
-	entry = store_index_find(s, id);
-	if (entry == NULL)
+	if (cap < e->block->original_size)
 	{
-		s->misses += 1;
-		*status = MEMBRANE_ERR_NOT_FOUND;
-		return (pthread_mutex_unlock(&s->lock), (store_entry_t *)NULL);
+		*out_len = e->block->original_size;
+		return (pthread_mutex_unlock(&s->lock), MEMBRANE_ERR_BUFFER_TOO_SMALL);
 	}
-	s->hits += 1;
-	if (out_cap < entry->block->original_size)
-	{
-		*out_len = entry->block->original_size;
-		*status = MEMBRANE_ERR_BUFFER_TOO_SMALL;
-		return (pthread_mutex_unlock(&s->lock), (store_entry_t *)NULL);
-	}
-	entry->pin_count += 1;
-	membrane_block_touch(entry->block);
-	lru_move_front(s, entry);
+	e->pin_count += 1;
+	membrane_block_touch(e->block);
+	lru_move_front(s, e);
 	pthread_mutex_unlock(&s->lock);
-	return (entry);
+	status = membrane_block_decode(e->block, out, cap, out_len);
+	pthread_mutex_lock(&s->lock);
+	e->pin_count -= 1;
+	if (e->pin_count == 0 && e->pending_remove)
+		entry_free(e);
+	pthread_cond_broadcast(&s->cond);
+	pthread_mutex_unlock(&s->lock);
+	return (status);
 }
 
-static void	store_get_unpin(struct s_membrane_store *s, store_entry_t *entry)
+/* Installs a loaded block as resident (room already reserved). */
+static void	promote_install(struct s_membrane_store *s, store_entry_t *e,
+				membrane_block_t *nb)
 {
-	pthread_mutex_lock(&s->lock);
-	entry->pin_count -= 1;
-	if (entry->pin_count == 0 && entry->pending_remove)
-		entry_free(entry);
+	size_t	size;
+
+	size = nb->stored_size;
+	membrane_backend_remove(s->backend, e->id);
+	membrane_block_destroy(e->block);
+	e->block = nb;
+	e->state = ENTRY_RESIDENT;
+	lru_push_front(s, e);
+	s->backend_bytes -= size;
+	s->resident_bytes += size;
+	if (s->resident_bytes > s->peak_resident_bytes)
+		s->peak_resident_bytes = s->resident_bytes;
+	s->promotions += 1;
+	s->promotion_bytes += size;
+}
+
+/* Finishes a promotion after the decode: promote if room, else stay cold. */
+static membrane_status_t	promote_finish(struct s_membrane_store *s,
+								store_entry_t *e, membrane_block_t *nb,
+								membrane_status_t decode_st)
+{
+	s->backend_reads += 1;
+	if (decode_st != MEMBRANE_OK)
+	{
+		e->state = ENTRY_EVICTED;
+		s->backend_read_failures += 1;
+		membrane_block_destroy(nb);
+	}
+	else if (store_make_room(s, nb->stored_size))
+		promote_install(s, e, nb);
+	else
+	{
+		e->state = ENTRY_EVICTED;
+		membrane_block_destroy(nb);
+	}
+	pthread_cond_broadcast(&s->cond);
 	pthread_mutex_unlock(&s->lock);
+	return (decode_st);
+}
+
+/* Serves an evicted entry: load and decode outside the lock, then promote. */
+static membrane_status_t	get_promote(struct s_membrane_store *s,
+								store_entry_t *e, uint8_t *out, size_t cap,
+								size_t *out_len)
+{
+	membrane_block_t	*nb;
+	membrane_status_t	status;
+
+	if (cap < e->block->original_size)
+	{
+		*out_len = e->block->original_size;
+		return (pthread_mutex_unlock(&s->lock), MEMBRANE_ERR_BUFFER_TOO_SMALL);
+	}
+	e->state = ENTRY_LOADING;
+	pthread_mutex_unlock(&s->lock);
+	status = membrane_backend_load(s->backend, e->id, &nb);
+	if (status != MEMBRANE_OK)
+	{
+		pthread_mutex_lock(&s->lock);
+		e->state = ENTRY_EVICTED;
+		s->backend_read_failures += 1;
+		pthread_cond_broadcast(&s->cond);
+		return (pthread_mutex_unlock(&s->lock), status);
+	}
+	status = membrane_block_decode(nb, out, cap, out_len);
+	pthread_mutex_lock(&s->lock);
+	return (promote_finish(s, e, nb, status));
 }
 
 membrane_status_t	membrane_store_get(membrane_store_t *store, uint64_t id,
 						uint8_t *out, size_t out_cap, size_t *out_len)
 {
-	store_entry_t		*entry;
-	membrane_status_t	status;
+	store_entry_t	*e;
 
 	if (store == NULL || out_len == NULL || (out == NULL && out_cap > 0))
 		return (MEMBRANE_ERR_INVALID_ARG);
-	entry = store_get_pin(store, id, out_cap, out_len, &status);
-	if (entry == NULL)
-		return (status);
-	status = membrane_block_decode(entry->block, out, out_cap, out_len);
-	store_get_unpin(store, entry);
-	return (status);
+	pthread_mutex_lock(&store->lock);
+	store->gets += 1;
+	e = find_settled(store, id);
+	if (e == NULL)
+	{
+		store->misses += 1;
+		pthread_mutex_unlock(&store->lock);
+		return (MEMBRANE_ERR_NOT_FOUND);
+	}
+	store->hits += 1;
+	if (e->state == ENTRY_RESIDENT)
+		return (get_resident(store, e, out, out_cap, out_len));
+	return (get_promote(store, e, out, out_cap, out_len));
 }
 
 membrane_status_t	membrane_store_remove(membrane_store_t *store, uint64_t id)
@@ -251,13 +367,14 @@ membrane_status_t	membrane_store_remove(membrane_store_t *store, uint64_t id)
 	if (store == NULL)
 		return (MEMBRANE_ERR_INVALID_ARG);
 	pthread_mutex_lock(&store->lock);
-	entry = store_index_find(store, id);
+	entry = find_settled(store, id);
 	if (entry == NULL)
 	{
 		pthread_mutex_unlock(&store->lock);
 		return (MEMBRANE_ERR_NOT_FOUND);
 	}
 	entry_detach(store, entry);
+	pthread_cond_broadcast(&store->cond);
 	pthread_mutex_unlock(&store->lock);
 	return (MEMBRANE_OK);
 }
@@ -270,7 +387,7 @@ static void	store_fill_meta(membrane_block_meta_t *m, const store_entry_t *e)
 	m->access_count = e->block->access_count;
 	m->last_access_ns = e->block->last_access_ns;
 	m->stored_codec = e->block->stored_codec;
-	m->resident = 1;
+	m->resident = (e->state == ENTRY_RESIDENT);
 }
 
 membrane_status_t	membrane_store_query(membrane_store_t *store, uint64_t id,
@@ -281,7 +398,7 @@ membrane_status_t	membrane_store_query(membrane_store_t *store, uint64_t id,
 	if (store == NULL || out_meta == NULL)
 		return (MEMBRANE_ERR_INVALID_ARG);
 	pthread_mutex_lock(&store->lock);
-	entry = store_index_find(store, id);
+	entry = find_settled(store, id);
 	if (entry == NULL)
 	{
 		pthread_mutex_unlock(&store->lock);
@@ -294,9 +411,31 @@ membrane_status_t	membrane_store_query(membrane_store_t *store, uint64_t id,
 
 static double	store_ratio(const struct s_membrane_store *s)
 {
-	if (s->resident_bytes == 0)
+	uint64_t	footprint;
+
+	footprint = (uint64_t)s->resident_bytes + s->backend_bytes;
+	if (footprint == 0)
 		return (0.0);
-	return ((double)s->logical_bytes / (double)s->resident_bytes);
+	return ((double)s->logical_bytes / (double)footprint);
+}
+
+static void	store_copy_counters(const struct s_membrane_store *s,
+				membrane_store_stats_t *o)
+{
+	o->puts = s->puts;
+	o->gets = s->gets;
+	o->hits = s->hits;
+	o->misses = s->misses;
+	o->evictions = s->evictions;
+	o->promotions = s->promotions;
+	o->eviction_bytes = s->eviction_bytes;
+	o->promotion_bytes = s->promotion_bytes;
+	o->backend_writes = s->backend_writes;
+	o->backend_reads = s->backend_reads;
+	o->backend_write_failures = s->backend_write_failures;
+	o->backend_read_failures = s->backend_read_failures;
+	o->raw_blocks = s->raw_blocks;
+	o->compressed_blocks = s->compressed_blocks;
 }
 
 static void	store_copy_stats(const struct s_membrane_store *s,
@@ -306,16 +445,11 @@ static void	store_copy_stats(const struct s_membrane_store *s,
 	o->resident_bytes = s->resident_bytes;
 	o->peak_resident_bytes = s->peak_resident_bytes;
 	o->logical_bytes = s->logical_bytes;
-	o->stored_bytes = s->stored_bytes;
+	o->backend_bytes = s->backend_bytes;
+	o->stored_bytes = (uint64_t)s->resident_bytes + s->backend_bytes;
 	o->block_count = s->block_count;
-	o->puts = s->puts;
-	o->gets = s->gets;
-	o->hits = s->hits;
-	o->misses = s->misses;
-	o->evictions = s->evictions;
-	o->raw_blocks = s->raw_blocks;
-	o->compressed_blocks = s->compressed_blocks;
 	o->effective_capacity_ratio = store_ratio(s);
+	store_copy_counters(s, o);
 }
 
 void	membrane_store_get_stats(membrane_store_t *store,
@@ -326,6 +460,18 @@ void	membrane_store_get_stats(membrane_store_t *store,
 	pthread_mutex_lock(&store->lock);
 	store_copy_stats(store, out);
 	pthread_mutex_unlock(&store->lock);
+}
+
+static int	store_init_sync(struct s_membrane_store *s)
+{
+	if (pthread_mutex_init(&s->lock, NULL) != 0)
+		return (-1);
+	if (pthread_cond_init(&s->cond, NULL) != 0)
+	{
+		pthread_mutex_destroy(&s->lock);
+		return (-1);
+	}
+	return (0);
 }
 
 membrane_store_t	*membrane_store_create(const membrane_store_config_t *cfg)
@@ -342,28 +488,42 @@ membrane_store_t	*membrane_store_create(const membrane_store_config_t *cfg)
 	if (buckets == 0)
 		buckets = STORE_DEFAULT_BUCKETS;
 	s->buckets = calloc(buckets, sizeof(*s->buckets));
-	if (s->buckets == NULL || pthread_mutex_init(&s->lock, NULL) != 0)
+	if (s->buckets == NULL || store_init_sync(s) != 0)
 		return (free(s->buckets), free(s), (membrane_store_t *)NULL);
 	s->bucket_count = buckets;
 	s->budget_bytes = cfg->budget_bytes;
 	s->default_codec = cfg->default_codec;
+	s->backend = cfg->backend;
 	return (s);
+}
+
+/* Frees every entry, resident or evicted, across all hash buckets. */
+static void	store_free_entries(struct s_membrane_store *s)
+{
+	store_entry_t	*e;
+	store_entry_t	*next;
+	size_t			i;
+
+	i = 0;
+	while (i < s->bucket_count)
+	{
+		e = s->buckets[i];
+		while (e != NULL)
+		{
+			next = e->hash_next;
+			entry_free(e);
+			e = next;
+		}
+		i++;
+	}
 }
 
 void	membrane_store_destroy(membrane_store_t *store)
 {
-	store_entry_t	*entry;
-	store_entry_t	*next;
-
 	if (store == NULL)
 		return ;
-	entry = store->lru_head;
-	while (entry != NULL)
-	{
-		next = entry->lru_next;
-		entry_free(entry);
-		entry = next;
-	}
+	store_free_entries(store);
+	pthread_cond_destroy(&store->cond);
 	pthread_mutex_destroy(&store->lock);
 	free(store->buckets);
 	free(store);
