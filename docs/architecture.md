@@ -36,8 +36,10 @@ A standalone, dependency-free C11 library (`membrane_core`) plus a CLI
 
 - No LLM runtime integration (no llama.cpp, no vLLM).
 - No GPU/CUDA code.
-- No hot/warm/cold eviction policy engine.
-- No NVMe or CXL storage tier.
+- No multi-tier hot/warm/cold engine (the store has single-tier LRU
+  eviction; see "Budget-aware block store" below).
+- No NVMe or CXL storage backend (evicted blocks are dropped, not
+  offloaded).
 - No lossy compression or quantization.
 - No predictive prefetching.
 - No distributed/multi-server memory.
@@ -86,6 +88,57 @@ This keeps the block store and CLI codec-agnostic — adding a new codec
 means writing a `compress`/`decompress`/`bound` triplet and registering it,
 nothing else needs to change. See `include/membrane/codec.h` for the exact
 function signatures.
+
+## Budget-aware block store (Phase 1.2)
+
+`membrane_store_t` (`include/membrane/store.h`) holds compressed blocks
+under a fixed byte budget and is the first piece that decides *which*
+blocks stay resident. Design decisions:
+
+- **Two physical states, not three tiers.** A block is either RESIDENT
+  (compressed, counted against `budget_bytes`) or gone. There is no
+  file/NVMe backend yet: an evicted block is simply dropped. The
+  roadmap's hot/warm/cold hierarchy is deliberately *not* built as three
+  physical pools here — that would be premature while only RAM exists.
+- **Budget is never exceeded.** `put` compresses first, then evicts the
+  least-recently-used blocks until the new block fits. If it still does
+  not fit (e.g. a single block larger than the whole budget, or every
+  other block pinned), `put` returns `MEMBRANE_ERR_BUDGET_FULL` and any
+  existing data for that id is left intact. Fit checks are written as
+  subtractions (`need <= budget - (resident - old_size)`) so they never
+  overflow `size_t`.
+- **Data structures.** An `id -> store_entry` chained hash index for
+  O(1) lookup, plus an intrusive doubly-linked LRU list threaded through
+  the same entries for O(1) touch/evict. Each `store_entry` owns one
+  `membrane_block_t`, reusing its size/codec/checksum metadata rather
+  than duplicating it.
+- **Thread safety: one mutex + pin/refcount.** A single
+  `pthread_mutex_t` guards the index, LRU list, and accounting. The slow
+  decode runs *outside* the lock: `get` pins the entry (so eviction
+  skips it), releases the lock, decodes with the pure `membrane_block_decode`,
+  then re-locks to unpin. A `remove` or overwrite of a pinned block
+  unlinks it immediately but defers the `free` to the last unpin, so
+  concurrent `get`/`remove` cannot use-after-free. Verified under
+  ThreadSanitizer with a multi-threaded get/put/remove stress test.
+- **Accounting knows the difference between logical and physical.**
+  `resident_bytes` (compressed footprint, the budgeted quantity) versus
+  `logical_bytes` (sum of original sizes); their ratio is the
+  `effective_capacity_ratio` — the headline number for "more logical
+  data than physical budget."
+
+Deliberately deferred (flagged as premature for this cut): file/NVMe and
+CXL/FPGA backends, async compression workers, prefetch, a pluggable
+eviction-policy vtable, and hash-index resizing.
+
+## Memory safety
+
+The build supports `-DMEMBRANE_ENABLE_SANITIZERS=ON` (AddressSanitizer +
+UndefinedBehaviorSanitizer) and `-DMEMBRANE_ENABLE_TSAN=ON`
+(ThreadSanitizer; mutually exclusive with the ASan build). CI runs a
+plain Debug build and an ASan build on every push. Note: running the
+TSan build on recent kernels may need `setarch -R` to disable ASLR,
+otherwise ThreadSanitizer aborts with "unexpected memory mapping" — this
+is an environment quirk, not a data race.
 
 ## Memory safety
 
