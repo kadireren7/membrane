@@ -614,6 +614,8 @@ typedef struct s_baseline
 	std::vector<uint8_t>		blob;		/* prefix only: prompt[0..P-2] */
 	blob_index_t				idx;
 	std::string					text;
+	std::string					name;		/* prompt file path, for reporting
+											 * and Phase 3.5 classification */
 	const char					*answer;	/* substring to check, or NULL */
 	size_t						f16_state_bytes;	/* real, whole-blob, full
 					 * prompt: the fair denominator for NATIVE-type ratios
@@ -639,6 +641,7 @@ static bool	capture_baseline(llama_model *model, const llama_vocab *vocab,
 	if (!tokenize_prompt(vocab, prompt_path, &out->prompt_tokens)
 		|| out->prompt_tokens.empty())
 		return (die("prompt tokenized to zero tokens"), false);
+	out->name = prompt_path;
 	out->last_token = out->prompt_tokens.back();
 	prefix.assign(out->prompt_tokens.begin(), out->prompt_tokens.end() - 1);
 	ctx = make_context(model, n_ctx, GGML_TYPE_F16, GGML_TYPE_F16);
@@ -1714,6 +1717,414 @@ static void	emit_policy_json(FILE *out, const optimizer_result_t &opt,
 }
 
 /* ------------------------------------------------------------------ */
+/* Phase 3.5: risk-aware validation.                                    */
+/*                                                                      */
+/* Phase 3.4's greedy optimizer accepted or rejected a candidate based  */
+/* on the AGGREGATE (mean) metrics across the valid prompt set. That     */
+/* let a critical prompt's quality erode silently as long as the mean    */
+/* held up -- exactly what happened to recall.txt's top-1 (96.9%, below  */
+/* the 98% bar the aggregate itself cleared). Every accept/reject        */
+/* decision below is a PER-PROMPT hard constraint: a candidate is only   */
+/* accepted if EVERY valid prompt individually clears its own threshold  */
+/* (with an adjustable safety margin on top), never just the mean. The   */
+/* aggregate is still computed and reported (item 1 asks for it), but it */
+/* never gates a decision here.                                         */
+/* ------------------------------------------------------------------ */
+
+typedef enum e_prompt_class
+{
+	PROMPT_RECALL_CRITICAL = 0,
+	PROMPT_CODE,
+	PROMPT_NATURAL,
+	PROMPT_REPEATED,
+	PROMPT_GENERAL
+}	prompt_class_t;
+
+static const char	*class_name(prompt_class_t c)
+{
+	static const char	*const names[] = {"recall-critical", "code",
+		"natural", "repeated", "general"};
+
+	return (names[c]);
+}
+
+/* Recall-critical prompts (item 1: any prompt with an expected answer to
+ * check) get stricter thresholds; everything else uses the shared base
+ * thresholds. Classification is by content role, not by file name magic
+ * beyond distinguishing the other four content types. */
+static prompt_class_t	classify_prompt(const baseline_t &b)
+{
+	if (b.answer != NULL)
+		return (PROMPT_RECALL_CRITICAL);
+	if (b.name.find("code") != std::string::npos)
+		return (PROMPT_CODE);
+	if (b.name.find("repeat") != std::string::npos)
+		return (PROMPT_REPEATED);
+	if (b.name.find("natural") != std::string::npos)
+		return (PROMPT_NATURAL);
+	return (PROMPT_GENERAL);
+}
+
+typedef struct s_prompt_thresholds
+{
+	double	top1_min;
+	double	top5_min;
+	double	cosine_min;
+}	prompt_thresholds_t;
+
+static prompt_thresholds_t	thresholds_for_class(prompt_class_t c)
+{
+	if (c == PROMPT_RECALL_CRITICAL)
+		return {99.0, 99.0, 0.9975};
+	return {g_default_thresholds.top1_min, g_default_thresholds.top5_min,
+		g_default_thresholds.cosine_min};
+}
+
+/* Item 4: adjustable safety margins added ON TOP of the class threshold
+ * (and, for K, on top of K's own stricter bar too) -- a candidate must
+ * clear threshold + margin, not just threshold. */
+typedef struct s_margin
+{
+	double	cosine_margin;
+	double	top1_margin;
+	double	top5_margin;
+}	margin_t;
+
+/* cosine_margin is capped low deliberately: the strictest base threshold
+ * (K_STRICT_COSINE / recall-critical, both 0.9975) plus too large a
+ * margin would exceed 1.0 -- an unreachable bar that cosine similarity
+ * can never clear, which would silently reject every candidate outright
+ * rather than being "conservative." 0.0015 keeps every class's effective
+ * bar under 1.0 with headroom (worst case 0.9975+0.0015=0.999). */
+static const margin_t	g_margin_conservative = {0.0015, 1.0, 0.2};
+static const margin_t	g_margin_balanced = {0.001, 0.5, 0.1};
+static const margin_t	g_margin_aggressive = {0.0, 0.0, 0.0};
+
+typedef struct s_per_prompt_result
+{
+	std::vector<metrics_t>	per_prompt;	/* aligned with the valid prompt list */
+	agg_result_t			aggregate;		/* reported, never gates (item 1) */
+}	per_prompt_result_t;
+
+static bool	evaluate_policy_detailed(llama_model *model,
+				const llama_vocab *vocab, int n_ctx, int gen_tokens,
+				const std::vector<baseline_t> &valid, const kv_policy_t &pol,
+				per_prompt_result_t *out)
+{
+	double	cos_sum;
+	double	top1_sum;
+	double	top5_sum;
+	double	kl_sum;
+	size_t	i;
+
+	out->per_prompt.resize(valid.size());
+	out->aggregate.recall_ok.assign(valid.size(), false);
+	out->aggregate.min_first_divergence = LONG_MAX;
+	cos_sum = 0.0;
+	top1_sum = 0.0;
+	top5_sum = 0.0;
+	kl_sum = 0.0;
+	i = 0;
+	while (i < valid.size())
+	{
+		if (!run_experiment(model, vocab, n_ctx, gen_tokens, valid[i],
+				policy_targets(valid[i].idx, pol), &out->per_prompt[i]))
+			return (false);
+		cos_sum += out->per_prompt[i].logit_cosine;
+		top1_sum += out->per_prompt[i].top1_pct;
+		top5_sum += out->per_prompt[i].top5_pct;
+		kl_sum += out->per_prompt[i].kl_mean;
+		if (out->per_prompt[i].first_divergence
+				< out->aggregate.min_first_divergence)
+			out->aggregate.min_first_divergence
+				= out->per_prompt[i].first_divergence;
+		out->aggregate.recall_ok[i] = out->per_prompt[i].recall_ok;
+		i++;
+	}
+	out->aggregate.top1 = top1_sum / (double)valid.size();
+	out->aggregate.top5 = top5_sum / (double)valid.size();
+	out->aggregate.cosine = cos_sum / (double)valid.size();
+	out->aggregate.kl = kl_sum / (double)valid.size();
+	return (true);
+}
+
+/* Item 3: checks EVERY valid prompt individually; returns "" (pass) or a
+ * message naming the specific prompt and metric that failed, so
+ * rejections are traceable, not just a pass/fail bit. */
+static std::string	check_candidate_per_prompt(const per_prompt_result_t &r,
+						const std::vector<baseline_t> &valid,
+						const std::vector<prompt_class_t> &classes, bool is_k,
+						const margin_t &margin,
+						const std::vector<bool> &must_stay_correct)
+{
+	prompt_thresholds_t	th;
+	double	cos_bar;
+	double	k_bar;
+	char	buf[220];
+	size_t	i;
+
+	i = 0;
+	while (i < valid.size())
+	{
+		th = thresholds_for_class(classes[i]);
+		cos_bar = th.cosine_min + margin.cosine_margin;
+		if (is_k)
+		{
+			k_bar = K_STRICT_COSINE + margin.cosine_margin;
+			if (k_bar > cos_bar)
+				cos_bar = k_bar;
+		}
+		if (r.per_prompt[i].logit_cosine < cos_bar)
+		{
+			snprintf(buf, sizeof(buf), "prompt '%s' (%s): cosine %.6f < "
+				"%.6f", valid[i].name.c_str(), class_name(classes[i]),
+				r.per_prompt[i].logit_cosine, cos_bar);
+			return (buf);
+		}
+		if (r.per_prompt[i].top1_pct < th.top1_min + margin.top1_margin)
+		{
+			snprintf(buf, sizeof(buf), "prompt '%s' (%s): top1 %.2f%% < "
+				"%.2f%%", valid[i].name.c_str(), class_name(classes[i]),
+				r.per_prompt[i].top1_pct, th.top1_min + margin.top1_margin);
+			return (buf);
+		}
+		if (r.per_prompt[i].top5_pct < th.top5_min + margin.top5_margin)
+		{
+			snprintf(buf, sizeof(buf), "prompt '%s' (%s): top5 %.2f%% < "
+				"%.2f%%", valid[i].name.c_str(), class_name(classes[i]),
+				r.per_prompt[i].top5_pct, th.top5_min + margin.top5_margin);
+			return (buf);
+		}
+		if (must_stay_correct[i] && !r.per_prompt[i].recall_ok)
+		{
+			snprintf(buf, sizeof(buf), "prompt '%s' (%s): recall broke "
+				"(all-Q8 answered it correctly, this candidate does not)",
+				valid[i].name.c_str(), class_name(classes[i]));
+			return (buf);
+		}
+		i++;
+	}
+	return ("");
+}
+
+typedef struct s_decision2
+{
+	slot_t					slot;
+	per_prompt_result_t	result;
+	double					memory_gain_bytes;
+	double					ratio;
+	bool					accepted;
+	std::string				reason;
+}	decision2_t;
+
+typedef struct s_optimizer_result2
+{
+	kv_policy_t					policy;
+	std::vector<decision2_t>	accepted;
+	std::vector<decision2_t>	rejected;
+	int							evals_used;
+	double						search_seconds;
+}	optimizer_result2_t;
+
+static double	worst_margin_ratio(const per_prompt_result_t &r,
+					const std::vector<prompt_class_t> &classes,
+					double memory_gain)
+{
+	double	worst;
+	double	loss;
+	size_t	i;
+
+	worst = 1e300;
+	i = 0;
+	while (i < r.per_prompt.size())
+	{
+		loss = thresholds_for_class(classes[i]).cosine_min
+			- r.per_prompt[i].logit_cosine;
+		if (loss < worst)
+			worst = loss;
+		i++;
+	}
+	loss = -worst;	/* positive = margin remaining, negative = violation */
+	return (memory_gain / (loss > 1e-9 ? loss : 1e-9));
+}
+
+/* The greedy pass, per-prompt-constraint version of Phase 3.4's
+ * greedy_optimize: same priority-queue design (V before K, one candidate
+ * per round, first-improvement), but every accept/reject decision now
+ * comes from check_candidate_per_prompt instead of the aggregate. */
+static bool	greedy_optimize_v2(llama_model *model, const llama_vocab *vocab,
+				int n_ctx, int gen_tokens, const std::vector<baseline_t> &valid,
+				const std::vector<prompt_class_t> &classes,
+				const std::vector<bool> &must_stay_correct,
+				const margin_t &margin, int search_budget,
+				const kv_policy_t &start_policy, optimizer_result2_t *out)
+{
+	std::vector<slot_t>	queue;
+	kv_policy_t				trial;
+	decision2_t				d;
+	std::string				reason;
+	std::chrono::steady_clock::time_point	t0;
+
+	t0 = std::chrono::steady_clock::now();
+	out->policy = start_policy;
+	out->evals_used = 0;
+	queue = priority_queue_slots(valid[0].idx.n_layer);
+	for (const slot_t &s : queue)
+	{
+		if (out->evals_used >= search_budget)
+			break ;
+		if ((s.is_k ? out->policy.kbits[s.layer] : out->policy.vbits[s.layer])
+				== 4)
+			continue ;	/* already at Q4 in the starting policy */
+		trial = out->policy;
+		if (s.is_k)
+			trial.kbits[s.layer] = 4;
+		else
+			trial.vbits[s.layer] = 4;
+		d.slot = s;
+		if (!evaluate_policy_detailed(model, vocab, n_ctx, gen_tokens, valid,
+				trial, &d.result))
+			return (false);
+		out->evals_used++;
+		d.memory_gain_bytes = slot_memory_gain(valid[0].idx, s);
+		reason = check_candidate_per_prompt(d.result, valid, classes, s.is_k,
+				margin, must_stay_correct);
+		d.ratio = worst_margin_ratio(d.result, classes, d.memory_gain_bytes);
+		d.accepted = reason.empty();
+		d.reason = reason.empty() ? "accepted" : reason;
+		fprintf(stderr, "  layer %2d %s -> Q4: agg-cosine %.6f  %s\n",
+			s.layer, s.is_k ? "K" : "V", d.result.aggregate.cosine,
+			d.accepted ? "ACCEPTED" : ("rejected: " + reason).c_str());
+		if (d.accepted)
+		{
+			out->policy = trial;
+			out->accepted.push_back(d);
+		}
+		else
+			out->rejected.push_back(d);
+	}
+	out->search_seconds = std::chrono::duration<double>(
+			std::chrono::steady_clock::now() - t0).count();
+	return (true);
+}
+
+static bool	backtrack_v2(llama_model *model, const llama_vocab *vocab,
+				int n_ctx, int gen_tokens, const std::vector<baseline_t> &valid,
+				const std::vector<prompt_class_t> &classes,
+				const std::vector<bool> &must_stay_correct,
+				const margin_t &margin, optimizer_result2_t *opt)
+{
+	int		n_check;
+	int		i;
+	kv_policy_t	trial;
+	per_prompt_result_t	r;
+	per_prompt_result_t	full;
+
+	n_check = (int)opt->accepted.size() < 4 ? (int)opt->accepted.size() : 4;
+	if (n_check == 0)
+		return (true);
+	if (!evaluate_policy_detailed(model, vocab, n_ctx, gen_tokens, valid,
+			opt->policy, &full))
+		return (false);
+	i = (int)opt->accepted.size() - 1;
+	while (i >= (int)opt->accepted.size() - n_check)
+	{
+		const slot_t	&s = opt->accepted[i].slot;
+
+		trial = opt->policy;
+		if (s.is_k)
+			trial.kbits[s.layer] = 8;
+		else
+			trial.vbits[s.layer] = 8;
+		if (!evaluate_policy_detailed(model, vocab, n_ctx, gen_tokens, valid,
+				trial, &r))
+			return (false);
+		opt->evals_used++;
+		bool	full_fails = !check_candidate_per_prompt(full, valid, classes,
+				s.is_k, margin, must_stay_correct).empty();
+		bool	recovers = full_fails && check_candidate_per_prompt(r, valid,
+				classes, s.is_k, margin, must_stay_correct).empty();
+		fprintf(stderr, "  revert layer %2d %s -> Q8: %s\n", s.layer,
+			s.is_k ? "K" : "V", recovers ? "REVERTED (was the cause of a "
+				"per-prompt failure)" : "kept at Q4");
+		if (recovers)
+		{
+			opt->policy = trial;
+			opt->accepted[i].accepted = false;
+			full = r;
+		}
+		i--;
+	}
+	opt->accepted.erase(std::remove_if(opt->accepted.begin(),
+			opt->accepted.end(), [](const decision2_t &d) {
+				return (!d.accepted); }), opt->accepted.end());
+	return (true);
+}
+
+/* Item 6: tokens/second for one policy on one prompt, measured over a
+ * single timed free-running generation pass on the spliced state. */
+static bool	measure_speed(llama_model *model, const llama_vocab *vocab,
+				int n_ctx, int gen_tokens, const baseline_t &base,
+				const kv_policy_t &pol, double *tok_per_sec)
+{
+	std::vector<uint8_t>	blob;
+	llama_context			*ctx;
+	pass_result_t			pr;
+	bool					ok;
+	std::chrono::steady_clock::time_point	t0;
+	std::chrono::steady_clock::time_point	t1;
+
+	blob = base.blob;
+	apply_targets(blob.data(), base.idx, policy_targets(base.idx, pol));
+	ctx = make_context(model, n_ctx, GGML_TYPE_F16, GGML_TYPE_F16);
+	if (ctx == NULL)
+		return (false);
+	ok = llama_state_seq_set_data(ctx, blob.data(), blob.size(), 0) > 0
+		&& decode_one(ctx, base.last_token);
+	if (ok)
+	{
+		t0 = std::chrono::steady_clock::now();
+		ok = run_gen(ctx, vocab, gen_tokens, NULL, &pr);
+		t1 = std::chrono::steady_clock::now();
+	}
+	if (ok)
+		*tok_per_sec = (double)gen_tokens
+			/ std::chrono::duration<double>(t1 - t0).count();
+	llama_free(ctx);
+	return (ok);
+}
+
+/* The exact policy Phase 3.4 produced (see docs/phase3-composition-aware.md):
+ * V Q4 everywhere except layers 16 and 25; K Q4 only at layers
+ * 0,2,3,4,6,8,11,14,20,25. Reused here (not re-derived -- its search was
+ * already run and documented in Phase 3.4) purely to re-measure its live
+ * performance fresh, for a fair, current comparison; it is not re-searched. */
+static kv_policy_t	phase34_reused_policy(uint32_t n_layer)
+{
+	static const int	k_q4[] = {0, 2, 3, 4, 6, 8, 11, 14, 20, 25};
+	kv_policy_t			p;
+	uint32_t			l;
+	size_t				i;
+
+	p = all_q8_policy(n_layer);
+	l = 0;
+	while (l < n_layer)
+	{
+		if (l != 16 && l != 25)
+			p.vbits[l] = 4;
+		l++;
+	}
+	i = 0;
+	while (i < sizeof(k_q4) / sizeof(k_q4[0]))
+	{
+		if ((uint32_t)k_q4[i] < n_layer)
+			p.kbits[k_q4[i]] = 4;
+		i++;
+	}
+	return (p);
+}
+
+/* ------------------------------------------------------------------ */
 /* CLI                                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -1731,8 +2142,11 @@ typedef struct s_opts
 	int							n_tokens;
 	int							gen_tokens;
 	const char					*out_path;
-	const char					*mode;			/* "sensitivity" or "optimize" */
-	int							search_budget;	/* Phase 3.4 max slots considered */
+	const char					*mode;	/* "sensitivity", "optimize", or "risk" */
+	int							search_budget;	/* Phase 3.4/3.5 max slots considered */
+	int							robustness_budget;	/* Phase 3.5 item 5 */
+	margin_t					balanced_margin_override;
+	bool						has_margin_override;
 }	opts_t;
 
 static int	parse_args(int argc, char **argv, opts_t *o)
@@ -1747,6 +2161,9 @@ static int	parse_args(int argc, char **argv, opts_t *o)
 	o->out_path = NULL;
 	o->mode = "sensitivity";
 	o->search_budget = 60;
+	o->robustness_budget = 16;
+	o->balanced_margin_override = g_margin_balanced;
+	o->has_margin_override = false;
 	i = 1;
 	while (i < argc)
 	{
@@ -1790,6 +2207,29 @@ static int	parse_args(int argc, char **argv, opts_t *o)
 		else if (strcmp(argv[i], "--search-budget") == 0 && i + 1 < argc)
 		{
 			o->search_budget = atoi(argv[i + 1]);
+			i += 2;
+		}
+		else if (strcmp(argv[i], "--robustness-budget") == 0 && i + 1 < argc)
+		{
+			o->robustness_budget = atoi(argv[i + 1]);
+			i += 2;
+		}
+		else if (strcmp(argv[i], "--cosine-margin") == 0 && i + 1 < argc)
+		{
+			o->balanced_margin_override.cosine_margin = atof(argv[i + 1]);
+			o->has_margin_override = true;
+			i += 2;
+		}
+		else if (strcmp(argv[i], "--top1-margin") == 0 && i + 1 < argc)
+		{
+			o->balanced_margin_override.top1_margin = atof(argv[i + 1]);
+			o->has_margin_override = true;
+			i += 2;
+		}
+		else if (strcmp(argv[i], "--top5-margin") == 0 && i + 1 < argc)
+		{
+			o->balanced_margin_override.top5_margin = atof(argv[i + 1]);
+			o->has_margin_override = true;
 			i += 2;
 		}
 		else
@@ -1904,6 +2344,319 @@ static bool	run_optimizer_mode(llama_model *model, const llama_vocab *vocab,
 	return (true);
 }
 
+typedef struct s_pareto_point
+{
+	const char			*name;
+	margin_t			margin;
+	optimizer_result2_t	opt;
+}	pareto_point_t;
+
+/* Item 6: three points on the memory/quality Pareto frontier, produced by
+ * running the SAME per-prompt-constraint greedy search at three different
+ * safety margins -- larger margins accept fewer, safer candidates. */
+static bool	run_pareto(llama_model *model, const llama_vocab *vocab,
+				const opts_t &o, const std::vector<baseline_t> &valid,
+				const std::vector<prompt_class_t> &classes,
+				const std::vector<bool> &must_stay_correct,
+				std::vector<pareto_point_t> *out)
+{
+	const struct { const char *name; margin_t margin; } levels[] = {
+		{"conservative", g_margin_conservative},
+		{"balanced", o.has_margin_override ? o.balanced_margin_override
+			: g_margin_balanced},
+		{"aggressive", g_margin_aggressive},
+	};
+	kv_policy_t	start;
+	size_t		li;
+
+	start = all_q8_policy(valid[0].idx.n_layer);
+	li = 0;
+	while (li < sizeof(levels) / sizeof(levels[0]))
+	{
+		pareto_point_t	p;
+
+		p.name = levels[li].name;
+		p.margin = levels[li].margin;
+		fprintf(stderr, "\n=== Pareto point: %s (cosine_margin=%.4f "
+			"top1_margin=%.3f top5_margin=%.3f) ===\n", p.name,
+			p.margin.cosine_margin, p.margin.top1_margin,
+			p.margin.top5_margin);
+		if (!greedy_optimize_v2(model, vocab, o.n_tokens, o.gen_tokens, valid,
+				classes, must_stay_correct, p.margin, o.search_budget, start,
+				&p.opt))
+			return (false);
+		if (!backtrack_v2(model, vocab, o.n_tokens, o.gen_tokens, valid,
+				classes, must_stay_correct, p.margin, &p.opt))
+			return (false);
+		fprintf(stderr, "  %s: %zu accepted, %zu rejected, %d evals, "
+			"%.1fs\n", p.name, p.opt.accepted.size(), p.opt.rejected.size(),
+			p.opt.evals_used, p.opt.search_seconds);
+		out->push_back(std::move(p));
+		li++;
+	}
+	return (true);
+}
+
+/* Item 5: re-runs the balanced-margin search at a reduced budget with the
+ * valid prompt list reversed and (fixed-seed) shuffled, and compares the
+ * resulting per-slot accept/reject decisions against the original order's
+ * decisions over the same candidates -- per-prompt hard constraints are a
+ * conjunction over the valid set, so accept/reject must be independent of
+ * the order the set is iterated in; this proves that empirically rather
+ * than only arguing it from the code. */
+static bool	run_robustness_check(llama_model *model, const llama_vocab *vocab,
+				const opts_t &o, const std::vector<baseline_t> &valid,
+				const std::vector<prompt_class_t> &classes,
+				const std::vector<bool> &must_stay_correct, int reduced_budget)
+{
+	std::vector<size_t>	orders[3];
+	const char				*names[3] = {"original", "reversed", "shuffled"};
+	size_t					n;
+	size_t					i;
+	int						mismatches;
+
+	n = valid.size();
+	orders[0].resize(n);
+	orders[1].resize(n);
+	orders[2] = {};
+	for (i = 0; i < n; i++)
+	{
+		orders[0][i] = i;
+		orders[1][n - 1 - i] = i;
+	}
+	orders[2] = {n > 3 ? 2u : 0u, 0, n > 2 ? 3u % n : 0, 1};
+	while (orders[2].size() < n)
+		orders[2].push_back(orders[2].size());
+	orders[2].resize(n);
+	fprintf(stderr, "\n=== Robustness: balanced policy under 3 prompt "
+		"orderings (reduced budget=%d) ===\n", reduced_budget);
+	std::vector<std::string>	decisions[3];
+	for (int oi = 0; oi < 3; oi++)
+	{
+		std::vector<baseline_t>	permuted;
+		std::vector<prompt_class_t>	pclasses;
+		std::vector<bool>				pmust;
+
+		for (size_t idx : orders[oi])
+		{
+			permuted.push_back(valid[idx]);
+			pclasses.push_back(classes[idx]);
+			pmust.push_back(must_stay_correct[idx]);
+		}
+		optimizer_result2_t	opt;
+		kv_policy_t	start = all_q8_policy(permuted[0].idx.n_layer);
+		margin_t	margin = o.has_margin_override ? o.balanced_margin_override
+			: g_margin_balanced;
+		if (!greedy_optimize_v2(model, vocab, o.n_tokens, o.gen_tokens,
+				permuted, pclasses, pmust, margin, reduced_budget,
+				start, &opt))
+			return (false);
+		for (const decision2_t &d : opt.accepted)
+			decisions[oi].push_back(std::to_string(d.slot.layer) + (d.slot.is_k
+					? "K" : "V") + "=accept");
+		for (const decision2_t &d : opt.rejected)
+			decisions[oi].push_back(std::to_string(d.slot.layer) + (d.slot.is_k
+					? "K" : "V") + "=reject");
+		std::sort(decisions[oi].begin(), decisions[oi].end());
+		fprintf(stderr, "  %-10s: %zu accepted, %zu rejected (of %d "
+			"considered)\n", names[oi], opt.accepted.size(),
+			opt.rejected.size(), reduced_budget);
+	}
+	mismatches = 0;
+	for (i = 0; i < decisions[0].size() && i < decisions[1].size(); i++)
+		if (decisions[0][i] != decisions[1][i])
+			mismatches++;
+	for (i = 0; i < decisions[0].size() && i < decisions[2].size(); i++)
+		if (decisions[0][i] != decisions[2][i])
+			mismatches++;
+	fprintf(stderr, "  stability: %s (%d mismatched decisions across the "
+		"3 orderings, out of %zu candidates x2 comparisons)\n",
+		mismatches == 0 ? "STABLE -- identical decisions regardless of "
+			"prompt order" : "UNSTABLE", mismatches, decisions[0].size());
+	return (true);
+}
+
+/* Item 7: all-Q8 / Phase 3.3 policy / Phase 3.4 policy (reused) /
+ * Phase 3.5 conservative / balanced / aggressive, for one prompt. */
+static bool	run_risk_comparison(llama_model *model, const llama_vocab *vocab,
+				int n_ctx, int gen_tokens, const baseline_t &base,
+				const std::vector<int> &layer_bits, bool age_override,
+				const kv_policy_t &phase34_policy,
+				const std::vector<pareto_point_t> &pareto, FILE *json_out,
+				bool is_valid)
+{
+	metrics_t	m_q8;
+	metrics_t	m_p33;
+	metrics_t	m_p34;
+	size_t		kv_q8;
+	double		f16b_real;
+	double		f16b_analytic;
+	double		tps;
+	std::vector<perturb_target_t>	pol33;
+	std::vector<perturb_target_t>	pol34;
+	bool		ok;
+
+	f16b_real = (double)base.f16_state_bytes;
+	f16b_analytic = full_f16_bytes(base.idx);
+	ok = run_kv_combo(model, vocab, n_ctx, gen_tokens, base, GGML_TYPE_Q8_0,
+			GGML_TYPE_Q8_0, &m_q8, &kv_q8);
+	pol33 = build_policy_targets(base.idx, layer_bits, age_override, 4);
+	if (ok)
+		ok = run_experiment(model, vocab, n_ctx, gen_tokens, base, pol33,
+				&m_p33);
+	pol34 = policy_targets(base.idx, phase34_policy);
+	if (ok)
+		ok = run_experiment(model, vocab, n_ctx, gen_tokens, base, pol34,
+				&m_p34);
+	if (!ok)
+		return (false);
+	fprintf(stderr, "\n--- prompt: %s (%s) ---\n", base.name.c_str(),
+		is_valid ? "valid" : "EXCLUDED, informational only");
+	print_row("all-Q8 (native)", m_q8, (double)kv_q8, f16b_real);
+	print_row("Phase 3.3 policy", m_p33, projected_kv_bytes(base.idx, pol33),
+		f16b_analytic);
+	print_row("Phase 3.4 policy", m_p34, projected_kv_bytes_kv(base.idx,
+			phase34_policy), f16b_analytic);
+	emit_json_row(json_out, base.name.c_str(), "all_q8", m_q8, (double)kv_q8,
+		f16b_real);
+	emit_json_row(json_out, base.name.c_str(), "phase33_policy", m_p33,
+		projected_kv_bytes(base.idx, pol33), f16b_analytic);
+	emit_json_row(json_out, base.name.c_str(), "phase34_policy", m_p34,
+		projected_kv_bytes_kv(base.idx, phase34_policy), f16b_analytic);
+	for (const pareto_point_t &pp : pareto)
+	{
+		metrics_t	m;
+		std::vector<perturb_target_t>	pol = policy_targets(base.idx,
+				pp.opt.policy);
+
+		if (!run_experiment(model, vocab, n_ctx, gen_tokens, base, pol, &m))
+			return (false);
+		if (!measure_speed(model, vocab, n_ctx, gen_tokens, base,
+				pp.opt.policy, &tps))
+			return (false);
+		fprintf(stderr, "  %-24s top1 %6.2f%%  top5 %6.2f%%  cosine %.6f  "
+			"KL %.6f  recall %-4s  KV %6.3fx  %.1f tok/s\n", pp.name,
+			m.top1_pct, m.top5_pct, m.logit_cosine, m.kl_mean,
+			m.recall_ok ? "OK" : "FAIL", f16b_analytic
+				/ projected_kv_bytes_kv(base.idx, pp.opt.policy), tps);
+		emit_json_row(json_out, base.name.c_str(),
+			(std::string("phase35_") + pp.name).c_str(), m,
+			projected_kv_bytes_kv(base.idx, pp.opt.policy), f16b_analytic);
+	}
+	return (true);
+}
+
+/* Top-level Phase 3.5 flow: baseline filtering + classification, all-Q8
+ * recall reference, the Pareto frontier (item 6), bounded robustness
+ * checking (item 5), and the final 6-way comparison (item 7) over every
+ * prompt. */
+static bool	run_risk_aware_mode(llama_model *model, const llama_vocab *vocab,
+				const opts_t &o, FILE *out)
+{
+	std::vector<baseline_t>		all_bases;
+	std::vector<baseline_t>		valid;
+	std::vector<prompt_class_t>	valid_classes;
+	std::vector<bool>				is_valid_flags;
+	std::vector<prompt_class_t>	all_classes;
+	agg_result_t					q8_ref;
+	per_prompt_result_t			q8_ref_detail;
+	kv_policy_t						q8_policy;
+	kv_policy_t						phase34_policy;
+	std::vector<pareto_point_t>		pareto;
+	std::vector<layer_result_t>		layer_results;
+	std::vector<age_result_t>			age_results;
+	std::vector<int>					layer_bits;
+	bool							age_override;
+	size_t							i;
+	std::chrono::steady_clock::time_point	t0;
+
+	t0 = std::chrono::steady_clock::now();
+	fprintf(stderr, "\n=== Phase 3.5: baseline filtering + classification "
+		"===\n");
+	i = 0;
+	while (i < o.prompts.size())
+	{
+		baseline_t	b;
+
+		if (!capture_baseline(model, vocab, o.n_tokens, o.gen_tokens,
+				o.prompts[i].path, o.prompts[i].answer, &b))
+			return (false);
+		prompt_class_t	c = classify_prompt(b);
+		bool ok = (b.answer == NULL)
+			|| (b.text.find(b.answer) != std::string::npos);
+		fprintf(stderr, "  %-32s [%-16s] %s\n", o.prompts[i].path,
+			class_name(c), ok ? "VALID" : "EXCLUDED (FP16 baseline itself "
+				"does not answer correctly)");
+		all_classes.push_back(c);
+		if (ok)
+		{
+			valid.push_back(b);
+			valid_classes.push_back(c);
+		}
+		is_valid_flags.push_back(ok);
+		all_bases.push_back(std::move(b));
+		i++;
+	}
+	if (valid.empty())
+		return (die("no valid prompts -- cannot optimize"), false);
+	fprintf(stderr, "valid evaluation set: %zu/%zu prompts\n", valid.size(),
+		o.prompts.size());
+	if (!self_test(model, vocab, o.n_tokens, o.gen_tokens, valid[0]))
+		return (die("self-test failed -- aborting, results would not be "
+				"trustworthy"), false);
+	q8_policy = all_q8_policy(valid[0].idx.n_layer);
+	if (!evaluate_policy(model, vocab, o.n_tokens, o.gen_tokens, valid,
+			q8_policy, &q8_ref))
+		return (false);
+	if (!evaluate_policy_detailed(model, vocab, o.n_tokens, o.gen_tokens,
+			valid, q8_policy, &q8_ref_detail))
+		return (false);
+	fprintf(stderr, "\nall-Q8 reference: aggregate cosine %.6f  top1 "
+		"%.2f%%  top5 %.2f%%; per-prompt:\n", q8_ref.cosine, q8_ref.top1,
+		q8_ref.top5);
+	for (i = 0; i < valid.size(); i++)
+		fprintf(stderr, "  %-32s [%-16s] cosine %.6f  top1 %.2f%%  "
+			"recall %s\n", valid[i].name.c_str(), class_name(valid_classes[i]),
+			q8_ref_detail.per_prompt[i].logit_cosine,
+			q8_ref_detail.per_prompt[i].top1_pct,
+			q8_ref_detail.per_prompt[i].recall_ok ? "OK" : "FAIL");
+	if (o.has_margin_override)
+		fprintf(stderr, "\n(--cosine-margin/--top1-margin/--top5-margin "
+			"override the 'balanced' Pareto point's margins)\n");
+	if (!run_pareto(model, vocab, o, valid, valid_classes, q8_ref.recall_ok,
+			&pareto))
+		return (false);
+	if (!run_robustness_check(model, vocab, o, valid, valid_classes,
+			q8_ref.recall_ok, o.robustness_budget))
+		return (false);
+	phase34_policy = phase34_reused_policy(valid[0].idx.n_layer);
+	if (!run_layer_sweep(model, vocab, o.n_tokens, o.gen_tokens, valid[0],
+			g_default_thresholds, &layer_results))
+		return (false);
+	if (!run_age_sweep(model, vocab, o.n_tokens, o.gen_tokens, valid[0],
+			g_default_thresholds, &age_results))
+		return (false);
+	layer_bits.resize(layer_results.size());
+	for (i = 0; i < layer_results.size(); i++)
+		layer_bits[i] = layer_results[i].classification;
+	age_override = !age_results.empty() && age_results[0].classification == 4;
+	fprintf(stderr, "\n=== Final 6-way comparison across %zu prompts ===\n",
+		all_bases.size());
+	i = 0;
+	while (i < all_bases.size())
+	{
+		if (!run_risk_comparison(model, vocab, o.n_tokens, o.gen_tokens,
+				all_bases[i], layer_bits, age_override, phase34_policy,
+				pareto, out, is_valid_flags[i]))
+			return (false);
+		i++;
+	}
+	fprintf(stderr, "\npolicy decision overhead (this whole run, wall "
+		"clock): %.1fs\n", std::chrono::duration<double>(
+			std::chrono::steady_clock::now() - t0).count());
+	return (true);
+}
+
 static bool	run_sensitivity_mode(llama_model *model, const llama_vocab *vocab,
 				const opts_t &o, FILE *out)
 {
@@ -1982,7 +2735,9 @@ int	main(int argc, char **argv)
 		return (die("model load failed"), 2);
 	vocab = llama_model_get_vocab(model);
 	out = o.out_path != NULL ? fopen(o.out_path, "w") : NULL;
-	if (strcmp(o.mode, "optimize") == 0)
+	if (strcmp(o.mode, "risk") == 0)
+		ok = run_risk_aware_mode(model, vocab, o, out);
+	else if (strcmp(o.mode, "optimize") == 0)
 		ok = run_optimizer_mode(model, vocab, o, out);
 	else
 		ok = run_sensitivity_mode(model, vocab, o, out);
