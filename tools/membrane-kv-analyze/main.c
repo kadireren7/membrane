@@ -12,6 +12,8 @@
 
 # define MAX_META 8
 # define N_BLOCK_SIZES 4
+# define MAX_LAYERS 64
+# define SUMMARY_BLOCK 65536
 
 static const size_t	g_block_sizes[N_BLOCK_SIZES] = {
 	4096, 16384, 65536, 262144
@@ -27,20 +29,43 @@ typedef struct s_kva_opts
 	int			input_count;
 }	kva_opts_t;
 
-/* Aggregates for the human K-vs-V summary at 64 KiB blocks. */
+/* Aggregates for the human K-vs-V summary at 64 KiB blocks. Index 0 = K,
+ * 1 = V for the per-tensor arrays. */
 typedef struct s_kva_totals
 {
 	uint64_t	raw[2];
 	uint64_t	rle[2];
 	uint64_t	adaptive[2];
+	uint64_t	byteplane[2];
+	uint64_t	byteplane_adaptive[2];
 	int			integrity_ok;
+	int			byteplane_integrity_ok;
 }	kva_totals_t;
+
+/* Per-layer byteplane aggregate at 64 KiB blocks, across all prompts. */
+typedef struct s_kva_layer
+{
+	uint64_t	raw;
+	uint64_t	byteplane_adaptive;
+	int			seen;
+}	kva_layer_t;
+
+/* Per-prompt (one input file) aggregate at 64 KiB blocks. */
+typedef struct s_kva_file_sum
+{
+	uint64_t	raw;
+	uint64_t	rle;
+	uint64_t	adaptive;
+	uint64_t	byteplane;
+	uint64_t	byteplane_adaptive;
+}	kva_file_sum_t;
 
 typedef struct s_kva_out
 {
 	FILE		*jsonl;
 	FILE		*csv;
 	kva_totals_t	totals;
+	kva_layer_t	layers[MAX_LAYERS];
 }	kva_out_t;
 
 static void	print_meta_json(FILE *f, const kva_opts_t *o)
@@ -132,6 +157,28 @@ static void	emit_jsonl_metrics(FILE *f, const membrane_kv_metrics_t *m)
 		m->integrity_ok ? "PASS" : "FAIL");
 }
 
+static void	emit_jsonl_byteplane(FILE *f, const membrane_kv_metrics_t *m)
+{
+	fprintf(f,
+		",\"byteplane_bytes\":%llu,\"byteplane_ratio\":%.4f,"
+		"\"byteplane_adaptive_bytes\":%llu,\"byteplane_adaptive_ratio\":%.4f,"
+		"\"byteplane_raw_blocks\":%llu,\"byteplane_codec_blocks\":%llu,"
+		"\"low_entropy_bits\":%.4f,\"high_entropy_bits\":%.4f,"
+		"\"low_plane_ratio\":%.4f,\"high_plane_ratio\":%.4f,"
+		"\"byteplane_applicable\":%d,\"byteplane_integrity\":\"%s\"",
+		(unsigned long long)m->byteplane_bytes,
+		ratio_of(m->raw_bytes, m->byteplane_bytes),
+		(unsigned long long)m->byteplane_adaptive_bytes,
+		ratio_of(m->raw_bytes, m->byteplane_adaptive_bytes),
+		(unsigned long long)m->byteplane_raw_blocks,
+		(unsigned long long)m->byteplane_codec_blocks,
+		m->low_entropy, m->high_entropy,
+		ratio_of(m->low_plane_bytes, m->low_plane_rle_bytes),
+		ratio_of(m->high_plane_bytes, m->high_plane_rle_bytes),
+		m->byteplane_applicable,
+		m->byteplane_integrity_ok ? "PASS" : "FAIL");
+}
+
 static void	emit_jsonl(kva_out_t *out, const kva_opts_t *o, const char *file,
 				const membrane_kv_header_t *h, size_t bs,
 				const membrane_kv_metrics_t *m)
@@ -143,6 +190,7 @@ static void	emit_jsonl(kva_out_t *out, const kva_opts_t *o, const char *file,
 		file, h->model, h->layer, h->tensor_type ? 'V' : 'K',
 		h->token_start, h->token_end, h->dtype, bs);
 	emit_jsonl_metrics(out->jsonl, m);
+	emit_jsonl_byteplane(out->jsonl, m);
 	print_meta_json(out->jsonl, o);
 	fprintf(out->jsonl, "}\n");
 }
@@ -153,7 +201,8 @@ static void	emit_csv(kva_out_t *out, const char *file,
 {
 	fprintf(out->csv,
 		"%s,%s,%u,%c,%u,%u,%u,%zu,%llu,%llu,%llu,%.4f,%llu,%.4f,"
-		"%.6f,%.4f,%llu,%s\n",
+		"%.6f,%.4f,%llu,%s,"
+		"%llu,%.4f,%llu,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%s\n",
 		file, h->model, h->layer, h->tensor_type ? 'V' : 'K',
 		h->token_start, h->token_end, h->dtype, bs,
 		(unsigned long long)m->blocks,
@@ -163,39 +212,71 @@ static void	emit_csv(kva_out_t *out, const char *file,
 		ratio_of(m->raw_bytes, m->adaptive_bytes),
 		m->raw_bytes ? (double)m->zero_bytes / (double)m->raw_bytes : 0.0,
 		m->entropy, (unsigned long long)m->max_run,
-		m->integrity_ok ? "PASS" : "FAIL");
+		m->integrity_ok ? "PASS" : "FAIL",
+		(unsigned long long)m->byteplane_bytes,
+		ratio_of(m->raw_bytes, m->byteplane_bytes),
+		(unsigned long long)m->byteplane_adaptive_bytes,
+		ratio_of(m->raw_bytes, m->byteplane_adaptive_bytes),
+		m->low_entropy, m->high_entropy,
+		ratio_of(m->low_plane_bytes, m->low_plane_rle_bytes),
+		ratio_of(m->high_plane_bytes, m->high_plane_rle_bytes),
+		m->byteplane_applicable,
+		m->byteplane_integrity_ok ? "PASS" : "FAIL");
 }
 
 static void	human_record(const membrane_kv_header_t *h,
 				const membrane_kv_metrics_t *m)
 {
 	fprintf(stderr,
-		"  layer %2u %c  tokens %u..%u  raw %7llu B  rle %.3fx  "
-		"adaptive %.3fx  H %.3f  %s\n",
+		"  layer %2u %c  tokens %u..%u  raw %7llu B  adaptive %.3fx  "
+		"byteplane %.3fx (adaptive %.3fx)  Hlo %.3f Hhi %.3f  %s\n",
 		h->layer, h->tensor_type ? 'V' : 'K', h->token_start, h->token_end,
 		(unsigned long long)m->raw_bytes,
-		ratio_of(m->raw_bytes, m->rle_bytes),
-		ratio_of(m->raw_bytes, m->adaptive_bytes), m->entropy,
-		m->integrity_ok ? "PASS" : "FAIL");
+		ratio_of(m->raw_bytes, m->adaptive_bytes),
+		ratio_of(m->raw_bytes, m->byteplane_bytes),
+		ratio_of(m->raw_bytes, m->byteplane_adaptive_bytes),
+		m->low_entropy, m->high_entropy,
+		(m->integrity_ok && m->byteplane_integrity_ok) ? "PASS" : "FAIL");
 }
 
-static void	totals_add(kva_totals_t *t, const membrane_kv_header_t *h,
+static void	totals_add(kva_out_t *out, const membrane_kv_header_t *h,
 				const membrane_kv_metrics_t *m)
 {
-	int	idx;
+	kva_totals_t	*t;
+	int				idx;
 
+	t = &out->totals;
 	idx = (h->tensor_type != 0);
 	t->raw[idx] += m->raw_bytes;
 	t->rle[idx] += m->rle_bytes;
 	t->adaptive[idx] += m->adaptive_bytes;
+	t->byteplane[idx] += m->byteplane_bytes;
+	t->byteplane_adaptive[idx] += m->byteplane_adaptive_bytes;
 	if (!m->integrity_ok)
 		t->integrity_ok = 0;
+	if (!m->byteplane_integrity_ok || !m->byteplane_applicable)
+		t->byteplane_integrity_ok = 0;
+	if (h->layer < MAX_LAYERS)
+	{
+		out->layers[h->layer].raw += m->raw_bytes;
+		out->layers[h->layer].byteplane_adaptive += m->byteplane_adaptive_bytes;
+		out->layers[h->layer].seen = 1;
+	}
+}
+
+static void	file_sum_add(kva_file_sum_t *fs, const membrane_kv_metrics_t *m)
+{
+	fs->raw += m->raw_bytes;
+	fs->rle += m->rle_bytes;
+	fs->adaptive += m->adaptive_bytes;
+	fs->byteplane += m->byteplane_bytes;
+	fs->byteplane_adaptive += m->byteplane_adaptive_bytes;
 }
 
 static membrane_status_t	analyze_record(kva_out_t *out,
 								const kva_opts_t *o, const char *file,
 								const membrane_kv_header_t *h,
-								const uint8_t *payload)
+								const uint8_t *payload, kva_file_sum_t *fs)
 {
 	membrane_kv_metrics_t	m;
 	membrane_status_t		st;
@@ -210,14 +291,26 @@ static membrane_status_t	analyze_record(kva_out_t *out,
 			return (st);
 		emit_jsonl(out, o, file, h, g_block_sizes[i], &m);
 		emit_csv(out, file, h, g_block_sizes[i], &m);
-		if (g_block_sizes[i] == 65536)
+		if (g_block_sizes[i] == SUMMARY_BLOCK)
 		{
 			human_record(h, &m);
-			totals_add(&out->totals, h, &m);
+			totals_add(out, h, &m);
+			file_sum_add(fs, &m);
 		}
 		i++;
 	}
 	return (MEMBRANE_OK);
+}
+
+static void	human_file_sum(const char *path, const kva_file_sum_t *fs)
+{
+	fprintf(stderr,
+		"  prompt total: raw %llu B  adaptive %.3fx  byteplane %.3fx"
+		" (adaptive %.3fx)\n",
+		(unsigned long long)fs->raw, ratio_of(fs->raw, fs->adaptive),
+		ratio_of(fs->raw, fs->byteplane),
+		ratio_of(fs->raw, fs->byteplane_adaptive));
+	(void)path;
 }
 
 static membrane_status_t	analyze_file(kva_out_t *out, const kva_opts_t *o,
@@ -226,19 +319,21 @@ static membrane_status_t	analyze_file(kva_out_t *out, const kva_opts_t *o,
 	FILE					*f;
 	membrane_kv_header_t	h;
 	uint8_t					*payload;
+	kva_file_sum_t			fs;
 	membrane_status_t		st;
 
 	f = fopen(path, "rb");
 	if (f == NULL)
 		return (fprintf(stderr, "cannot open %s\n", path), MEMBRANE_ERR_IO);
 	fprintf(stderr, "%s:\n", path);
+	memset(&fs, 0, sizeof(fs));
 	st = membrane_kvdump_read_header(f, &h);
 	while (st == MEMBRANE_OK)
 	{
 		st = membrane_kvdump_read_payload(f, &h, &payload);
 		if (st != MEMBRANE_OK)
 			break ;
-		st = analyze_record(out, o, path, &h, payload);
+		st = analyze_record(out, o, path, &h, payload, &fs);
 		free(payload);
 		if (st != MEMBRANE_OK)
 			break ;
@@ -246,21 +341,52 @@ static membrane_status_t	analyze_file(kva_out_t *out, const kva_opts_t *o,
 	}
 	fclose(f);
 	if (st == MEMBRANE_ERR_NOT_FOUND)
-		return (MEMBRANE_OK);
+		return (human_file_sum(path, &fs), MEMBRANE_OK);
 	return (fprintf(stderr, "error in %s (status %d)\n", path, st), st);
 }
 
-static void	human_totals(const kva_totals_t *t)
+static void	human_kv_line(const kva_totals_t *t, int idx, char label)
 {
+	fprintf(stderr,
+		"  %c: raw %llu B  rle %.3fx  adaptive %.3fx  byteplane %.3fx"
+		" (adaptive %.3fx)\n",
+		label, (unsigned long long)t->raw[idx],
+		ratio_of(t->raw[idx], t->rle[idx]),
+		ratio_of(t->raw[idx], t->adaptive[idx]),
+		ratio_of(t->raw[idx], t->byteplane[idx]),
+		ratio_of(t->raw[idx], t->byteplane_adaptive[idx]));
+}
+
+static void	human_layers(const kva_out_t *out)
+{
+	int	i;
+
+	fprintf(stderr, "\nPer-layer byteplane adaptive (64 KiB blocks,"
+		" K+V, all prompts):\n");
+	i = 0;
+	while (i < MAX_LAYERS)
+	{
+		if (out->layers[i].seen)
+			fprintf(stderr, "  layer %2d: raw %llu B  byteplane %.3fx\n",
+				i, (unsigned long long)out->layers[i].raw,
+				ratio_of(out->layers[i].raw,
+					out->layers[i].byteplane_adaptive));
+		i++;
+	}
+}
+
+static void	human_totals(const kva_out_t *out)
+{
+	const kva_totals_t	*t;
+
+	t = &out->totals;
 	fprintf(stderr, "\nK vs V (64 KiB blocks, all inputs):\n");
-	fprintf(stderr, "  K: raw %llu B  rle %.3fx  adaptive %.3fx\n",
-		(unsigned long long)t->raw[0], ratio_of(t->raw[0], t->rle[0]),
-		ratio_of(t->raw[0], t->adaptive[0]));
-	fprintf(stderr, "  V: raw %llu B  rle %.3fx  adaptive %.3fx\n",
-		(unsigned long long)t->raw[1], ratio_of(t->raw[1], t->rle[1]),
-		ratio_of(t->raw[1], t->adaptive[1]));
-	fprintf(stderr, "  integrity: %s\n",
-		t->integrity_ok ? "PASS" : "FAIL");
+	human_kv_line(t, 0, 'K');
+	human_kv_line(t, 1, 'V');
+	human_layers(out);
+	fprintf(stderr, "\n  integrity: adaptive %s  byteplane %s\n",
+		t->integrity_ok ? "PASS" : "FAIL",
+		t->byteplane_integrity_ok ? "PASS" : "FAIL");
 }
 
 static int	opt_apply(kva_opts_t *o, int c)
@@ -312,8 +438,13 @@ static int	open_outputs(kva_out_t *out, const kva_opts_t *o)
 		return (fprintf(stderr, "cannot open outputs\n"), -1);
 	fprintf(out->csv, "file,model,layer,tensor,token_start,token_end,dtype,"
 		"block_size,blocks,raw_bytes,rle_bytes,rle_ratio,adaptive_bytes,"
-		"adaptive_ratio,zero_ratio,entropy_bits,max_run,integrity\n");
+		"adaptive_ratio,zero_ratio,entropy_bits,max_run,integrity,"
+		"byteplane_bytes,byteplane_ratio,byteplane_adaptive_bytes,"
+		"byteplane_adaptive_ratio,low_entropy_bits,high_entropy_bits,"
+		"low_plane_ratio,high_plane_ratio,byteplane_applicable,"
+		"byteplane_integrity\n");
 	out->totals.integrity_ok = 1;
+	out->totals.byteplane_integrity_ok = 1;
 	return (0);
 }
 
@@ -338,10 +469,11 @@ int	main(int argc, char **argv)
 			rc = 1;
 		i++;
 	}
-	human_totals(&out.totals);
+	human_totals(&out);
 	fclose(out.jsonl);
 	fclose(out.csv);
-	if (rc == 0 && !out.totals.integrity_ok)
+	if (rc == 0 && (!out.totals.integrity_ok
+			|| !out.totals.byteplane_integrity_ok))
 		rc = 1;
 	return (rc);
 }

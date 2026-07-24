@@ -95,6 +95,133 @@ static membrane_status_t	block_adaptive(const uint8_t *b, size_t len,
 	return (st);
 }
 
+/* RLE-compresses one deinterleaved byte plane and accumulates its size. */
+static membrane_status_t	plane_rle_size(const uint8_t *plane, size_t len,
+									uint64_t *out)
+{
+	const membrane_codec_vtable_t	*rle;
+	uint8_t							*tmp;
+	size_t							got;
+	membrane_status_t				st;
+
+	rle = membrane_codec_get(MEMBRANE_CODEC_RLE);
+	tmp = malloc(rle->bound(len) + 1);
+	if (tmp == NULL)
+		return (MEMBRANE_ERR_ALLOC_FAILED);
+	st = rle->compress(plane, len, tmp, rle->bound(len), &got);
+	free(tmp);
+	if (st == MEMBRANE_OK)
+		*out += got;
+	return (st);
+}
+
+/* Deinterleaves the two F16 byte planes and records their entropy and
+ * independent RLE-compressed sizes. */
+static membrane_status_t	byteplane_split(const uint8_t *b, size_t len,
+									membrane_kv_metrics_t *m)
+{
+	uint8_t				*low;
+	uint8_t				*high;
+	uint64_t			sink;
+	size_t				plane_len;
+	size_t				i;
+	membrane_status_t	st;
+
+	plane_len = len / 2;
+	low = malloc(plane_len + 1);
+	high = malloc(plane_len + 1);
+	if (low == NULL || high == NULL)
+	{
+		free(low);
+		free(high);
+		return (MEMBRANE_ERR_ALLOC_FAILED);
+	}
+	i = 0;
+	while (i < plane_len)
+	{
+		low[i] = b[2 * i];
+		high[i] = b[2 * i + 1];
+		i++;
+	}
+	sink = 0;
+	m->low_entropy += block_entropy(low, plane_len, &sink) * (double)plane_len;
+	m->high_entropy += block_entropy(high, plane_len, &sink) * (double)plane_len;
+	m->low_plane_bytes += plane_len;
+	m->high_plane_bytes += plane_len;
+	st = plane_rle_size(low, plane_len, &m->low_plane_rle_bytes);
+	if (st == MEMBRANE_OK)
+		st = plane_rle_size(high, plane_len, &m->high_plane_rle_bytes);
+	free(low);
+	free(high);
+	return (st);
+}
+
+/* Runs the whole F16 byte-plane codec through the block layer, mirroring
+ * block_adaptive: the block stores RAW if the codec would expand it. */
+static membrane_status_t	byteplane_adaptive(const uint8_t *b, size_t len,
+									uint8_t *scratch, membrane_kv_metrics_t *m)
+{
+	membrane_block_t	*blk;
+	size_t				got;
+	membrane_status_t	st;
+
+	blk = membrane_block_create(0, MEMBRANE_CODEC_F16_BYTEPLANE_RLE);
+	if (blk == NULL)
+		return (MEMBRANE_ERR_ALLOC_FAILED);
+	st = membrane_block_write(blk, b, len);
+	if (st == MEMBRANE_OK)
+	{
+		m->byteplane_adaptive_bytes += blk->stored_size;
+		if (blk->stored_codec == MEMBRANE_CODEC_RAW)
+			m->byteplane_raw_blocks += 1;
+		else
+			m->byteplane_codec_blocks += 1;
+		st = membrane_block_read(blk, scratch, len, &got);
+		if (st != MEMBRANE_OK || got != len || memcmp(scratch, b, len) != 0)
+			m->byteplane_integrity_ok = 0;
+	}
+	membrane_block_destroy(blk);
+	return (st);
+}
+
+/* Compresses one block with the raw F16 byte-plane codec (no fallback) to
+ * record its true output size, then measures the adaptive variant. */
+static membrane_status_t	byteplane_codec_size(const uint8_t *b, size_t len,
+									uint8_t *scratch, membrane_kv_metrics_t *m)
+{
+	const membrane_codec_vtable_t	*bp;
+	uint8_t							*out;
+	size_t							got;
+	membrane_status_t				st;
+
+	bp = membrane_codec_get(MEMBRANE_CODEC_F16_BYTEPLANE_RLE);
+	out = malloc(bp->bound(len) + 1);
+	if (out == NULL)
+		return (MEMBRANE_ERR_ALLOC_FAILED);
+	st = bp->compress(b, len, out, bp->bound(len), &got);
+	free(out);
+	if (st != MEMBRANE_OK)
+		return (st);
+	m->byteplane_bytes += got;
+	return (byteplane_adaptive(b, len, scratch, m));
+}
+
+static membrane_status_t	metrics_byteplane(const uint8_t *b, size_t len,
+									uint8_t *scratch, membrane_kv_metrics_t *m)
+{
+	membrane_status_t	st;
+
+	if (len % 2 != 0)
+	{
+		m->byteplane_applicable = 0;
+		return (MEMBRANE_OK);
+	}
+	st = byteplane_split(b, len, m);
+	if (st != MEMBRANE_OK)
+		return (st);
+	return (byteplane_codec_size(b, len, scratch, m));
+}
+
 static membrane_status_t	metrics_one_block(const uint8_t *b, size_t len,
 								uint8_t *scratch, membrane_kv_metrics_t *m)
 {
@@ -107,7 +234,10 @@ static membrane_status_t	metrics_one_block(const uint8_t *b, size_t len,
 	st = block_rle_size(b, len, &m->rle_bytes);
 	if (st != MEMBRANE_OK)
 		return (st);
-	return (block_adaptive(b, len, scratch, m));
+	st = block_adaptive(b, len, scratch, m);
+	if (st != MEMBRANE_OK)
+		return (st);
+	return (metrics_byteplane(b, len, scratch, m));
 }
 
 static membrane_status_t	metrics_loop(const uint8_t *buf, size_t len,
@@ -142,6 +272,8 @@ membrane_status_t	membrane_kv_metrics_compute(const uint8_t *buf,
 		return (MEMBRANE_ERR_INVALID_ARG);
 	memset(out, 0, sizeof(*out));
 	out->integrity_ok = 1;
+	out->byteplane_applicable = 1;
+	out->byteplane_integrity_ok = 1;
 	if (len == 0)
 		return (MEMBRANE_OK);
 	scratch = malloc(block_size);
@@ -150,6 +282,12 @@ membrane_status_t	membrane_kv_metrics_compute(const uint8_t *buf,
 	st = metrics_loop(buf, len, block_size, scratch, out);
 	free(scratch);
 	if (st == MEMBRANE_OK)
+	{
 		out->entropy /= (double)len;
+		if (out->low_plane_bytes > 0)
+			out->low_entropy /= (double)out->low_plane_bytes;
+		if (out->high_plane_bytes > 0)
+			out->high_entropy /= (double)out->high_plane_bytes;
+	}
 	return (st);
 }

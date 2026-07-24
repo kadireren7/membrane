@@ -30,6 +30,26 @@ typedef struct s_membrane_kv_metrics
 	uint64_t	max_run;
 	double		entropy;	/* size-weighted mean Shannon entropy, bits/byte */
 	int			integrity_ok;
+	/*
+	 * Phase 2.2 -- F16 byte-plane RLE codec. byteplane_bytes is the raw
+	 * codec output over all blocks; byteplane_adaptive_bytes routes it
+	 * through the block layer, so a block that would expand is stored RAW
+	 * instead. low_/high_* describe the two deinterleaved byte planes.
+	 * byteplane_applicable is 0 if any block had an odd length (the codec
+	 * only accepts whole F16 elements), in which case the fields are 0.
+	 */
+	uint64_t	byteplane_bytes;
+	uint64_t	byteplane_adaptive_bytes;
+	uint64_t	byteplane_raw_blocks;
+	uint64_t	byteplane_codec_blocks;
+	uint64_t	low_plane_bytes;
+	uint64_t	high_plane_bytes;
+	uint64_t	low_plane_rle_bytes;
+	uint64_t	high_plane_rle_bytes;
+	double		low_entropy;	/* size-weighted mean, bits/byte */
+	double		high_entropy;
+	int			byteplane_applicable;
+	int			byteplane_integrity_ok;
 }	membrane_kv_metrics_t;
 
 membrane_status_t	membrane_kv_metrics_compute(const uint8_t *buf,

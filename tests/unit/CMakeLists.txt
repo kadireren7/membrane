@@ -1,4 +1,5 @@
-foreach(t test_block test_codec_raw test_codec_rle test_store test_kvdump)
+foreach(t test_block test_codec_raw test_codec_rle test_codec_f16_byteplane
+    test_store test_kvdump)
   add_executable(${t} ${t}.c)
   target_link_libraries(${t} PRIVATE membrane_core)
   add_test(NAME ${t} COMMAND ${t})
