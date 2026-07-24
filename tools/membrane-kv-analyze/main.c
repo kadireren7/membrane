@@ -13,16 +13,26 @@
 #include "membrane/kvdump.h"
 #include "membrane/kvmetrics.h"
 #include "membrane/kvpredict.h"
+#include "membrane/kvquant.h"
 
 # define MAX_META 8
 # define N_BLOCK_SIZES 4
 # define MAX_LAYERS 64
 # define SUMMARY_BLOCK 65536
 # define NPRED MEMBRANE_PRED_COUNT
+# define N_GROUP_SIZES 4
+# define N_Q8_MODES 2
+# define Q8_REF_GROUP 0	/* index into g_group_sizes used for the headline
+						 * per-layer/per-prompt/RAW-vs-codec comparisons:
+						 * 32 elements, symmetric mode, the closest analogue
+						 * to common inference-engine int8 KV quantization. */
+# define Q8_REF_MODE MEMBRANE_Q8_SYMMETRIC
 
 static const size_t	g_block_sizes[N_BLOCK_SIZES] = {
 	4096, 16384, 65536, 262144
 };
+
+static const size_t	g_group_sizes[N_GROUP_SIZES] = {32, 64, 128, 256};
 
 typedef struct s_kva_opts
 {
@@ -30,6 +40,7 @@ typedef struct s_kva_opts
 	const char	*csv_path;
 	const char	*pred_csv_path;
 	const char	*highplane_path;
+	const char	*quant_csv_path;
 	const char	*meta[MAX_META];
 	int			meta_count;
 	char		**inputs;
@@ -65,6 +76,11 @@ typedef struct s_kva_file_sum
 	uint64_t	adaptive;
 	uint64_t	byteplane;
 	uint64_t	byteplane_adaptive;
+	uint64_t	huffman;
+	uint64_t	q8_raw;			/* reference config: 32 elems, symmetric */
+	uint64_t	q8_encoded;
+	uint64_t	q8_elements;
+	double		q8_sum_sq_err;
 }	kva_file_sum_t;
 
 /* Per-predictor residual aggregate over whole tensor payloads, split by
@@ -95,12 +111,51 @@ typedef struct s_hp_acc
 	uint64_t	timed_bytes;
 }	hp_acc_t;
 
+/*
+ * Q8 quantization aggregate (Phase 3.1), split by tensor (0=K, 1=V), for
+ * one (mode, group_elems) combo across every record. sum_sq_err/
+ * sum_abs_err are element-weighted sums of per-record MSE*n / MAE*n --
+ * combining them this way reproduces the exact combined MSE/MAE (not an
+ * approximation), since MSE_i = sum_sq_i / n_i by definition. cosine/rel_l2
+ * are only approximately combinable this way (element-weighted mean of
+ * per-record values), which is documented at the point of use.
+ */
+typedef struct s_q8_acc
+{
+	uint64_t	raw[2];
+	uint64_t	encoded[2];
+	uint64_t	elements[2];
+	uint64_t	saturated[2];
+	uint64_t	nan_input[2];
+	uint64_t	inf_input[2];
+	double		sum_sq_err[2];
+	double		sum_abs_err[2];
+	double		max_abs_err[2];
+	double		cosine_sum[2];
+	double		rel_l2_sum[2];
+	double		enc_ns;
+	double		dec_ns;
+	uint64_t	timed_bytes;
+	int			decode_fail;
+}	q8_acc_t;
+
+/* Per-layer aggregate at the reference config only (K+V combined). */
+typedef struct s_q8_layer
+{
+	uint64_t	raw;
+	uint64_t	encoded;
+	uint64_t	elements;
+	double		sum_sq_err;
+	int			seen;
+}	q8_layer_t;
+
 typedef struct s_kva_out
 {
 	FILE		*jsonl;
 	FILE		*csv;
 	FILE		*pred_csv;
 	FILE		*highplane;
+	FILE		*quant_csv;
 	kva_totals_t	totals;
 	kva_layer_t	layers[MAX_LAYERS];
 	pred_acc_t	pred[NPRED];
@@ -109,6 +164,8 @@ typedef struct s_kva_out
 	int			layer_pred_seen[MAX_LAYERS];
 	hp_acc_t	hp[N_BLOCK_SIZES];
 	int			hp_integrity_ok;
+	q8_acc_t	q8[N_Q8_MODES][N_GROUP_SIZES];
+	q8_layer_t	q8_layers[MAX_LAYERS];
 }	kva_out_t;
 
 /* Order-0 entropy ceiling (bytes) for the two F16 byte planes, from the
@@ -466,6 +523,187 @@ static membrane_status_t	analyze_predictors(kva_out_t *out,
 	return (MEMBRANE_OK);
 }
 
+static const char	*q8_mode_name(membrane_q8_mode_t mode)
+{
+	if (mode == MEMBRANE_Q8_AFFINE)
+		return ("affine");
+	return ("symmetric");
+}
+
+static void	emit_quant(kva_out_t *out, const kva_opts_t *o, const char *file,
+				const membrane_kv_header_t *h, membrane_q8_mode_t mode,
+				size_t group_elems, const membrane_kv_quant_metrics_t *m)
+{
+	fprintf(out->jsonl,
+		"{\"record\":\"quant\",\"file\":\"%s\",\"model\":\"%s\","
+		"\"layer\":%u,\"tensor\":\"%c\",\"mode\":\"%s\","
+		"\"group_elems\":%zu,\"raw_bytes\":%llu,\"encoded_bytes\":%llu,"
+		"\"ratio\":%.4f,\"elements\":%llu,\"saturation_ratio\":%.6f,"
+		"\"nan_input\":%llu,\"inf_input\":%llu,\"mse\":%.8f,\"rmse\":%.6f,"
+		"\"mae\":%.6f,\"max_abs_err\":%.6f,\"cosine_similarity\":%.6f,"
+		"\"rel_l2_error\":%.6f,\"metadata_bytes\":%llu,\"decode_ok\":%d",
+		file, h->model, h->layer, h->tensor_type ? 'V' : 'K',
+		q8_mode_name(mode), group_elems,
+		(unsigned long long)m->raw_bytes, (unsigned long long)m->encoded_bytes,
+		ratio_of(m->raw_bytes, m->encoded_bytes),
+		(unsigned long long)m->elements,
+		m->elements ? (double)m->saturated / (double)m->elements : 0.0,
+		(unsigned long long)m->nan_input, (unsigned long long)m->inf_input,
+		m->mse, m->rmse, m->mae, m->max_abs_err, m->cosine_similarity,
+		m->rel_l2_error, (unsigned long long)m->metadata_bytes, m->decode_ok);
+	print_meta_json(out->jsonl, o);
+	fprintf(out->jsonl, "}\n");
+	if (out->quant_csv == NULL)
+		return ;
+	fprintf(out->quant_csv,
+		"%s,%s,%u,%c,%s,%zu,%llu,%llu,%.4f,%llu,%.6f,%llu,%llu,%.8f,%.6f,"
+		"%.6f,%.6f,%.6f,%.6f,%llu,%d\n",
+		file, h->model, h->layer, h->tensor_type ? 'V' : 'K',
+		q8_mode_name(mode), group_elems,
+		(unsigned long long)m->raw_bytes, (unsigned long long)m->encoded_bytes,
+		ratio_of(m->raw_bytes, m->encoded_bytes),
+		(unsigned long long)m->elements,
+		m->elements ? (double)m->saturated / (double)m->elements : 0.0,
+		(unsigned long long)m->nan_input, (unsigned long long)m->inf_input,
+		m->mse, m->rmse, m->mae, m->max_abs_err, m->cosine_similarity,
+		m->rel_l2_error, (unsigned long long)m->metadata_bytes, m->decode_ok);
+}
+
+static void	q8_accumulate(kva_out_t *out, const membrane_kv_header_t *h,
+				int mode_idx, int group_idx, const membrane_kv_quant_metrics_t *m)
+{
+	q8_acc_t	*a;
+	int			idx;
+
+	a = &out->q8[mode_idx][group_idx];
+	idx = (h->tensor_type != 0);
+	a->raw[idx] += m->raw_bytes;
+	a->encoded[idx] += m->encoded_bytes;
+	a->elements[idx] += m->elements;
+	a->saturated[idx] += m->saturated;
+	a->nan_input[idx] += m->nan_input;
+	a->inf_input[idx] += m->inf_input;
+	a->sum_sq_err[idx] += m->mse * (double)m->elements;
+	a->sum_abs_err[idx] += m->mae * (double)m->elements;
+	if (m->max_abs_err > a->max_abs_err[idx])
+		a->max_abs_err[idx] = m->max_abs_err;
+	a->cosine_sum[idx] += m->cosine_similarity * (double)m->elements;
+	a->rel_l2_sum[idx] += m->rel_l2_error * (double)m->elements;
+	if (!m->decode_ok)
+		a->decode_fail = 1;
+}
+
+/* Times membrane_q8_encode/decode over the whole payload once (the sweep
+ * loop already ran membrane_kv_quant_compute for correctness metrics; this
+ * is a dedicated timing-only pass, mirroring time_highplane in Phase 2.4). */
+static membrane_status_t	time_q8(const uint8_t *payload, size_t len,
+								const membrane_q8_cfg_t *cfg, q8_acc_t *a)
+{
+	uint8_t				*enc;
+	uint8_t				*dec;
+	size_t				bound;
+	size_t				el;
+	size_t				dl;
+	double				t0;
+	double				t1;
+	double				t2;
+	membrane_status_t	st;
+
+	if (len == 0)
+		return (MEMBRANE_OK);
+	bound = membrane_q8_bound(len, cfg);
+	if (bound == SIZE_MAX)
+		return (MEMBRANE_ERR_INVALID_ARG);
+	enc = malloc(bound);
+	dec = malloc(len);
+	if (enc == NULL || dec == NULL)
+		return (free(enc), free(dec), MEMBRANE_ERR_ALLOC_FAILED);
+	t0 = now_ns();
+	st = membrane_q8_encode(cfg, payload, len, enc, bound, &el, NULL);
+	t1 = now_ns();
+	if (st == MEMBRANE_OK)
+		st = membrane_q8_decode(enc, el, dec, len, &dl);
+	t2 = now_ns();
+	if (st == MEMBRANE_OK)
+	{
+		a->enc_ns += t1 - t0;
+		a->dec_ns += t2 - t1;
+		a->timed_bytes += len;
+	}
+	return (free(enc), free(dec), st);
+}
+
+static void	q8_layer_accumulate(kva_out_t *out, const membrane_kv_header_t *h,
+				const membrane_kv_quant_metrics_t *m)
+{
+	q8_layer_t	*l;
+
+	if (h->layer >= MAX_LAYERS)
+		return ;
+	l = &out->q8_layers[h->layer];
+	l->raw += m->raw_bytes;
+	l->encoded += m->encoded_bytes;
+	l->elements += m->elements;
+	l->sum_sq_err += m->mse * (double)m->elements;
+	l->seen = 1;
+}
+
+static void	q8_file_sum_add(kva_file_sum_t *fs,
+				const membrane_kv_metrics_t *hm,
+				const membrane_kv_quant_metrics_t *qm)
+{
+	fs->huffman += hm->huffman_bytes;
+	fs->q8_raw += qm->raw_bytes;
+	fs->q8_encoded += qm->encoded_bytes;
+	fs->q8_elements += qm->elements;
+	fs->q8_sum_sq_err += qm->mse * (double)qm->elements;
+}
+
+/* Whole-payload Q8 sweep: every (mode, group_elems) combo on one tensor.
+ * `ref_hm` is the 64 KiB-block metrics already computed for this record
+ * (carrying huffman_bytes), reused here only to feed the per-prompt
+ * RAW/Huffman/Q8 comparison -- it is not recomputed. */
+static membrane_status_t	analyze_quant(kva_out_t *out, const kva_opts_t *o,
+								const char *file, const membrane_kv_header_t *h,
+								const uint8_t *payload,
+								const membrane_kv_metrics_t *ref_hm,
+								kva_file_sum_t *fs)
+{
+	membrane_kv_quant_metrics_t	m;
+	membrane_q8_cfg_t				cfg;
+	membrane_status_t				st;
+	int								mi;
+	int								gi;
+
+	mi = 0;
+	while (mi < N_Q8_MODES)
+	{
+		cfg.mode = (membrane_q8_mode_t)mi;
+		gi = 0;
+		while (gi < N_GROUP_SIZES)
+		{
+			cfg.group_elems = g_group_sizes[gi];
+			st = membrane_kv_quant_compute(payload, h->payload_size, &cfg, &m);
+			if (st != MEMBRANE_OK)
+				return (st);
+			emit_quant(out, o, file, h, cfg.mode, cfg.group_elems, &m);
+			q8_accumulate(out, h, mi, gi, &m);
+			st = time_q8(payload, h->payload_size, &cfg,
+					&out->q8[mi][gi]);
+			if (st != MEMBRANE_OK)
+				return (st);
+			if (mi == Q8_REF_MODE && gi == Q8_REF_GROUP)
+			{
+				q8_layer_accumulate(out, h, &m);
+				q8_file_sum_add(fs, ref_hm, &m);
+			}
+			gi++;
+		}
+		mi++;
+	}
+	return (MEMBRANE_OK);
+}
+
 static void	hp_accumulate(hp_acc_t *a, const membrane_kv_metrics_t *m)
 {
 	a->raw += m->raw_bytes;
@@ -553,9 +791,11 @@ static membrane_status_t	analyze_record(kva_out_t *out,
 								const uint8_t *payload, kva_file_sum_t *fs)
 {
 	membrane_kv_metrics_t	m;
+	membrane_kv_metrics_t	ref_hm;
 	membrane_status_t		st;
 	int						i;
 
+	memset(&ref_hm, 0, sizeof(ref_hm));
 	i = 0;
 	while (i < N_BLOCK_SIZES)
 	{
@@ -577,22 +817,35 @@ static membrane_status_t	analyze_record(kva_out_t *out,
 			human_record(h, &m);
 			totals_add(out, h, &m);
 			file_sum_add(fs, &m);
+			ref_hm = m;
 		}
 		i++;
 	}
 	if (out->highplane != NULL)
 		dump_highplane(out->highplane, payload, h->payload_size);
-	return (analyze_predictors(out, o, file, h, payload));
+	st = analyze_predictors(out, o, file, h, payload);
+	if (st != MEMBRANE_OK)
+		return (st);
+	return (analyze_quant(out, o, file, h, payload, &ref_hm, fs));
 }
 
 static void	human_file_sum(const char *path, const kva_file_sum_t *fs)
 {
+	double	q8_rmse;
+
+	q8_rmse = fs->q8_elements ? sqrt(fs->q8_sum_sq_err
+			/ (double)fs->q8_elements) : 0.0;
 	fprintf(stderr,
 		"  prompt total: raw %llu B  adaptive %.3fx  byteplane %.3fx"
 		" (adaptive %.3fx)\n",
 		(unsigned long long)fs->raw, ratio_of(fs->raw, fs->adaptive),
 		ratio_of(fs->raw, fs->byteplane),
 		ratio_of(fs->raw, fs->byteplane_adaptive));
+	fprintf(stderr,
+		"  prompt RAW vs Huffman vs Q8(sym,32): huffman %.3fx"
+		"  q8 %.3fx  q8 RMSE %.5f\n",
+		ratio_of(fs->raw, fs->huffman), ratio_of(fs->q8_raw, fs->q8_encoded),
+		q8_rmse);
 	(void)path;
 }
 
@@ -790,6 +1043,171 @@ static void	human_huffman(const kva_out_t *out)
 	fprintf(stderr, "  integrity: %s\n", out->hp_integrity_ok ? "PASS" : "FAIL");
 }
 
+static double	q8_ratio(const q8_acc_t *a)
+{
+	return (ratio_of(a->raw[0] + a->raw[1], a->encoded[0] + a->encoded[1]));
+}
+
+static double	q8_rmse(const q8_acc_t *a)
+{
+	uint64_t	n;
+
+	n = a->elements[0] + a->elements[1];
+	if (n == 0)
+		return (0.0);
+	return (sqrt((a->sum_sq_err[0] + a->sum_sq_err[1]) / (double)n));
+}
+
+/* Element-weighted mean of per-record cosine similarity -- an approximate
+ * combination (cosine does not combine linearly across records the way
+ * MSE does), but a standard and adequate way to report an aggregate. */
+static double	q8_cosine(const q8_acc_t *a)
+{
+	uint64_t	n;
+
+	n = a->elements[0] + a->elements[1];
+	if (n == 0)
+		return (1.0);
+	return ((a->cosine_sum[0] + a->cosine_sum[1]) / (double)n);
+}
+
+static double	q8_rel_l2(const q8_acc_t *a)
+{
+	uint64_t	n;
+
+	n = a->elements[0] + a->elements[1];
+	if (n == 0)
+		return (0.0);
+	return ((a->rel_l2_sum[0] + a->rel_l2_sum[1]) / (double)n);
+}
+
+static double	q8_saturation(const q8_acc_t *a)
+{
+	uint64_t	n;
+
+	n = a->elements[0] + a->elements[1];
+	if (n == 0)
+		return (0.0);
+	return ((double)(a->saturated[0] + a->saturated[1]) / (double)n);
+}
+
+/* The full sweep: every (mode, group_elems) combo, K+V combined, so the
+ * effect of group granularity and quantization mode is directly visible. */
+static void	human_q8_sweep(const kva_out_t *out)
+{
+	const q8_acc_t	*a;
+	int				mi;
+	int				gi;
+
+	fprintf(stderr, "\nQ8 quantization sweep (K+V combined, all prompts):\n");
+	fprintf(stderr, "  mode        group  ratio    RMSE      cosine    "
+		"rel_L2   sat%%    enc GB/s  dec GB/s\n");
+	mi = 0;
+	while (mi < N_Q8_MODES)
+	{
+		gi = 0;
+		while (gi < N_GROUP_SIZES)
+		{
+			a = &out->q8[mi][gi];
+			fprintf(stderr,
+				"  %-10s  %5zu  %.3fx  %.6f  %.6f  %.4f  %5.2f  %8.3f  %8.3f\n",
+				q8_mode_name((membrane_q8_mode_t)mi), g_group_sizes[gi],
+				q8_ratio(a), q8_rmse(a), q8_cosine(a), q8_rel_l2(a),
+				100.0 * q8_saturation(a),
+				a->enc_ns > 0 ? (double)a->timed_bytes / a->enc_ns : 0.0,
+				a->dec_ns > 0 ? (double)a->timed_bytes / a->dec_ns : 0.0);
+			gi++;
+		}
+		mi++;
+	}
+}
+
+/* K vs V at the reference config (32 elements, symmetric). */
+static void	human_q8_kv(const kva_out_t *out)
+{
+	const q8_acc_t	*a;
+
+	a = &out->q8[Q8_REF_MODE][Q8_REF_GROUP];
+	fprintf(stderr, "\nQ8 K vs V (group=%zu, %s, all prompts):\n",
+		g_group_sizes[Q8_REF_GROUP], q8_mode_name(Q8_REF_MODE));
+	fprintf(stderr, "  K: ratio %.3fx  RMSE %.6f  cosine %.6f  rel_L2 %.4f"
+		"  sat%% %.2f\n",
+		ratio_of(a->raw[0], a->encoded[0]),
+		a->elements[0] ? sqrt(a->sum_sq_err[0] / (double)a->elements[0]) : 0.0,
+		a->elements[0] ? a->cosine_sum[0] / (double)a->elements[0] : 1.0,
+		a->elements[0] ? a->rel_l2_sum[0] / (double)a->elements[0] : 0.0,
+		a->elements[0] ? 100.0 * (double)a->saturated[0]
+			/ (double)a->elements[0] : 0.0);
+	fprintf(stderr, "  V: ratio %.3fx  RMSE %.6f  cosine %.6f  rel_L2 %.4f"
+		"  sat%% %.2f\n",
+		ratio_of(a->raw[1], a->encoded[1]),
+		a->elements[1] ? sqrt(a->sum_sq_err[1] / (double)a->elements[1]) : 0.0,
+		a->elements[1] ? a->cosine_sum[1] / (double)a->elements[1] : 1.0,
+		a->elements[1] ? a->rel_l2_sum[1] / (double)a->elements[1] : 0.0,
+		a->elements[1] ? 100.0 * (double)a->saturated[1]
+			/ (double)a->elements[1] : 0.0);
+}
+
+static void	human_q8_layers(const kva_out_t *out)
+{
+	const q8_layer_t	*l;
+	int					i;
+
+	fprintf(stderr, "\nQ8 per-layer (group=%zu, %s, K+V, all prompts):\n",
+		g_group_sizes[Q8_REF_GROUP], q8_mode_name(Q8_REF_MODE));
+	i = 0;
+	while (i < MAX_LAYERS)
+	{
+		l = &out->q8_layers[i];
+		if (l->seen)
+			fprintf(stderr, "  layer %2d: ratio %.3fx  RMSE %.6f\n", i,
+				ratio_of(l->raw, l->encoded),
+				l->elements ? sqrt(l->sum_sq_err / (double)l->elements) : 0.0);
+		i++;
+	}
+}
+
+/* Phase 3.1 success criteria (item 7 of the task): actual ratio >= 1.8x,
+ * cosine similarity >= 0.99, relative L2 error reported explicitly, and
+ * saturation kept low -- checked against every swept config so it is
+ * visible which granularities and modes actually meet the bar. */
+static void	human_q8_criteria(const kva_out_t *out)
+{
+	const q8_acc_t	*a;
+	int				mi;
+	int				gi;
+	int				pass;
+
+	fprintf(stderr, "\nQ8 success criteria (ratio>=1.8x, cosine>=0.99):\n");
+	mi = 0;
+	while (mi < N_Q8_MODES)
+	{
+		gi = 0;
+		while (gi < N_GROUP_SIZES)
+		{
+			a = &out->q8[mi][gi];
+			pass = (q8_ratio(a) >= 1.8 && q8_cosine(a) >= 0.99
+					&& !a->decode_fail);
+			fprintf(stderr,
+				"  %-10s group=%-4zu ratio %.3fx cosine %.6f rel_L2 %.4f"
+				" sat%% %.2f  %s\n",
+				q8_mode_name((membrane_q8_mode_t)mi), g_group_sizes[gi],
+				q8_ratio(a), q8_cosine(a), q8_rel_l2(a),
+				100.0 * q8_saturation(a), pass ? "MEETS BAR" : "below bar");
+			gi++;
+		}
+		mi++;
+	}
+}
+
+static void	human_q8(const kva_out_t *out)
+{
+	human_q8_sweep(out);
+	human_q8_kv(out);
+	human_q8_layers(out);
+	human_q8_criteria(out);
+}
+
 static int	opt_apply(kva_opts_t *o, int c)
 {
 	if (c == 'j')
@@ -802,6 +1220,8 @@ static int	opt_apply(kva_opts_t *o, int c)
 		o->pred_csv_path = optarg;
 	else if (c == 'H')
 		o->highplane_path = optarg;
+	else if (c == 'q')
+		o->quant_csv_path = optarg;
 	else if (c != 'x')
 		return (-1);
 	return (0);
@@ -814,24 +1234,26 @@ static int	parse_opts(int argc, char **argv, kva_opts_t *o)
 	{"csv", required_argument, 0, 'v'},
 	{"pred-csv", required_argument, 0, 'p'},
 	{"dump-highplane", required_argument, 0, 'H'},
+	{"quant-csv", required_argument, 0, 'q'},
 	{"meta", required_argument, 0, 'x'},
 	{0, 0, 0, 0}};
 	int						c;
 
 	memset(o, 0, sizeof(*o));
-	c = getopt_long(argc, argv, "j:v:p:H:x:", lo, NULL);
+	c = getopt_long(argc, argv, "j:v:p:H:q:x:", lo, NULL);
 	while (c != -1)
 	{
 		if (opt_apply(o, c) != 0)
 			return (-1);
-		c = getopt_long(argc, argv, "j:v:p:H:x:", lo, NULL);
+		c = getopt_long(argc, argv, "j:v:p:H:q:x:", lo, NULL);
 	}
 	o->inputs = argv + optind;
 	o->input_count = argc - optind;
 	if (o->input_count < 1 || o->jsonl_path == NULL || o->csv_path == NULL)
 	{
 		fprintf(stderr, "Usage: membrane-kv-analyze --jsonl OUT --csv OUT "
-			"[--pred-csv OUT] [--dump-highplane OUT] [--meta k=v]... DUMP...\n");
+			"[--pred-csv OUT] [--dump-highplane OUT] [--quant-csv OUT] "
+			"[--meta k=v]... DUMP...\n");
 		return (-1);
 	}
 	return (0);
@@ -872,6 +1294,16 @@ static int	open_outputs(kva_out_t *out, const kva_opts_t *o)
 		if (out->highplane == NULL)
 			return (fprintf(stderr, "cannot open highplane dump\n"), -1);
 	}
+	if (o->quant_csv_path != NULL)
+	{
+		out->quant_csv = fopen(o->quant_csv_path, "w");
+		if (out->quant_csv == NULL)
+			return (fprintf(stderr, "cannot open quant-csv\n"), -1);
+		fprintf(out->quant_csv, "file,model,layer,tensor,mode,group_elems,"
+			"raw_bytes,encoded_bytes,ratio,elements,saturation_ratio,"
+			"nan_input,inf_input,mse,rmse,mae,max_abs_err,cosine_similarity,"
+			"rel_l2_error,metadata_bytes,decode_ok\n");
+	}
 	return (0);
 }
 
@@ -899,12 +1331,22 @@ int	main(int argc, char **argv)
 	human_totals(&out);
 	human_pred(&out);
 	human_huffman(&out);
+	human_q8(&out);
 	fclose(out.jsonl);
 	fclose(out.csv);
 	if (out.pred_csv != NULL)
 		fclose(out.pred_csv);
 	if (out.highplane != NULL)
 		fclose(out.highplane);
+	if (out.quant_csv != NULL)
+		fclose(out.quant_csv);
+	i = 0;
+	while (i < N_Q8_MODES * N_GROUP_SIZES)
+	{
+		if (out.q8[i / N_GROUP_SIZES][i % N_GROUP_SIZES].decode_fail)
+			rc = 1;
+		i++;
+	}
 	if (rc == 0 && (!out.totals.integrity_ok
 			|| !out.totals.byteplane_integrity_ok || !out.hp_integrity_ok))
 		rc = 1;

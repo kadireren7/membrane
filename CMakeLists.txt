@@ -79,6 +79,8 @@ add_library(membrane_core
   src/codecs/f16_xor_byteplane.c
   src/codecs/huffman.c
   src/codecs/f16_highplane_huffman.c
+  src/codecs/f16convert.c
+  src/codecs/q8block.c
   src/codecs/codec_registry.c
   src/stats.c
   src/store/store.c
@@ -88,6 +90,7 @@ add_library(membrane_core
   src/kvdump/kvdump.c
   src/kvdump/kvmetrics.c
   src/kvdump/kvpredict.c
+  src/kvdump/kvquant.c
 )
 target_include_directories(membrane_core PUBLIC include)
 target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m)
@@ -108,6 +111,7 @@ if(MEMBRANE_ENABLE_LLAMA)
   set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
   add_subdirectory(third_party/llama.cpp EXCLUDE_FROM_ALL)
   add_subdirectory(tools/membrane-kv-capture)
+  add_subdirectory(tools/membrane-kv-quality)
 endif()
 
 if(MEMBRANE_BUILD_TESTS)
