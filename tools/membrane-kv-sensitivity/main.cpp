@@ -53,10 +53,21 @@
  * marked FP16/Q8/Q4 by whatever policy is being evaluated. This is
  * labeled clearly wherever it is reported, distinct from the K/V-sweep's
  * real, measured get_size numbers.
+ *
+ * Phase 3.4 adds a composition-aware greedy optimizer on top of the same
+ * splicing engine: Phase 3.3's policy unioned INDEPENDENT per-layer
+ * scores and found the union did not compose linearly (a combined
+ * cosine below what every constituent layer cleared alone). The
+ * optimizer below never accepts a candidate from an isolated score --
+ * every accept/reject decision re-measures the CURRENT, already-accepted
+ * policy live. See the "Phase 3.4" section further down for the search
+ * design.
  */
 
 #include <sys/resource.h>
 
+#include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1248,6 +1259,461 @@ static void	run_kv_combo_sweep(llama_model *model, const llama_vocab *vocab,
 }
 
 /* ------------------------------------------------------------------ */
+/* Phase 3.4: composition-aware greedy optimizer.                       */
+/*                                                                      */
+/* Phase 3.3 built a policy by unioning INDEPENDENT per-layer scores,   */
+/* then found the union did not compose linearly (aggregate cosine      */
+/* dropped below the per-layer bar every constituent layer cleared      */
+/* alone). This optimizer never trusts an independent score for an      */
+/* accept/reject decision: every candidate is evaluated by splicing it  */
+/* into the CURRENT, already-accepted policy and running live inference */
+/* with everything else exactly as it stands -- so what gets measured   */
+/* is always the actual composed effect, never an isolated one.         */
+/*                                                                      */
+/* Search space: 60 slots (30 layers x {K,V}), starting at Q8           */
+/* everywhere (item 1). Each round considers exactly the next slot in a */
+/* fixed priority queue -- all V-slots (ascending layer) before any     */
+/* K-slot (ascending layer), per item 5 -- and evaluates ONE trial       */
+/* (that slot alone dropped to Q4, everything else as currently          */
+/* accepted) against the full valid prompt set. This is a              */
+/* first-improvement greedy (accept the first candidate that clears     */
+/* every threshold, in priority order) rather than a best-of-batch      */
+/* greedy: the task explicitly rules out full brute force and asks for  */
+/* a parametrized search budget, and evaluating only one candidate per  */
+/* round bounds total live evaluations to exactly the number of slots   */
+/* considered (<= 60), which a best-of-batch scheme evaluating several  */
+/* candidates per round to compare ratios would not. The memory/quality */
+/* ratio is still computed and reported for every candidate (accepted   */
+/* or not), so the search remains ratio-aware even though the ordering  */
+/* decides *which* candidate is offered before comparison, not the      */
+/* ratio itself.                                                        */
+/* ------------------------------------------------------------------ */
+
+typedef struct s_kv_policy
+{
+	std::vector<int>	kbits;	/* per layer, 8 or 4 */
+	std::vector<int>	vbits;
+}	kv_policy_t;
+
+static kv_policy_t	all_q8_policy(uint32_t n_layer)
+{
+	kv_policy_t	p;
+
+	p.kbits.assign(n_layer, 8);
+	p.vbits.assign(n_layer, 8);
+	return (p);
+}
+
+static std::vector<perturb_target_t>	policy_targets(const blob_index_t &idx,
+		const kv_policy_t &pol)
+{
+	std::vector<perturb_target_t>	targets;
+	uint32_t	l;
+
+	l = 0;
+	while (l < idx.n_layer)
+	{
+		targets.push_back({(int)l, true, false, 0, idx.cell_count,
+				pol.kbits[l]});
+		targets.push_back({(int)l, false, true, 0, idx.cell_count,
+				pol.vbits[l]});
+		l++;
+	}
+	return (targets);
+}
+
+typedef struct s_agg_result
+{
+	double				top1;
+	double				top5;
+	double				cosine;
+	double				kl;
+	long				min_first_divergence;
+	std::vector<bool>	recall_ok;	/* aligned with the valid prompt list */
+}	agg_result_t;
+
+/* Evaluates one candidate policy across every prompt in `valid`, folding
+ * the per-prompt metrics into simple means (steps/elements are equal
+ * across these prompts' fixed gen_tokens, so an unweighted mean is exact
+ * enough for search purposes; the final comparison table re-measures the
+ * chosen policies precisely, per-prompt, without any averaging). */
+static bool	evaluate_policy(llama_model *model, const llama_vocab *vocab,
+				int n_ctx, int gen_tokens, const std::vector<baseline_t> &valid,
+				const kv_policy_t &pol, agg_result_t *out)
+{
+	metrics_t	m;
+	size_t		i;
+
+	out->top1 = 0.0;
+	out->top5 = 0.0;
+	out->cosine = 0.0;
+	out->kl = 0.0;
+	out->min_first_divergence = LONG_MAX;
+	out->recall_ok.assign(valid.size(), false);
+	i = 0;
+	while (i < valid.size())
+	{
+		if (!run_experiment(model, vocab, n_ctx, gen_tokens, valid[i],
+				policy_targets(valid[i].idx, pol), &m))
+			return (false);
+		out->top1 += m.top1_pct;
+		out->top5 += m.top5_pct;
+		out->cosine += m.logit_cosine;
+		out->kl += m.kl_mean;
+		if (m.first_divergence < out->min_first_divergence)
+			out->min_first_divergence = m.first_divergence;
+		out->recall_ok[i] = m.recall_ok;
+		i++;
+	}
+	out->top1 /= (double)valid.size();
+	out->top5 /= (double)valid.size();
+	out->cosine /= (double)valid.size();
+	out->kl /= (double)valid.size();
+	return (true);
+}
+
+typedef struct s_slot
+{
+	int		layer;
+	bool	is_k;
+}	slot_t;
+
+static std::vector<slot_t>	priority_queue_slots(uint32_t n_layer)
+{
+	std::vector<slot_t>	q;
+	uint32_t	l;
+
+	l = 0;
+	while (l < n_layer)
+		q.push_back({(int)l++, false});	/* V-slots first (item 5) */
+	l = 0;
+	while (l < n_layer)
+		q.push_back({(int)l++, true});		/* then K-slots */
+	return (q);
+}
+
+/* K candidates are evaluated with a stricter cosine bar than V (item 5's
+ * "higher penalty" for K) -- a K-slot must not just clear the standard
+ * bar but clear a materially tighter one. */
+# define K_STRICT_COSINE 0.9975
+
+typedef struct s_decision
+{
+	slot_t			slot;
+	agg_result_t	result;
+	double			memory_gain_bytes;
+	double			ratio;
+	bool			accepted;
+	std::string		reason;
+}	decision_t;
+
+static double	slot_memory_gain(const blob_index_t &idx, const slot_t &s)
+{
+	size_t	row_size;
+
+	row_size = s.is_k ? idx.layers[s.layer].k_row_size
+		: idx.layers[s.layer].v_row_size;
+	return ((bytes_per_row(row_size, 8) - bytes_per_row(row_size, 4))
+		* idx.cell_count);
+}
+
+/* Checks a candidate's live-measured result against the thresholds and
+ * the must-stay-correct recall set (item 4: every recall test the
+ * all-Q8 reference answered correctly must still be answered correctly;
+ * a baseline-unsolvable prompt is never a reason to reject, per item 6).
+ * Returns "" (pass) or a human-readable rejection reason. */
+static std::string	check_candidate(const agg_result_t &r, bool is_k,
+						const std::vector<bool> &must_stay_correct)
+{
+	double	cos_bar;
+	size_t	i;
+	char	buf[160];
+
+	cos_bar = is_k ? K_STRICT_COSINE : g_default_thresholds.cosine_min;
+	if (r.cosine < cos_bar)
+	{
+		snprintf(buf, sizeof(buf), "cosine %.6f < %.6f (%s threshold)",
+			r.cosine, cos_bar, is_k ? "K, strict" : "V");
+		return (buf);
+	}
+	if (r.top1 < g_default_thresholds.top1_min)
+	{
+		snprintf(buf, sizeof(buf), "top1 %.2f%% < %.2f%%", r.top1,
+			g_default_thresholds.top1_min);
+		return (buf);
+	}
+	if (r.top5 < g_default_thresholds.top5_min)
+	{
+		snprintf(buf, sizeof(buf), "top5 %.2f%% < %.2f%%", r.top5,
+			g_default_thresholds.top5_min);
+		return (buf);
+	}
+	i = 0;
+	while (i < must_stay_correct.size())
+	{
+		if (must_stay_correct[i] && !r.recall_ok[i])
+		{
+			snprintf(buf, sizeof(buf),
+				"recall broke on valid prompt #%zu (all-Q8 answered it "
+				"correctly, this candidate does not)", i);
+			return (buf);
+		}
+		i++;
+	}
+	return ("");
+}
+
+typedef struct s_optimizer_result
+{
+	kv_policy_t					policy;
+	std::vector<decision_t>	accepted;
+	std::vector<decision_t>	rejected;
+	int							evals_used;
+	double						search_seconds;
+}	optimizer_result_t;
+
+/* The greedy pass: item 2. */
+static bool	greedy_optimize(llama_model *model, const llama_vocab *vocab,
+				int n_ctx, int gen_tokens, const std::vector<baseline_t> &valid,
+				const std::vector<bool> &must_stay_correct, int search_budget,
+				optimizer_result_t *out)
+{
+	std::vector<slot_t>	queue;
+	kv_policy_t				trial;
+	decision_t				d;
+	std::string				reason;
+	std::chrono::steady_clock::time_point	t0;
+
+	t0 = std::chrono::steady_clock::now();
+	out->policy = all_q8_policy(valid[0].idx.n_layer);
+	out->evals_used = 0;
+	queue = priority_queue_slots(valid[0].idx.n_layer);
+	fprintf(stderr, "\n=== Greedy composition-aware search (budget=%d, "
+		"%zu candidate slots, V-before-K) ===\n", search_budget,
+		queue.size());
+	for (const slot_t &s : queue)
+	{
+		if (out->evals_used >= search_budget)
+		{
+			fprintf(stderr, "  search budget exhausted, stopping early "
+				"(%d/%zu slots considered)\n", out->evals_used,
+				queue.size());
+			break ;
+		}
+		trial = out->policy;
+		if (s.is_k)
+			trial.kbits[s.layer] = 4;
+		else
+			trial.vbits[s.layer] = 4;
+		d.slot = s;
+		if (!evaluate_policy(model, vocab, n_ctx, gen_tokens, valid, trial,
+				&d.result))
+			return (false);
+		out->evals_used++;
+		d.memory_gain_bytes = slot_memory_gain(valid[0].idx, s);
+		reason = check_candidate(d.result, s.is_k, must_stay_correct);
+		d.ratio = d.memory_gain_bytes / (1.0 - d.result.cosine > 1e-9
+				? 1.0 - d.result.cosine : 1e-9);
+		d.accepted = reason.empty();
+		d.reason = reason.empty() ? "accepted" : reason;
+		fprintf(stderr, "  layer %2d %s -> Q4: cosine %.6f top1 %.2f%% "
+			"top5 %.2f%% ratio %.1f B/unit  %s\n", s.layer,
+			s.is_k ? "K" : "V", d.result.cosine, d.result.top1, d.result.top5,
+			d.ratio, d.accepted ? "ACCEPTED" : ("rejected: " + reason).c_str());
+		if (d.accepted)
+		{
+			out->policy = trial;
+			out->accepted.push_back(d);
+		}
+		else
+			out->rejected.push_back(d);
+	}
+	out->search_seconds = std::chrono::duration<double>(
+			std::chrono::steady_clock::now() - t0).count();
+	return (true);
+}
+
+/* Item 3: bounded backtracking. Re-tests reverting each of the last
+ * min(4, N) accepted slots, one at a time and in most-recent-first
+ * order, against the policy as it stands at that point (so a reversion
+ * earlier in this pass can change what the next reversion is tested
+ * against -- still composition-aware, not independent). A reversion is
+ * kept if the policy without that slot clears every threshold and the
+ * one with it did not, i.e. that slot was the specific cause of a
+ * failure -- or if reverting it recovers a materially better cosine
+ * (>=0.001 improvement) for a comparatively small memory cost (this
+ * slot's own gain is < 10% of the policy's total gain so far). */
+static bool	backtrack(llama_model *model, const llama_vocab *vocab,
+				int n_ctx, int gen_tokens, const std::vector<baseline_t> &valid,
+				const std::vector<bool> &must_stay_correct,
+				optimizer_result_t *opt)
+{
+	int		n_check;
+	int		i;
+	kv_policy_t	trial;
+	agg_result_t	r;
+	agg_result_t	full;
+	std::string	reason;
+	double	total_gain;
+
+	n_check = (int)opt->accepted.size() < 4 ? (int)opt->accepted.size() : 4;
+	if (n_check == 0)
+		return (true);
+	fprintf(stderr, "\n=== Backtracking: re-testing the last %d accepted "
+		"downgrades individually ===\n", n_check);
+	if (!evaluate_policy(model, vocab, n_ctx, gen_tokens, valid, opt->policy,
+			&full))
+		return (false);
+	total_gain = 0.0;
+	for (const decision_t &d : opt->accepted)
+		total_gain += d.memory_gain_bytes;
+	i = (int)opt->accepted.size() - 1;
+	while (i >= (int)opt->accepted.size() - n_check)
+	{
+		const slot_t	&s = opt->accepted[i].slot;
+
+		trial = opt->policy;
+		if (s.is_k)
+			trial.kbits[s.layer] = 8;
+		else
+			trial.vbits[s.layer] = 8;
+		if (!evaluate_policy(model, vocab, n_ctx, gen_tokens, valid, trial,
+				&r))
+			return (false);
+		opt->evals_used++;
+		reason = check_candidate(full, s.is_k, must_stay_correct);
+		bool	small_share = opt->accepted[i].memory_gain_bytes
+			< 0.10 * total_gain;
+		bool	recovers = check_candidate(r, s.is_k,
+				must_stay_correct).empty() && !reason.empty();
+		bool	improves = (r.cosine - full.cosine) >= 0.001 && small_share;
+		fprintf(stderr, "  revert layer %2d %s -> Q8: without it cosine "
+			"%.6f (with it %.6f)  %s\n", s.layer, s.is_k ? "K" : "V",
+			r.cosine, full.cosine, (recovers || improves)
+				? "REVERTED" : "kept at Q4");
+		if (recovers || improves)
+		{
+			opt->policy = trial;
+			opt->accepted[i].accepted = false;
+			opt->accepted[i].reason = recovers
+				? "reverted in backtracking: was the cause of a threshold "
+					"failure in the full policy"
+				: "reverted in backtracking: small memory share, cosine "
+					"improved >=0.001 without it";
+			full = r;
+		}
+		i--;
+	}
+	opt->accepted.erase(std::remove_if(opt->accepted.begin(),
+			opt->accepted.end(), [](const decision_t &d) {
+				return (!d.accepted); }), opt->accepted.end());
+	return (true);
+}
+
+static double	projected_kv_bytes_kv(const blob_index_t &idx,
+					const kv_policy_t &pol)
+{
+	double	total;
+	uint32_t	l;
+
+	total = 0.0;
+	l = 0;
+	while (l < idx.n_layer)
+	{
+		total += bytes_per_row(idx.layers[l].k_row_size, pol.kbits[l])
+			* idx.cell_count;
+		total += bytes_per_row(idx.layers[l].v_row_size, pol.vbits[l])
+			* idx.cell_count;
+		l++;
+	}
+	return (total);
+}
+
+/* Item 7: FP16 / all-Q8 / all-Q4 / Phase 3.3 independent policy /
+ * Phase 3.4 composition-aware policy, for one prompt. */
+static bool	run_final_comparison(llama_model *model, const llama_vocab *vocab,
+				int n_ctx, int gen_tokens, const baseline_t &base,
+				const char *prompt_path, const std::vector<int> &layer_bits,
+				bool age_override, const kv_policy_t &opt_policy,
+				FILE *json_out, bool is_valid)
+{
+	metrics_t	m_q8;
+	metrics_t	m_q4;
+	metrics_t	m_p33;
+	metrics_t	m_p34;
+	size_t		kv_q8;
+	size_t		kv_q4;
+	double		f16b_real;
+	double		f16b_analytic;
+	std::vector<perturb_target_t>	pol33;
+	std::vector<perturb_target_t>	pol34;
+	bool		ok;
+
+	f16b_real = (double)base.f16_state_bytes;
+	f16b_analytic = full_f16_bytes(base.idx);
+	ok = run_kv_combo(model, vocab, n_ctx, gen_tokens, base, GGML_TYPE_Q8_0,
+			GGML_TYPE_Q8_0, &m_q8, &kv_q8);
+	if (ok)
+		ok = run_kv_combo(model, vocab, n_ctx, gen_tokens, base,
+				GGML_TYPE_Q4_0, GGML_TYPE_Q4_0, &m_q4, &kv_q4);
+	pol33 = build_policy_targets(base.idx, layer_bits, age_override, 4);
+	if (ok)
+		ok = run_experiment(model, vocab, n_ctx, gen_tokens, base, pol33,
+				&m_p33);
+	pol34 = policy_targets(base.idx, opt_policy);
+	if (ok)
+		ok = run_experiment(model, vocab, n_ctx, gen_tokens, base, pol34,
+				&m_p34);
+	if (!ok)
+		return (false);
+	fprintf(stderr, "\n--- prompt: %s (%s) ---\n", prompt_path,
+		is_valid ? "valid" : "EXCLUDED from optimization, informational only");
+	print_row("all-Q8 (native)", m_q8, (double)kv_q8, f16b_real);
+	print_row("all-Q4 (native)", m_q4, (double)kv_q4, f16b_real);
+	print_row("Phase 3.3 policy", m_p33, projected_kv_bytes(base.idx, pol33),
+		f16b_analytic);
+	print_row("Phase 3.4 policy", m_p34, projected_kv_bytes_kv(base.idx,
+			opt_policy), f16b_analytic);
+	emit_json_row(json_out, prompt_path, "all_q8", m_q8, (double)kv_q8,
+		f16b_real);
+	emit_json_row(json_out, prompt_path, "all_q4", m_q4, (double)kv_q4,
+		f16b_real);
+	emit_json_row(json_out, prompt_path, "phase33_policy", m_p33,
+		projected_kv_bytes(base.idx, pol33), f16b_analytic);
+	emit_json_row(json_out, prompt_path, "phase34_policy", m_p34,
+		projected_kv_bytes_kv(base.idx, opt_policy), f16b_analytic);
+	return (true);
+}
+
+static void	emit_policy_json(FILE *out, const optimizer_result_t &opt,
+				int n_layer)
+{
+	int	l;
+
+	if (out == NULL)
+		return ;
+	fprintf(out, "{\"record\":\"phase34_policy\",\"kbits\":[");
+	for (l = 0; l < n_layer; l++)
+		fprintf(out, "%s%d", l ? "," : "", opt.policy.kbits[l]);
+	fprintf(out, "],\"vbits\":[");
+	for (l = 0; l < n_layer; l++)
+		fprintf(out, "%s%d", l ? "," : "", opt.policy.vbits[l]);
+	fprintf(out, "],\"evals_used\":%d,\"search_seconds\":%.3f,"
+		"\"accepted\":%zu,\"rejected\":%zu}\n", opt.evals_used,
+		opt.search_seconds, opt.accepted.size(), opt.rejected.size());
+	for (const decision_t &d : opt.accepted)
+		fprintf(out, "{\"record\":\"decision\",\"layer\":%d,\"kv\":\"%s\","
+			"\"outcome\":\"accepted\",\"cosine\":%.6f,\"top1\":%.4f,"
+			"\"ratio\":%.2f}\n", d.slot.layer, d.slot.is_k ? "K" : "V",
+			d.result.cosine, d.result.top1, d.ratio);
+	for (const decision_t &d : opt.rejected)
+		fprintf(out, "{\"record\":\"decision\",\"layer\":%d,\"kv\":\"%s\","
+			"\"outcome\":\"rejected\",\"cosine\":%.6f,\"top1\":%.4f,"
+			"\"reason\":\"%s\"}\n", d.slot.layer, d.slot.is_k ? "K" : "V",
+			d.result.cosine, d.result.top1, json_escape(d.reason).c_str());
+}
+
+/* ------------------------------------------------------------------ */
 /* CLI                                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -1265,6 +1731,8 @@ typedef struct s_opts
 	int							n_tokens;
 	int							gen_tokens;
 	const char					*out_path;
+	const char					*mode;			/* "sensitivity" or "optimize" */
+	int							search_budget;	/* Phase 3.4 max slots considered */
 }	opts_t;
 
 static int	parse_args(int argc, char **argv, opts_t *o)
@@ -1277,6 +1745,8 @@ static int	parse_args(int argc, char **argv, opts_t *o)
 	o->n_tokens = 1024;
 	o->gen_tokens = 32;
 	o->out_path = NULL;
+	o->mode = "sensitivity";
+	o->search_budget = 60;
 	i = 1;
 	while (i < argc)
 	{
@@ -1312,13 +1782,24 @@ static int	parse_args(int argc, char **argv, opts_t *o)
 			o->out_path = argv[i + 1];
 			i += 2;
 		}
+		else if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc)
+		{
+			o->mode = argv[i + 1];
+			i += 2;
+		}
+		else if (strcmp(argv[i], "--search-budget") == 0 && i + 1 < argc)
+		{
+			o->search_budget = atoi(argv[i + 1]);
+			i += 2;
+		}
 		else
 			return (die("unknown or malformed option"));
 	}
 	if (o->model_path == NULL || o->prompts.empty())
 		return (die("usage: --model M --prompt PATH ANSWER|- [...]"
 				" [--profiler-index N] [--n-tokens N] [--gen-tokens G]"
-				" [--out OUT.jsonl]"));
+				" [--out OUT.jsonl] [--mode sensitivity|optimize]"
+				" [--search-budget N]"));
 	return (0);
 }
 
@@ -1330,12 +1811,102 @@ static long	peak_rss_kb(void)
 	return (ru.ru_maxrss);
 }
 
-int	main(int argc, char **argv)
+/* Top-level Phase 3.4 flow: baseline filtering (item 6), all-Q8 recall
+ * reference (item 4), greedy search (item 2), backtracking (item 3),
+ * a fresh Phase 3.3 independent policy for comparison, and the final
+ * 5-way table (item 7) over every prompt (valid and excluded alike, the
+ * latter clearly labeled). */
+static bool	run_optimizer_mode(llama_model *model, const llama_vocab *vocab,
+				const opts_t &o, FILE *out)
 {
-	opts_t				o;
-	llama_model			*model;
-	const llama_vocab	*vocab;
-	FILE				*out;
+	std::vector<baseline_t>	all_bases;
+	std::vector<baseline_t>	valid;
+	std::vector<bool>			is_valid_flags;
+	kv_policy_t					q8_ref_policy;
+	agg_result_t				q8_ref;
+	optimizer_result_t			opt;
+	std::vector<layer_result_t>	layer_results;
+	std::vector<age_result_t>		age_results;
+	std::vector<int>				layer_bits;
+	bool						age_override;
+	size_t						i;
+	std::chrono::steady_clock::time_point	t0;
+	double						total_seconds;
+
+	t0 = std::chrono::steady_clock::now();
+	fprintf(stderr, "\n=== Phase 3.4: baseline filtering (item 6) ===\n");
+	i = 0;
+	while (i < o.prompts.size())
+	{
+		baseline_t	b;
+
+		if (!capture_baseline(model, vocab, o.n_tokens, o.gen_tokens,
+				o.prompts[i].path, o.prompts[i].answer, &b))
+			return (false);
+		bool ok = (b.answer == NULL)
+			|| (b.text.find(b.answer) != std::string::npos);
+		fprintf(stderr, "  %-32s %s\n", o.prompts[i].path,
+			ok ? "VALID" : "EXCLUDED (FP16 baseline itself does not "
+				"answer correctly)");
+		if (ok)
+			valid.push_back(b);
+		is_valid_flags.push_back(ok);
+		all_bases.push_back(std::move(b));
+		i++;
+	}
+	if (valid.empty())
+		return (die("no valid prompts -- FP16 baseline fails all of them, "
+				"cannot optimize"), false);
+	fprintf(stderr, "valid evaluation set: %zu/%zu prompts\n", valid.size(),
+		o.prompts.size());
+	q8_ref_policy = all_q8_policy(valid[0].idx.n_layer);
+	if (!evaluate_policy(model, vocab, o.n_tokens, o.gen_tokens, valid,
+			q8_ref_policy, &q8_ref))
+		return (false);
+	fprintf(stderr, "\nall-Q8 reference on the valid set: cosine %.6f  "
+		"top1 %.2f%%  top5 %.2f%%\n", q8_ref.cosine, q8_ref.top1,
+		q8_ref.top5);
+	if (!greedy_optimize(model, vocab, o.n_tokens, o.gen_tokens, valid,
+			q8_ref.recall_ok, o.search_budget, &opt))
+		return (false);
+	if (!backtrack(model, vocab, o.n_tokens, o.gen_tokens, valid,
+			q8_ref.recall_ok, &opt))
+		return (false);
+	fprintf(stderr, "\nFinal Phase 3.4 policy: %zu accepted, %zu rejected, "
+		"%d live evaluations, %.1fs search time\n", opt.accepted.size(),
+		opt.rejected.size(), opt.evals_used, opt.search_seconds);
+	if (!run_layer_sweep(model, vocab, o.n_tokens, o.gen_tokens, valid[0],
+			g_default_thresholds, &layer_results))
+		return (false);
+	if (!run_age_sweep(model, vocab, o.n_tokens, o.gen_tokens, valid[0],
+			g_default_thresholds, &age_results))
+		return (false);
+	layer_bits.resize(layer_results.size());
+	for (i = 0; i < layer_results.size(); i++)
+		layer_bits[i] = layer_results[i].classification;
+	age_override = !age_results.empty() && age_results[0].classification == 4;
+	emit_policy_json(out, opt, (int)valid[0].idx.n_layer);
+	fprintf(stderr, "\n=== Final comparison across %zu prompts ===\n",
+		all_bases.size());
+	i = 0;
+	while (i < all_bases.size())
+	{
+		if (!run_final_comparison(model, vocab, o.n_tokens, o.gen_tokens,
+				all_bases[i], o.prompts[i].path, layer_bits, age_override,
+				opt.policy, out, is_valid_flags[i]))
+			return (false);
+		i++;
+	}
+	total_seconds = std::chrono::duration<double>(
+			std::chrono::steady_clock::now() - t0).count();
+	fprintf(stderr, "\npolicy decision overhead (this whole run, wall "
+		"clock): %.1fs\n", total_seconds);
+	return (true);
+}
+
+static bool	run_sensitivity_mode(llama_model *model, const llama_vocab *vocab,
+				const opts_t &o, FILE *out)
+{
 	std::vector<baseline_t>			bases;
 	baseline_t							prof;
 	std::vector<layer_result_t>		layer_results;
@@ -1344,31 +1915,22 @@ int	main(int argc, char **argv)
 	bool								age_override;
 	size_t								i;
 
-	if (parse_args(argc, argv, &o) != 0)
-		return (2);
-	llama_backend_init();
-	model = llama_model_load_from_file(o.model_path,
-			llama_model_default_params());
-	if (model == NULL)
-		return (die("model load failed"), 2);
-	vocab = llama_model_get_vocab(model);
-	out = o.out_path != NULL ? fopen(o.out_path, "w") : NULL;
 	if (!capture_baseline(model, vocab, o.n_tokens, o.gen_tokens,
 			o.prompts[(size_t)o.profiler_index].path,
 			o.prompts[(size_t)o.profiler_index].answer, &prof))
-		return (llama_model_free(model), 2);
+		return (false);
 	fprintf(stderr, "profiler prompt: %s (%u tokens, %u KV cells)\n",
 		o.prompts[(size_t)o.profiler_index].path,
 		(unsigned)prof.prompt_tokens.size(), prof.idx.cell_count);
 	if (!self_test(model, vocab, o.n_tokens, o.gen_tokens, prof))
 		return (die("self-test failed -- aborting, results would not be "
-				"trustworthy"), llama_model_free(model), 2);
+				"trustworthy"), false);
 	if (!run_layer_sweep(model, vocab, o.n_tokens, o.gen_tokens, prof,
 			g_default_thresholds, &layer_results))
-		return (llama_model_free(model), 2);
+		return (false);
 	if (!run_age_sweep(model, vocab, o.n_tokens, o.gen_tokens, prof,
 			g_default_thresholds, &age_results))
-		return (llama_model_free(model), 2);
+		return (false);
 	layer_bits.resize(layer_results.size());
 	for (i = 0; i < layer_results.size(); i++)
 		layer_bits[i] = layer_results[i].classification;
@@ -1400,11 +1962,35 @@ int	main(int argc, char **argv)
 				o.prompts[i].path);
 		bases.push_back(std::move(b));
 	}
+	return (true);
+}
+
+int	main(int argc, char **argv)
+{
+	opts_t				o;
+	llama_model			*model;
+	const llama_vocab	*vocab;
+	FILE				*out;
+	bool				ok;
+
+	if (parse_args(argc, argv, &o) != 0)
+		return (2);
+	llama_backend_init();
+	model = llama_model_load_from_file(o.model_path,
+			llama_model_default_params());
+	if (model == NULL)
+		return (die("model load failed"), 2);
+	vocab = llama_model_get_vocab(model);
+	out = o.out_path != NULL ? fopen(o.out_path, "w") : NULL;
+	if (strcmp(o.mode, "optimize") == 0)
+		ok = run_optimizer_mode(model, vocab, o, out);
+	else
+		ok = run_sensitivity_mode(model, vocab, o, out);
 	fprintf(stderr, "\npeak RSS (whole process): %ld MB\n",
 		peak_rss_kb() / 1024);
 	if (out != NULL)
 		fclose(out);
 	llama_model_free(model);
 	llama_backend_free();
-	return (0);
+	return (ok ? 0 : 1);
 }
