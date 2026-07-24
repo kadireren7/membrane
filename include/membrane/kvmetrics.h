@@ -50,6 +50,20 @@ typedef struct s_membrane_kv_metrics
 	double		high_entropy;
 	int			byteplane_applicable;
 	int			byteplane_integrity_ok;
+	/*
+	 * Phase 2.4 -- F16 high-plane Huffman codec. huffman_bytes is the raw
+	 * codec output over all blocks; huffman_adaptive_bytes routes it
+	 * through the block layer (RAW fallback aware). huffman_header_bytes is
+	 * the fixed per-block overhead (codec header + Huffman table) summed
+	 * over the blocks that actually used the codec -- the metadata cost
+	 * that dominates on small blocks.
+	 */
+	uint64_t	huffman_bytes;
+	uint64_t	huffman_adaptive_bytes;
+	uint64_t	huffman_raw_blocks;
+	uint64_t	huffman_codec_blocks;
+	uint64_t	huffman_header_bytes;
+	int			huffman_integrity_ok;
 }	membrane_kv_metrics_t;
 
 membrane_status_t	membrane_kv_metrics_compute(const uint8_t *buf,

@@ -6,6 +6,7 @@ extern const membrane_codec_vtable_t	g_membrane_codec_raw;
 extern const membrane_codec_vtable_t	g_membrane_codec_rle;
 extern const membrane_codec_vtable_t	g_membrane_codec_f16_byteplane_rle;
 extern const membrane_codec_vtable_t	g_membrane_codec_f16_xor_byteplane;
+extern const membrane_codec_vtable_t	g_membrane_codec_f16_highplane_huffman;
 
 static membrane_status_t	unimpl_compress(const uint8_t *in, size_t in_len,
 				uint8_t *out, size_t out_cap, size_t *out_len)
@@ -64,6 +65,7 @@ const membrane_codec_vtable_t	*membrane_codec_get(membrane_codec_t id)
 		&g_membrane_codec_bitpack,
 		&g_membrane_codec_f16_byteplane_rle,
 		&g_membrane_codec_f16_xor_byteplane,
+		&g_membrane_codec_f16_highplane_huffman,
 	};
 
 	if ((int)id < 0 || id >= MEMBRANE_CODEC_COUNT)

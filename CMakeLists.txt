@@ -77,6 +77,8 @@ add_library(membrane_core
   src/codecs/rle.c
   src/codecs/f16_byteplane.c
   src/codecs/f16_xor_byteplane.c
+  src/codecs/huffman.c
+  src/codecs/f16_highplane_huffman.c
   src/codecs/codec_registry.c
   src/stats.c
   src/store/store.c

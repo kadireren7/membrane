@@ -3,7 +3,13 @@
 #include <string.h>
 
 #include "membrane/block.h"
+#include "membrane/huffman.h"
 #include "membrane/kvmetrics.h"
+
+/* Fixed per-block overhead when the high-plane Huffman codec is used: its
+ * 18-byte codec header plus the Huffman table. Mirrors HP_HEADER in
+ * src/codecs/f16_highplane_huffman.c. */
+# define HUFFMAN_META (18 + MEMBRANE_HUFFMAN_HEADER)
 
 static double	block_entropy(const uint8_t *b, size_t len, uint64_t *zeros)
 {
@@ -222,6 +228,75 @@ static membrane_status_t	metrics_byteplane(const uint8_t *b, size_t len,
 	return (byteplane_codec_size(b, len, scratch, m));
 }
 
+/* Pure high-plane Huffman codec output for one block (no fallback). */
+static membrane_status_t	huffman_codec_size(const uint8_t *b, size_t len,
+									membrane_kv_metrics_t *m)
+{
+	const membrane_codec_vtable_t	*hp;
+	uint8_t							*out;
+	size_t							got;
+	membrane_status_t				st;
+
+	hp = membrane_codec_get(MEMBRANE_CODEC_F16_HIGHPLANE_HUFFMAN);
+	out = malloc(hp->bound(len) + 1);
+	if (out == NULL)
+		return (MEMBRANE_ERR_ALLOC_FAILED);
+	st = hp->compress(b, len, out, hp->bound(len), &got);
+	free(out);
+	if (st == MEMBRANE_OK)
+		m->huffman_bytes += got;
+	return (st);
+}
+
+/* Routes the block through the high-plane Huffman codec via the block
+ * layer, so a block that would expand is stored RAW instead. */
+static membrane_status_t	huffman_adaptive(const uint8_t *b, size_t len,
+									uint8_t *scratch, membrane_kv_metrics_t *m)
+{
+	membrane_block_t	*blk;
+	size_t				got;
+	membrane_status_t	st;
+
+	blk = membrane_block_create(0, MEMBRANE_CODEC_F16_HIGHPLANE_HUFFMAN);
+	if (blk == NULL)
+		return (MEMBRANE_ERR_ALLOC_FAILED);
+	st = membrane_block_write(blk, b, len);
+	if (st == MEMBRANE_OK)
+	{
+		m->huffman_adaptive_bytes += blk->stored_size;
+		if (blk->stored_codec == MEMBRANE_CODEC_RAW)
+			m->huffman_raw_blocks += 1;
+		else
+		{
+			m->huffman_codec_blocks += 1;
+			m->huffman_header_bytes += HUFFMAN_META;
+		}
+		st = membrane_block_read(blk, scratch, len, &got);
+		if (st != MEMBRANE_OK || got != len || memcmp(scratch, b, len) != 0)
+			m->huffman_integrity_ok = 0;
+	}
+	membrane_block_destroy(blk);
+	return (st);
+}
+
+static membrane_status_t	metrics_huffman(const uint8_t *b, size_t len,
+									uint8_t *scratch, membrane_kv_metrics_t *m)
+{
+	membrane_status_t	st;
+
+	if (len % 2 != 0)
+	{
+		m->huffman_bytes += len;
+		m->huffman_adaptive_bytes += len;
+		m->huffman_raw_blocks += 1;
+		return (MEMBRANE_OK);
+	}
+	st = huffman_codec_size(b, len, m);
+	if (st != MEMBRANE_OK)
+		return (st);
+	return (huffman_adaptive(b, len, scratch, m));
+}
+
 static membrane_status_t	metrics_one_block(const uint8_t *b, size_t len,
 								uint8_t *scratch, membrane_kv_metrics_t *m)
 {
@@ -237,7 +312,10 @@ static membrane_status_t	metrics_one_block(const uint8_t *b, size_t len,
 	st = block_adaptive(b, len, scratch, m);
 	if (st != MEMBRANE_OK)
 		return (st);
-	return (metrics_byteplane(b, len, scratch, m));
+	st = metrics_byteplane(b, len, scratch, m);
+	if (st != MEMBRANE_OK)
+		return (st);
+	return (metrics_huffman(b, len, scratch, m));
 }
 
 static membrane_status_t	metrics_loop(const uint8_t *buf, size_t len,
@@ -274,6 +352,7 @@ membrane_status_t	membrane_kv_metrics_compute(const uint8_t *buf,
 	out->integrity_ok = 1;
 	out->byteplane_applicable = 1;
 	out->byteplane_integrity_ok = 1;
+	out->huffman_integrity_ok = 1;
 	if (len == 0)
 		return (MEMBRANE_OK);
 	scratch = malloc(block_size);

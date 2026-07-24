@@ -1,12 +1,15 @@
 #define _DEFAULT_SOURCE
 
 #include <getopt.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/utsname.h>
+#include <time.h>
 #include <unistd.h>
 
+#include "membrane/codec.h"
 #include "membrane/kvdump.h"
 #include "membrane/kvmetrics.h"
 #include "membrane/kvpredict.h"
@@ -26,6 +29,7 @@ typedef struct s_kva_opts
 	const char	*jsonl_path;
 	const char	*csv_path;
 	const char	*pred_csv_path;
+	const char	*highplane_path;
 	const char	*meta[MAX_META];
 	int			meta_count;
 	char		**inputs;
@@ -75,18 +79,56 @@ typedef struct s_pred_acc
 	double		q_last[2];
 }	pred_acc_t;
 
+/* Per-block-size high-plane Huffman aggregate (Phase 2.4). enc/dec_ns and
+ * timed_bytes come from a dedicated timing pass over the same blocks. */
+typedef struct s_hp_acc
+{
+	uint64_t	raw;
+	uint64_t	huffman;			/* pure codec output */
+	uint64_t	huffman_adaptive;	/* RAW-fallback aware */
+	uint64_t	ideal;				/* order-0 entropy ceiling bytes */
+	uint64_t	header;				/* metadata of codec-used blocks */
+	uint64_t	codec_blocks;
+	uint64_t	blocks;
+	double		enc_ns;
+	double		dec_ns;
+	uint64_t	timed_bytes;
+}	hp_acc_t;
+
 typedef struct s_kva_out
 {
 	FILE		*jsonl;
 	FILE		*csv;
 	FILE		*pred_csv;
+	FILE		*highplane;
 	kva_totals_t	totals;
 	kva_layer_t	layers[MAX_LAYERS];
 	pred_acc_t	pred[NPRED];
 	uint64_t	layer_pred_ideal[MAX_LAYERS][NPRED];
 	uint64_t	layer_raw[MAX_LAYERS];
 	int			layer_pred_seen[MAX_LAYERS];
+	hp_acc_t	hp[N_BLOCK_SIZES];
+	int			hp_integrity_ok;
 }	kva_out_t;
+
+/* Order-0 entropy ceiling (bytes) for the two F16 byte planes, from the
+ * mean plane entropies the metrics already measured. */
+static uint64_t	huffman_ideal_bytes(const membrane_kv_metrics_t *m)
+{
+	double	plane;
+
+	plane = (double)m->raw_bytes / 2.0;
+	return ((uint64_t)ceil(plane * m->low_entropy / 8.0)
+		+ (uint64_t)ceil(plane * m->high_entropy / 8.0));
+}
+
+static double	now_ns(void)
+{
+	struct timespec	ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ((double)ts.tv_sec * 1e9 + (double)ts.tv_nsec);
+}
 
 static void	print_meta_json(FILE *f, const kva_opts_t *o)
 {
@@ -199,6 +241,28 @@ static void	emit_jsonl_byteplane(FILE *f, const membrane_kv_metrics_t *m)
 		m->byteplane_integrity_ok ? "PASS" : "FAIL");
 }
 
+static void	emit_jsonl_huffman(FILE *f, const membrane_kv_metrics_t *m)
+{
+	uint64_t	ideal;
+
+	ideal = huffman_ideal_bytes(m);
+	fprintf(f,
+		",\"huffman_bytes\":%llu,\"huffman_ratio\":%.4f,"
+		"\"huffman_adaptive_bytes\":%llu,\"huffman_adaptive_ratio\":%.4f,"
+		"\"theoretical_ratio\":%.4f,\"efficiency\":%.4f,"
+		"\"huffman_header_bytes\":%llu,\"huffman_codec_blocks\":%llu,"
+		"\"huffman_integrity\":\"%s\"",
+		(unsigned long long)m->huffman_bytes,
+		ratio_of(m->raw_bytes, m->huffman_bytes),
+		(unsigned long long)m->huffman_adaptive_bytes,
+		ratio_of(m->raw_bytes, m->huffman_adaptive_bytes),
+		ratio_of(m->raw_bytes, ideal),
+		m->huffman_bytes ? (double)ideal / (double)m->huffman_bytes : 0.0,
+		(unsigned long long)m->huffman_header_bytes,
+		(unsigned long long)m->huffman_codec_blocks,
+		m->huffman_integrity_ok ? "PASS" : "FAIL");
+}
+
 static void	emit_jsonl(kva_out_t *out, const kva_opts_t *o, const char *file,
 				const membrane_kv_header_t *h, size_t bs,
 				const membrane_kv_metrics_t *m)
@@ -211,6 +275,7 @@ static void	emit_jsonl(kva_out_t *out, const kva_opts_t *o, const char *file,
 		h->token_start, h->token_end, h->dtype, bs);
 	emit_jsonl_metrics(out->jsonl, m);
 	emit_jsonl_byteplane(out->jsonl, m);
+	emit_jsonl_huffman(out->jsonl, m);
 	print_meta_json(out->jsonl, o);
 	fprintf(out->jsonl, "}\n");
 }
@@ -222,7 +287,7 @@ static void	emit_csv(kva_out_t *out, const char *file,
 	fprintf(out->csv,
 		"%s,%s,%u,%c,%u,%u,%u,%zu,%llu,%llu,%llu,%.4f,%llu,%.4f,"
 		"%.6f,%.4f,%llu,%s,"
-		"%llu,%.4f,%llu,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%s\n",
+		"%llu,%.4f,%llu,%.4f,%.4f,%.4f,%.4f,%.4f,%d,%s",
 		file, h->model, h->layer, h->tensor_type ? 'V' : 'K',
 		h->token_start, h->token_end, h->dtype, bs,
 		(unsigned long long)m->blocks,
@@ -242,6 +307,17 @@ static void	emit_csv(kva_out_t *out, const char *file,
 		ratio_of(m->high_plane_bytes, m->high_plane_rle_bytes),
 		m->byteplane_applicable,
 		m->byteplane_integrity_ok ? "PASS" : "FAIL");
+	fprintf(out->csv, ",%llu,%.4f,%llu,%.4f,%.4f,%.4f,%llu,%s",
+		(unsigned long long)m->huffman_bytes,
+		ratio_of(m->raw_bytes, m->huffman_bytes),
+		(unsigned long long)m->huffman_adaptive_bytes,
+		ratio_of(m->raw_bytes, m->huffman_adaptive_bytes),
+		ratio_of(m->raw_bytes, huffman_ideal_bytes(m)),
+		m->huffman_bytes
+		? (double)huffman_ideal_bytes(m) / (double)m->huffman_bytes : 0.0,
+		(unsigned long long)m->huffman_header_bytes,
+		m->huffman_integrity_ok ? "PASS" : "FAIL");
+	fprintf(out->csv, "\n");
 }
 
 static void	human_record(const membrane_kv_header_t *h,
@@ -390,6 +466,87 @@ static membrane_status_t	analyze_predictors(kva_out_t *out,
 	return (MEMBRANE_OK);
 }
 
+static void	hp_accumulate(hp_acc_t *a, const membrane_kv_metrics_t *m)
+{
+	a->raw += m->raw_bytes;
+	a->huffman += m->huffman_bytes;
+	a->huffman_adaptive += m->huffman_adaptive_bytes;
+	a->ideal += huffman_ideal_bytes(m);
+	a->header += m->huffman_header_bytes;
+	a->codec_blocks += m->huffman_codec_blocks;
+	a->blocks += m->blocks;
+}
+
+/* Times the high-plane Huffman codec (encode then decode) over one
+ * payload split into `bs`-byte blocks, accumulating wall-clock nanoseconds
+ * and the raw bytes processed. Verifies bit-exact decode as it goes. */
+static membrane_status_t	time_highplane(const uint8_t *payload, size_t len,
+								size_t bs, hp_acc_t *a, int *integrity)
+{
+	const membrane_codec_vtable_t	*hp;
+	uint8_t							*enc;
+	uint8_t							*dec;
+	size_t							off;
+	size_t							n;
+	size_t							el;
+	size_t							dl;
+	double							t0;
+	double							t1;
+	double							t2;
+	membrane_status_t				st;
+
+	hp = membrane_codec_get(MEMBRANE_CODEC_F16_HIGHPLANE_HUFFMAN);
+	enc = malloc(hp->bound(bs) + 1);
+	dec = malloc(bs + 1);
+	if (enc == NULL || dec == NULL)
+		return (free(enc), free(dec), MEMBRANE_ERR_ALLOC_FAILED);
+	off = 0;
+	st = MEMBRANE_OK;
+	while (off < len && st == MEMBRANE_OK)
+	{
+		n = len - off;
+		if (n > bs)
+			n = bs;
+		if (n % 2 == 0)
+		{
+			t0 = now_ns();
+			st = hp->compress(payload + off, n, enc, hp->bound(bs), &el);
+			t1 = now_ns();
+			if (st == MEMBRANE_OK)
+				st = hp->decompress(enc, el, dec, bs, &dl);
+			t2 = now_ns();
+			if (st == MEMBRANE_OK && (dl != n
+					|| memcmp(dec, payload + off, n) != 0))
+				*integrity = 0;
+			a->enc_ns += t1 - t0;
+			a->dec_ns += t2 - t1;
+			a->timed_bytes += n;
+		}
+		off += n;
+	}
+	return (free(enc), free(dec), st);
+}
+
+/* Writes the record's high byte plane (odd bytes) to the offline dump so
+ * an external coder (zstd/gzip/xz) can be compared against Huffman. */
+static void	dump_highplane(FILE *f, const uint8_t *payload, size_t len)
+{
+	uint8_t	*high;
+	size_t	i;
+
+	high = malloc(len / 2 + 1);
+	if (high == NULL)
+		return ;
+	i = 0;
+	while (2 * i + 1 < len)
+	{
+		high[i] = payload[2 * i + 1];
+		i++;
+	}
+	fwrite(high, 1, i, f);
+	free(high);
+}
+
 static membrane_status_t	analyze_record(kva_out_t *out,
 								const kva_opts_t *o, const char *file,
 								const membrane_kv_header_t *h,
@@ -408,6 +565,13 @@ static membrane_status_t	analyze_record(kva_out_t *out,
 			return (st);
 		emit_jsonl(out, o, file, h, g_block_sizes[i], &m);
 		emit_csv(out, file, h, g_block_sizes[i], &m);
+		hp_accumulate(&out->hp[i], &m);
+		if (!m.huffman_integrity_ok)
+			out->hp_integrity_ok = 0;
+		st = time_highplane(payload, h->payload_size, g_block_sizes[i],
+				&out->hp[i], &out->hp_integrity_ok);
+		if (st != MEMBRANE_OK)
+			return (st);
 		if (g_block_sizes[i] == SUMMARY_BLOCK)
 		{
 			human_record(h, &m);
@@ -416,6 +580,8 @@ static membrane_status_t	analyze_record(kva_out_t *out,
 		}
 		i++;
 	}
+	if (out->highplane != NULL)
+		dump_highplane(out->highplane, payload, h->payload_size);
 	return (analyze_predictors(out, o, file, h, payload));
 }
 
@@ -596,6 +762,34 @@ static void	human_pred(const kva_out_t *out)
 	human_pred_tokenaxis(out);
 }
 
+/* The Phase 2.4 headline: actual high-plane Huffman ratio, entropy
+ * ceiling, achieved efficiency, throughput, and metadata cost, per block
+ * size, so the small-block overhead is explicit. */
+static void	human_huffman(const kva_out_t *out)
+{
+	const hp_acc_t	*a;
+	int				i;
+
+	fprintf(stderr, "\nHigh-plane Huffman by block size (K+V, all prompts):\n");
+	fprintf(stderr, "  block     actual  adaptive  ceiling  effic"
+		"  enc GB/s  dec GB/s   meta%%\n");
+	i = 0;
+	while (i < N_BLOCK_SIZES)
+	{
+		a = &out->hp[i];
+		fprintf(stderr,
+			"  %6zu   %.3fx   %.3fx    %.3fx  %.3f   %7.3f   %7.3f  %6.2f\n",
+			g_block_sizes[i], ratio_of(a->raw, a->huffman),
+			ratio_of(a->raw, a->huffman_adaptive), ratio_of(a->raw, a->ideal),
+			a->huffman ? (double)a->ideal / (double)a->huffman : 0.0,
+			a->enc_ns > 0 ? (double)a->timed_bytes / a->enc_ns : 0.0,
+			a->dec_ns > 0 ? (double)a->timed_bytes / a->dec_ns : 0.0,
+			a->huffman ? 100.0 * (double)a->header / (double)a->huffman : 0.0);
+		i++;
+	}
+	fprintf(stderr, "  integrity: %s\n", out->hp_integrity_ok ? "PASS" : "FAIL");
+}
+
 static int	opt_apply(kva_opts_t *o, int c)
 {
 	if (c == 'j')
@@ -606,6 +800,8 @@ static int	opt_apply(kva_opts_t *o, int c)
 		o->meta[o->meta_count++] = optarg;
 	else if (c == 'p')
 		o->pred_csv_path = optarg;
+	else if (c == 'H')
+		o->highplane_path = optarg;
 	else if (c != 'x')
 		return (-1);
 	return (0);
@@ -617,24 +813,25 @@ static int	parse_opts(int argc, char **argv, kva_opts_t *o)
 	{"jsonl", required_argument, 0, 'j'},
 	{"csv", required_argument, 0, 'v'},
 	{"pred-csv", required_argument, 0, 'p'},
+	{"dump-highplane", required_argument, 0, 'H'},
 	{"meta", required_argument, 0, 'x'},
 	{0, 0, 0, 0}};
 	int						c;
 
 	memset(o, 0, sizeof(*o));
-	c = getopt_long(argc, argv, "j:v:p:x:", lo, NULL);
+	c = getopt_long(argc, argv, "j:v:p:H:x:", lo, NULL);
 	while (c != -1)
 	{
 		if (opt_apply(o, c) != 0)
 			return (-1);
-		c = getopt_long(argc, argv, "j:v:p:x:", lo, NULL);
+		c = getopt_long(argc, argv, "j:v:p:H:x:", lo, NULL);
 	}
 	o->inputs = argv + optind;
 	o->input_count = argc - optind;
 	if (o->input_count < 1 || o->jsonl_path == NULL || o->csv_path == NULL)
 	{
 		fprintf(stderr, "Usage: membrane-kv-analyze --jsonl OUT --csv OUT "
-			"[--pred-csv OUT] [--meta k=v]... DUMP...\n");
+			"[--pred-csv OUT] [--dump-highplane OUT] [--meta k=v]... DUMP...\n");
 		return (-1);
 	}
 	return (0);
@@ -652,9 +849,13 @@ static int	open_outputs(kva_out_t *out, const kva_opts_t *o)
 		"byteplane_bytes,byteplane_ratio,byteplane_adaptive_bytes,"
 		"byteplane_adaptive_ratio,low_entropy_bits,high_entropy_bits,"
 		"low_plane_ratio,high_plane_ratio,byteplane_applicable,"
-		"byteplane_integrity\n");
+		"byteplane_integrity,"
+		"huffman_bytes,huffman_ratio,huffman_adaptive_bytes,"
+		"huffman_adaptive_ratio,theoretical_ratio,efficiency,"
+		"huffman_header_bytes,huffman_integrity\n");
 	out->totals.integrity_ok = 1;
 	out->totals.byteplane_integrity_ok = 1;
+	out->hp_integrity_ok = 1;
 	if (o->pred_csv_path != NULL)
 	{
 		out->pred_csv = fopen(o->pred_csv_path, "w");
@@ -664,6 +865,12 @@ static int	open_outputs(kva_out_t *out, const kva_opts_t *o)
 			"stride_elems,applicable,raw_bytes,entropy_bits,low_entropy_bits,"
 			"high_entropy_bits,zero_u16_ratio,zero_byte_ratio,longest_zero_run,"
 			"ideal_bytes,theoretical_ratio,q0,q1,q2,q3\n");
+	}
+	if (o->highplane_path != NULL)
+	{
+		out->highplane = fopen(o->highplane_path, "wb");
+		if (out->highplane == NULL)
+			return (fprintf(stderr, "cannot open highplane dump\n"), -1);
 	}
 	return (0);
 }
@@ -691,12 +898,15 @@ int	main(int argc, char **argv)
 	}
 	human_totals(&out);
 	human_pred(&out);
+	human_huffman(&out);
 	fclose(out.jsonl);
 	fclose(out.csv);
 	if (out.pred_csv != NULL)
 		fclose(out.pred_csv);
+	if (out.highplane != NULL)
+		fclose(out.highplane);
 	if (rc == 0 && (!out.totals.integrity_ok
-			|| !out.totals.byteplane_integrity_ok))
+			|| !out.totals.byteplane_integrity_ok || !out.hp_integrity_ok))
 		rc = 1;
 	return (rc);
 }
