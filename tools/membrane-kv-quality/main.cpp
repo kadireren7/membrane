@@ -1,33 +1,43 @@
 /*
- * membrane-kv-quality: measures the model-quality impact of quantizing
- * the KV cache during real inference (Phase 3.1, item 7).
+ * membrane-kv-quality: live model-quality validation of KV-cache
+ * quantization (Phase 3.2).
  *
- * MEMBRANE's own MEMBRANE_CODEC_F16_Q8_BLOCK codec (src/codecs/q8block.c)
- * is a standalone, offline transform -- it is not wired into any
- * inference runtime yet (that is future integration work, roadmap
- * Phase 3+). To measure what block-wise int8 KV quantization actually
- * does to a running model's outputs today, this tool uses llama.cpp's
- * OWN native ggml Q8_0 KV cache type (per-32-element-block symmetric int8
- * with an F16 scale) as the closest real analogue: same granularity and
- * quantization family as MEMBRANE's group_elems=32 symmetric config, just
- * implemented inside llama.cpp's attention kernels instead of MEMBRANE's
- * codec. Every number below is measured from actual llama.cpp inference,
- * not derived from the offline codec.
+ * IMPORTANT SCOPE NOTE, established empirically while building this tool:
+ * ggml's quantized KV cache types (Q8_0, Q4_0, Q5_0, Q5_1, Q4_1, IQ4_NL)
+ * all use a FIXED block size of 32 -- baked into the on-disk/in-memory
+ * format itself, not a runtime parameter. llama.cpp has no notion of
+ * "Q8_0 with group_elems=128" or "affine int8 KV cache"; those are
+ * properties of MEMBRANE's own codec (Phase 3.1,
+ * src/codecs/q8block.c), which is not wired into any inference runtime.
+ * So only ONE live config actually exists to test this way: GGML_TYPE_Q8_0
+ * (block-32, symmetric) -- the live analogue of MEMBRANE's
+ * "symmetric, group_elems=32" config specifically. The other three swept
+ * configs from Phase 3.1 (symmetric/64, symmetric/128, symmetric/256,
+ * affine/128) have no live equivalent in llama.cpp and are NOT
+ * re-validated here; their numbers remain the Phase 3.1 offline
+ * measurements on real captured KV tensors, cited in
+ * docs/phase3-kv-q8-quality.md. This tool also runs GGML_TYPE_Q4_0 as a
+ * bonus second live data point (also block-32, but 4-bit instead of
+ * 8-bit) since it costs nothing extra in this design and gives one more
+ * real quality/memory tradeoff point beyond what was strictly asked.
  *
- * Methodology: three decode passes over the same prompt and model.
- *   1. Baseline (F16 KV): greedy-decode gen_tokens steps, recording every
- *      chosen token and its full logit vector.
- *   2. Quantized (Q8_0 KV), free-running: greedy-decode independently
- *      from the same prompt, to see whether the *generated text* itself
- *      diverges over time.
- *   3. Quantized (Q8_0 KV), teacher-forced: fed the exact token sequence
- *      pass 1 chose, so pass 3's logits are directly comparable to pass
- *      1's logits at matched positions -- isolating the KV-quantization
- *      effect on logits from any confound of the two passes having
- *      walked different token sequences.
- * Peak RSS is a whole-process running maximum on Linux, so a clean
- * per-variant number needs separate process invocations: pass --variant
- * baseline or --variant q8 to measure one in isolation.
+ * Methodology per (prompt, live type, run): three decode passes, as in
+ * Phase 3.1 --
+ *   1. F16 baseline: greedy-decode gen_tokens steps, recording every
+ *      chosen token, its full logit vector, and prefill (TTFT) time.
+ *   2. Quantized, free-running: greedy-decode independently from the same
+ *      prompt, to see whether generated TEXT diverges over time; the
+ *      first position where its own greedy choice differs from the
+ *      baseline's is recorded.
+ *   3. Quantized, teacher-forced on pass 1's exact tokens: its logits are
+ *      then directly comparable to pass 1's at matched positions,
+ *      isolating the quantization effect from any confound of the two
+ *      passes having walked different token sequences.
+ * Every metric is collected over >= 10 repeated runs per (prompt, type)
+ * and reported as mean/min/max/stddev, since llama.cpp's multi-threaded
+ * CPU reduction order can introduce tiny run-to-run floating-point
+ * nondeterminism even under greedy (seed-free) decoding -- that variance
+ * is itself worth measuring honestly, not assumed to be zero.
  */
 
 #include <sys/resource.h>
@@ -42,23 +52,34 @@
 #include <vector>
 
 #include "llama.h"
-#include "membrane/q8block.h"
 
 typedef struct s_quality_opts
 {
-	const char	*model_path;
-	const char	*prompt_path;
-	int			n_tokens;
-	int			gen_tokens;
-	const char	*variant;	/* "both", "baseline", or "q8" */
+	const char					*model_path;
+	std::vector<const char *>	prompt_paths;
+	int							n_tokens;
+	int							gen_tokens;
+	int							runs;
+	const char					*out_path;
 }	quality_opts_t;
 
-typedef struct s_pass_result
+typedef struct s_prompt_entry
 {
-	std::vector<llama_token>			tokens;
-	std::vector<std::vector<float>>	logits;
-	double								tokens_per_sec;
-}	pass_result_t;
+	std::string					name;
+	std::vector<llama_token>	tokens;
+}	prompt_entry_t;
+
+typedef struct s_live_type
+{
+	const char	*name;
+	ggml_type	type;
+}	live_type_t;
+
+static const live_type_t	g_live_types[] = {
+	{"q8_0", GGML_TYPE_Q8_0},
+	{"q4_0", GGML_TYPE_Q4_0},
+};
+# define N_LIVE_TYPES 2
 
 static int	die(const char *msg)
 {
@@ -66,7 +87,7 @@ static int	die(const char *msg)
 	return (-1);
 }
 
-static std::string	read_prompt(const char *path)
+static std::string	read_file(const char *path)
 {
 	FILE		*f;
 	std::string	s;
@@ -82,20 +103,38 @@ static std::string	read_prompt(const char *path)
 	return (s);
 }
 
-static std::vector<llama_token>	tokenize_prompt(const llama_vocab *vocab,
-									const std::string &text)
+static std::string	basename_no_ext(const char *path)
 {
-	std::vector<llama_token>	out;
-	int							n;
+	std::string	s(path);
+	size_t		slash;
+	size_t		dot;
 
-	out.resize(text.size() + 8);
+	slash = s.find_last_of('/');
+	if (slash != std::string::npos)
+		s = s.substr(slash + 1);
+	dot = s.find_last_of('.');
+	if (dot != std::string::npos)
+		s = s.substr(0, dot);
+	return (s);
+}
+
+static bool	tokenize_prompt(const llama_vocab *vocab, const char *path,
+				prompt_entry_t *out)
+{
+	std::string	text;
+	int			n;
+
+	text = read_file(path);
+	if (text.empty())
+		return (die("empty or unreadable prompt file"), false);
+	out->name = basename_no_ext(path);
+	out->tokens.resize(text.size() + 8);
 	n = llama_tokenize(vocab, text.c_str(), (int32_t)text.size(),
-			out.data(), (int32_t)out.size(), true, false);
+			out->tokens.data(), (int32_t)out->tokens.size(), true, false);
 	if (n < 0)
-		out.clear();
-	else
-		out.resize(n);
-	return (out);
+		return (die("tokenization failed"), false);
+	out->tokens.resize(n);
+	return (true);
 }
 
 static llama_context	*make_context(llama_model *model, int n_ctx,
@@ -110,12 +149,13 @@ static llama_context	*make_context(llama_model *model, int n_ctx,
 	cp.n_threads_batch = 4;
 	cp.type_k = type_k;
 	cp.type_v = type_v;
+	cp.no_perf = true;
 	if (type_k != GGML_TYPE_F16 || type_v != GGML_TYPE_F16)
 		cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
 	return (llama_init_from_model(model, cp));
 }
 
-static int	decode_prompt(llama_context *ctx,
+static bool	decode_prompt(llama_context *ctx,
 				const std::vector<llama_token> &tokens, int n_batch)
 {
 	size_t	off;
@@ -130,35 +170,56 @@ static int	decode_prompt(llama_context *ctx,
 		if (llama_decode(ctx,
 				llama_batch_get_one((llama_token *)tokens.data() + off,
 					(int32_t)n)) != 0)
-			return (die("llama_decode (prompt) failed"));
+			return (die("llama_decode (prompt) failed"), false);
 		off += n;
 	}
-	return (0);
+	return (true);
+}
+
+typedef struct s_pass_result
+{
+	std::vector<llama_token>			tokens;
+	std::vector<std::vector<float>>	logits;
+	double								ttft_ms;
+	double								tokens_per_sec;
+	size_t								kv_state_bytes;
+}	pass_result_t;
+
+static int	argmax(const float *v, int n)
+{
+	int	best;
+	int	i;
+
+	best = 0;
+	for (i = 1; i < n; i++)
+		if (v[i] > v[best])
+			best = i;
+	return (best);
 }
 
 /*
- * Greedy-decodes gen_steps tokens. If `forced` is non-NULL, the token at
- * each step is taken from it instead of argmax-sampled (teacher forcing),
- * but the logits recorded are always this context's own -- this is what
- * makes pass 3 comparable to pass 1 at matched positions.
+ * Greedy-decodes gen_steps tokens. If `forced` is non-NULL, the token fed
+ * at each step comes from it (teacher forcing) instead of this context's
+ * own argmax; the logits recorded are always this context's own.
  */
 static bool	run_pass(llama_context *ctx, const llama_vocab *vocab,
 				const std::vector<llama_token> &prompt, int gen_steps,
 				const std::vector<llama_token> *forced, pass_result_t *out)
 {
-	llama_token				tok;
-	const float				*logits;
-	int32_t					n_vocab;
-	int						i;
-	int						best;
-	int						j;
+	llama_token	tok;
+	const float	*logits;
+	int32_t		n_vocab;
+	int			i;
 	std::chrono::steady_clock::time_point	t0;
 	std::chrono::steady_clock::time_point	t1;
+	std::chrono::steady_clock::time_point	t2;
 
-	if (decode_prompt(ctx, prompt, 256) != 0)
-		return (false);
-	n_vocab = llama_vocab_n_tokens(vocab);
 	t0 = std::chrono::steady_clock::now();
+	if (!decode_prompt(ctx, prompt, 256))
+		return (false);
+	t1 = std::chrono::steady_clock::now();
+	out->ttft_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+	n_vocab = llama_vocab_n_tokens(vocab);
 	i = 0;
 	while (i < gen_steps)
 	{
@@ -169,25 +230,16 @@ static bool	run_pass(llama_context *ctx, const llama_vocab *vocab,
 		if (forced != NULL && i < (int)forced->size())
 			tok = (*forced)[i];
 		else
-		{
-			best = 0;
-			j = 1;
-			while (j < n_vocab)
-			{
-				if (logits[j] > logits[best])
-					best = j;
-				j++;
-			}
-			tok = best;
-		}
+			tok = argmax(logits, n_vocab);
 		out->tokens.push_back(tok);
 		if (llama_decode(ctx, llama_batch_get_one(&tok, 1)) != 0)
 			return (die("llama_decode (gen) failed"), false);
 		i++;
 	}
-	t1 = std::chrono::steady_clock::now();
+	t2 = std::chrono::steady_clock::now();
 	out->tokens_per_sec = (double)gen_steps
-		/ std::chrono::duration<double>(t1 - t0).count();
+		/ std::chrono::duration<double>(t2 - t1).count();
+	out->kv_state_bytes = llama_state_seq_get_size(ctx, 0);
 	return (true);
 }
 
@@ -207,47 +259,93 @@ static std::string	tokens_to_text(const llama_vocab *vocab,
 	return (out);
 }
 
-typedef struct s_logit_stats
+static long	peak_rss_kb(void)
 {
-	uint64_t	steps;
-	uint64_t	top1_agree;
-	uint64_t	top5_agree;
-	double		kl_sum;
-	double		max_logit_diff;
-	double		mean_logit_diff;
-}	logit_stats_t;
+	struct rusage	ru;
 
-static void	softmax(const std::vector<float> &logits, std::vector<double> &p)
-{
-	double	mx;
-	double	sum;
-	size_t	i;
-
-	mx = logits[0];
-	for (float v : logits)
-		if (v > mx)
-			mx = v;
-	sum = 0.0;
-	p.resize(logits.size());
-	for (i = 0; i < logits.size(); i++)
-	{
-		p[i] = exp((double)logits[i] - mx);
-		sum += p[i];
-	}
-	for (i = 0; i < p.size(); i++)
-		p[i] /= sum;
+	getrusage(RUSAGE_SELF, &ru);
+	return (ru.ru_maxrss);
 }
 
-static int	argmax(const std::vector<float> &v)
+/* Running mean/min/max/stddev over repeated-run values for one metric. */
+typedef struct s_stat_acc
 {
-	int	best;
-	int	i;
+	double	sum;
+	double	sumsq;
+	double	mn;
+	double	mx;
+	int		n;
+}	stat_acc_t;
 
-	best = 0;
-	for (i = 1; i < (int)v.size(); i++)
-		if (v[i] > v[best])
-			best = i;
-	return (best);
+static void	stat_init(stat_acc_t *a)
+{
+	a->sum = 0.0;
+	a->sumsq = 0.0;
+	a->mn = 1e300;
+	a->mx = -1e300;
+	a->n = 0;
+}
+
+static void	stat_add(stat_acc_t *a, double v)
+{
+	a->sum += v;
+	a->sumsq += v * v;
+	if (v < a->mn)
+		a->mn = v;
+	if (v > a->mx)
+		a->mx = v;
+	a->n += 1;
+}
+
+static double	stat_mean(const stat_acc_t *a)
+{
+	return (a->n ? a->sum / a->n : 0.0);
+}
+
+static double	stat_stddev(const stat_acc_t *a)
+{
+	double	m;
+	double	var;
+
+	if (a->n < 2)
+		return (0.0);
+	m = stat_mean(a);
+	var = a->sumsq / a->n - m * m;
+	return (var > 0.0 ? sqrt(var) : 0.0);
+}
+
+typedef struct s_agg
+{
+	stat_acc_t	top1_pct;
+	stat_acc_t	top5_pct;
+	stat_acc_t	logit_cosine;
+	stat_acc_t	logit_rmse;
+	stat_acc_t	kl_mean;
+	stat_acc_t	first_divergence;	/* gen_steps if never diverged */
+	stat_acc_t	ttft_ms_base;
+	stat_acc_t	ttft_ms_q8;
+	stat_acc_t	toks_base;
+	stat_acc_t	toks_q8;
+	stat_acc_t	kv_bytes_base;
+	stat_acc_t	kv_bytes_q8;
+	std::string	sample_base_text;
+	std::string	sample_q8_text;
+}	agg_t;
+
+static void	agg_init(agg_t *a)
+{
+	stat_init(&a->top1_pct);
+	stat_init(&a->top5_pct);
+	stat_init(&a->logit_cosine);
+	stat_init(&a->logit_rmse);
+	stat_init(&a->kl_mean);
+	stat_init(&a->first_divergence);
+	stat_init(&a->ttft_ms_base);
+	stat_init(&a->ttft_ms_q8);
+	stat_init(&a->toks_base);
+	stat_init(&a->toks_q8);
+	stat_init(&a->kv_bytes_base);
+	stat_init(&a->kv_bytes_q8);
 }
 
 /* True if `token` is among the 5 highest logits in `logits`. */
@@ -263,184 +361,276 @@ static bool	in_top5(const std::vector<float> &logits, int token)
 	return (rank < 5);
 }
 
+/* One matched-position comparison step: raw-logit cosine/RMSE, softmax KL
+ * divergence, and top-1/top-5 agreement against the baseline's choice. */
 static void	compare_step(const std::vector<float> &base,
-				const std::vector<float> &q8, logit_stats_t *st)
+				const std::vector<float> &q8, double *cos_sum,
+				double *sumsq, uint64_t *n_elems, double *kl_sum,
+				uint64_t *top1, uint64_t *top5)
 {
+	double	dot;
+	double	na;
+	double	nb;
+	double	diff;
+	double	mx;
+	double	sum_pb;
+	double	sum_pq;
 	std::vector<double>	pb;
 	std::vector<double>	pq;
-	int						base_top1;
-	int						q8_top1;
-	double					diff;
-	double					sum_abs;
-	size_t					i;
+	size_t	i;
+	int		base_top1;
 
-	softmax(base, pb);
-	softmax(q8, pq);
-	base_top1 = argmax(base);
-	q8_top1 = argmax(q8);
-	st->steps += 1;
-	st->top1_agree += (base_top1 == q8_top1);
-	st->top5_agree += in_top5(q8, base_top1);
-	sum_abs = 0.0;
+	dot = 0.0;
+	na = 0.0;
+	nb = 0.0;
 	for (i = 0; i < base.size(); i++)
 	{
-		diff = fabs((double)base[i] - (double)q8[i]);
-		sum_abs += diff;
-		if (diff > st->max_logit_diff)
-			st->max_logit_diff = diff;
-		if (pb[i] > 0.0)
-			st->kl_sum += pb[i] * log(pb[i] / (pq[i] > 1e-300 ? pq[i] : 1e-300));
+		dot += (double)base[i] * (double)q8[i];
+		na += (double)base[i] * (double)base[i];
+		nb += (double)q8[i] * (double)q8[i];
+		diff = (double)base[i] - (double)q8[i];
+		*sumsq += diff * diff;
 	}
-	st->mean_logit_diff += sum_abs / (double)base.size();
+	*n_elems += base.size();
+	if (na > 0.0 && nb > 0.0)
+		*cos_sum += dot / (sqrt(na) * sqrt(nb));
+	else
+		*cos_sum += (na == 0.0 && nb == 0.0) ? 1.0 : 0.0;
+	mx = base[0];
+	for (float v : base)
+		if (v > mx)
+			mx = v;
+	pb.resize(base.size());
+	pq.resize(base.size());
+	sum_pb = 0.0;
+	sum_pq = 0.0;
+	for (i = 0; i < base.size(); i++)
+	{
+		pb[i] = exp((double)base[i] - mx);
+		pq[i] = exp((double)q8[i] - mx);
+		sum_pb += pb[i];
+		sum_pq += pq[i];
+	}
+	for (i = 0; i < base.size(); i++)
+	{
+		pb[i] /= sum_pb;
+		pq[i] /= sum_pq;
+		if (pb[i] > 0.0)
+			*kl_sum += pb[i] * log(pb[i] / (pq[i] > 1e-300 ? pq[i] : 1e-300));
+	}
+	base_top1 = argmax(base.data(), (int)base.size());
+	*top1 += (base_top1 == argmax(q8.data(), (int)q8.size()));
+	*top5 += in_top5(q8, base_top1);
 }
 
-static long	peak_rss_kb(void)
+/* One (prompt, live-type) run: baseline + quantized free-running +
+ * quantized teacher-forced, folded into agg's running statistics. */
+static bool	run_once(llama_model *model, const prompt_entry_t &prompt,
+				ggml_type qtype, int n_ctx, int gen_tokens, bool keep_text,
+				agg_t *agg)
 {
-	struct rusage	ru;
-
-	getrusage(RUSAGE_SELF, &ru);
-	return (ru.ru_maxrss);
-}
-
-static void	report_variant_only(llama_context *ctx, const llama_vocab *vocab,
-				const std::vector<llama_token> &prompt, int gen_tokens,
-				const char *label)
-{
-	pass_result_t	r;
-
-	if (!run_pass(ctx, vocab, prompt, gen_tokens, NULL, &r))
-		return ;
-	fprintf(stderr, "%s: %d tokens generated, %.1f tok/s, peak RSS %ld MB\n",
-		label, gen_tokens, r.tokens_per_sec, peak_rss_kb() / 1024);
-	fprintf(stderr, "%s text: %s\n", label,
-		tokens_to_text(vocab, r.tokens).c_str());
-}
-
-static void	report_kv_footprint(void)
-{
-	membrane_q8_cfg_t	cfg;
-	size_t				f16_bytes;
-	size_t				q8_bytes;
-
-	cfg.mode = MEMBRANE_Q8_SYMMETRIC;
-	cfg.group_elems = 32;
-	f16_bytes = 2 * 288;
-	q8_bytes = membrane_q8_bound(f16_bytes, &cfg);
-	fprintf(stderr,
-		"\nKV cache footprint (analytic, from MEMBRANE_CODEC_F16_Q8_BLOCK's "
-		"own ratio, NOT an OOM-probed max-context measurement):\n"
-		"  per-token K or V row: F16 %zu B vs Q8(sym,32) %zu B -> %.3fx\n"
-		"  at a fixed memory budget this implies roughly %.2fx more "
-		"context could fit; not empirically probed to an actual limit.\n",
-		f16_bytes, q8_bytes, (double)f16_bytes / (double)q8_bytes,
-		(double)f16_bytes / (double)q8_bytes);
-}
-
-static void	report_comparison(llama_context *base_ctx,
-				llama_context *q8_ctx, llama_context *q8_forced_ctx,
-				const llama_vocab *vocab,
-				const std::vector<llama_token> &prompt, int gen_tokens)
-{
+	llama_context	*base_ctx;
+	llama_context	*q8_ctx;
+	llama_context	*q8_forced_ctx;
+	const llama_vocab	*vocab;
 	pass_result_t	base;
 	pass_result_t	q8_free;
 	pass_result_t	q8_forced;
-	logit_stats_t	st;
-	size_t			first_diff;
-	size_t			matched;
+	double			cos_sum;
+	double			sumsq;
+	uint64_t		n_elems;
+	double			kl_sum;
+	uint64_t		top1;
+	uint64_t		top5;
 	size_t			i;
+	size_t			steps;
+	long			first_div;
+	bool			ok;
 
-	memset(&st, 0, sizeof(st));
-	if (!run_pass(base_ctx, vocab, prompt, gen_tokens, NULL, &base))
-		return ;
-	if (!run_pass(q8_ctx, vocab, prompt, gen_tokens, NULL, &q8_free))
-		return ;
-	if (!run_pass(q8_forced_ctx, vocab, prompt, gen_tokens, &base.tokens,
-			&q8_forced))
-		return ;
-	for (i = 0; i < base.logits.size() && i < q8_forced.logits.size(); i++)
-		compare_step(base.logits[i], q8_forced.logits[i], &st);
-	first_diff = 0;
-	matched = 0;
-	while (first_diff < base.tokens.size() && first_diff < q8_free.tokens.size()
-		&& base.tokens[first_diff] == q8_free.tokens[first_diff])
+	vocab = llama_model_get_vocab(model);
+	base_ctx = make_context(model, n_ctx, GGML_TYPE_F16, GGML_TYPE_F16);
+	q8_ctx = make_context(model, n_ctx, qtype, qtype);
+	q8_forced_ctx = make_context(model, n_ctx, qtype, qtype);
+	ok = base_ctx != NULL && q8_ctx != NULL && q8_forced_ctx != NULL;
+	if (ok)
+		ok = run_pass(base_ctx, vocab, prompt.tokens, gen_tokens, NULL, &base);
+	if (ok)
+		ok = run_pass(q8_ctx, vocab, prompt.tokens, gen_tokens, NULL, &q8_free);
+	if (ok)
+		ok = run_pass(q8_forced_ctx, vocab, prompt.tokens, gen_tokens,
+				&base.tokens, &q8_forced);
+	if (ok)
 	{
-		matched++;
-		first_diff++;
+		cos_sum = 0.0;
+		sumsq = 0.0;
+		n_elems = 0;
+		kl_sum = 0.0;
+		top1 = 0;
+		top5 = 0;
+		steps = base.logits.size() < q8_forced.logits.size()
+			? base.logits.size() : q8_forced.logits.size();
+		for (i = 0; i < steps; i++)
+			compare_step(base.logits[i], q8_forced.logits[i], &cos_sum,
+				&sumsq, &n_elems, &kl_sum, &top1, &top5);
+		first_div = (long)gen_tokens;
+		for (i = 0; i < base.tokens.size() && i < q8_free.tokens.size(); i++)
+			if (base.tokens[i] != q8_free.tokens[i])
+			{
+				first_div = (long)i;
+				break ;
+			}
+		stat_add(&agg->top1_pct, steps ? 100.0 * (double)top1 / (double)steps
+				: 0.0);
+		stat_add(&agg->top5_pct, steps ? 100.0 * (double)top5 / (double)steps
+				: 0.0);
+		stat_add(&agg->logit_cosine, steps ? cos_sum / (double)steps : 0.0);
+		stat_add(&agg->logit_rmse, n_elems ? sqrt(sumsq / (double)n_elems)
+				: 0.0);
+		stat_add(&agg->kl_mean, steps ? kl_sum / (double)steps : 0.0);
+		stat_add(&agg->first_divergence, (double)first_div);
+		stat_add(&agg->ttft_ms_base, base.ttft_ms);
+		stat_add(&agg->ttft_ms_q8, q8_free.ttft_ms);
+		stat_add(&agg->toks_base, base.tokens_per_sec);
+		stat_add(&agg->toks_q8, q8_free.tokens_per_sec);
+		stat_add(&agg->kv_bytes_base, (double)base.kv_state_bytes);
+		stat_add(&agg->kv_bytes_q8, (double)q8_free.kv_state_bytes);
+		if (keep_text)
+		{
+			agg->sample_base_text = tokens_to_text(vocab, base.tokens);
+			agg->sample_q8_text = tokens_to_text(vocab, q8_free.tokens);
+		}
 	}
-	fprintf(stderr, "\n=== Model quality: FP16 KV baseline vs llama.cpp "
-		"native Q8_0 KV ===\n");
-	fprintf(stderr, "gen_tokens=%d  n_vocab=%d\n", gen_tokens,
-		llama_vocab_n_tokens(vocab));
-	fprintf(stderr, "\nMatched-position logit comparison (Q8 teacher-forced "
-		"on baseline's token choices):\n");
-	fprintf(stderr, "  top-1 agreement: %llu/%llu (%.2f%%)\n",
-		(unsigned long long)st.top1_agree, (unsigned long long)st.steps,
-		st.steps ? 100.0 * (double)st.top1_agree / (double)st.steps : 0.0);
-	fprintf(stderr, "  top-5 agreement: %llu/%llu (%.2f%%)\n",
-		(unsigned long long)st.top5_agree, (unsigned long long)st.steps,
-		st.steps ? 100.0 * (double)st.top5_agree / (double)st.steps : 0.0);
-	fprintf(stderr, "  mean KL divergence (baseline || q8): %.6f\n",
-		st.steps ? st.kl_sum / (double)st.steps : 0.0);
-	fprintf(stderr, "  mean |logit diff|: %.6f   max |logit diff|: %.6f\n",
-		st.steps ? st.mean_logit_diff / (double)st.steps : 0.0,
-		st.max_logit_diff);
-	fprintf(stderr, "\nFree-running generation (each variant picks its own "
-		"tokens):\n");
-	fprintf(stderr, "  tokens identical to baseline before first divergence: "
-		"%zu/%zu\n", matched, base.tokens.size());
-	fprintf(stderr, "  baseline (F16) tok/s: %.1f\n", base.tokens_per_sec);
-	fprintf(stderr, "  q8 (Q8_0)      tok/s: %.1f\n", q8_free.tokens_per_sec);
-	fprintf(stderr, "  baseline text: %s\n",
-		tokens_to_text(vocab, base.tokens).c_str());
-	fprintf(stderr, "  q8       text: %s\n",
-		tokens_to_text(vocab, q8_free.tokens).c_str());
-	fprintf(stderr, "\nPeak RSS after all three passes (whole-process "
-		"running max, not per-variant -- rerun with --variant baseline "
-		"or --variant q8 for an isolated number): %ld MB\n",
-		peak_rss_kb() / 1024);
-	report_kv_footprint();
+	llama_free(base_ctx);
+	llama_free(q8_ctx);
+	llama_free(q8_forced_ctx);
+	return (ok);
+}
+
+static void	print_stat_line(const char *label, const stat_acc_t *a,
+				const char *unit)
+{
+	fprintf(stderr, "    %-22s mean %10.4f  min %10.4f  max %10.4f  "
+		"stddev %10.4f  %s\n", label, stat_mean(a), a->n ? a->mn : 0.0,
+		a->n ? a->mx : 0.0, stat_stddev(a), unit);
+}
+
+static void	print_agg(const char *prompt_name, const char *type_name,
+				int runs, int gen_tokens, const agg_t *a)
+{
+	fprintf(stderr, "\n[%s | %s | %d runs]\n", prompt_name, type_name, runs);
+	print_stat_line("top1_agreement", &a->top1_pct, "%");
+	print_stat_line("top5_agreement", &a->top5_pct, "%");
+	print_stat_line("logit_cosine", &a->logit_cosine, "");
+	print_stat_line("logit_rmse", &a->logit_rmse, "");
+	print_stat_line("kl_divergence", &a->kl_mean, "nats");
+	print_stat_line("first_divergence_pos", &a->first_divergence,
+		gen_tokens == (int)a->first_divergence.mx ? "(gen_tokens = never)"
+			: "tokens");
+	print_stat_line("ttft_baseline", &a->ttft_ms_base, "ms");
+	print_stat_line("ttft_quantized", &a->ttft_ms_q8, "ms");
+	print_stat_line("tok/s_baseline", &a->toks_base, "tok/s");
+	print_stat_line("tok/s_quantized", &a->toks_q8, "tok/s");
+	print_stat_line("kv_bytes_baseline", &a->kv_bytes_base, "bytes");
+	print_stat_line("kv_bytes_quantized", &a->kv_bytes_q8, "bytes");
+	fprintf(stderr, "    KV memory reduction: %.3fx (%.1f%% smaller)\n",
+		stat_mean(&a->kv_bytes_base) / stat_mean(&a->kv_bytes_q8),
+		100.0 * (1.0 - stat_mean(&a->kv_bytes_q8)
+			/ stat_mean(&a->kv_bytes_base)));
+	fprintf(stderr, "    speed penalty: %.3fx (quantized tok/s / baseline "
+		"tok/s)\n", stat_mean(&a->toks_q8) / stat_mean(&a->toks_base));
+	fprintf(stderr, "    sample baseline text: %s\n",
+		a->sample_base_text.c_str());
+	fprintf(stderr, "    sample quantized text: %s\n",
+		a->sample_q8_text.c_str());
+}
+
+static void	emit_json_line(FILE *f, const char *prompt_name,
+				const char *type_name, int runs, const agg_t *a)
+{
+	fprintf(f, "{\"prompt\":\"%s\",\"type\":\"%s\",\"runs\":%d,",
+		prompt_name, type_name, runs);
+	fprintf(f, "\"top1_pct\":{\"mean\":%.6f,\"min\":%.6f,\"max\":%.6f,"
+		"\"stddev\":%.6f},", stat_mean(&a->top1_pct), a->top1_pct.mn,
+		a->top1_pct.mx, stat_stddev(&a->top1_pct));
+	fprintf(f, "\"top5_pct\":{\"mean\":%.6f,\"min\":%.6f,\"max\":%.6f,"
+		"\"stddev\":%.6f},", stat_mean(&a->top5_pct), a->top5_pct.mn,
+		a->top5_pct.mx, stat_stddev(&a->top5_pct));
+	fprintf(f, "\"logit_cosine\":{\"mean\":%.6f,\"min\":%.6f,\"max\":%.6f,"
+		"\"stddev\":%.6f},", stat_mean(&a->logit_cosine), a->logit_cosine.mn,
+		a->logit_cosine.mx, stat_stddev(&a->logit_cosine));
+	fprintf(f, "\"logit_rmse\":{\"mean\":%.6f,\"min\":%.6f,\"max\":%.6f,"
+		"\"stddev\":%.6f},", stat_mean(&a->logit_rmse), a->logit_rmse.mn,
+		a->logit_rmse.mx, stat_stddev(&a->logit_rmse));
+	fprintf(f, "\"kl_divergence\":{\"mean\":%.6f,\"min\":%.6f,\"max\":%.6f,"
+		"\"stddev\":%.6f},", stat_mean(&a->kl_mean), a->kl_mean.mn,
+		a->kl_mean.mx, stat_stddev(&a->kl_mean));
+	fprintf(f, "\"first_divergence\":{\"mean\":%.6f,\"min\":%.6f,"
+		"\"max\":%.6f,\"stddev\":%.6f},", stat_mean(&a->first_divergence),
+		a->first_divergence.mn, a->first_divergence.mx,
+		stat_stddev(&a->first_divergence));
+	fprintf(f, "\"ttft_ms_baseline\":{\"mean\":%.6f,\"stddev\":%.6f},",
+		stat_mean(&a->ttft_ms_base), stat_stddev(&a->ttft_ms_base));
+	fprintf(f, "\"ttft_ms_quantized\":{\"mean\":%.6f,\"stddev\":%.6f},",
+		stat_mean(&a->ttft_ms_q8), stat_stddev(&a->ttft_ms_q8));
+	fprintf(f, "\"toks_baseline\":{\"mean\":%.6f,\"stddev\":%.6f},",
+		stat_mean(&a->toks_base), stat_stddev(&a->toks_base));
+	fprintf(f, "\"toks_quantized\":{\"mean\":%.6f,\"stddev\":%.6f},",
+		stat_mean(&a->toks_q8), stat_stddev(&a->toks_q8));
+	fprintf(f, "\"kv_bytes_baseline\":{\"mean\":%.6f},",
+		stat_mean(&a->kv_bytes_base));
+	fprintf(f, "\"kv_bytes_quantized\":{\"mean\":%.6f},",
+		stat_mean(&a->kv_bytes_q8));
+	fprintf(f, "\"kv_reduction_x\":%.6f}\n",
+		stat_mean(&a->kv_bytes_base) / stat_mean(&a->kv_bytes_q8));
 }
 
 static int	parse_args(int argc, char **argv, quality_opts_t *o)
 {
 	int	i;
 
-	memset(o, 0, sizeof(*o));
-	o->n_tokens = 512;
-	o->gen_tokens = 64;
-	o->variant = "both";
+	o->model_path = NULL;
+	o->prompt_paths.clear();
+	o->n_tokens = 1024;
+	o->gen_tokens = 32;
+	o->runs = 10;
+	o->out_path = NULL;
 	i = 1;
 	while (i + 1 < argc)
 	{
 		if (strcmp(argv[i], "--model") == 0)
 			o->model_path = argv[i + 1];
 		else if (strcmp(argv[i], "--prompt-file") == 0)
-			o->prompt_path = argv[i + 1];
+			o->prompt_paths.push_back(argv[i + 1]);
 		else if (strcmp(argv[i], "--n-tokens") == 0)
 			o->n_tokens = atoi(argv[i + 1]);
 		else if (strcmp(argv[i], "--gen-tokens") == 0)
 			o->gen_tokens = atoi(argv[i + 1]);
-		else if (strcmp(argv[i], "--variant") == 0)
-			o->variant = argv[i + 1];
+		else if (strcmp(argv[i], "--runs") == 0)
+			o->runs = atoi(argv[i + 1]);
+		else if (strcmp(argv[i], "--out") == 0)
+			o->out_path = argv[i + 1];
 		else
 			return (die("unknown option"));
 		i += 2;
 	}
-	if (o->model_path == NULL || o->prompt_path == NULL || o->gen_tokens < 1)
-		return (die("usage: --model M --prompt-file P [--n-tokens N] "
-				"[--gen-tokens G] [--variant both|baseline|q8]"));
+	if (o->model_path == NULL || o->prompt_paths.empty() || o->runs < 1)
+		return (die("usage: --model M --prompt-file P [--prompt-file P]... "
+				"[--n-tokens N] [--gen-tokens G] [--runs R] [--out OUT.jsonl]"));
 	return (0);
 }
 
 int	main(int argc, char **argv)
 {
-	quality_opts_t				o;
-	llama_model					*model;
-	const llama_vocab			*vocab;
-	std::vector<llama_token>	prompt;
-	llama_context				*base_ctx;
-	llama_context				*q8_ctx;
-	llama_context				*q8_forced_ctx;
+	quality_opts_t	o;
+	llama_model		*model;
+	const llama_vocab	*vocab;
+	FILE			*out;
+	prompt_entry_t	prompt;
+	agg_t			agg;
+	int				ti;
+	size_t			pi;
+	int				run;
+	bool			ok;
 
 	if (parse_args(argc, argv, &o) != 0)
 		return (2);
@@ -450,44 +640,46 @@ int	main(int argc, char **argv)
 	if (model == NULL)
 		return (die("model load failed"), 2);
 	vocab = llama_model_get_vocab(model);
-	prompt = tokenize_prompt(vocab, read_prompt(o.prompt_path));
-	if (prompt.empty())
-		return (die("tokenization failed"), llama_model_free(model), 2);
-	if (strcmp(o.variant, "baseline") == 0)
+	out = NULL;
+	if (o.out_path != NULL)
+		out = fopen(o.out_path, "w");
+	fprintf(stderr, "model=%s  n_ctx=%d  gen_tokens=%d  runs=%d\n",
+		o.model_path, o.n_tokens, o.gen_tokens, o.runs);
+	for (pi = 0; pi < o.prompt_paths.size(); pi++)
 	{
-		base_ctx = make_context(model, o.n_tokens, GGML_TYPE_F16,
-				GGML_TYPE_F16);
-		if (base_ctx != NULL)
-			report_variant_only(base_ctx, vocab, prompt, o.gen_tokens,
-				"baseline (F16 KV)");
-		llama_free(base_ctx);
+		if (!tokenize_prompt(vocab, o.prompt_paths[pi], &prompt))
+			continue ;
+		fprintf(stderr, "\n=== prompt: %s (%zu tokens) ===\n", prompt.name.c_str(),
+			prompt.tokens.size());
+		for (ti = 0; ti < N_LIVE_TYPES; ti++)
+		{
+			agg_init(&agg);
+			run = 0;
+			while (run < o.runs)
+			{
+				ok = run_once(model, prompt, g_live_types[ti].type,
+						o.n_tokens, o.gen_tokens, run == 0, &agg);
+				if (!ok)
+					break ;
+				run++;
+			}
+			if (run == 0)
+			{
+				fprintf(stderr, "  [%s] all runs failed, skipping\n",
+					g_live_types[ti].name);
+				continue ;
+			}
+			print_agg(prompt.name.c_str(), g_live_types[ti].name, run,
+				o.gen_tokens, &agg);
+			if (out != NULL)
+				emit_json_line(out, prompt.name.c_str(),
+					g_live_types[ti].name, run, &agg);
+		}
 	}
-	else if (strcmp(o.variant, "q8") == 0)
-	{
-		q8_ctx = make_context(model, o.n_tokens, GGML_TYPE_Q8_0,
-				GGML_TYPE_Q8_0);
-		if (q8_ctx != NULL)
-			report_variant_only(q8_ctx, vocab, prompt, o.gen_tokens,
-				"quantized (Q8_0 KV)");
-		llama_free(q8_ctx);
-	}
-	else
-	{
-		base_ctx = make_context(model, o.n_tokens, GGML_TYPE_F16,
-				GGML_TYPE_F16);
-		q8_ctx = make_context(model, o.n_tokens, GGML_TYPE_Q8_0,
-				GGML_TYPE_Q8_0);
-		q8_forced_ctx = make_context(model, o.n_tokens, GGML_TYPE_Q8_0,
-				GGML_TYPE_Q8_0);
-		if (base_ctx != NULL && q8_ctx != NULL && q8_forced_ctx != NULL)
-			report_comparison(base_ctx, q8_ctx, q8_forced_ctx, vocab, prompt,
-				o.gen_tokens);
-		else
-			die("context creation failed");
-		llama_free(base_ctx);
-		llama_free(q8_ctx);
-		llama_free(q8_forced_ctx);
-	}
+	fprintf(stderr, "\npeak RSS (whole process): %ld MB\n",
+		peak_rss_kb() / 1024);
+	if (out != NULL)
+		fclose(out);
 	llama_model_free(model);
 	llama_backend_free();
 	return (0);
