@@ -112,6 +112,7 @@ if(MEMBRANE_ENABLE_LLAMA)
   add_subdirectory(third_party/llama.cpp EXCLUDE_FROM_ALL)
   add_subdirectory(tools/membrane-kv-capture)
   add_subdirectory(tools/membrane-kv-quality)
+  add_subdirectory(tools/membrane-kv-sensitivity)
 endif()
 
 if(MEMBRANE_BUILD_TESTS)
