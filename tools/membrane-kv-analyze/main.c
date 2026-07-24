@@ -9,11 +9,13 @@
 
 #include "membrane/kvdump.h"
 #include "membrane/kvmetrics.h"
+#include "membrane/kvpredict.h"
 
 # define MAX_META 8
 # define N_BLOCK_SIZES 4
 # define MAX_LAYERS 64
 # define SUMMARY_BLOCK 65536
+# define NPRED MEMBRANE_PRED_COUNT
 
 static const size_t	g_block_sizes[N_BLOCK_SIZES] = {
 	4096, 16384, 65536, 262144
@@ -23,6 +25,7 @@ typedef struct s_kva_opts
 {
 	const char	*jsonl_path;
 	const char	*csv_path;
+	const char	*pred_csv_path;
 	const char	*meta[MAX_META];
 	int			meta_count;
 	char		**inputs;
@@ -60,12 +63,29 @@ typedef struct s_kva_file_sum
 	uint64_t	byteplane_adaptive;
 }	kva_file_sum_t;
 
+/* Per-predictor residual aggregate over whole tensor payloads, split by
+ * tensor (index 0 = K, 1 = V). ent_bytes / q_* are byte-weighted sums. */
+typedef struct s_pred_acc
+{
+	uint64_t	raw[2];
+	uint64_t	ideal[2];
+	uint64_t	bytes[2];
+	double		ent_bytes[2];
+	double		q_first[2];
+	double		q_last[2];
+}	pred_acc_t;
+
 typedef struct s_kva_out
 {
 	FILE		*jsonl;
 	FILE		*csv;
+	FILE		*pred_csv;
 	kva_totals_t	totals;
 	kva_layer_t	layers[MAX_LAYERS];
+	pred_acc_t	pred[NPRED];
+	uint64_t	layer_pred_ideal[MAX_LAYERS][NPRED];
+	uint64_t	layer_raw[MAX_LAYERS];
+	int			layer_pred_seen[MAX_LAYERS];
 }	kva_out_t;
 
 static void	print_meta_json(FILE *f, const kva_opts_t *o)
@@ -273,6 +293,103 @@ static void	file_sum_add(kva_file_sum_t *fs, const membrane_kv_metrics_t *m)
 	fs->byteplane_adaptive += m->byteplane_adaptive_bytes;
 }
 
+static void	emit_residual(kva_out_t *out, const kva_opts_t *o,
+				const char *file, const membrane_kv_header_t *h,
+				const membrane_residual_metrics_t *m, membrane_predictor_t p)
+{
+	fprintf(out->jsonl,
+		"{\"record\":\"residual\",\"file\":\"%s\",\"model\":\"%s\","
+		"\"layer\":%u,\"tensor\":\"%c\",\"predictor\":\"%s\","
+		"\"stride_elems\":%llu,\"applicable\":%d,\"raw_bytes\":%llu,"
+		"\"entropy_bits\":%.4f,\"low_entropy_bits\":%.4f,"
+		"\"high_entropy_bits\":%.4f,\"zero_u16_ratio\":%.6f,"
+		"\"zero_byte_ratio\":%.6f,\"longest_zero_run\":%llu,"
+		"\"ideal_bytes\":%llu,\"theoretical_ratio\":%.4f,\"q0\":%.4f,"
+		"\"q1\":%.4f,\"q2\":%.4f,\"q3\":%.4f",
+		file, h->model, h->layer, h->tensor_type ? 'V' : 'K',
+		membrane_predictor_name(p), (unsigned long long)m->stride_elems,
+		m->applicable, (unsigned long long)m->raw_bytes, m->entropy,
+		m->low_entropy, m->high_entropy,
+		m->total_u16 ? (double)m->zero_u16 / (double)m->total_u16 : 0.0,
+		m->raw_bytes ? (double)m->zero_bytes / (double)m->raw_bytes : 0.0,
+		(unsigned long long)m->longest_zero_run,
+		(unsigned long long)m->ideal_bytes,
+		ratio_of(m->raw_bytes, m->ideal_bytes), m->quartile_entropy[0],
+		m->quartile_entropy[1], m->quartile_entropy[2],
+		m->quartile_entropy[3]);
+	print_meta_json(out->jsonl, o);
+	fprintf(out->jsonl, "}\n");
+	if (out->pred_csv == NULL)
+		return ;
+	fprintf(out->pred_csv,
+		"%s,%s,%u,%c,%s,%llu,%d,%llu,%.4f,%.4f,%.4f,%.6f,%.6f,%llu,%llu,"
+		"%.4f,%.4f,%.4f,%.4f,%.4f\n",
+		file, h->model, h->layer, h->tensor_type ? 'V' : 'K',
+		membrane_predictor_name(p), (unsigned long long)m->stride_elems,
+		m->applicable, (unsigned long long)m->raw_bytes, m->entropy,
+		m->low_entropy, m->high_entropy,
+		m->total_u16 ? (double)m->zero_u16 / (double)m->total_u16 : 0.0,
+		m->raw_bytes ? (double)m->zero_bytes / (double)m->raw_bytes : 0.0,
+		(unsigned long long)m->longest_zero_run,
+		(unsigned long long)m->ideal_bytes,
+		ratio_of(m->raw_bytes, m->ideal_bytes), m->quartile_entropy[0],
+		m->quartile_entropy[1], m->quartile_entropy[2],
+		m->quartile_entropy[3]);
+}
+
+static void	pred_accumulate(kva_out_t *out, const membrane_kv_header_t *h,
+				int p, const membrane_residual_metrics_t *m)
+{
+	pred_acc_t	*a;
+	int			idx;
+
+	a = &out->pred[p];
+	idx = (h->tensor_type != 0);
+	a->raw[idx] += m->raw_bytes;
+	a->ideal[idx] += m->ideal_bytes;
+	a->bytes[idx] += m->raw_bytes;
+	a->ent_bytes[idx] += m->entropy * (double)m->raw_bytes;
+	a->q_first[idx] += m->quartile_entropy[0] * (double)m->raw_bytes;
+	a->q_last[idx] += m->quartile_entropy[MEMBRANE_PRED_QUARTILES - 1]
+		* (double)m->raw_bytes;
+	if (h->layer < MAX_LAYERS)
+	{
+		out->layer_pred_ideal[h->layer][p] += m->ideal_bytes;
+		if (p == 0)
+			out->layer_raw[h->layer] += m->raw_bytes;
+		out->layer_pred_seen[h->layer] = 1;
+	}
+}
+
+/* Whole-payload predictive pass: every predictor mode on one tensor. */
+static membrane_status_t	analyze_predictors(kva_out_t *out,
+								const kva_opts_t *o, const char *file,
+								const membrane_kv_header_t *h,
+								const uint8_t *payload)
+{
+	membrane_residual_metrics_t	m;
+	membrane_residual_cfg_t		cfg;
+	membrane_status_t			st;
+	int							p;
+
+	cfg.row_elems = 0;
+	if (h->n_dims >= 2 && h->dims[0] >= 2)
+		cfg.row_elems = (size_t)(h->dims[0] / 2);
+	cfg.n_rows = (h->n_dims >= 2) ? (size_t)h->dims[1] : 0;
+	p = 0;
+	while (p < NPRED)
+	{
+		cfg.predictor = (membrane_predictor_t)p;
+		st = membrane_kv_residual_metrics(payload, h->payload_size, &cfg, &m);
+		if (st != MEMBRANE_OK)
+			return (st);
+		emit_residual(out, o, file, h, &m, cfg.predictor);
+		pred_accumulate(out, h, p, &m);
+		p++;
+	}
+	return (MEMBRANE_OK);
+}
+
 static membrane_status_t	analyze_record(kva_out_t *out,
 								const kva_opts_t *o, const char *file,
 								const membrane_kv_header_t *h,
@@ -299,7 +416,7 @@ static membrane_status_t	analyze_record(kva_out_t *out,
 		}
 		i++;
 	}
-	return (MEMBRANE_OK);
+	return (analyze_predictors(out, o, file, h, payload));
 }
 
 static void	human_file_sum(const char *path, const kva_file_sum_t *fs)
@@ -389,6 +506,96 @@ static void	human_totals(const kva_out_t *out)
 		t->byteplane_integrity_ok ? "PASS" : "FAIL");
 }
 
+/* Prints residual entropy and the entropy-ceiling ratio per predictor,
+ * split K vs V, over whole tensor payloads. */
+static void	human_pred_table(const kva_out_t *out)
+{
+	const pred_acc_t	*a;
+	int					p;
+
+	fprintf(stderr, "\nPredictive residual (whole tensors, all prompts):\n");
+	fprintf(stderr, "  %-17s  K: H=bits ratio       V: H=bits ratio\n",
+		"predictor");
+	p = 0;
+	while (p < NPRED)
+	{
+		a = &out->pred[p];
+		fprintf(stderr,
+			"  %-17s  K: %.3f  %.3fx      V: %.3f  %.3fx\n",
+			membrane_predictor_name((membrane_predictor_t)p),
+			a->bytes[0] ? a->ent_bytes[0] / (double)a->bytes[0] : 0.0,
+			ratio_of(a->raw[0], a->ideal[0]),
+			a->bytes[1] ? a->ent_bytes[1] / (double)a->bytes[1] : 0.0,
+			ratio_of(a->raw[1], a->ideal[1]));
+		p++;
+	}
+}
+
+/* Best (lowest ideal size) predictor for one layer's K+V payloads. */
+static int	layer_best_pred(const kva_out_t *out, int layer)
+{
+	int			best;
+	int			p;
+	uint64_t	lo;
+
+	best = 0;
+	lo = out->layer_pred_ideal[layer][0];
+	p = 1;
+	while (p < NPRED)
+	{
+		if (out->layer_pred_ideal[layer][p] < lo)
+		{
+			lo = out->layer_pred_ideal[layer][p];
+			best = p;
+		}
+		p++;
+	}
+	return (best);
+}
+
+static void	human_pred_layers(const kva_out_t *out)
+{
+	int	i;
+	int	best;
+
+	fprintf(stderr, "\nBest predictor per layer (K+V, lowest entropy ceiling):\n");
+	i = 0;
+	while (i < MAX_LAYERS)
+	{
+		if (out->layer_pred_seen[i])
+		{
+			best = layer_best_pred(out, i);
+			fprintf(stderr, "  layer %2d: %-17s  ceiling %.3fx\n", i,
+				membrane_predictor_name((membrane_predictor_t)best),
+				ratio_of(out->layer_raw[i], out->layer_pred_ideal[i][best]));
+		}
+		i++;
+	}
+}
+
+/* Token-axis check: first vs last token quartile entropy for the token
+ * predictor, per tensor. */
+static void	human_pred_tokenaxis(const kva_out_t *out)
+{
+	const pred_acc_t	*a;
+
+	a = &out->pred[MEMBRANE_PRED_XOR_PREV_TOKEN];
+	fprintf(stderr, "\nToken-axis (xor_prev_token residual entropy, "
+		"first vs last quartile):\n");
+	fprintf(stderr, "  K: q0 %.3f -> q3 %.3f    V: q0 %.3f -> q3 %.3f\n",
+		a->bytes[0] ? a->q_first[0] / (double)a->bytes[0] : 0.0,
+		a->bytes[0] ? a->q_last[0] / (double)a->bytes[0] : 0.0,
+		a->bytes[1] ? a->q_first[1] / (double)a->bytes[1] : 0.0,
+		a->bytes[1] ? a->q_last[1] / (double)a->bytes[1] : 0.0);
+}
+
+static void	human_pred(const kva_out_t *out)
+{
+	human_pred_table(out);
+	human_pred_layers(out);
+	human_pred_tokenaxis(out);
+}
+
 static int	opt_apply(kva_opts_t *o, int c)
 {
 	if (c == 'j')
@@ -397,6 +604,8 @@ static int	opt_apply(kva_opts_t *o, int c)
 		o->csv_path = optarg;
 	else if (c == 'x' && o->meta_count < MAX_META)
 		o->meta[o->meta_count++] = optarg;
+	else if (c == 'p')
+		o->pred_csv_path = optarg;
 	else if (c != 'x')
 		return (-1);
 	return (0);
@@ -407,24 +616,25 @@ static int	parse_opts(int argc, char **argv, kva_opts_t *o)
 	static struct option	lo[] = {
 	{"jsonl", required_argument, 0, 'j'},
 	{"csv", required_argument, 0, 'v'},
+	{"pred-csv", required_argument, 0, 'p'},
 	{"meta", required_argument, 0, 'x'},
 	{0, 0, 0, 0}};
 	int						c;
 
 	memset(o, 0, sizeof(*o));
-	c = getopt_long(argc, argv, "j:v:x:", lo, NULL);
+	c = getopt_long(argc, argv, "j:v:p:x:", lo, NULL);
 	while (c != -1)
 	{
 		if (opt_apply(o, c) != 0)
 			return (-1);
-		c = getopt_long(argc, argv, "j:v:x:", lo, NULL);
+		c = getopt_long(argc, argv, "j:v:p:x:", lo, NULL);
 	}
 	o->inputs = argv + optind;
 	o->input_count = argc - optind;
 	if (o->input_count < 1 || o->jsonl_path == NULL || o->csv_path == NULL)
 	{
 		fprintf(stderr, "Usage: membrane-kv-analyze --jsonl OUT --csv OUT "
-			"[--meta k=v]... DUMP...\n");
+			"[--pred-csv OUT] [--meta k=v]... DUMP...\n");
 		return (-1);
 	}
 	return (0);
@@ -445,6 +655,16 @@ static int	open_outputs(kva_out_t *out, const kva_opts_t *o)
 		"byteplane_integrity\n");
 	out->totals.integrity_ok = 1;
 	out->totals.byteplane_integrity_ok = 1;
+	if (o->pred_csv_path != NULL)
+	{
+		out->pred_csv = fopen(o->pred_csv_path, "w");
+		if (out->pred_csv == NULL)
+			return (fprintf(stderr, "cannot open pred-csv\n"), -1);
+		fprintf(out->pred_csv, "file,model,layer,tensor,predictor,"
+			"stride_elems,applicable,raw_bytes,entropy_bits,low_entropy_bits,"
+			"high_entropy_bits,zero_u16_ratio,zero_byte_ratio,longest_zero_run,"
+			"ideal_bytes,theoretical_ratio,q0,q1,q2,q3\n");
+	}
 	return (0);
 }
 
@@ -470,8 +690,11 @@ int	main(int argc, char **argv)
 		i++;
 	}
 	human_totals(&out);
+	human_pred(&out);
 	fclose(out.jsonl);
 	fclose(out.csv);
+	if (out.pred_csv != NULL)
+		fclose(out.pred_csv);
 	if (rc == 0 && (!out.totals.integrity_ok
 			|| !out.totals.byteplane_integrity_ok))
 		rc = 1;

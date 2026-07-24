@@ -76,6 +76,7 @@ add_library(membrane_core
   src/codecs/raw.c
   src/codecs/rle.c
   src/codecs/f16_byteplane.c
+  src/codecs/f16_xor_byteplane.c
   src/codecs/codec_registry.c
   src/stats.c
   src/store/store.c
@@ -84,6 +85,7 @@ add_library(membrane_core
   src/backends/backend_file.c
   src/kvdump/kvdump.c
   src/kvdump/kvmetrics.c
+  src/kvdump/kvpredict.c
 )
 target_include_directories(membrane_core PUBLIC include)
 target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m)
