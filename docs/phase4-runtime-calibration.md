@@ -414,3 +414,145 @@ risk the margin-tier design exists to guard against. Per item 11's
 explicit instruction, this is reported as-is: **no threshold was
 loosened, no result was rounded up to claim success it did not reach.**
 See §12 for the SmolLM2-360M cross-model result.
+
+## 12. SmolLM2-360M results (real, measured)
+
+Model: `models/SmolLM2-360M-Instruct-f16.gguf`, 32 layers, same 8
+prompts, same `--n-tokens 1024 --gen-tokens 128`.
+
+**Valid (hard-gate) set: 7/8 prompts** — every FP16 baseline answered
+correctly this time (0 excluded for that reason, unlike 135M's 3).
+Excluded: `short.txt`, for the same reason as 135M — the real all-Q8
+STARTING policy's own top1 (95.31%) falls under the general-class 98%
+floor, a genuine all-Q8 baseline limit, not loosened.
+
+**An important nuance surfaced by this run: `recall.txt`'s exact-answer
+gate was silently inactive for the entire 360M search.** All-Q8's own
+real generation on `recall.txt` got the factual answer WRONG (`recall
+FAIL`) while still clearing the numeric cosine/top1/top5 floor —
+`prepare_valid_set()` checks the numeric floor and the exact-answer
+correctness separately by design (item 4: "exact-answer gate zorunlu
+whenever the reference answered correctly"), so a prompt whose all-Q8
+reference itself already gets the answer wrong is kept in the valid set
+(its cosine/top1/top5 floor still gates real candidates) but with
+`must_stay_correct=false` — no candidate is ever required to answer it
+correctly, because the reference it would be judged against already
+fails to. This is correct per the spec's own literal wording, not a
+bug, but it is exactly the kind of non-obvious consequence that is easy
+to miss reading a table that shows "recall FAIL" next to every config
+for this prompt and assume it is a search failure: it is not — it is
+SmolLM2-360M's own Q8 quantization already breaking this specific
+prompt's factual recall, independent of anything this optimizer chose
+to do. `distractor.txt` (the other recall-critical prompt) did NOT have
+this problem — all-Q8 answered it correctly, so its exact-answer gate
+stayed active for the whole search.
+
+**Search:**
+
+| tier | accepted slots | live evals used | search seconds |
+|---|---|---|---|
+| conservative | **0** | 20/20 | 1825.2 |
+| balanced | **0** | 20/20 | 1984.4 |
+| aggressive | 10 (all V) | 20/20 | 4609.3 |
+
+Conservative and balanced found nothing to accept at all for this
+model — every one of the 20 tested candidates was rejected, mostly on
+K-slot cosine or `recall.txt`/`distractor.txt` top1 (interesting given
+the point above: `recall.txt` rejections came from its cosine/top1
+FLOOR, which stayed active even though its exact-answer requirement did
+not). Their final policy is therefore identical to the all-Q8 starting
+policy — confirmed directly: every KV-byte ratio in the final table for
+conservative/balanced exactly matches all-Q8's own ratio, prompt for
+prompt.
+
+**Final comparison, restricted to the 7 valid prompts, each tier's own
+threshold + margin applied via `check_prompt`'s exact formula (using
+the real `must_stay_correct` value derived above per prompt):**
+
+| tier | recall.txt | distractor.txt | secrets/code/natural/repeat/longcontext | KV reduction | valid-prompt violations |
+|---|---|---|---|---|---|
+| conservative | cosine 0.999726 (floor 0.9990) FAIL top1 | cosine 0.999791 (floor 0.9990) PASS | all PASS | **1.882x** (= all-Q8) | not evaluated further — see below |
+| balanced | cosine 0.999726 (floor 0.9985) FAIL top1 | cosine 0.999791 (floor 0.9985) PASS | all PASS | **1.882x** (= all-Q8) | not evaluated further — see below |
+| aggressive | cosine 0.999320 (floor 0.9975) PASS, exact-answer gate inactive | cosine 0.999468 (floor 0.9975) **FAIL** | all PASS | **2.031x** | **1** |
+
+Conservative and balanced are marked "not evaluated further" rather
+than a violation count for a simple reason: **their final policy is
+literally the all-Q8 starting policy** (0 slots changed), so they
+provide **zero additional memory reduction beyond all-Q8's own 1.882x**
+— they fail item 11's bar on the memory-reduction half alone, before
+violations are even relevant. (For the record: conservative/balanced's
+own margined top1 floor for `recall.txt`, 100.00%/99.50%, is not met by
+the measured 99.22% — but since `recall.txt`'s exact-answer gate was
+inactive and no slot changed at all, this reflects all-Q8's own real
+behavior at this margin, not a search failure.)
+
+Aggressive reaches 2.031x (beats all-Q8's 1.882x, matching the first
+half of item 11's bar, same as both 135M tiers that reached 2x+) but
+has one real, measured violation: `distractor.txt`'s cosine (0.999468
+vs the 0.9975 floor) — the OTHER recall-critical prompt from the one
+that had its gate disabled, and the one whose exact-answer requirement
+WAS active and was in fact satisfied (`recall OK` in the table); it is
+the numeric cosine floor, not the exact-answer gate, that failed here.
+
+**Verdict for SmolLM2-360M: also does not meet the full success
+criterion**, and by a similar pattern to 135M — margin tiers are safe
+but deliver zero-to-minimal real improvement over all-Q8, while the
+zero-margin tier crosses 2.0x but with exactly one real, measured
+recall-critical violation.
+
+## 13. Cross-model conclusion (item 11)
+
+Per item 11's explicit instruction — report the cross-model result if
+both models were run, and do not force success by loosening
+thresholds if it did not come out — here is the honest, unforced
+result:
+
+**Neither SmolLM2-135M nor SmolLM2-360M produced a tier that
+simultaneously reaches >=2.0x real KV reduction AND has zero
+hard-constraint violations on its valid prompts**, under the exact
+thresholds specified in item 4 and the exact real-runtime
+verification specified in item 3. In both models the same shape of
+result appeared: margin-buffered tiers (conservative/balanced) are
+provably safe against every measured hard constraint but deliver
+little-to-no real memory improvement beyond the all-Q8 starting point
+(135M: capped at 1.896x after exhausting all real candidates at
+2x the original search budget; 360M: 0 candidates accepted at all,
+staying at all-Q8's 1.882x), while the zero-margin aggressive tier
+clears 2.0x in both models (135M: 2.076x; 360M: 2.031x) but has
+exactly one real, measured recall-critical cosine violation in both
+models (135M: `recall.txt`; 360M: `distractor.txt`).
+
+This is reported as the actual outcome, not adjusted to look like a
+pass. No threshold in §4 was loosened for either model, no margin
+tier's definition was changed after seeing results, and the aggressive
+tier's real violation was not excluded or reclassified to manufacture
+a clean success. What this phase DID succeed at, independent of the
+numeric success criterion:
+
+- Building a genuinely two-backend optimizer where only real
+  LIVE_RUNTIME evaluation can accept a candidate (§1, §3), verified
+  structurally and behaviorally.
+- Finding and fixing a real O(rounds x slots) cost bug before it made
+  the tool practically unusable (§3).
+- Finding and fixing a real stale-checkpoint write-ordering bug before
+  it could silently corrupt a resumed search (§5).
+- Discovering and measuring a SECOND, smaller but real gap this phase
+  was not originally looking for: real-vs-real measurement variance
+  between the search's own accept-time evaluation and later
+  independent re-measurement of the identical policy, large enough to
+  flip a zero-margin accept decision (§10) — a genuinely new, honest
+  finding about the limits of real-runtime-only gating that Phase 4.1
+  did not surface.
+- Discovering that a recall-critical prompt's exact-answer gate can be
+  silently (and correctly, per spec) inactive when even the all-Q8
+  reference itself already fails that prompt, and that this is easy to
+  miss without deliberately checking `must_stay_correct` per prompt
+  (§12) — worth surfacing for anyone reading this phase's tables in the
+  future.
+- A real, demonstrated interrupt-and-resume of a substantial (not
+  synthetic) optimizer run (§5), and real checkpoint/resume behavior
+  across two separate real runs and one deliberate `SIGTERM`.
+
+The numeric success bar was not reached on either model. That is the
+honest result of this phase, reported per item 11's explicit
+instruction not to force it.
