@@ -93,6 +93,7 @@ add_library(membrane_core
   src/kvdump/kvquant.c
   src/hash/sha256.c
   src/policy/policy.c
+  src/quant/quant_simd.c
 )
 target_include_directories(membrane_core PUBLIC include)
 target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m)
@@ -100,6 +101,7 @@ target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads 
 add_subdirectory(tools/membrane-bench)
 add_subdirectory(tools/membrane-store-bench)
 add_subdirectory(tools/membrane-kv-analyze)
+add_subdirectory(tools/membrane-quant-bench)
 
 if(MEMBRANE_ENABLE_LLAMA)
   enable_language(CXX)
@@ -177,6 +179,20 @@ if(MEMBRANE_ENABLE_LLAMA)
       third_party/llama.cpp/ggml/src/ggml-cpu)
     enable_testing()
     add_test(NAME test_ggml_quant_parity COMMAND test_ggml_quant_parity)
+
+    # Phase 5.1: every membrane_simd_* backend (portable, in
+    # membrane_core, no llama dependency) vs. membrane_ggml_quant's
+    # oracle. Registered here (not with the portable tests further
+    # down) only because it needs membrane_ggml_quant to reach that
+    # oracle -- membrane_core/quant_simd.c itself has no llama
+    # dependency and is built and usable even when
+    # MEMBRANE_ENABLE_LLAMA is OFF.
+    add_executable(test_quant_simd_parity
+      tests/unit/test_quant_simd_parity.c)
+    target_link_libraries(test_quant_simd_parity PRIVATE membrane_core
+      membrane_ggml_quant)
+    target_include_directories(test_quant_simd_parity PRIVATE tests/unit)
+    add_test(NAME test_quant_simd_parity COMMAND test_quant_simd_parity)
   endif()
 
   add_subdirectory(tools/membrane-kv-capture)

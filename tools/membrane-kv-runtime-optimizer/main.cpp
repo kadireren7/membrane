@@ -36,6 +36,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <chrono>
 #include <string>
 #include <thread>
@@ -47,6 +48,7 @@
 #include "membrane/hash.h"
 #include "membrane/llama_commit.h"
 #include "membrane/policy.h"
+#include "membrane/quant_simd.h"
 
 #include "checkpoint.h"
 
@@ -139,24 +141,47 @@ static void	progress_print_eta(double avg_eval_seconds, int done, int total)
 		avg_eval_seconds);
 }
 
+/* Phase 5.1 item 9: quantization-engine visibility. g_quant_backend/
+ * g_quant_threads are fixed once at startup (membrane_simd_best_backend()
+ * is deterministic for a given CPU; this integration point calls the
+ * single-row, non-parallel membrane_simd_* API from inside an already
+ * hot serial loop -- see quant_roundtrip_inplace -- so threads used is
+ * always 1 here, honestly reported as such rather than implying a
+ * worker pool that this call site doesn't use). g_quant_elems_window/
+ * g_quant_ns_window are windowed accumulators, reset every heartbeat
+ * tick, so the reported throughput is a real measured rate over the
+ * last ~60s, not a cumulative average that hides slowdowns. */
+static const char				*g_quant_backend = "unknown";
+static int						g_quant_threads = 1;
+static std::atomic<long long>	g_quant_elems_window{0};
+static std::atomic<long long>	g_quant_ns_window{0};
+
 static void	heartbeat_loop(void)
 {
 	while (true)
 	{
 		std::this_thread::sleep_for(std::chrono::seconds(60));
-		int		done;
-		int		total;
-		double	avg;
-		double	eta;
+		int			done;
+		int			total;
+		double		avg;
+		double		eta;
+		long long	elems;
+		long long	ns;
+		double		mb_s;
 
 		done = g_progress.cand_index.load();
 		total = g_progress.cand_total.load();
 		avg = g_progress.avg_eval_seconds.load();
 		eta = (avg > 0.0 && total > done)
 			? avg * (double)(total - done) : -1.0;
+		elems = g_quant_elems_window.exchange(0);
+		ns = g_quant_ns_window.exchange(0);
+		mb_s = ns > 0 ? (double)elems * 2.0 / ((double)ns / 1e9) / 1e6 : 0.0;
 		fprintf(stderr, "  [heartbeat] elapsed %.0fs  stage=%s tier=%s  "
-			"candidates %d/%d", progress_elapsed_seconds(),
-			g_progress.stage.load(), g_progress.tier.load(), done, total);
+			"candidates %d/%d  quant backend=%s threads=%d "
+			"throughput=%.1fMB/s(60s window)", progress_elapsed_seconds(),
+			g_progress.stage.load(), g_progress.tier.load(), done, total,
+			g_quant_backend, g_quant_threads, mb_s);
 		if (eta >= 0.0)
 			fprintf(stderr, "  ETA ~%.0fs\n", eta);
 		else
@@ -313,20 +338,56 @@ static bool	parse_blob(const uint8_t *blob, size_t size, blob_index_t *idx)
 	return (true);
 }
 
-/* ggml-exact (Phase 4.4): applies membrane_ggml_quant_roundtrip (ggml's
- * own Q8_0/Q4_0 quantize+dequantize, membrane/ggml_quant.h) over `len`
- * bytes of F16 data -- replaces the Phase 3.3 linear per-32-element
- * max-abs quantizer this offline pre-screen used to use, which did not
- * match ggml's real block format/rounding (retired formula documented
- * in docs/phase4-ggml-quant-parity.md). Every real Q8_0/Q4_0-eligible
- * KV row length is already a multiple of the 32-element block size
- * (ggml requires n_embd_head % blck_size == 0 to construct a quantized
- * KV cache type at all), so no partial-block handling is needed. */
+/* Phase 5.1: routes through the portable membrane_simd_* engine
+ * (src/quant/quant_simd.c), which is bit-exact with membrane_ggml_quant
+ * (verified across 100,000+ random blocks in
+ * tests/unit/test_quant_simd_parity.c) but avoids that path's per-call
+ * ggml dispatch overhead -- this function sits in the optimizer's
+ * hottest inner loop (called once per K/V row per candidate per
+ * simulated token), so the saved overhead compounds across a whole
+ * search run (docs/phase5-quant-engine.md). Every real Q8_0/Q4_0-
+ * eligible KV row length is already a multiple of the 32-element block
+ * size (ggml requires n_embd_head % blck_size == 0 to construct a
+ * quantized KV cache type at all), so the size check below never
+ * actually trips in practice; it, and the oversized-row case, fall back
+ * to the ggml-backed oracle rather than growing a heap path in this hot
+ * loop, since both are defensive-only and not expected to be hit. */
 static void	quant_roundtrip_inplace(uint8_t *data, size_t len, int bits)
 {
+	static const size_t		k_max_row_elems = 8192;
+	uint16_t					*x_f16;
+	size_t						n;
+	uint8_t						packed[(8192 / MEMBRANE_QSIMD_BLOCK_ELEMS)
+									* MEMBRANE_QSIMD_Q8_0_BLOCK_BYTES];
+	membrane_simd_backend_t	backend;
+	struct timespec				t0;
+	struct timespec				t1;
+
 	if (bits == 16)
 		return ;
-	membrane_ggml_quant_roundtrip((uint16_t *)(void *)data, len / 2, bits);
+	x_f16 = (uint16_t *)(void *)data;
+	n = len / 2;
+	if (n == 0 || n % MEMBRANE_QSIMD_BLOCK_ELEMS != 0 || n > k_max_row_elems)
+	{
+		membrane_ggml_quant_roundtrip(x_f16, n, bits);
+		return ;
+	}
+	backend = membrane_simd_best_backend();
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+	if (bits == 8)
+	{
+		membrane_simd_q8_0_quantize(backend, x_f16, n, packed);
+		membrane_simd_q8_0_dequantize(backend, packed, n, x_f16);
+	}
+	else
+	{
+		membrane_simd_q4_0_quantize(backend, x_f16, n, packed);
+		membrane_simd_q4_0_dequantize(backend, packed, n, x_f16);
+	}
+	clock_gettime(CLOCK_MONOTONIC, &t1);
+	g_quant_elems_window.fetch_add((long long)n);
+	g_quant_ns_window.fetch_add((t1.tv_sec - t0.tv_sec) * 1000000000LL
+		+ (t1.tv_nsec - t0.tv_nsec));
 }
 
 typedef struct s_perturb_target
@@ -2323,6 +2384,10 @@ int	main(int argc, char **argv)
 	 * actually happens. */
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
+	g_quant_backend = membrane_simd_backend_name(membrane_simd_best_backend());
+	fprintf(stderr, "quant engine: backend=%s threads=%d "
+		"(single-row calls; see docs/phase5-quant-engine.md)\n",
+		g_quant_backend, g_quant_threads);
 	progress_init();
 	std::thread(heartbeat_loop).detach();
 	llama_backend_init();
