@@ -153,9 +153,26 @@ if(MEMBRANE_ENABLE_LLAMA)
   add_subdirectory(tools/membrane-kv-sensitivity)
   add_subdirectory(tools/membrane-policy-export)
   add_subdirectory(tools/membrane-kv-runtime)
+  add_subdirectory(tools/membrane-kv-runtime-optimizer)
 endif()
 
 if(MEMBRANE_BUILD_TESTS)
   enable_testing()
   add_subdirectory(tests/unit)
+
+  # test_checkpoint.cpp exercises Phase 4.2's checkpoint/resume format
+  # (tools/membrane-kv-runtime-optimizer/checkpoint.h), which has no
+  # llama.cpp dependency -- built here, unconditionally, so it runs
+  # under the standard Release/ASan suites even when
+  # MEMBRANE_ENABLE_LLAMA is OFF, not only in llama-enabled builds.
+  enable_language(CXX)
+  add_executable(test_checkpoint
+    tools/membrane-kv-runtime-optimizer/test_checkpoint.cpp)
+  set_target_properties(test_checkpoint PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_checkpoint PRIVATE membrane_core)
+  target_include_directories(test_checkpoint PRIVATE
+    tools/membrane-kv-runtime-optimizer)
+  add_test(NAME test_checkpoint COMMAND test_checkpoint)
 endif()
