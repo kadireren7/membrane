@@ -148,6 +148,37 @@ if(MEMBRANE_ENABLE_LLAMA)
     ${CMAKE_SOURCE_DIR}/cmake/llama_commit.h.in
     ${CMAKE_BINARY_DIR}/generated/membrane/llama_commit.h)
 
+  # Phase 4.4: bit-exact adapter over ggml's own Q8_0/Q4_0 quantize and
+  # dequantize implementations (see src/quant/ggml_quant.c and
+  # docs/phase4-ggml-quant-parity.md). Only buildable here, since it
+  # links directly against ggml -- unlike membrane_core, which stays
+  # dependency-free for the portable Release/ASan suites.
+  add_library(membrane_ggml_quant STATIC src/quant/ggml_quant.c)
+  target_include_directories(membrane_ggml_quant PUBLIC include)
+  target_include_directories(membrane_ggml_quant PRIVATE
+    third_party/llama.cpp/ggml/include
+    third_party/llama.cpp/ggml/src
+    third_party/llama.cpp/ggml/src/ggml-cpu)
+  target_link_libraries(membrane_ggml_quant PRIVATE ggml)
+
+  if(MEMBRANE_BUILD_TESTS)
+    # Phase 4.4 bit-parity tests: links ggml directly to make an
+    # independent comparison call, so this can only build here (unlike
+    # test_checkpoint, which is llama-free and built unconditionally
+    # further down).
+    add_executable(test_ggml_quant_parity
+      tests/unit/test_ggml_quant_parity.c)
+    target_link_libraries(test_ggml_quant_parity PRIVATE
+      membrane_ggml_quant ggml)
+    target_include_directories(test_ggml_quant_parity PRIVATE
+      tests/unit
+      third_party/llama.cpp/ggml/include
+      third_party/llama.cpp/ggml/src
+      third_party/llama.cpp/ggml/src/ggml-cpu)
+    enable_testing()
+    add_test(NAME test_ggml_quant_parity COMMAND test_ggml_quant_parity)
+  endif()
+
   add_subdirectory(tools/membrane-kv-capture)
   add_subdirectory(tools/membrane-kv-quality)
   add_subdirectory(tools/membrane-kv-sensitivity)

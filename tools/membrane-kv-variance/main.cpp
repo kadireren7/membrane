@@ -62,6 +62,7 @@
 
 #include "llama.h"
 #include "membrane/f16convert.h"
+#include "membrane/ggml_quant.h"
 #include "membrane/hash.h"
 #include "membrane/llama_commit.h"
 #include "membrane/policy.h"
@@ -318,7 +319,15 @@ static bool	parse_blob(const uint8_t *blob, size_t size, blob_index_t *idx)
 	return (true);
 }
 
-static void	quant_roundtrip_group(uint16_t *elems, size_t n, int bits)
+/* Phase 3.3's own linear per-32-element max-abs quantizer. Phase 4.4
+ * (docs/phase4-ggml-quant-parity.md) found this does not match ggml's
+ * real Q8_0/Q4_0 block format or rounding, and every OTHER tool that
+ * used it has since switched to membrane_ggml_quant_roundtrip (the real
+ * ggml math). It stays here, actively used, ONLY because this specific
+ * tool's --mode quant-timing exists to measure the gap between the two
+ * -- see eval_offline's `ggml_exact` parameter below. */
+static void	quant_roundtrip_group_LEGACY(uint16_t *elems, size_t n,
+					int bits)
 {
 	int		qmax;
 	float	max_abs;
@@ -356,7 +365,8 @@ static void	quant_roundtrip_group(uint16_t *elems, size_t n, int bits)
 	}
 }
 
-static void	quant_roundtrip_inplace(uint8_t *data, size_t len, int bits)
+static void	quant_roundtrip_inplace_LEGACY(uint8_t *data, size_t len,
+					int bits)
 {
 	size_t	elements;
 	size_t	off;
@@ -371,9 +381,28 @@ static void	quant_roundtrip_inplace(uint8_t *data, size_t len, int bits)
 		n = elements - off;
 		if (n > GROUP_ELEMS)
 			n = GROUP_ELEMS;
-		quant_roundtrip_group((uint16_t *)(void *)(data + off * 2), n, bits);
+		quant_roundtrip_group_LEGACY((uint16_t *)(void *)(data + off * 2), n,
+			bits);
 		off += n;
 	}
+}
+
+/* `ggml_exact` selects which quantize math apply_targets uses: true (the
+ * default everywhere except --mode quant-timing's legacy arm) calls
+ * membrane_ggml_quant_roundtrip -- ggml's own Q8_0/Q4_0 math, see
+ * membrane/ggml_quant.h; false calls the retired LEGACY function above,
+ * kept only so --mode quant-timing can measure the difference it makes
+ * (docs/phase4-ggml-quant-parity.md item 6's regression benchmark). */
+static void	quant_roundtrip_inplace(uint8_t *data, size_t len, int bits,
+				bool ggml_exact)
+{
+	if (bits == 16)
+		return ;
+	if (ggml_exact)
+		membrane_ggml_quant_roundtrip((uint16_t *)(void *)data, len / 2,
+			bits);
+	else
+		quant_roundtrip_inplace_LEGACY(data, len, bits);
 }
 
 typedef struct s_perturb_target
@@ -387,7 +416,7 @@ typedef struct s_perturb_target
 }	perturb_target_t;
 
 static void	apply_targets(uint8_t *blob, const blob_index_t &idx,
-				const std::vector<perturb_target_t> &targets)
+				const std::vector<perturb_target_t> &targets, bool ggml_exact)
 {
 	uint32_t	r;
 
@@ -401,10 +430,12 @@ static void	apply_targets(uint8_t *blob, const blob_index_t &idx,
 		{
 			if (t.do_k)
 				quant_roundtrip_inplace(blob + ls.k_offset
-						+ (size_t)r * ls.k_row_size, ls.k_row_size, t.bits);
+						+ (size_t)r * ls.k_row_size, ls.k_row_size, t.bits,
+					ggml_exact);
 			if (t.do_v)
 				quant_roundtrip_inplace(blob + ls.v_offset
-						+ (size_t)r * ls.v_row_size, ls.v_row_size, t.bits);
+						+ (size_t)r * ls.v_row_size, ls.v_row_size, t.bits,
+					ggml_exact);
 			r++;
 		}
 	}
@@ -893,7 +924,7 @@ static ggml_type	kv_policy_type_cb(int32_t il, bool is_v, void *ud)
 static bool	eval_offline(llama_model *model, const llama_vocab *vocab,
 				int n_ctx, int gen_tokens, const baseline_t &base,
 				const kv_policy_t &pol, const ctx_cfg_t &cfg,
-				metrics_t *m)
+				bool ggml_exact, metrics_t *m)
 {
 	std::vector<uint8_t>	blob;
 	llama_context			*free_ctx;
@@ -905,7 +936,7 @@ static bool	eval_offline(llama_model *model, const llama_vocab *vocab,
 
 	blob = base.blob;
 	targets = policy_targets(base.idx, pol);
-	apply_targets(blob.data(), base.idx, targets);
+	apply_targets(blob.data(), base.idx, targets, ggml_exact);
 	free_ctx = make_context(model, n_ctx, GGML_TYPE_F16, GGML_TYPE_F16, cfg);
 	forced_ctx = make_context(model, n_ctx, GGML_TYPE_F16, GGML_TYPE_F16,
 			cfg);
@@ -1442,6 +1473,12 @@ static bool	mode_flashattn(llama_model *model, const llama_vocab *vocab,
 /* ctx_cfg and the identical baseline.                                  */
 /* ------------------------------------------------------------------ */
 
+/* Phase 4.4 extended this mode to three arms instead of two: native
+ * (real ggml write-time quantization, unchanged), post-hoc-ggml-exact
+ * (the NEW membrane_ggml_quant_roundtrip post-hoc path), and
+ * post-hoc-LEGACY (the OLD per-32-element linear quantizer this mode
+ * originally compared against, kept only for this side-by-side
+ * regression comparison -- docs/phase4-ggml-quant-parity.md item 6). */
 static bool	mode_quant_timing(llama_model *model, const llama_vocab *vocab,
 				int n_ctx, int gen_tokens, const baseline_t &base,
 				const kv_policy_t &pol, int repeats)
@@ -1449,46 +1486,61 @@ static bool	mode_quant_timing(llama_model *model, const llama_vocab *vocab,
 	ctx_cfg_t				cfg;
 	prompt_decode_mode_t	shape;
 	std::vector<double>	native_cos;
-	std::vector<double>	posthoc_cos;
+	std::vector<double>	exact_cos;
+	std::vector<double>	legacy_cos;
 	std::vector<double>	native_top1;
-	std::vector<double>	posthoc_top1;
+	std::vector<double>	exact_top1;
+	std::vector<double>	legacy_top1;
 	int						i;
 
 	cfg = default_ctx_cfg();
 	shape.split_last_token = false;
-	progress_stage("quant-timing", "", repeats * 2);
+	progress_stage("quant-timing", "", repeats * 3);
 	fprintf(stderr, "\n=== mode: quant-timing (native write-time vs "
-		"post-hoc, %d repeats each, symmetric n_threads=%d flash_attn=%s) "
-		"===\n", repeats, cfg.n_threads, fa_name(cfg.flash_attn));
+		"post-hoc-ggml-exact vs post-hoc-LEGACY, %d repeats each, "
+		"symmetric n_threads=%d flash_attn=%s) ===\n", repeats,
+		cfg.n_threads, fa_name(cfg.flash_attn));
 	i = 0;
 	while (i < repeats)
 	{
 		live_result_t	lr;
-		metrics_t		om;
+		metrics_t		om_exact;
+		metrics_t		om_legacy;
 
 		if (!eval_live(model, vocab, n_ctx, gen_tokens, base, pol, cfg,
 				shape, &lr))
 			return (false);
 		g_progress.cand_index.fetch_add(1);
 		if (!eval_offline(model, vocab, n_ctx, gen_tokens, base, pol, cfg,
-				&om))
+				true, &om_exact))
+			return (false);
+		g_progress.cand_index.fetch_add(1);
+		if (!eval_offline(model, vocab, n_ctx, gen_tokens, base, pol, cfg,
+				false, &om_legacy))
 			return (false);
 		g_progress.cand_index.fetch_add(1);
 		fprintf(stderr, "  run %2d/%d: native cosine %.8f top1 %.4f%%   "
-			"post-hoc cosine %.8f top1 %.4f%%   delta(native-posthoc) "
-			"cosine %+.8f\n", i + 1, repeats, lr.m.logit_cosine,
-			lr.m.top1_pct, om.logit_cosine, om.top1_pct,
-			lr.m.logit_cosine - om.logit_cosine);
+			"post-hoc-exact cosine %.8f top1 %.4f%%   post-hoc-LEGACY "
+			"cosine %.8f top1 %.4f%%   delta(native-exact) %+.8f   "
+			"delta(native-legacy) %+.8f\n", i + 1, repeats,
+			lr.m.logit_cosine, lr.m.top1_pct, om_exact.logit_cosine,
+			om_exact.top1_pct, om_legacy.logit_cosine, om_legacy.top1_pct,
+			lr.m.logit_cosine - om_exact.logit_cosine,
+			lr.m.logit_cosine - om_legacy.logit_cosine);
 		native_cos.push_back(lr.m.logit_cosine);
-		posthoc_cos.push_back(om.logit_cosine);
+		exact_cos.push_back(om_exact.logit_cosine);
+		legacy_cos.push_back(om_legacy.logit_cosine);
 		native_top1.push_back(lr.m.top1_pct);
-		posthoc_top1.push_back(om.top1_pct);
+		exact_top1.push_back(om_exact.top1_pct);
+		legacy_top1.push_back(om_legacy.top1_pct);
 		i++;
 	}
-	fprintf(stderr, "\n  native   "); print_stat("cosine", compute_stat(native_cos));
-	fprintf(stderr, "  post-hoc "); print_stat("cosine", compute_stat(posthoc_cos));
-	fprintf(stderr, "  native   "); print_stat("top1_pct", compute_stat(native_top1));
-	fprintf(stderr, "  post-hoc "); print_stat("top1_pct", compute_stat(posthoc_top1));
+	fprintf(stderr, "\n  native            "); print_stat("cosine", compute_stat(native_cos));
+	fprintf(stderr, "  post-hoc-exact     "); print_stat("cosine", compute_stat(exact_cos));
+	fprintf(stderr, "  post-hoc-LEGACY    "); print_stat("cosine", compute_stat(legacy_cos));
+	fprintf(stderr, "  native            "); print_stat("top1_pct", compute_stat(native_top1));
+	fprintf(stderr, "  post-hoc-exact     "); print_stat("top1_pct", compute_stat(exact_top1));
+	fprintf(stderr, "  post-hoc-LEGACY    "); print_stat("top1_pct", compute_stat(legacy_top1));
 	return (true);
 }
 
@@ -1542,7 +1594,7 @@ static bool	mode_drift(llama_model *model, const llama_vocab *vocab,
 		"runtime for the target policy (symmetric n_threads=%d "
 		"flash_attn=%s) ===\n", cfg.n_threads, fa_name(cfg.flash_attn));
 	if (!eval_offline(model, vocab, n_ctx, gen_tokens, base, pol, cfg,
-			&off_m))
+			true, &off_m))
 		return (false);
 	if (!eval_live(model, vocab, n_ctx, gen_tokens, base, pol, cfg, shape,
 			&live_r))
@@ -1596,7 +1648,7 @@ static bool	mode_drift(llama_model *model, const llama_vocab *vocab,
 		else
 			running.vbits[slots[i].layer] = 4;
 		if (!eval_offline(model, vocab, n_ctx, gen_tokens, base, running,
-				cfg, &step_off))
+				cfg, true, &step_off))
 			return (false);
 		if (!eval_live(model, vocab, n_ctx, gen_tokens, base, running, cfg,
 				shape, &step_live))

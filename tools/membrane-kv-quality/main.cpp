@@ -219,6 +219,17 @@ static bool	run_pass(llama_context *ctx, const llama_vocab *vocab,
 		return (false);
 	t1 = std::chrono::steady_clock::now();
 	out->ttft_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+	/* Phase 4.4 (docs/phase4-ggml-quant-parity.md item 7): measured
+	 * right after the prompt decode, before any generated tokens grow
+	 * the cache further -- matching membrane-kv-runtime,
+	 * membrane-kv-runtime-optimizer, and membrane-kv-variance's shared
+	 * convention (all three measure kv_bytes at this same point). This
+	 * tool used to measure it after the full prompt+generation decode
+	 * instead, which is why the SAME model/prompt/policy previously
+	 * reported a different KV-byte figure here than in those tools;
+	 * see docs/phase4-ggml-quant-parity.md for the real, measured
+	 * before/after comparison. */
+	out->kv_state_bytes = llama_state_seq_get_size(ctx, 0);
 	n_vocab = llama_vocab_n_tokens(vocab);
 	i = 0;
 	while (i < gen_steps)
@@ -239,7 +250,6 @@ static bool	run_pass(llama_context *ctx, const llama_vocab *vocab,
 	t2 = std::chrono::steady_clock::now();
 	out->tokens_per_sec = (double)gen_steps
 		/ std::chrono::duration<double>(t2 - t1).count();
-	out->kv_state_bytes = llama_state_seq_get_size(ctx, 0);
 	return (true);
 }
 

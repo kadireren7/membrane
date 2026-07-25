@@ -43,6 +43,7 @@
 
 #include "llama.h"
 #include "membrane/f16convert.h"
+#include "membrane/ggml_quant.h"
 #include "membrane/hash.h"
 #include "membrane/llama_commit.h"
 #include "membrane/policy.h"
@@ -312,62 +313,20 @@ static bool	parse_blob(const uint8_t *blob, size_t size, blob_index_t *idx)
 	return (true);
 }
 
-static void	quant_roundtrip_group(uint16_t *elems, size_t n, int bits)
-{
-	int		qmax;
-	float	max_abs;
-	float	scale;
-	float	v;
-	long	q;
-	size_t	i;
-
-	qmax = (1 << (bits - 1)) - 1;
-	max_abs = 0.0f;
-	i = 0;
-	while (i < n)
-	{
-		v = fabsf(membrane_f16_to_f32(elems[i]));
-		if (v > max_abs)
-			max_abs = v;
-		i++;
-	}
-	scale = (max_abs > 0.0f) ? max_abs / (float)qmax : 0.0f;
-	i = 0;
-	while (i < n)
-	{
-		if (scale > 0.0f)
-		{
-			q = lroundf(membrane_f16_to_f32(elems[i]) / scale);
-			if (q > qmax)
-				q = qmax;
-			if (q < -qmax)
-				q = -qmax;
-			elems[i] = membrane_f32_to_f16((float)q * scale);
-		}
-		else
-			elems[i] = membrane_f32_to_f16(0.0f);
-		i++;
-	}
-}
-
+/* ggml-exact (Phase 4.4): applies membrane_ggml_quant_roundtrip (ggml's
+ * own Q8_0/Q4_0 quantize+dequantize, membrane/ggml_quant.h) over `len`
+ * bytes of F16 data -- replaces the Phase 3.3 linear per-32-element
+ * max-abs quantizer this offline pre-screen used to use, which did not
+ * match ggml's real block format/rounding (retired formula documented
+ * in docs/phase4-ggml-quant-parity.md). Every real Q8_0/Q4_0-eligible
+ * KV row length is already a multiple of the 32-element block size
+ * (ggml requires n_embd_head % blck_size == 0 to construct a quantized
+ * KV cache type at all), so no partial-block handling is needed. */
 static void	quant_roundtrip_inplace(uint8_t *data, size_t len, int bits)
 {
-	size_t	elements;
-	size_t	off;
-	size_t	n;
-
 	if (bits == 16)
 		return ;
-	elements = len / 2;
-	off = 0;
-	while (off < elements)
-	{
-		n = elements - off;
-		if (n > GROUP_ELEMS)
-			n = GROUP_ELEMS;
-		quant_roundtrip_group((uint16_t *)(void *)(data + off * 2), n, bits);
-		off += n;
-	}
+	membrane_ggml_quant_roundtrip((uint16_t *)(void *)data, len / 2, bits);
 }
 
 typedef struct s_perturb_target

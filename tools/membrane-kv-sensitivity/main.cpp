@@ -80,6 +80,7 @@
 
 #include "llama.h"
 #include "membrane/f16convert.h"
+#include "membrane/ggml_quant.h"
 
 # define SEQ_STATE_MAGIC 0xaf143cd8u
 # define GROUP_ELEMS 32
@@ -256,64 +257,21 @@ static bool	parse_blob(const uint8_t *blob, size_t size, blob_index_t *idx)
 /* membrane_f32_to_f16 (the real conversion primitives) directly.      */
 /* ------------------------------------------------------------------ */
 
-static void	quant_roundtrip_group(uint16_t *elems, size_t n, int bits)
-{
-	int		qmax;
-	float	max_abs;
-	float	scale;
-	float	v;
-	long	q;
-	size_t	i;
-
-	qmax = (1 << (bits - 1)) - 1;
-	max_abs = 0.0f;
-	i = 0;
-	while (i < n)
-	{
-		v = fabsf(membrane_f16_to_f32(elems[i]));
-		if (v > max_abs)
-			max_abs = v;
-		i++;
-	}
-	scale = (max_abs > 0.0f) ? max_abs / (float)qmax : 0.0f;
-	i = 0;
-	while (i < n)
-	{
-		if (scale > 0.0f)
-		{
-			q = lroundf(membrane_f16_to_f32(elems[i]) / scale);
-			if (q > qmax)
-				q = qmax;
-			if (q < -qmax)
-				q = -qmax;
-			elems[i] = membrane_f32_to_f16((float)q * scale);
-		}
-		else
-			elems[i] = membrane_f32_to_f16(0.0f);
-		i++;
-	}
-}
-
-/* Applies quant_roundtrip_group over `len` bytes of F16 data in
- * GROUP_ELEMS-sized chunks (bits == 16 is a no-op: FP16 stays exact). */
+/* ggml-exact (Phase 4.4): applies membrane_ggml_quant_roundtrip (ggml's
+ * own Q8_0/Q4_0 quantize+dequantize, see membrane/ggml_quant.h) over
+ * `len` bytes of F16 data. Replaces Phase 3.3's own linear
+ * per-32-element max-abs quantizer, which did not match ggml's real
+ * block format or rounding (docs/phase4-ggml-quant-parity.md documents
+ * the retired formula and exactly how it differed). Every real
+ * Q8_0/Q4_0-eligible KV row length is already a multiple of the
+ * 32-element block size (ggml itself requires n_embd_head % blck_size
+ * == 0 for a quantized KV cache type to be constructible at all), so no
+ * partial-block handling is needed here. */
 static void	quant_roundtrip_inplace(uint8_t *data, size_t len, int bits)
 {
-	size_t	elements;
-	size_t	off;
-	size_t	n;
-
 	if (bits == 16)
 		return ;
-	elements = len / 2;
-	off = 0;
-	while (off < elements)
-	{
-		n = elements - off;
-		if (n > GROUP_ELEMS)
-			n = GROUP_ELEMS;
-		quant_roundtrip_group((uint16_t *)(void *)(data + off * 2), n, bits);
-		off += n;
-	}
+	membrane_ggml_quant_roundtrip((uint16_t *)(void *)data, len / 2, bits);
 }
 
 typedef struct s_perturb_target
