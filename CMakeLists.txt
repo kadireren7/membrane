@@ -154,6 +154,7 @@ if(MEMBRANE_ENABLE_LLAMA)
   add_subdirectory(tools/membrane-policy-export)
   add_subdirectory(tools/membrane-kv-runtime)
   add_subdirectory(tools/membrane-kv-runtime-optimizer)
+  add_subdirectory(tools/membrane-kv-variance)
 endif()
 
 if(MEMBRANE_BUILD_TESTS)

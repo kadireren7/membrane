@@ -493,6 +493,24 @@ static bool	decode_one(llama_context *ctx, llama_token tok)
 	return (llama_decode(ctx, llama_batch_get_one(&tok, 1)) == 0);
 }
 
+/* Phase 4.3's determinism audit (docs/phase4-runtime-variance.md) found
+ * that capture_baseline() decodes the prompt as (prefix, last-token) in
+ * two llama_decode calls while eval_live() decoded it as one whole-prompt
+ * call -- a real, measured, deterministic source of cosine bias between
+ * the reference and every candidate (confirmed: forcing eval_live to
+ * decode this same (prefix, last-token) shape reproduces the exact
+ * cosine capture_baseline's own shape would predict, eliminating the
+ * gap). This helper makes eval_live's decode match capture_baseline's,
+ * instead of the two silently differing. */
+static bool	decode_prompt_matched(llama_context *ctx,
+				const std::vector<llama_token> &tokens)
+{
+	std::vector<llama_token>	prefix;
+
+	prefix.assign(tokens.begin(), tokens.end() - 1);
+	return (decode_prompt(ctx, prefix, 256) && decode_one(ctx, tokens.back()));
+}
+
 static int	argmax(const float *v, int n)
 {
 	int	best;
@@ -986,7 +1004,7 @@ static bool	eval_live(llama_model *model, const llama_vocab *vocab,
 	if (ok)
 	{
 		t0 = std::chrono::steady_clock::now();
-		ok = decode_prompt(free_ctx, base.prompt_tokens, 256);
+		ok = decode_prompt_matched(free_ctx, base.prompt_tokens);
 	}
 	if (ok)
 	{
@@ -1006,7 +1024,7 @@ static bool	eval_live(llama_model *model, const llama_vocab *vocab,
 	}
 	t_gen_done = std::chrono::steady_clock::now();
 	if (ok)
-		ok = decode_prompt(forced_ctx, base.prompt_tokens, 256)
+		ok = decode_prompt_matched(forced_ctx, base.prompt_tokens)
 			&& run_gen(forced_ctx, vocab, gen_tokens, &base.free_run.tokens,
 				&forced_run);
 	if (ok)
