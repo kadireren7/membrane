@@ -1,0 +1,163 @@
+diff --git a/include/llama.h b/include/llama.h
+index 9fab693..5216739 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -377,6 +377,14 @@ extern "C" {
+         enum ggml_type type_k; // data type for K cache [EXPERIMENTAL]
+         enum ggml_type type_v; // data type for V cache [EXPERIMENTAL]
+ 
++        // [EXPERIMENTAL, MEMBRANE] optional per-layer KV cache type override,
++        // queried once per layer (per K and V) at context-construction time
++        // instead of the flat type_k/type_v above. NULL leaves behavior
++        // identical to upstream. Only honored for the standard, non-SWA,
++        // non-hybrid llama_kv_cache construction path.
++        enum ggml_type (*kv_type_override)(int32_t il, bool is_v, void * user_data);
++        void * kv_type_override_ud;
++
+         // Abort callback
+         // if it returns true, execution of llama_decode() will be aborted
+         // currently works only with CPU execution
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index eed041e..30e93bb 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -380,11 +380,13 @@ llama_context::llama_context(
+     // init the memory module
+     if (!hparams.vocab_only) {
+         llama_memory_params params_mem = {
+-            /*.type_k    =*/ params.type_k,
+-            /*.type_v    =*/ params.type_v,
+-            /*.swa_full  =*/ params.swa_full,
+-            /*.ctx_type  =*/ cparams.ctx_type,
+-            /*.mem_other =*/ llama_get_memory(cparams.ctx_other),
++            /*.type_k             =*/ params.type_k,
++            /*.type_v             =*/ params.type_v,
++            /*.kv_type_override   =*/ params.kv_type_override,
++            /*.kv_type_override_ud=*/ params.kv_type_override_ud,
++            /*.swa_full           =*/ params.swa_full,
++            /*.ctx_type           =*/ cparams.ctx_type,
++            /*.mem_other          =*/ llama_get_memory(cparams.ctx_other),
+         };
+ 
+         memory.reset(model.create_memory(params_mem, cparams));
+@@ -3488,6 +3490,8 @@ llama_context_params llama_context_default_params() {
+         /*.cb_eval_user_data           =*/ nullptr,
+         /*.type_k                      =*/ GGML_TYPE_F16,
+         /*.type_v                      =*/ GGML_TYPE_F16,
++        /*.kv_type_override            =*/ nullptr,
++        /*.kv_type_override_ud         =*/ nullptr,
+         /*.abort_callback              =*/ nullptr,
+         /*.abort_callback_data         =*/ nullptr,
+         /*.embeddings                  =*/ false,
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index e70583e..d075552 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -77,7 +77,9 @@ llama_kv_cache::llama_kv_cache(
+            llama_memory_t   mem_other,
+     const layer_filter_cb & filter,
+     const  layer_reuse_cb & reuse,
+-    const  layer_share_cb & share) :
++    const  layer_share_cb & share,
++    ggml_type (*kv_type_override)(int32_t il, bool is_v, void * user_data),
++    void * kv_type_override_ud) :
+     model(model), hparams(hparams), v_trans(v_trans),
+     n_seq_max(n_seq_max), n_stream(unified ? 1 : n_seq_max), n_pad(n_pad), n_swa(n_swa), swa_type(swa_type),
+     other(static_cast<llama_kv_cache *>(mem_other)),
+@@ -228,8 +230,15 @@ llama_kv_cache::llama_kv_cache(
+         const bool has_k = true;
+         const bool has_v = !is_mla;
+ 
+-        ggml_tensor * k = has_k ? ggml_new_tensor_3d(ctx, type_k, n_embd_k_gqa, kv_size, n_stream) : nullptr;
+-        ggml_tensor * v = has_v ? ggml_new_tensor_3d(ctx, type_v, n_embd_v_gqa, kv_size, n_stream) : nullptr;
++        // [MEMBRANE] per-layer type override, resolved once here at
++        // allocation time -- cpy_k/cpy_v/get_k/get_v/state_write/
++        // state_read already read the type off each layer's own tensor,
++        // so no further per-layer patching is needed anywhere else.
++        const ggml_type layer_type_k = kv_type_override ? kv_type_override(il, false, kv_type_override_ud) : type_k;
++        const ggml_type layer_type_v = kv_type_override ? kv_type_override(il, true, kv_type_override_ud) : type_v;
++
++        ggml_tensor * k = has_k ? ggml_new_tensor_3d(ctx, layer_type_k, n_embd_k_gqa, kv_size, n_stream) : nullptr;
++        ggml_tensor * v = has_v ? ggml_new_tensor_3d(ctx, layer_type_v, n_embd_v_gqa, kv_size, n_stream) : nullptr;
+ 
+         has_k && ggml_format_name(k, "cache_k_l%d", il);
+         has_v && ggml_format_name(v, "cache_v_l%d", il);
+@@ -311,9 +320,17 @@ llama_kv_cache::llama_kv_cache(
+         attn_rot_v = other->attn_rot_v;
+     } else {
+         const char * LLAMA_ATTN_ROT_DISABLE = getenv("LLAMA_ATTN_ROT_DISABLE");
+-        const bool attn_rot_disable = LLAMA_ATTN_ROT_DISABLE ? atoi(LLAMA_ATTN_ROT_DISABLE) : false;
++        // [MEMBRANE] the Hadamard KV-rotation feature below is a single
++        // cache-wide flag derived from the flat type_k/type_v, applied
++        // uniformly across every layer; with a per-layer type override
++        // active it would be ambiguous (and wrong for any layer that
++        // ends up staying F16), so it is force-disabled instead. This is
++        // a known, documented scope limitation of the per-layer override,
++        // not a correctness workaround for anything else.
++        const bool attn_rot_disable = (LLAMA_ATTN_ROT_DISABLE ? atoi(LLAMA_ATTN_ROT_DISABLE) : false)
++            || kv_type_override != nullptr;
+         if (attn_rot_disable) {
+-            LLAMA_LOG_WARN("%s: attention rotation force disabled (LLAMA_ATTN_ROT_DISABLE)\n", __func__);
++            LLAMA_LOG_WARN("%s: attention rotation force disabled (LLAMA_ATTN_ROT_DISABLE or MEMBRANE kv_type_override)\n", __func__);
+         }
+ 
+         attn_rot_k =
+@@ -323,7 +340,8 @@ llama_kv_cache::llama_kv_cache(
+             hparams.n_embd_head_k() % 64 == 0;
+ 
+         // always create Hadamard rotation tensors for DeepSeek lightning indexers
+-        if ((model.arch == LLM_ARCH_DEEPSEEK32 || model.arch == LLM_ARCH_DEEPSEEK4) &&
++        if (kv_type_override == nullptr &&
++                (model.arch == LLM_ARCH_DEEPSEEK32 || model.arch == LLM_ARCH_DEEPSEEK4) &&
+                 hparams.n_embd_head_k_full == hparams.indexer_head_size) {
+             attn_rot_k = true;
+         }
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+index 531d99d..5c865a8 100644
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -112,7 +112,12 @@ public:
+                llama_memory_t   mem_other,
+         const layer_filter_cb & filter,
+         const  layer_reuse_cb & reuse,
+-        const  layer_share_cb & share);
++        const  layer_share_cb & share,
++        // [MEMBRANE] optional per-layer type override, see
++        // llama_context_params::kv_type_override. NULL (the default)
++        // reproduces upstream behavior exactly.
++        ggml_type (*kv_type_override)(int32_t il, bool is_v, void * user_data) = nullptr,
++        void * kv_type_override_ud = nullptr);
+ 
+     ~llama_kv_cache() = default;
+ 
+diff --git a/src/llama-memory.h b/src/llama-memory.h
+index db82539..794cf19 100644
+--- a/src/llama-memory.h
++++ b/src/llama-memory.h
+@@ -19,6 +19,11 @@ struct llama_memory_params {
+     ggml_type type_k;
+     ggml_type type_v;
+ 
++    // [MEMBRANE] optional per-layer KV type override, see
++    // llama_context_params::kv_type_override
++    ggml_type (*kv_type_override)(int32_t il, bool is_v, void * user_data);
++    void * kv_type_override_ud;
++
+     // use full-size SWA cache
+     bool swa_full;
+ 
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index c9b290e..9591c35 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -2279,7 +2279,9 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params,
+                                 nullptr,
+                                 filter,
+                                 nullptr,
+-                                nullptr);
++                                nullptr,
++                                params.kv_type_override,
++                                params.kv_type_override_ud);
+                     }
+                 }
+             }

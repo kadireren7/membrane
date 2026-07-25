@@ -1,0 +1,10 @@
+#ifndef MEMBRANE_LLAMA_COMMIT_H
+# define MEMBRANE_LLAMA_COMMIT_H
+
+/* Generated at configure time from the third_party/llama.cpp submodule's
+ * checked-out commit -- see CMakeLists.txt. Used by membrane_policy_context_t
+ * to check a loaded policy against the llama.cpp build actually running,
+ * instead of a hand-maintained string that could drift out of sync. */
+# define MEMBRANE_LLAMA_CPP_COMMIT "@MEMBRANE_LLAMA_CPP_COMMIT@"
+
+#endif

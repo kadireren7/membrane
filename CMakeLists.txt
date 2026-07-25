@@ -91,6 +91,8 @@ add_library(membrane_core
   src/kvdump/kvmetrics.c
   src/kvdump/kvpredict.c
   src/kvdump/kvquant.c
+  src/hash/sha256.c
+  src/policy/policy.c
 )
 target_include_directories(membrane_core PUBLIC include)
 target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m)
@@ -105,14 +107,52 @@ if(MEMBRANE_ENABLE_LLAMA)
     message(FATAL_ERROR "llama.cpp submodule missing; run: "
       "git submodule update --init third_party/llama.cpp")
   endif()
+
+  # The MEMBRANE per-layer KV type override needs a small patch to the
+  # pinned llama.cpp commit (see
+  # patches/llama.cpp-membrane-kv-type-override.patch and
+  # docs/phase4-runtime-policy.md). Applied here, idempotently, so a
+  # fresh submodule checkout builds without a manual step -- the
+  # submodule's own commit pin is never changed, only its working tree.
+  set(MEMBRANE_LLAMA_PATCH
+    ${CMAKE_SOURCE_DIR}/patches/llama.cpp-membrane-kv-type-override.patch)
+  execute_process(
+    COMMAND git apply --reverse --check ${MEMBRANE_LLAMA_PATCH}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/llama.cpp
+    RESULT_VARIABLE MEMBRANE_PATCH_ALREADY_APPLIED
+    OUTPUT_QUIET ERROR_QUIET)
+  if(NOT MEMBRANE_PATCH_ALREADY_APPLIED EQUAL 0)
+    execute_process(
+      COMMAND git apply ${MEMBRANE_LLAMA_PATCH}
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/llama.cpp
+      RESULT_VARIABLE MEMBRANE_PATCH_APPLY_RESULT)
+    if(NOT MEMBRANE_PATCH_APPLY_RESULT EQUAL 0)
+      message(FATAL_ERROR "failed to apply ${MEMBRANE_LLAMA_PATCH} to "
+        "third_party/llama.cpp -- see docs/phase4-runtime-policy.md")
+    endif()
+    message(STATUS "applied MEMBRANE kv_type_override patch to llama.cpp")
+  endif()
+
   set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
   set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
   set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
   add_subdirectory(third_party/llama.cpp EXCLUDE_FROM_ALL)
+
+  execute_process(
+    COMMAND git rev-parse HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/llama.cpp
+    OUTPUT_VARIABLE MEMBRANE_LLAMA_CPP_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+  configure_file(
+    ${CMAKE_SOURCE_DIR}/cmake/llama_commit.h.in
+    ${CMAKE_BINARY_DIR}/generated/membrane/llama_commit.h)
+
   add_subdirectory(tools/membrane-kv-capture)
   add_subdirectory(tools/membrane-kv-quality)
   add_subdirectory(tools/membrane-kv-sensitivity)
+  add_subdirectory(tools/membrane-policy-export)
+  add_subdirectory(tools/membrane-kv-runtime)
 endif()
 
 if(MEMBRANE_BUILD_TESTS)
