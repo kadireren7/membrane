@@ -102,6 +102,7 @@ add_subdirectory(tools/membrane-bench)
 add_subdirectory(tools/membrane-store-bench)
 add_subdirectory(tools/membrane-kv-analyze)
 add_subdirectory(tools/membrane-quant-bench)
+add_subdirectory(tools/membrane-hw-sim)
 
 if(MEMBRANE_ENABLE_LLAMA)
   enable_language(CXX)

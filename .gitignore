@@ -3,6 +3,13 @@
 # --------------------------------------------------
 build/
 build-*/
+
+# Locally-extracted dev tools (iverilog/yosys/nextpnr, obtained via
+# `apt-get download` + `dpkg-deb -x` since this environment has no root
+# access to install them system-wide -- see docs/phase5-fpga-streaming.md
+# section 6). Not part of the repo; each developer/CI environment must
+# provide its own.
+tools/.local-*/
 out/
 bin/
 lib/
