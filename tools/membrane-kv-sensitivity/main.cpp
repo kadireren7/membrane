@@ -74,6 +74,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <chrono>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -779,10 +780,19 @@ static bool	run_kv_combo(llama_model *model, const llama_vocab *vocab,
 	ok = free_ctx != NULL && forced_ctx != NULL;
 	if (ok)
 		ok = decode_prompt(free_ctx, base.prompt_tokens, 256);
-	if (ok)
-		ok = run_gen(free_ctx, vocab, gen_tokens, NULL, &free_run);
+	/* Measured right after the prompt decode, BEFORE run_gen -- matching
+	 * base.f16_state_bytes' prompt-only cell count exactly. Measuring
+	 * this after generation (the cell count grows by gen_tokens) would
+	 * put the numerator (prompt-only F16 bytes) and denominator
+	 * (prompt+gen_tokens native bytes) on different cell counts, which
+	 * for short prompts with a large gen_tokens can make the reported
+	 * "reduction" fall below 1x even though the real per-cell byte cost
+	 * did shrink -- the same class of denominator-mixing bug the project
+	 * caught and fixed once already for the projected/spliced metric. */
 	if (ok)
 		*kv_bytes = llama_state_seq_get_size(free_ctx, 0);
+	if (ok)
+		ok = run_gen(free_ctx, vocab, gen_tokens, NULL, &free_run);
 	if (ok)
 		ok = decode_prompt(forced_ctx, base.prompt_tokens, 256);
 	if (ok)
@@ -1926,6 +1936,231 @@ typedef struct s_optimizer_result2
 	double						search_seconds;
 }	optimizer_result2_t;
 
+/* Item 8: candidate pre-screening. Evaluates the valid prompt set in a
+ * given priority ORDER (recall-critical first -- the cheapest, highest-
+ * signal check) and stops the moment one prompt fails its own threshold,
+ * instead of always paying for every prompt regardless of an early
+ * failure. An ACCEPTED result always has every prompt evaluated (the
+ * loop only stops early on a failure); the aggregate on a REJECTED
+ * result is over however many prompts were actually evaluated before
+ * stopping, which is disclosed at every call site that reports it. */
+static bool	evaluate_and_check(llama_model *model, const llama_vocab *vocab,
+				int n_ctx, int gen_tokens, const std::vector<baseline_t> &valid,
+				const std::vector<size_t> &order,
+				const std::vector<prompt_class_t> &classes, bool is_k,
+				const margin_t &margin, const std::vector<bool> &must_stay,
+				const kv_policy_t &trial, per_prompt_result_t *out,
+				std::string *reason)
+{
+	prompt_thresholds_t	th;
+	double	cos_bar;
+	double	k_bar;
+	double	cos_sum;
+	double	top1_sum;
+	double	top5_sum;
+	double	kl_sum;
+	size_t	n_evaluated;
+	char	buf[220];
+
+	out->per_prompt.assign(valid.size(), metrics_t());
+	out->aggregate.recall_ok.assign(valid.size(), false);
+	out->aggregate.min_first_divergence = LONG_MAX;
+	cos_sum = 0.0;
+	top1_sum = 0.0;
+	top5_sum = 0.0;
+	kl_sum = 0.0;
+	n_evaluated = 0;
+	*reason = "";
+	for (size_t idx : order)
+	{
+		if (!run_experiment(model, vocab, n_ctx, gen_tokens, valid[idx],
+				policy_targets(valid[idx].idx, trial), &out->per_prompt[idx]))
+			return (false);
+		n_evaluated++;
+		cos_sum += out->per_prompt[idx].logit_cosine;
+		top1_sum += out->per_prompt[idx].top1_pct;
+		top5_sum += out->per_prompt[idx].top5_pct;
+		kl_sum += out->per_prompt[idx].kl_mean;
+		out->aggregate.recall_ok[idx] = out->per_prompt[idx].recall_ok;
+		if (out->per_prompt[idx].first_divergence
+				< out->aggregate.min_first_divergence)
+			out->aggregate.min_first_divergence
+				= out->per_prompt[idx].first_divergence;
+		th = thresholds_for_class(classes[idx]);
+		cos_bar = th.cosine_min + margin.cosine_margin;
+		if (is_k)
+		{
+			k_bar = K_STRICT_COSINE + margin.cosine_margin;
+			if (k_bar > cos_bar)
+				cos_bar = k_bar;
+		}
+		if (out->per_prompt[idx].logit_cosine < cos_bar)
+		{
+			snprintf(buf, sizeof(buf), "prompt '%s' (%s): cosine %.6f < "
+				"%.6f", valid[idx].name.c_str(), class_name(classes[idx]),
+				out->per_prompt[idx].logit_cosine, cos_bar);
+			*reason = buf;
+			break ;
+		}
+		if (out->per_prompt[idx].top1_pct < th.top1_min + margin.top1_margin)
+		{
+			snprintf(buf, sizeof(buf), "prompt '%s' (%s): top1 %.2f%% < "
+				"%.2f%%", valid[idx].name.c_str(), class_name(classes[idx]),
+				out->per_prompt[idx].top1_pct,
+				th.top1_min + margin.top1_margin);
+			*reason = buf;
+			break ;
+		}
+		if (out->per_prompt[idx].top5_pct < th.top5_min + margin.top5_margin)
+		{
+			snprintf(buf, sizeof(buf), "prompt '%s' (%s): top5 %.2f%% < "
+				"%.2f%%", valid[idx].name.c_str(), class_name(classes[idx]),
+				out->per_prompt[idx].top5_pct,
+				th.top5_min + margin.top5_margin);
+			*reason = buf;
+			break ;
+		}
+		if (must_stay[idx] && !out->per_prompt[idx].recall_ok)
+		{
+			snprintf(buf, sizeof(buf), "prompt '%s' (%s): recall broke "
+				"(all-Q8 answered it correctly, this candidate does not)",
+				valid[idx].name.c_str(), class_name(classes[idx]));
+			*reason = buf;
+			break ;
+		}
+	}
+	out->aggregate.top1 = n_evaluated ? top1_sum / (double)n_evaluated : 0.0;
+	out->aggregate.top5 = n_evaluated ? top5_sum / (double)n_evaluated : 0.0;
+	out->aggregate.cosine = n_evaluated ? cos_sum / (double)n_evaluated : 0.0;
+	out->aggregate.kl = n_evaluated ? kl_sum / (double)n_evaluated : 0.0;
+	return (true);
+}
+
+/* Recall-critical prompts first (cheapest, highest-signal rejection
+ * check), everything else in its original order after. */
+static std::vector<size_t>	screening_order(
+		const std::vector<prompt_class_t> &classes)
+{
+	std::vector<size_t>	order;
+	size_t	i;
+
+	i = 0;
+	while (i < classes.size())
+	{
+		if (classes[i] == PROMPT_RECALL_CRITICAL)
+			order.push_back(i);
+		i++;
+	}
+	i = 0;
+	while (i < classes.size())
+	{
+		if (classes[i] != PROMPT_RECALL_CRITICAL)
+			order.push_back(i);
+		i++;
+	}
+	return (order);
+}
+
+/* Item 8: resumable checkpointing. Every live decision is appended
+ * immediately (and flushed) to `checkpoint_out` as it is made, so a
+ * search interrupted partway through can be restarted with
+ * load_checkpoint() reading the same file back: already-decided slots
+ * are fast-forwarded into the policy without re-running any inference. */
+typedef struct s_resume_decision
+{
+	int			layer;
+	bool		is_k;
+	bool		accepted;
+	double		cosine;
+	double		top1;
+	double		top5;
+	std::string	reason;
+}	resume_decision_t;
+
+/* cosine/top1/top5/reason are persisted (not just accepted/rejected) so
+ * that a decision fast-forwarded from an EARLIER run/resume can still be
+ * reconstructed into a full decision2_t and reported in the JSONL --
+ * without this, a search resumed more than once would silently lose the
+ * layer-position/rejection-reason data for every slot decided before the
+ * most recent invocation. */
+static void	write_checkpoint(FILE *f, const char *model_name,
+				const char *tier, const slot_t &s, bool accepted,
+				double cosine, double top1, double top5,
+				const std::string &reason)
+{
+	if (f == NULL)
+		return ;
+	fprintf(f, "{\"record\":\"checkpoint\",\"model\":\"%s\",\"tier\":\"%s\","
+		"\"layer\":%d,\"kv\":\"%s\",\"accepted\":%s,\"cosine\":%.6f,"
+		"\"top1\":%.4f,\"top5\":%.4f,\"reason\":\"%s\"}\n", model_name, tier,
+		s.layer, s.is_k ? "K" : "V", accepted ? "true" : "false", cosine,
+		top1, top5, json_escape(reason).c_str());
+	fflush(f);
+}
+
+static std::vector<resume_decision_t>	load_checkpoint(const char *path,
+		const char *model_name, const char *tier)
+{
+	std::vector<resume_decision_t>	out;
+	FILE		*f;
+	char		line[1024];
+	char		m[128];
+	char		t[64];
+	char		kv[4];
+	int			layer;
+	int			acc;
+	double		cosine;
+	double		top1;
+	double		top5;
+	const char	*rp;
+	const char	*rend;
+	std::string	reason;
+
+	out.clear();
+	if (path == NULL)
+		return (out);
+	f = fopen(path, "r");
+	if (f == NULL)
+		return (out);
+	while (fgets(line, sizeof(line), f) != NULL)
+	{
+		if (strstr(line, "\"record\":\"checkpoint\"") == NULL)
+			continue ;
+		if (sscanf(line, "{\"record\":\"checkpoint\",\"model\":\"%127[^\"]"
+				"\",\"tier\":\"%63[^\"]\",\"layer\":%d,\"kv\":\"%3[^\"]"
+				"\",\"accepted\":%*[a-z]", m, t, &layer, kv) < 4)
+			continue ;
+		if (strcmp(m, model_name) != 0 || strcmp(t, tier) != 0)
+			continue ;
+		acc = strstr(line, "\"accepted\":true") != NULL;
+		cosine = 0.0;
+		top1 = 0.0;
+		top5 = 0.0;
+		rp = strstr(line, "\"cosine\":");
+		if (rp != NULL)
+			sscanf(rp, "\"cosine\":%lf", &cosine);
+		rp = strstr(line, "\"top1\":");
+		if (rp != NULL)
+			sscanf(rp, "\"top1\":%lf", &top1);
+		rp = strstr(line, "\"top5\":");
+		if (rp != NULL)
+			sscanf(rp, "\"top5\":%lf", &top5);
+		reason.clear();
+		rp = strstr(line, "\"reason\":\"");
+		if (rp != NULL)
+		{
+			rp += strlen("\"reason\":\"");
+			rend = strstr(rp, "\"}");
+			if (rend != NULL)
+				reason.assign(rp, (size_t)(rend - rp));
+		}
+		out.push_back({layer, kv[0] == 'K', acc != 0, cosine, top1, top5,
+				reason});
+	}
+	fclose(f);
+	return (out);
+}
+
 static double	worst_margin_ratio(const per_prompt_result_t &r,
 					const std::vector<prompt_class_t> &classes,
 					double memory_gain)
@@ -1950,16 +2185,25 @@ static double	worst_margin_ratio(const per_prompt_result_t &r,
 
 /* The greedy pass, per-prompt-constraint version of Phase 3.4's
  * greedy_optimize: same priority-queue design (V before K, one candidate
- * per round, first-improvement), but every accept/reject decision now
- * comes from check_candidate_per_prompt instead of the aggregate. */
+ * per round, first-improvement), now using evaluate_and_check's
+ * pre-screening (item 8: stop evaluating a candidate the moment one
+ * prompt fails, instead of always paying for every prompt) and, if
+ * `checkpoint_out`/`resume_from`/`model_name`/`tier` are supplied,
+ * resumable checkpointing -- each live decision is written immediately,
+ * and a prior run's checkpoint file can fast-forward already-decided
+ * slots without re-running any inference. */
 static bool	greedy_optimize_v2(llama_model *model, const llama_vocab *vocab,
 				int n_ctx, int gen_tokens, const std::vector<baseline_t> &valid,
 				const std::vector<prompt_class_t> &classes,
 				const std::vector<bool> &must_stay_correct,
 				const margin_t &margin, int search_budget,
-				const kv_policy_t &start_policy, optimizer_result2_t *out)
+				const kv_policy_t &start_policy, optimizer_result2_t *out,
+				const char *model_name = NULL, const char *tier = NULL,
+				FILE *checkpoint_out = NULL, const char *resume_from = NULL)
 {
 	std::vector<slot_t>	queue;
+	std::vector<size_t>	order;
+	std::vector<resume_decision_t>	resume;
 	kv_policy_t				trial;
 	decision2_t				d;
 	std::string				reason;
@@ -1967,10 +2211,58 @@ static bool	greedy_optimize_v2(llama_model *model, const llama_vocab *vocab,
 
 	t0 = std::chrono::steady_clock::now();
 	out->policy = start_policy;
-	out->evals_used = 0;
+	order = screening_order(classes);
 	queue = priority_queue_slots(valid[0].idx.n_layer);
+	if (model_name != NULL && tier != NULL)
+		resume = load_checkpoint(resume_from, model_name, tier);
+	/* `search_budget` bounds the TOTAL live evaluations across the whole
+	 * logical search, interrupt/resume boundaries included -- not a
+	 * fresh allowance per invocation. Each fast-forwarded checkpoint
+	 * entry already cost one live evaluation in the original run, so it
+	 * counts against the same budget here; otherwise repeated resumes
+	 * could silently search far more than the disclosed `search_budget`
+	 * candidates, breaking reproducibility with an uninterrupted run. */
+	out->evals_used = (int)resume.size();
+	if (!resume.empty())
+		fprintf(stderr, "  resuming from checkpoint: %zu prior decisions "
+			"for %s/%s (already counted against search_budget=%d)\n",
+			resume.size(), model_name, tier, search_budget);
 	for (const slot_t &s : queue)
 	{
+		bool	found_resume = false;
+
+		for (const resume_decision_t &rd : resume)
+			if (rd.layer == s.layer && rd.is_k == s.is_k)
+			{
+				decision2_t	rd_decision{};
+
+				if (rd.accepted)
+				{
+					if (s.is_k)
+						out->policy.kbits[s.layer] = 4;
+					else
+						out->policy.vbits[s.layer] = 4;
+				}
+				rd_decision.slot = s;
+				rd_decision.result.aggregate.cosine = rd.cosine;
+				rd_decision.result.aggregate.top1 = rd.top1;
+				rd_decision.result.aggregate.top5 = rd.top5;
+				rd_decision.memory_gain_bytes = slot_memory_gain(
+						valid[0].idx, s);
+				rd_decision.ratio = 0.0;	/* not recomputed on resume */
+				rd_decision.accepted = rd.accepted;
+				rd_decision.reason = rd.accepted ? "accepted (resumed)"
+					: (rd.reason.empty() ? "rejected (resumed)"
+						: rd.reason);
+				if (rd.accepted)
+					out->accepted.push_back(rd_decision);
+				else
+					out->rejected.push_back(rd_decision);
+				found_resume = true;
+				break ;
+			}
+		if (found_resume)
+			continue ;
 		if (out->evals_used >= search_budget)
 			break ;
 		if ((s.is_k ? out->policy.kbits[s.layer] : out->policy.vbits[s.layer])
@@ -1982,19 +2274,21 @@ static bool	greedy_optimize_v2(llama_model *model, const llama_vocab *vocab,
 		else
 			trial.vbits[s.layer] = 4;
 		d.slot = s;
-		if (!evaluate_policy_detailed(model, vocab, n_ctx, gen_tokens, valid,
-				trial, &d.result))
+		if (!evaluate_and_check(model, vocab, n_ctx, gen_tokens, valid, order,
+				classes, s.is_k, margin, must_stay_correct, trial, &d.result,
+				&reason))
 			return (false);
 		out->evals_used++;
 		d.memory_gain_bytes = slot_memory_gain(valid[0].idx, s);
-		reason = check_candidate_per_prompt(d.result, valid, classes, s.is_k,
-				margin, must_stay_correct);
 		d.ratio = worst_margin_ratio(d.result, classes, d.memory_gain_bytes);
 		d.accepted = reason.empty();
 		d.reason = reason.empty() ? "accepted" : reason;
-		fprintf(stderr, "  layer %2d %s -> Q4: agg-cosine %.6f  %s\n",
-			s.layer, s.is_k ? "K" : "V", d.result.aggregate.cosine,
+		fprintf(stderr, "  layer %2d %s -> Q4: agg-cosine %.6f (screened)  "
+			"%s\n", s.layer, s.is_k ? "K" : "V", d.result.aggregate.cosine,
 			d.accepted ? "ACCEPTED" : ("rejected: " + reason).c_str());
+		write_checkpoint(checkpoint_out, model_name, tier, s, d.accepted,
+			d.result.aggregate.cosine, d.result.aggregate.top1,
+			d.result.aggregate.top5, d.reason);
 		if (d.accepted)
 		{
 			out->policy = trial;
@@ -2061,6 +2355,63 @@ static bool	backtrack_v2(llama_model *model, const llama_vocab *vocab,
 	return (true);
 }
 
+static long	peak_rss_kb(void);
+
+typedef struct s_perf_result
+{
+	double	ttft_ms;
+	double	tok_per_sec;
+	size_t	kv_bytes;
+	long	peak_rss_kb;
+}	perf_result_t;
+
+/* Item 7: TTFT + tokens/second under a NATIVE, uniformly-typed KV cache --
+ * the only KV configuration llama.cpp's public API can actually execute.
+ * Composed per-layer policies (conservative/balanced/aggressive) are
+ * numerically spliced after the fact into an F16-backed context purely
+ * for quality evaluation, so running them through this real-decode timer
+ * would measure F16 compute cost while implying a speedup the runtime
+ * cannot actually deliver for a per-layer-mixed KV cache -- there is no
+ * public API to build one. Only all-FP16/all-Q8/all-Q4 get a real,
+ * hardware-measured TTFT/tok-s; this is disclosed explicitly wherever
+ * these numbers are reported, and composed policies are documented as
+ * memory-only projections instead. */
+static bool	measure_native_perf(llama_model *model, const llama_vocab *vocab,
+				int n_ctx, int gen_tokens, const baseline_t &base,
+				ggml_type tk, ggml_type tv, perf_result_t *out)
+{
+	llama_context	*ctx;
+	pass_result_t	pr;
+	bool			ok;
+	std::chrono::steady_clock::time_point	t0;
+	std::chrono::steady_clock::time_point	t_first_tok;
+	std::chrono::steady_clock::time_point	t_gen_done;
+
+	ctx = make_context(model, n_ctx, tk, tv);
+	if (ctx == NULL)
+		return (false);
+	t0 = std::chrono::steady_clock::now();
+	ok = decode_prompt(ctx, base.prompt_tokens, 256);
+	if (ok)
+		ok = run_gen(ctx, vocab, 1, NULL, &pr);
+	t_first_tok = std::chrono::steady_clock::now();
+	if (ok && gen_tokens > 1)
+		ok = run_gen(ctx, vocab, gen_tokens - 1, NULL, &pr);
+	t_gen_done = std::chrono::steady_clock::now();
+	if (ok)
+	{
+		out->ttft_ms = std::chrono::duration<double, std::milli>(
+				t_first_tok - t0).count();
+		out->tok_per_sec = gen_tokens > 1 ? (double)(gen_tokens - 1)
+			/ std::chrono::duration<double>(t_gen_done - t_first_tok).count()
+			: 0.0;
+		out->kv_bytes = llama_state_seq_get_size(ctx, 0);
+		out->peak_rss_kb = peak_rss_kb();
+	}
+	llama_free(ctx);
+	return (ok);
+}
+
 /* Item 6: tokens/second for one policy on one prompt, measured over a
  * single timed free-running generation pass on the spliced state. */
 static bool	measure_speed(llama_model *model, const llama_vocab *vocab,
@@ -2125,6 +2476,123 @@ static kv_policy_t	phase34_reused_policy(uint32_t n_layer)
 }
 
 /* ------------------------------------------------------------------ */
+/* Phase 3.6 item 5: transfer-policy experiment. A policy's Q4 layers are  */
+/* normalized to FRACTIONAL depth (layer / (n_layer-1)) so the same       */
+/* relative "which part of the network" pattern can be denormalized onto  */
+/* a model with a different layer count, then validated -- never trusted */
+/* -- against that model's own hard constraints.                         */
+/* ------------------------------------------------------------------ */
+
+typedef struct s_normalized_policy
+{
+	std::vector<double>	k_fractions;
+	std::vector<double>	v_fractions;
+}	normalized_policy_t;
+
+static normalized_policy_t	normalize_policy(const kv_policy_t &pol,
+		uint32_t n_layer)
+{
+	normalized_policy_t	np;
+	uint32_t				l;
+	double					frac;
+
+	l = 0;
+	while (l < n_layer)
+	{
+		frac = n_layer > 1 ? (double)l / (double)(n_layer - 1) : 0.0;
+		if (pol.kbits[l] == 4)
+			np.k_fractions.push_back(frac);
+		if (pol.vbits[l] == 4)
+			np.v_fractions.push_back(frac);
+		l++;
+	}
+	return (np);
+}
+
+static kv_policy_t	denormalize_policy(const normalized_policy_t &np,
+		uint32_t n_layer)
+{
+	kv_policy_t	p;
+	uint32_t	l;
+
+	p = all_q8_policy(n_layer);
+	for (double f : np.k_fractions)
+	{
+		l = (uint32_t)llround(f * (double)(n_layer > 1 ? n_layer - 1 : 0));
+		if (l < n_layer)
+			p.kbits[l] = 4;
+	}
+	for (double f : np.v_fractions)
+	{
+		l = (uint32_t)llround(f * (double)(n_layer > 1 ? n_layer - 1 : 0));
+		if (l < n_layer)
+			p.vbits[l] = 4;
+	}
+	return (p);
+}
+
+static bool	save_normalized_policy(const char *path,
+				const normalized_policy_t &np)
+{
+	FILE	*f;
+	size_t	i;
+
+	f = fopen(path, "w");
+	if (f == NULL)
+		return (false);
+	fprintf(f, "{\"k_fractions\":[");
+	for (i = 0; i < np.k_fractions.size(); i++)
+		fprintf(f, "%s%.6f", i ? "," : "", np.k_fractions[i]);
+	fprintf(f, "],\"v_fractions\":[");
+	for (i = 0; i < np.v_fractions.size(); i++)
+		fprintf(f, "%s%.6f", i ? "," : "", np.v_fractions[i]);
+	fprintf(f, "]}\n");
+	fclose(f);
+	return (true);
+}
+
+static std::vector<double>	parse_fraction_array(const std::string &content,
+		const char *key)
+{
+	std::vector<double>	out;
+	size_t					p;
+	size_t					e;
+	std::stringstream		ss;
+	std::string				tok;
+
+	p = content.find(key);
+	if (p == std::string::npos)
+		return (out);
+	p = content.find('[', p);
+	e = content.find(']', p);
+	if (p == std::string::npos || e == std::string::npos)
+		return (out);
+	ss.str(content.substr(p + 1, e - p - 1));
+	while (std::getline(ss, tok, ','))
+		if (!tok.empty())
+			out.push_back(atof(tok.c_str()));
+	return (out);
+}
+
+static bool	load_normalized_policy(const char *path, normalized_policy_t *np)
+{
+	FILE		*f;
+	std::string	content;
+	char		buf[4096];
+	size_t		n;
+
+	f = fopen(path, "r");
+	if (f == NULL)
+		return (false);
+	while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+		content.append(buf, n);
+	fclose(f);
+	np->k_fractions = parse_fraction_array(content, "k_fractions");
+	np->v_fractions = parse_fraction_array(content, "v_fractions");
+	return (true);
+}
+
+/* ------------------------------------------------------------------ */
 /* CLI                                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -2147,6 +2615,17 @@ typedef struct s_opts
 	int							robustness_budget;	/* Phase 3.5 item 5 */
 	margin_t					balanced_margin_override;
 	bool						has_margin_override;
+	const char					*model_name;	/* Phase 3.6: label for reporting
+											 * and checkpoint matching */
+	const char					*checkpoint_path;	/* Phase 3.6 item 8 */
+	bool						resume;				/* read checkpoint_path back */
+	const char					*export_policy_path;	/* Phase 3.6 item 5 */
+	const char					*transfer_from_path;
+	bool						skip_legacy_comparison;	/* Phase 3.6: item 3
+					 * only asks for FP16/Q8/Q4/conservative/balanced/
+					 * aggressive, not the Phase 3.3/3.4 policies -- this
+					 * skips their comparatively expensive layer/age
+					 * sweep for cross-model runs where it isn't needed. */
 }	opts_t;
 
 static int	parse_args(int argc, char **argv, opts_t *o)
@@ -2164,6 +2643,12 @@ static int	parse_args(int argc, char **argv, opts_t *o)
 	o->robustness_budget = 16;
 	o->balanced_margin_override = g_margin_balanced;
 	o->has_margin_override = false;
+	o->model_name = "model";
+	o->checkpoint_path = NULL;
+	o->resume = false;
+	o->export_policy_path = NULL;
+	o->transfer_from_path = NULL;
+	o->skip_legacy_comparison = false;
 	i = 1;
 	while (i < argc)
 	{
@@ -2232,14 +2717,45 @@ static int	parse_args(int argc, char **argv, opts_t *o)
 			o->has_margin_override = true;
 			i += 2;
 		}
+		else if (strcmp(argv[i], "--model-name") == 0 && i + 1 < argc)
+		{
+			o->model_name = argv[i + 1];
+			i += 2;
+		}
+		else if (strcmp(argv[i], "--checkpoint") == 0 && i + 1 < argc)
+		{
+			o->checkpoint_path = argv[i + 1];
+			i += 2;
+		}
+		else if (strcmp(argv[i], "--resume") == 0)
+		{
+			o->resume = true;
+			i += 1;
+		}
+		else if (strcmp(argv[i], "--export-policy") == 0 && i + 1 < argc)
+		{
+			o->export_policy_path = argv[i + 1];
+			i += 2;
+		}
+		else if (strcmp(argv[i], "--transfer-from") == 0 && i + 1 < argc)
+		{
+			o->transfer_from_path = argv[i + 1];
+			i += 2;
+		}
+		else if (strcmp(argv[i], "--skip-legacy-comparison") == 0)
+		{
+			o->skip_legacy_comparison = true;
+			i += 1;
+		}
 		else
 			return (die("unknown or malformed option"));
 	}
 	if (o->model_path == NULL || o->prompts.empty())
 		return (die("usage: --model M --prompt PATH ANSWER|- [...]"
 				" [--profiler-index N] [--n-tokens N] [--gen-tokens G]"
-				" [--out OUT.jsonl] [--mode sensitivity|optimize]"
-				" [--search-budget N]"));
+				" [--out OUT.jsonl] [--mode sensitivity|optimize|risk]"
+				" [--search-budget N] [--model-name LABEL]"
+				" [--checkpoint PATH] [--resume]"));
 	return (0);
 }
 
@@ -2368,7 +2884,10 @@ static bool	run_pareto(llama_model *model, const llama_vocab *vocab,
 	};
 	kv_policy_t	start;
 	size_t		li;
+	FILE		*checkpoint_out;
 
+	checkpoint_out = o.checkpoint_path != NULL
+		? fopen(o.checkpoint_path, "a") : NULL;
 	start = all_q8_policy(valid[0].idx.n_layer);
 	li = 0;
 	while (li < sizeof(levels) / sizeof(levels[0]))
@@ -2383,18 +2902,74 @@ static bool	run_pareto(llama_model *model, const llama_vocab *vocab,
 			p.margin.top5_margin);
 		if (!greedy_optimize_v2(model, vocab, o.n_tokens, o.gen_tokens, valid,
 				classes, must_stay_correct, p.margin, o.search_budget, start,
-				&p.opt))
+				&p.opt, o.model_name, p.name, checkpoint_out,
+				o.resume ? o.checkpoint_path : NULL))
+		{
+			if (checkpoint_out != NULL)
+				fclose(checkpoint_out);
 			return (false);
+		}
 		if (!backtrack_v2(model, vocab, o.n_tokens, o.gen_tokens, valid,
 				classes, must_stay_correct, p.margin, &p.opt))
+		{
+			if (checkpoint_out != NULL)
+				fclose(checkpoint_out);
 			return (false);
+		}
 		fprintf(stderr, "  %s: %zu accepted, %zu rejected, %d evals, "
 			"%.1fs\n", p.name, p.opt.accepted.size(), p.opt.rejected.size(),
 			p.opt.evals_used, p.opt.search_seconds);
 		out->push_back(std::move(p));
 		li++;
 	}
+	if (checkpoint_out != NULL)
+		fclose(checkpoint_out);
 	return (true);
+}
+
+/* Item 4/9: writes every Pareto tier's final policy AND every individual
+ * accept/reject candidate decision (layer, K/V, aggregate cosine/top1/top5,
+ * rejection reason when applicable) to the machine-readable JSONL --
+ * without this, layer-position distribution and candidate rejection
+ * reasons (both explicitly required by item 4) would only exist as
+ * stderr text, not in a format the cross-model analysis can consume. */
+static void	emit_pareto_json(FILE *out, const char *model_name,
+				const std::vector<pareto_point_t> &pareto, uint32_t n_layer)
+{
+	uint32_t	l;
+
+	if (out == NULL)
+		return ;
+	for (const pareto_point_t &pp : pareto)
+	{
+		fprintf(out, "{\"record\":\"pareto_policy\",\"model\":\"%s\","
+			"\"tier\":\"%s\",\"kbits\":[", model_name, pp.name);
+		for (l = 0; l < n_layer; l++)
+			fprintf(out, "%s%d", l ? "," : "", pp.opt.policy.kbits[l]);
+		fprintf(out, "],\"vbits\":[");
+		for (l = 0; l < n_layer; l++)
+			fprintf(out, "%s%d", l ? "," : "", pp.opt.policy.vbits[l]);
+		fprintf(out, "],\"evals_used\":%d,\"search_seconds\":%.3f,"
+			"\"accepted\":%zu,\"rejected\":%zu}\n", pp.opt.evals_used,
+			pp.opt.search_seconds, pp.opt.accepted.size(),
+			pp.opt.rejected.size());
+		for (const decision2_t &d : pp.opt.accepted)
+			fprintf(out, "{\"record\":\"pareto_decision\",\"model\":\"%s\","
+				"\"tier\":\"%s\",\"layer\":%d,\"kv\":\"%s\","
+				"\"outcome\":\"accepted\",\"agg_cosine\":%.6f,"
+				"\"agg_top1\":%.4f,\"agg_top5\":%.4f,\"ratio\":%.4f}\n",
+				model_name, pp.name, d.slot.layer, d.slot.is_k ? "K" : "V",
+				d.result.aggregate.cosine, d.result.aggregate.top1,
+				d.result.aggregate.top5, d.ratio);
+		for (const decision2_t &d : pp.opt.rejected)
+			fprintf(out, "{\"record\":\"pareto_decision\",\"model\":\"%s\","
+				"\"tier\":\"%s\",\"layer\":%d,\"kv\":\"%s\","
+				"\"outcome\":\"rejected\",\"agg_cosine\":%.6f,"
+				"\"agg_top1\":%.4f,\"agg_top5\":%.4f,\"reason\":\"%s\"}\n",
+				model_name, pp.name, d.slot.layer, d.slot.is_k ? "K" : "V",
+				d.result.aggregate.cosine, d.result.aggregate.top1,
+				d.result.aggregate.top5, json_escape(d.reason).c_str());
+	}
 }
 
 /* Item 5: re-runs the balanced-margin search at a reduced budget with the
@@ -2476,6 +3051,115 @@ static bool	run_robustness_check(llama_model *model, const llama_vocab *vocab,
 	return (true);
 }
 
+/* Item 5: loads a normalized layer-position policy learned on a DIFFERENT
+ * model (e.g. the balanced policy exported from SmolLM2-135M), denormalizes
+ * it onto this model's own layer count, and validates it against THIS
+ * model's own per-prompt hard constraints at the balanced margin. A
+ * transfer policy that fails even one prompt's threshold is reported
+ * UNSAFE and is never accepted as a substitute for this model's own
+ * independently-optimized policy, regardless of how well it performed on
+ * the source model it was learned from. */
+static bool	run_transfer_policy_check(llama_model *model,
+				const llama_vocab *vocab, const opts_t &o,
+				const std::vector<baseline_t> &valid,
+				const std::vector<prompt_class_t> &classes,
+				const std::vector<bool> &must_stay_correct,
+				const std::vector<pareto_point_t> &pareto, FILE *json_out)
+{
+	normalized_policy_t		np;
+	kv_policy_t				transferred;
+	per_prompt_result_t		result;
+	std::string				reason;
+	margin_t				margin;
+	const pareto_point_t	*own_balanced;
+	bool					is_k;
+	bool					safe;
+	uint32_t				n_layer;
+	uint32_t				l;
+	uint32_t				own_q4;
+	uint32_t				transfer_q4;
+	size_t					pi;
+
+	fprintf(stderr, "\n=== Transfer-policy check: '%s' on %s ===\n",
+		o.transfer_from_path, o.model_name);
+	if (!load_normalized_policy(o.transfer_from_path, &np))
+	{
+		fprintf(stderr, "  FAILED to load '%s' -- skipping transfer-policy "
+			"check\n", o.transfer_from_path);
+		return (true);
+	}
+	n_layer = valid[0].idx.n_layer;
+	transferred = denormalize_policy(np, n_layer);
+	is_k = false;
+	l = 0;
+	while (l < n_layer)
+	{
+		if (transferred.kbits[l] == 4)
+			is_k = true;
+		l++;
+	}
+	margin = o.has_margin_override ? o.balanced_margin_override
+		: g_margin_balanced;
+	if (!evaluate_policy_detailed(model, vocab, o.n_tokens, o.gen_tokens,
+			valid, transferred, &result))
+		return (false);
+	reason = check_candidate_per_prompt(result, valid, classes, is_k, margin,
+			must_stay_correct);
+	safe = reason.empty();
+	fprintf(stderr, "  denormalized: %d K-Q4 layers, %d V-Q4 layers (of %u)\n",
+		(int)np.k_fractions.size(), (int)np.v_fractions.size(), n_layer);
+	fprintf(stderr, "  aggregate cosine %.6f  top1 %.2f%%  top5 %.2f%%\n",
+		result.aggregate.cosine, result.aggregate.top1,
+		result.aggregate.top5);
+	if (safe)
+		fprintf(stderr, "  verdict: SAFE on %s -- passes every valid "
+			"prompt's own hard constraint at the balanced margin\n",
+			o.model_name);
+	else
+		fprintf(stderr, "  verdict: UNSAFE on %s -- %s (transfer policy is "
+			"NOT accepted; this model's own optimized policy must be used "
+			"instead)\n", o.model_name, reason.c_str());
+	own_balanced = NULL;
+	pi = 0;
+	while (pi < pareto.size())
+	{
+		if (strcmp(pareto[pi].name, "balanced") == 0)
+			own_balanced = &pareto[pi];
+		pi++;
+	}
+	if (own_balanced != NULL)
+	{
+		own_q4 = 0;
+		transfer_q4 = 0;
+		l = 0;
+		while (l < n_layer)
+		{
+			if (own_balanced->opt.policy.kbits[l] == 4)
+				own_q4++;
+			if (own_balanced->opt.policy.vbits[l] == 4)
+				own_q4++;
+			if (transferred.kbits[l] == 4)
+				transfer_q4++;
+			if (transferred.vbits[l] == 4)
+				transfer_q4++;
+			l++;
+		}
+		fprintf(stderr, "  vs. this model's own optimized balanced policy: "
+			"%u/%u Q4 slots (own) vs %u/%u Q4 slots (transferred)\n",
+			own_q4, n_layer * 2, transfer_q4, n_layer * 2);
+	}
+	if (json_out != NULL)
+		fprintf(json_out, "{\"record\":\"transfer_policy\",\"model\":\"%s\","
+			"\"source\":\"%s\",\"safe\":%s,\"reason\":\"%s\","
+			"\"aggregate_cosine\":%.6f,\"aggregate_top1\":%.4f,"
+			"\"aggregate_top5\":%.4f,\"k_q4_layers\":%d,\"v_q4_layers\":%d}\n",
+			o.model_name, o.transfer_from_path, safe ? "true" : "false",
+			json_escape(reason).c_str(), result.aggregate.cosine,
+			result.aggregate.top1, result.aggregate.top5,
+			(int)np.k_fractions.size(), (int)np.v_fractions.size());
+	return (true);
+}
+
 /* Item 7: all-Q8 / Phase 3.3 policy / Phase 3.4 policy (reused) /
  * Phase 3.5 conservative / balanced / aggressive, for one prompt. */
 static bool	run_risk_comparison(llama_model *model, const llama_vocab *vocab,
@@ -2483,12 +3167,14 @@ static bool	run_risk_comparison(llama_model *model, const llama_vocab *vocab,
 				const std::vector<int> &layer_bits, bool age_override,
 				const kv_policy_t &phase34_policy,
 				const std::vector<pareto_point_t> &pareto, FILE *json_out,
-				bool is_valid)
+				bool is_valid, bool skip_legacy)
 {
 	metrics_t	m_q8;
+	metrics_t	m_q4;
 	metrics_t	m_p33;
 	metrics_t	m_p34;
 	size_t		kv_q8;
+	size_t		kv_q4;
 	double		f16b_real;
 	double		f16b_analytic;
 	double		tps;
@@ -2500,29 +3186,45 @@ static bool	run_risk_comparison(llama_model *model, const llama_vocab *vocab,
 	f16b_analytic = full_f16_bytes(base.idx);
 	ok = run_kv_combo(model, vocab, n_ctx, gen_tokens, base, GGML_TYPE_Q8_0,
 			GGML_TYPE_Q8_0, &m_q8, &kv_q8);
-	pol33 = build_policy_targets(base.idx, layer_bits, age_override, 4);
+	/* Item 6 success criteria need all-Q4's QUALITY (cosine/top1/top5/
+	 * recall), not just its memory/speed (already covered by
+	 * measure_native_perf) -- without this, "clearly better quality than
+	 * all-Q4" can never actually be checked against a measured number. */
 	if (ok)
-		ok = run_experiment(model, vocab, n_ctx, gen_tokens, base, pol33,
-				&m_p33);
-	pol34 = policy_targets(base.idx, phase34_policy);
-	if (ok)
-		ok = run_experiment(model, vocab, n_ctx, gen_tokens, base, pol34,
-				&m_p34);
+		ok = run_kv_combo(model, vocab, n_ctx, gen_tokens, base,
+				GGML_TYPE_Q4_0, GGML_TYPE_Q4_0, &m_q4, &kv_q4);
+	if (!skip_legacy)
+	{
+		pol33 = build_policy_targets(base.idx, layer_bits, age_override, 4);
+		if (ok)
+			ok = run_experiment(model, vocab, n_ctx, gen_tokens, base, pol33,
+					&m_p33);
+		pol34 = policy_targets(base.idx, phase34_policy);
+		if (ok)
+			ok = run_experiment(model, vocab, n_ctx, gen_tokens, base, pol34,
+					&m_p34);
+	}
 	if (!ok)
 		return (false);
 	fprintf(stderr, "\n--- prompt: %s (%s) ---\n", base.name.c_str(),
 		is_valid ? "valid" : "EXCLUDED, informational only");
 	print_row("all-Q8 (native)", m_q8, (double)kv_q8, f16b_real);
-	print_row("Phase 3.3 policy", m_p33, projected_kv_bytes(base.idx, pol33),
-		f16b_analytic);
-	print_row("Phase 3.4 policy", m_p34, projected_kv_bytes_kv(base.idx,
-			phase34_policy), f16b_analytic);
+	print_row("all-Q4 (native)", m_q4, (double)kv_q4, f16b_real);
 	emit_json_row(json_out, base.name.c_str(), "all_q8", m_q8, (double)kv_q8,
 		f16b_real);
-	emit_json_row(json_out, base.name.c_str(), "phase33_policy", m_p33,
-		projected_kv_bytes(base.idx, pol33), f16b_analytic);
-	emit_json_row(json_out, base.name.c_str(), "phase34_policy", m_p34,
-		projected_kv_bytes_kv(base.idx, phase34_policy), f16b_analytic);
+	emit_json_row(json_out, base.name.c_str(), "all_q4", m_q4, (double)kv_q4,
+		f16b_real);
+	if (!skip_legacy)
+	{
+		print_row("Phase 3.3 policy", m_p33, projected_kv_bytes(base.idx,
+				pol33), f16b_analytic);
+		print_row("Phase 3.4 policy", m_p34, projected_kv_bytes_kv(base.idx,
+				phase34_policy), f16b_analytic);
+		emit_json_row(json_out, base.name.c_str(), "phase33_policy", m_p33,
+			projected_kv_bytes(base.idx, pol33), f16b_analytic);
+		emit_json_row(json_out, base.name.c_str(), "phase34_policy", m_p34,
+			projected_kv_bytes_kv(base.idx, phase34_policy), f16b_analytic);
+	}
 	for (const pareto_point_t &pp : pareto)
 	{
 		metrics_t	m;
@@ -2571,6 +3273,12 @@ static bool	run_risk_aware_mode(llama_model *model, const llama_vocab *vocab,
 	std::chrono::steady_clock::time_point	t0;
 
 	t0 = std::chrono::steady_clock::now();
+	age_override = false;
+	fprintf(stderr, "\n=== Phase 3.6 model: %s ===\n", o.model_name);
+	if (out != NULL)
+		fprintf(out, "{\"record\":\"model_info\",\"model\":\"%s\","
+			"\"n_tokens\":%d,\"gen_tokens\":%d,\"search_budget\":%d}\n",
+			o.model_name, o.n_tokens, o.gen_tokens, o.search_budget);
 	fprintf(stderr, "\n=== Phase 3.5: baseline filtering + classification "
 		"===\n");
 	i = 0;
@@ -2623,23 +3331,102 @@ static bool	run_risk_aware_mode(llama_model *model, const llama_vocab *vocab,
 	if (o.has_margin_override)
 		fprintf(stderr, "\n(--cosine-margin/--top1-margin/--top5-margin "
 			"override the 'balanced' Pareto point's margins)\n");
+	fprintf(stderr, "\n=== Item 7: real hardware TTFT/tok-s (native KV "
+		"types only -- see measure_native_perf comment for why composed "
+		"policies cannot be measured this way) ===\n");
+	{
+		const struct { const char *name; ggml_type tk; ggml_type tv; }
+			native[] = {
+				{"all-FP16", GGML_TYPE_F16, GGML_TYPE_F16},
+				{"all-Q8", GGML_TYPE_Q8_0, GGML_TYPE_Q8_0},
+				{"all-Q4", GGML_TYPE_Q4_0, GGML_TYPE_Q4_0},
+			};
+		size_t	ni;
+
+		ni = 0;
+		while (ni < sizeof(native) / sizeof(native[0]))
+		{
+			perf_result_t	perf;
+
+			if (!measure_native_perf(model, vocab, o.n_tokens, o.gen_tokens,
+					valid[0], native[ni].tk, native[ni].tv, &perf))
+				return (false);
+			fprintf(stderr, "  %-8s TTFT %8.1fms  %6.1f tok/s  KV %8zu "
+				"bytes  peak RSS %6ldMB\n", native[ni].name, perf.ttft_ms,
+				perf.tok_per_sec, perf.kv_bytes, perf.peak_rss_kb / 1024);
+			if (out != NULL)
+				fprintf(out, "{\"record\":\"native_perf\",\"model\":\"%s\","
+					"\"config\":\"%s\",\"prompt\":\"%s\",\"ttft_ms\":%.3f,"
+					"\"tok_per_sec\":%.3f,\"kv_bytes\":%zu,"
+					"\"peak_rss_kb\":%ld}\n", o.model_name, native[ni].name,
+					valid[0].name.c_str(), perf.ttft_ms, perf.tok_per_sec,
+					perf.kv_bytes, perf.peak_rss_kb);
+			ni++;
+		}
+	}
 	if (!run_pareto(model, vocab, o, valid, valid_classes, q8_ref.recall_ok,
 			&pareto))
 		return (false);
+	emit_pareto_json(out, o.model_name, pareto, valid[0].idx.n_layer);
 	if (!run_robustness_check(model, vocab, o, valid, valid_classes,
 			q8_ref.recall_ok, o.robustness_budget))
 		return (false);
-	phase34_policy = phase34_reused_policy(valid[0].idx.n_layer);
-	if (!run_layer_sweep(model, vocab, o.n_tokens, o.gen_tokens, valid[0],
-			g_default_thresholds, &layer_results))
-		return (false);
-	if (!run_age_sweep(model, vocab, o.n_tokens, o.gen_tokens, valid[0],
-			g_default_thresholds, &age_results))
-		return (false);
-	layer_bits.resize(layer_results.size());
-	for (i = 0; i < layer_results.size(); i++)
-		layer_bits[i] = layer_results[i].classification;
-	age_override = !age_results.empty() && age_results[0].classification == 4;
+	if (o.skip_legacy_comparison)
+		fprintf(stderr, "\n(--skip-legacy-comparison: Phase 3.3/3.4 "
+			"per-layer/per-age sweeps and their policies are not "
+			"re-derived or reported for this model -- item 3 of Phase "
+			"3.6 only requires FP16/Q8/Q4/conservative/balanced/"
+			"aggressive)\n");
+	else
+	{
+		phase34_policy = phase34_reused_policy(valid[0].idx.n_layer);
+		if (!run_layer_sweep(model, vocab, o.n_tokens, o.gen_tokens, valid[0],
+				g_default_thresholds, &layer_results))
+			return (false);
+		if (!run_age_sweep(model, vocab, o.n_tokens, o.gen_tokens, valid[0],
+				g_default_thresholds, &age_results))
+			return (false);
+		layer_bits.resize(layer_results.size());
+		for (i = 0; i < layer_results.size(); i++)
+			layer_bits[i] = layer_results[i].classification;
+		age_override = !age_results.empty()
+			&& age_results[0].classification == 4;
+	}
+	if (o.export_policy_path != NULL)
+	{
+		const pareto_point_t	*balanced;
+		size_t					pi;
+
+		balanced = NULL;
+		pi = 0;
+		while (pi < pareto.size())
+		{
+			if (strcmp(pareto[pi].name, "balanced") == 0)
+				balanced = &pareto[pi];
+			pi++;
+		}
+		if (balanced == NULL)
+			fprintf(stderr, "\n(--export-policy: no 'balanced' Pareto "
+				"point found, nothing exported)\n");
+		else
+		{
+			normalized_policy_t	np = normalize_policy(balanced->opt.policy,
+					valid[0].idx.n_layer);
+
+			if (!save_normalized_policy(o.export_policy_path, np))
+				fprintf(stderr, "\n(--export-policy: failed to write "
+					"'%s')\n", o.export_policy_path);
+			else
+				fprintf(stderr, "\n(--export-policy: wrote normalized "
+					"balanced policy -- %zu K fractions, %zu V fractions "
+					"-- to '%s')\n", np.k_fractions.size(),
+					np.v_fractions.size(), o.export_policy_path);
+		}
+	}
+	if (o.transfer_from_path != NULL)
+		if (!run_transfer_policy_check(model, vocab, o, valid, valid_classes,
+				q8_ref.recall_ok, pareto, out))
+			return (false);
 	fprintf(stderr, "\n=== Final 6-way comparison across %zu prompts ===\n",
 		all_bases.size());
 	i = 0;
@@ -2647,7 +3434,7 @@ static bool	run_risk_aware_mode(llama_model *model, const llama_vocab *vocab,
 	{
 		if (!run_risk_comparison(model, vocab, o.n_tokens, o.gen_tokens,
 				all_bases[i], layer_bits, age_override, phase34_policy,
-				pareto, out, is_valid_flags[i]))
+				pareto, out, is_valid_flags[i], o.skip_legacy_comparison))
 			return (false);
 		i++;
 	}
