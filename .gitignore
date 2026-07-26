@@ -83,6 +83,11 @@ benchmarks/cache/
 *.kvtrace
 *.kvdump
 *.memtrace
+# Phase 6.1: real captured KV access traces, intentionally committed so
+# membrane-cxl-sim's calibration source is reproducible from the repo
+# alone (docs/phase6-cxl-near-memory.md section 3/11), not excluded by
+# the generic *.kvtrace rule above.
+!benchmarks/cxl-sim/traces/*.kvtrace
 
 # --------------------------------------------------
 # Large model and tensor files

@@ -96,6 +96,7 @@ add_library(membrane_core
   src/quant/quant_simd.c
   src/fpga/fpga_dma.c
   src/fpga/quant_backend.c
+  src/kvtrace/kvtrace.c
 )
 target_include_directories(membrane_core PUBLIC include)
 target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m)
@@ -105,6 +106,12 @@ add_subdirectory(tools/membrane-store-bench)
 add_subdirectory(tools/membrane-kv-analyze)
 add_subdirectory(tools/membrane-quant-bench)
 add_subdirectory(tools/membrane-hw-sim)
+
+# membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
+# llama.cpp dependency -- built unconditionally like the C tools above,
+# unlike tools/membrane-kv-capture etc, which need MEMBRANE_ENABLE_LLAMA.
+enable_language(CXX)
+add_subdirectory(tools/membrane-cxl-sim)
 
 if(MEMBRANE_ENABLE_LLAMA)
   enable_language(CXX)
@@ -199,6 +206,7 @@ if(MEMBRANE_ENABLE_LLAMA)
   endif()
 
   add_subdirectory(tools/membrane-kv-capture)
+  add_subdirectory(tools/membrane-kv-trace-capture)
   add_subdirectory(tools/membrane-kv-quality)
   add_subdirectory(tools/membrane-kv-sensitivity)
   add_subdirectory(tools/membrane-policy-export)
