@@ -24,6 +24,7 @@
 #include "membrane/hash.h"
 #include "membrane/llama_commit.h"
 #include "membrane/policy.h"
+#include "membrane/quant_backend.h"
 
 static int	die(const char *msg)
 {
@@ -435,6 +436,7 @@ typedef struct s_opts
 	int			gen_tokens;
 	const char	*model_name;
 	const char	*out_path;
+	membrane_quant_backend_t	quant_backend;
 }	opts_t;
 
 static int	parse_args(int argc, char **argv, opts_t *o)
@@ -445,6 +447,7 @@ static int	parse_args(int argc, char **argv, opts_t *o)
 	o->n_tokens = 1024;
 	o->gen_tokens = 32;
 	o->model_name = "model";
+	o->quant_backend = MEMBRANE_QUANT_BACKEND_CPU;
 	i = 1;
 	while (i < argc)
 	{
@@ -466,6 +469,37 @@ static int	parse_args(int argc, char **argv, opts_t *o)
 			o->model_name = argv[++i];
 		else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc)
 			o->out_path = argv[++i];
+		else if (strcmp(argv[i], "--quant-backend") == 0 && i + 1 < argc)
+		{
+			const char	*v = argv[++i];
+
+			/*
+			 * Additive-only flag (Phase 5.4 task 116): default "cpu"
+			 * reproduces this tool's exact pre-existing behavior --
+			 * K/V tensors are quantized by ggml's own internal Q8_0/
+			 * Q4_0 kernels via the kv_type_override mechanism, same
+			 * as before this flag existed. "fpga"/"auto" do NOT
+			 * redirect that live, in-inference quantization (ggml's
+			 * internal dispatch is not patched, see this flag's
+			 * report_backend_choice() call site for why) -- they
+			 * only affect the ADDITIONAL "quant_backend" field this
+			 * tool now reports, resolved via the same
+			 * membrane_choose_quant_backend() this phase's
+			 * membrane-fpga-runtime tool uses for its own AUTO
+			 * decisions (membrane/quant_backend.h), so the choice
+			 * that would apply to a batch OFFLINE quantize/dequantize
+			 * call (as opposed to live inference) is genuinely
+			 * computed, not just echoed back.
+			 */
+			if (strcmp(v, "cpu") == 0)
+				o->quant_backend = MEMBRANE_QUANT_BACKEND_CPU;
+			else if (strcmp(v, "fpga") == 0)
+				o->quant_backend = MEMBRANE_QUANT_BACKEND_FPGA;
+			else if (strcmp(v, "auto") == 0)
+				o->quant_backend = MEMBRANE_QUANT_BACKEND_AUTO;
+			else
+				return (die("--quant-backend must be cpu|fpga|auto"), 1);
+		}
 		else
 			return (die("unknown or malformed option"), 1);
 		i++;
@@ -473,7 +507,8 @@ static int	parse_args(int argc, char **argv, opts_t *o)
 	if (o->model_path == NULL || o->prompt_path == NULL)
 		return (die("usage: --model PATH --prompt PATH ANSWER|- "
 				"[--policy POLICY] [--n-tokens N] [--gen-tokens G] "
-				"[--model-name LABEL] [--out JSONL]"), 1);
+				"[--model-name LABEL] [--out JSONL] "
+				"[--quant-backend cpu|fpga|auto]"), 1);
 	return (0);
 }
 
@@ -522,6 +557,31 @@ int	main(int argc, char **argv)
 
 	if (parse_args(argc, argv, &o) != 0)
 		return (1);
+	{
+		/*
+		 * Phase 5.4 task 116: report which backend an OFFLINE batch
+		 * quantize/dequantize call (not this run's own live
+		 * inference, which always uses ggml's internal kernels, see
+		 * --quant-backend's help text above) would resolve to for a
+		 * representative batch -- computed via the same shared
+		 * membrane_choose_quant_backend() this phase's
+		 * membrane-fpga-runtime tool uses, not a placeholder.
+		 * cpu_cores_available is approximated from the context's own
+		 * n_threads (4, see make_context) since that's the thread
+		 * budget this run itself is already using.
+		 */
+		membrane_quant_backend_t	resolved = membrane_choose_quant_backend(
+			o.quant_backend, /* batch_blocks (representative) */ 64,
+			/* fpga_queue_used */ 0, /* fpga_queue_depth */ 16,
+			/* cpu_cores_available */ 4);
+		const char					*names[3] = {"cpu", "fpga", "auto"};
+
+		fprintf(stderr,
+			"membrane-kv-runtime: quant_backend requested=%s resolved=%s "
+			"(live in-inference K/V quantization always uses ggml's own "
+			"CPU kernels -- see --quant-backend's source comment)\n",
+			names[o.quant_backend], names[resolved]);
+	}
 	llama_backend_init();
 	model = llama_model_load_from_file(o.model_path,
 			llama_model_default_params());

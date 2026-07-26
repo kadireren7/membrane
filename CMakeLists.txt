@@ -94,6 +94,8 @@ add_library(membrane_core
   src/hash/sha256.c
   src/policy/policy.c
   src/quant/quant_simd.c
+  src/fpga/fpga_dma.c
+  src/fpga/quant_backend.c
 )
 target_include_directories(membrane_core PUBLIC include)
 target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m)
