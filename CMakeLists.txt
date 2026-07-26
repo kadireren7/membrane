@@ -97,6 +97,7 @@ add_library(membrane_core
   src/fpga/fpga_dma.c
   src/fpga/quant_backend.c
   src/kvtrace/kvtrace.c
+  src/attntrace/attntrace.c
 )
 target_include_directories(membrane_core PUBLIC include)
 target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m)
@@ -112,6 +113,12 @@ add_subdirectory(tools/membrane-hw-sim)
 # unlike tools/membrane-kv-capture etc, which need MEMBRANE_ENABLE_LLAMA.
 enable_language(CXX)
 add_subdirectory(tools/membrane-cxl-sim)
+
+# membrane-kv-workingset-sim (Phase 6.2) is also a pure discrete-event
+# simulator with no llama.cpp dependency -- built unconditionally like
+# membrane-cxl-sim, whose sim_config.h calibration constants it reuses
+# via an include path only (no link dependency on the cxl-sim binary).
+add_subdirectory(tools/membrane-kv-workingset-sim)
 
 if(MEMBRANE_ENABLE_LLAMA)
   enable_language(CXX)
@@ -207,6 +214,8 @@ if(MEMBRANE_ENABLE_LLAMA)
 
   add_subdirectory(tools/membrane-kv-capture)
   add_subdirectory(tools/membrane-kv-trace-capture)
+  add_subdirectory(tools/membrane-kv-attn-trace-capture)
+  add_subdirectory(tools/membrane-kv-attn-quality)
   add_subdirectory(tools/membrane-kv-quality)
   add_subdirectory(tools/membrane-kv-sensitivity)
   add_subdirectory(tools/membrane-policy-export)
@@ -234,4 +243,18 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_checkpoint PRIVATE
     tools/membrane-kv-runtime-optimizer)
   add_test(NAME test_checkpoint COMMAND test_checkpoint)
+
+  # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
+  # tests, plus an engine determinism check -- llama-free (they test
+  # membrane_wssim_core's C++ logic directly, not real inference), so
+  # built unconditionally like test_checkpoint above.
+  add_executable(test_hotcache
+    tools/membrane-kv-workingset-sim/test_hotcache.cpp)
+  target_link_libraries(test_hotcache PRIVATE membrane_wssim_core)
+  add_test(NAME test_hotcache COMMAND test_hotcache)
+
+  add_executable(test_workingset_policy
+    tools/membrane-kv-workingset-sim/test_workingset_policy.cpp)
+  target_link_libraries(test_workingset_policy PRIVATE membrane_wssim_core)
+  add_test(NAME test_workingset_policy COMMAND test_workingset_policy)
 endif()
