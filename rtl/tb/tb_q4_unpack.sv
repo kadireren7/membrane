@@ -12,7 +12,7 @@ module tb_q4_unpack;
 	int				out_idx;
 	int				fails;
 
-	q4_unpack #(.DELAY(2)) dut (
+	q4_unpack #(.MUL_DELAY(1)) dut (
 		.clk(clk), .rst_n(rst_n), .valid_in(valid_in),
 		.packed_in(packed_in), .valid_out(valid_out), .x_out(x_out));
 

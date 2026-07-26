@@ -8,6 +8,7 @@ module tb_q4_pack;
 	logic			rst_n;
 	logic			valid_in;
 	logic	[15:0]	x_in		[0:31];
+	logic	[511:0]	x_in_flat;
 	logic	[15:0]	d_f16;
 	logic	[31:0]	id_f32;
 	logic			valid_out;
@@ -16,10 +17,14 @@ module tb_q4_pack;
 	int				out_idx;
 	int				fails;
 
-	q4_pack #(.DELAY(4)) dut (
-		.clk(clk), .rst_n(rst_n), .valid_in(valid_in), .x_in(x_in),
+	q4_pack #(.MUL_DELAY(1)) dut (
+		.clk(clk), .rst_n(rst_n), .valid_in(valid_in), .x_in_flat(x_in_flat),
 		.d_f16(d_f16), .id_f32(id_f32), .valid_out(valid_out),
 		.packed_out(packed_out));
+
+	always_comb
+		for (int j = 0; j < 32; j++)
+			x_in_flat[j * 16 +: 16] = x_in[j];
 
 	initial clk = 0;
 	always #5 clk = ~clk;

@@ -65,4 +65,37 @@ module stream_fifo #(
 			$finish;
 		end
 	end
+
+	// Phase 5.3 item 7 (formal/property checks): no FIFO overflow, no
+	// FIFO underflow, no stale output after reset. SymbiYosys is not
+	// available in this environment (not packaged for apt, disclosed in
+	// docs/phase5-synthesizable-fpga.md); these are simulation-checked
+	// immediate assertions instead, exercised by
+	// rtl/tb/tb_top_verilator.cpp's 520,000-transaction randomized-
+	// backpressure run (every stream_fifo instance in
+	// membrane_quant_stream_top -- both the input and output FIFO --
+	// runs through these on every cycle of that run).
+`ifndef SYNTHESIS
+	always_ff @(posedge clk) begin
+		if (rst_n) begin
+			assert (!(do_write && full))
+				else $error("stream_fifo: write accepted while full (overflow)");
+			assert (!(do_read && empty))
+				else $error("stream_fifo: read accepted while empty (underflow)");
+		end
+	end
+
+	logic	prev_rst_n;
+
+	always_ff @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			prev_rst_n <= 1'b0;
+		else begin
+			if (!prev_rst_n)
+				assert (!out_valid)
+					else $error("stream_fifo: out_valid asserted immediately after reset release (stale output)");
+			prev_rst_n <= 1'b1;
+		end
+	end
+`endif
 endmodule

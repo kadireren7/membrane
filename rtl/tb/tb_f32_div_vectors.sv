@@ -6,6 +6,7 @@
 // datapath performs.
 module tb_f32_div_vectors;
 	import membrane_fp_pkg::*;
+	import membrane_fp_sim_pkg::*;
 
 	localparam int N = 100000;
 	logic [31:0]	amax_vec[0:N-1];

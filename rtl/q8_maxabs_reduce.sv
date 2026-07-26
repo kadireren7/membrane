@@ -47,16 +47,54 @@ module q8_maxabs_reduce (
 	input	logic			clk,
 	input	logic			rst_n,
 	input	logic			valid_in,
-	input	logic	[15:0]	x_in		[0:31],
+	input	logic	[511:0]	x_in_flat,
 	output	logic			valid_out,
 	output	logic	[15:0]	amax_f16_out
 );
+	logic	[15:0]	x_in	[0:31];
 
+	assign x_in[0] = x_in_flat[15:0];
+	assign x_in[1] = x_in_flat[31:16];
+	assign x_in[2] = x_in_flat[47:32];
+	assign x_in[3] = x_in_flat[63:48];
+	assign x_in[4] = x_in_flat[79:64];
+	assign x_in[5] = x_in_flat[95:80];
+	assign x_in[6] = x_in_flat[111:96];
+	assign x_in[7] = x_in_flat[127:112];
+	assign x_in[8] = x_in_flat[143:128];
+	assign x_in[9] = x_in_flat[159:144];
+	assign x_in[10] = x_in_flat[175:160];
+	assign x_in[11] = x_in_flat[191:176];
+	assign x_in[12] = x_in_flat[207:192];
+	assign x_in[13] = x_in_flat[223:208];
+	assign x_in[14] = x_in_flat[239:224];
+	assign x_in[15] = x_in_flat[255:240];
+	assign x_in[16] = x_in_flat[271:256];
+	assign x_in[17] = x_in_flat[287:272];
+	assign x_in[18] = x_in_flat[303:288];
+	assign x_in[19] = x_in_flat[319:304];
+	assign x_in[20] = x_in_flat[335:320];
+	assign x_in[21] = x_in_flat[351:336];
+	assign x_in[22] = x_in_flat[367:352];
+	assign x_in[23] = x_in_flat[383:368];
+	assign x_in[24] = x_in_flat[399:384];
+	assign x_in[25] = x_in_flat[415:400];
+	assign x_in[26] = x_in_flat[431:416];
+	assign x_in[27] = x_in_flat[447:432];
+	assign x_in[28] = x_in_flat[463:448];
+	assign x_in[29] = x_in_flat[479:464];
+	assign x_in[30] = x_in_flat[495:480];
+	assign x_in[31] = x_in_flat[511:496];
+
+
+	// Assigns the function's own name instead of using `return` --
+	// yosys 0.33 rejects `return` inside module-scoped functions, see
+	// membrane_fp_adder.sv's lzc_9 header comment for the full finding.
 	function automatic logic [15:0] mk_cand(input logic [15:0] x);
 		logic	is_nan;
 
 		is_nan = (x[14:10] == 5'h1F) && (x[9:0] != 10'h0);
-		return ({is_nan, x[14:0]});
+		mk_cand = {is_nan, x[14:0]};
 	endfunction
 
 	function automatic logic [15:0] pick(input logic [15:0] a,
@@ -67,14 +105,15 @@ module q8_maxabs_reduce (
 		a_nan = a[15];
 		b_nan = b[15];
 		if (a_nan && b_nan)
-			return (a);
-		if (a_nan)
-			return (b);
-		if (b_nan)
-			return (a);
-		if (a[14:0] >= b[14:0])
-			return (a);
-		return (b);
+			pick = a;
+		else if (a_nan)
+			pick = b;
+		else if (b_nan)
+			pick = a;
+		else if (a[14:0] >= b[14:0])
+			pick = a;
+		else
+			pick = b;
 	endfunction
 
 	logic	[15:0]	level0	[0:31];

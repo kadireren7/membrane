@@ -9,36 +9,75 @@
 // SystemVerilog package, imported here rather than textually included --
 // see that file's header comment for the full story).
 module q4_scan (
-	input	logic	[15:0]	x_in	[0:31],
+	input	logic	[511:0]	x_in_flat,
 	output	logic	[31:0]	mx_f32_out
 );
-	import membrane_fp_pkg::*;
+	logic	[15:0]	x_in	[0:31];
 
+	assign x_in[0] = x_in_flat[15:0];
+	assign x_in[1] = x_in_flat[31:16];
+	assign x_in[2] = x_in_flat[47:32];
+	assign x_in[3] = x_in_flat[63:48];
+	assign x_in[4] = x_in_flat[79:64];
+	assign x_in[5] = x_in_flat[95:80];
+	assign x_in[6] = x_in_flat[111:96];
+	assign x_in[7] = x_in_flat[127:112];
+	assign x_in[8] = x_in_flat[143:128];
+	assign x_in[9] = x_in_flat[159:144];
+	assign x_in[10] = x_in_flat[175:160];
+	assign x_in[11] = x_in_flat[191:176];
+	assign x_in[12] = x_in_flat[207:192];
+	assign x_in[13] = x_in_flat[223:208];
+	assign x_in[14] = x_in_flat[239:224];
+	assign x_in[15] = x_in_flat[255:240];
+	assign x_in[16] = x_in_flat[271:256];
+	assign x_in[17] = x_in_flat[287:272];
+	assign x_in[18] = x_in_flat[303:288];
+	assign x_in[19] = x_in_flat[319:304];
+	assign x_in[20] = x_in_flat[335:320];
+	assign x_in[21] = x_in_flat[351:336];
+	assign x_in[22] = x_in_flat[367:352];
+	assign x_in[23] = x_in_flat[383:368];
+	assign x_in[24] = x_in_flat[399:384];
+	assign x_in[25] = x_in_flat[415:400];
+	assign x_in[26] = x_in_flat[431:416];
+	assign x_in[27] = x_in_flat[447:432];
+	assign x_in[28] = x_in_flat[463:448];
+	assign x_in[29] = x_in_flat[479:464];
+	assign x_in[30] = x_in_flat[495:480];
+	assign x_in[31] = x_in_flat[511:496];
+
+
+	// Assigns the function's own name instead of using `return` --
+	// yosys 0.33 rejects `return` inside module-scoped functions, see
+	// membrane_fp_adder.sv's lzc_9 header comment for the full finding.
 	function automatic logic is_nan_f32(input logic [31:0] f);
-		return ((f[30:23] == 8'hFF) && (f[22:0] != 23'h0));
+		is_nan_f32 = (f[30:23] == 8'hFF) && (f[22:0] != 23'h0);
 	endfunction
 
 	function automatic logic [31:0] fabs_f32(input logic [31:0] f);
-		return ({1'b0, f[30:0]});
+		fabs_f32 = {1'b0, f[30:0]};
 	endfunction
 
 	function automatic logic mag_gt(input logic [31:0] a_abs,
 			input logic [31:0] b_abs);
-		return (a_abs[30:0] > b_abs[30:0]);
+		mag_gt = (a_abs[30:0] > b_abs[30:0]);
 	endfunction
 
 	function automatic logic [31:0] scan_amax(input logic [31:0] cur_amax,
 			input logic [31:0] v);
 		if (!is_nan_f32(v) && mag_gt(fabs_f32(v), cur_amax))
-			return (fabs_f32(v));
-		return (cur_amax);
+			scan_amax = fabs_f32(v);
+		else
+			scan_amax = cur_amax;
 	endfunction
 
 	function automatic logic [31:0] scan_mx(input logic [31:0] cur_amax,
 			input logic [31:0] cur_mx, input logic [31:0] v);
 		if (!is_nan_f32(v) && mag_gt(fabs_f32(v), cur_amax))
-			return (v);
-		return (cur_mx);
+			scan_mx = v;
+		else
+			scan_mx = cur_mx;
 	endfunction
 
 	logic	[31:0]	xf32	[0:31];
@@ -53,38 +92,38 @@ module q4_scan (
 	logic	[31:0]	mx29, mx30, mx31, mx32;
 
 	always_comb begin
-		xf32[0] = f16_to_f32_bits(x_in[0]);
-		xf32[1] = f16_to_f32_bits(x_in[1]);
-		xf32[2] = f16_to_f32_bits(x_in[2]);
-		xf32[3] = f16_to_f32_bits(x_in[3]);
-		xf32[4] = f16_to_f32_bits(x_in[4]);
-		xf32[5] = f16_to_f32_bits(x_in[5]);
-		xf32[6] = f16_to_f32_bits(x_in[6]);
-		xf32[7] = f16_to_f32_bits(x_in[7]);
-		xf32[8] = f16_to_f32_bits(x_in[8]);
-		xf32[9] = f16_to_f32_bits(x_in[9]);
-		xf32[10] = f16_to_f32_bits(x_in[10]);
-		xf32[11] = f16_to_f32_bits(x_in[11]);
-		xf32[12] = f16_to_f32_bits(x_in[12]);
-		xf32[13] = f16_to_f32_bits(x_in[13]);
-		xf32[14] = f16_to_f32_bits(x_in[14]);
-		xf32[15] = f16_to_f32_bits(x_in[15]);
-		xf32[16] = f16_to_f32_bits(x_in[16]);
-		xf32[17] = f16_to_f32_bits(x_in[17]);
-		xf32[18] = f16_to_f32_bits(x_in[18]);
-		xf32[19] = f16_to_f32_bits(x_in[19]);
-		xf32[20] = f16_to_f32_bits(x_in[20]);
-		xf32[21] = f16_to_f32_bits(x_in[21]);
-		xf32[22] = f16_to_f32_bits(x_in[22]);
-		xf32[23] = f16_to_f32_bits(x_in[23]);
-		xf32[24] = f16_to_f32_bits(x_in[24]);
-		xf32[25] = f16_to_f32_bits(x_in[25]);
-		xf32[26] = f16_to_f32_bits(x_in[26]);
-		xf32[27] = f16_to_f32_bits(x_in[27]);
-		xf32[28] = f16_to_f32_bits(x_in[28]);
-		xf32[29] = f16_to_f32_bits(x_in[29]);
-		xf32[30] = f16_to_f32_bits(x_in[30]);
-		xf32[31] = f16_to_f32_bits(x_in[31]);
+		xf32[0] = membrane_fp_pkg::f16_to_f32_bits(x_in[0]);
+		xf32[1] = membrane_fp_pkg::f16_to_f32_bits(x_in[1]);
+		xf32[2] = membrane_fp_pkg::f16_to_f32_bits(x_in[2]);
+		xf32[3] = membrane_fp_pkg::f16_to_f32_bits(x_in[3]);
+		xf32[4] = membrane_fp_pkg::f16_to_f32_bits(x_in[4]);
+		xf32[5] = membrane_fp_pkg::f16_to_f32_bits(x_in[5]);
+		xf32[6] = membrane_fp_pkg::f16_to_f32_bits(x_in[6]);
+		xf32[7] = membrane_fp_pkg::f16_to_f32_bits(x_in[7]);
+		xf32[8] = membrane_fp_pkg::f16_to_f32_bits(x_in[8]);
+		xf32[9] = membrane_fp_pkg::f16_to_f32_bits(x_in[9]);
+		xf32[10] = membrane_fp_pkg::f16_to_f32_bits(x_in[10]);
+		xf32[11] = membrane_fp_pkg::f16_to_f32_bits(x_in[11]);
+		xf32[12] = membrane_fp_pkg::f16_to_f32_bits(x_in[12]);
+		xf32[13] = membrane_fp_pkg::f16_to_f32_bits(x_in[13]);
+		xf32[14] = membrane_fp_pkg::f16_to_f32_bits(x_in[14]);
+		xf32[15] = membrane_fp_pkg::f16_to_f32_bits(x_in[15]);
+		xf32[16] = membrane_fp_pkg::f16_to_f32_bits(x_in[16]);
+		xf32[17] = membrane_fp_pkg::f16_to_f32_bits(x_in[17]);
+		xf32[18] = membrane_fp_pkg::f16_to_f32_bits(x_in[18]);
+		xf32[19] = membrane_fp_pkg::f16_to_f32_bits(x_in[19]);
+		xf32[20] = membrane_fp_pkg::f16_to_f32_bits(x_in[20]);
+		xf32[21] = membrane_fp_pkg::f16_to_f32_bits(x_in[21]);
+		xf32[22] = membrane_fp_pkg::f16_to_f32_bits(x_in[22]);
+		xf32[23] = membrane_fp_pkg::f16_to_f32_bits(x_in[23]);
+		xf32[24] = membrane_fp_pkg::f16_to_f32_bits(x_in[24]);
+		xf32[25] = membrane_fp_pkg::f16_to_f32_bits(x_in[25]);
+		xf32[26] = membrane_fp_pkg::f16_to_f32_bits(x_in[26]);
+		xf32[27] = membrane_fp_pkg::f16_to_f32_bits(x_in[27]);
+		xf32[28] = membrane_fp_pkg::f16_to_f32_bits(x_in[28]);
+		xf32[29] = membrane_fp_pkg::f16_to_f32_bits(x_in[29]);
+		xf32[30] = membrane_fp_pkg::f16_to_f32_bits(x_in[30]);
+		xf32[31] = membrane_fp_pkg::f16_to_f32_bits(x_in[31]);
 
 		amax0 = 32'h0;
 		mx0 = 32'h0;

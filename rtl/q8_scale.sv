@@ -1,4 +1,4 @@
-// Phase 5.2: computes the Q8_0 block scale d = amax/127 (stored, as F16,
+// Phase 5.3: computes the Q8_0 block scale d = amax/127 (stored, as F16,
 // in the packed block header) and the reciprocal id = 127/amax (fed to
 // q8_quantize_pack's per-lane multiply), bit-exact with
 // q8_0_quant_block_scalar's `d = amax/127.0f; id = amax!=0 ? 127.0f/amax
@@ -7,27 +7,18 @@
 // (docs/phase4-ggml-quant-parity.md); this module replicates the direct-
 // division form.
 //
-// The division itself is NOT synthesizable as written: it widens the F32
-// operands to F64, uses the simulator's native `real` (double) divide via
-// $bitstoreal/$realtobits, and narrows the result back to F32 with
-// round-to-nearest-even (rtl/membrane_fp_functions.svh's
-// f32_widen_to_f64/f64_narrow_to_f32_rne, verified to reproduce
-// correctly-rounded IEEE-754 float32 division in
-// rtl/tb/tb_f32_div_vectors.sv, 100,000 vectors). `real`/$bitstoreal/
-// $realtobits are simulation-only SystemVerilog constructs with no
-// synthesis mapping in any tool used in this phase (Yosys does not
-// support them) -- a synthesizable version needs a vendor or custom
-// pipelined float32 divider IP, out of scope for this streaming-datapath-
-// first prototype (see docs/phase5-fpga-streaming.md for the disclosure
-// this implies for synthesis results).
-//
-// Latency is configurable via the DELAY parameter (default 10, matching
-// tools/membrane-hw-sim's default --scale-lat) via a separate
-// valid_delay_line instance; the division itself is computed
-// combinationally and simply held for DELAY cycles as a placeholder for
-// where a real pipelined divider IP's latency would go.
+// Fully synthesizable: both divisions go through membrane_fp_divider.sv
+// (a bit-exact integer-restoring-division-based FP32 divider, no
+// `real`/`shortreal`/DPI anywhere in the production datapath from this
+// phase on -- see that module's own header for how it stays exact). Two
+// divider instances run in parallel (one for d, one for id) rather than
+// time-multiplexing a single divider, since both share the same amax
+// input and this keeps the module's own latency accounting simple; a
+// production design targeting minimum area would likely share one
+// divider across both operations at the cost of extra scheduling logic,
+// not attempted here (disclosed in docs/phase5-synthesizable-fpga.md).
 module q8_scale #(
-	parameter int DELAY = 10
+	parameter int DIV_DELAY = 1
 ) (
 	input	logic			clk,
 	input	logic			rst_n,
@@ -37,51 +28,40 @@ module q8_scale #(
 	output	logic	[15:0]	d_f16_out,
 	output	logic	[31:0]	id_f32_out
 );
-	import membrane_fp_pkg::*;
 
 	logic	[31:0]	amax_f32;
-	logic	[63:0]	amax_f64;
-	logic	[63:0]	c127_f64;
-	real			amax_r;
-	real			d_r;
-	real			id_r;
-	logic	[31:0]	d_f32;
-	logic	[31:0]	id_f32;
-	logic	[15:0]	d_f16;
+	logic	[31:0]	d_f32_raw;
+	logic	[31:0]	id_f32_raw;
+	logic			d_valid, id_valid;
+	logic			amax_is_zero;
+	logic	[31:0]	id_f32_final;
 
-	assign amax_f32 = f16_to_f32_bits(amax_f16_in);
-	assign amax_f64 = f32_widen_to_f64(amax_f32);
-	assign c127_f64 = f32_widen_to_f64(32'h42FE0000);
+	assign amax_f32 = membrane_fp_pkg::f16_to_f32_bits(amax_f16_in);
+	assign amax_is_zero = (amax_f32 == 32'h0);
 
-	always_comb begin
-		amax_r = $bitstoreal(amax_f64);
-		d_r = amax_r / $bitstoreal(c127_f64);
-		id_r = (amax_r != 0.0) ? ($bitstoreal(c127_f64) / amax_r) : 0.0;
-		d_f32 = f64_narrow_to_f32_rne($realtobits(d_r));
-		id_f32 = (amax_r != 0.0) ? f64_narrow_to_f32_rne($realtobits(id_r))
-			: 32'h00000000;
-		d_f16 = f32_to_f16_bits(d_f32);
-	end
+	membrane_fp_divider #(.DELAY(DIV_DELAY)) u_div_d (
+		.clk(clk), .rst_n(rst_n), .valid_in(valid_in), .a_in(amax_f32),
+		.b_in(32'h42FE0000), .valid_out(d_valid), .result_out(d_f32_raw));
 
-	valid_delay_line #(.DEPTH(DELAY)) u_valid (
-		.clk(clk), .rst_n(rst_n), .valid_in(valid_in),
-		.valid_out(valid_out));
+	membrane_fp_divider #(.DELAY(DIV_DELAY)) u_div_id (
+		.clk(clk), .rst_n(rst_n), .valid_in(valid_in), .a_in(32'h42FE0000),
+		.b_in(amax_f32), .valid_out(id_valid), .result_out(id_f32_raw));
 
-	// Data is held in plain registers delayed by DELAY-1 additional
-	// cycles beyond the combinational compute above, so d_f16_out/
-	// id_f32_out become valid on the same cycle as valid_out.
-	logic	[15:0]	d_pipe	[0:DELAY - 1];
-	logic	[31:0]	id_pipe	[0:DELAY - 1];
+	// `amax_is_zero` must be delayed by the SAME DIV_DELAY cycles as the
+	// divider results it gates, so the explicit id=0-when-amax=0 mux
+	// (matching the C reference's own ternary, not something the
+	// divider itself special-cases beyond the general 127/0=+Inf IEEE
+	// rule) lines up with the correct transaction.
+	logic	[0:0]	zero_pipe	[0:DIV_DELAY - 1];
 
 	always_ff @(posedge clk) begin
-		d_pipe[0] <= d_f16;
-		id_pipe[0] <= id_f32;
-		for (int k = DELAY - 1; k > 0; k--) begin
-			d_pipe[k] <= d_pipe[k - 1];
-			id_pipe[k] <= id_pipe[k - 1];
-		end
+		zero_pipe[0] <= amax_is_zero;
+		for (int k = DIV_DELAY - 1; k > 0; k--)
+			zero_pipe[k] <= zero_pipe[k - 1];
 	end
 
-	assign d_f16_out = d_pipe[DELAY - 1];
-	assign id_f32_out = id_pipe[DELAY - 1];
+	assign id_f32_final = zero_pipe[DIV_DELAY - 1] ? 32'h0 : id_f32_raw;
+	assign valid_out = d_valid && id_valid;
+	assign d_f16_out = membrane_fp_pkg::f32_to_f16_bits(d_f32_raw);
+	assign id_f32_out = id_f32_final;
 endmodule

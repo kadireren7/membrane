@@ -1,5 +1,6 @@
 module tb_fp_functions_smoke;
 	import membrane_fp_pkg::*;
+	import membrane_fp_sim_pkg::*;
 
 	logic [31:0] r32;
 	logic [15:0] r16;

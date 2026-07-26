@@ -12,7 +12,7 @@ module tb_q8_dequantize;
 	int				out_idx;
 	int				fails;
 
-	q8_dequantize #(.DELAY(2)) dut (
+	q8_dequantize #(.MUL_DELAY(1)) dut (
 		.clk(clk), .rst_n(rst_n), .valid_in(valid_in),
 		.packed_in(packed_in), .valid_out(valid_out), .x_out(x_out));
 

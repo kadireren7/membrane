@@ -6,6 +6,7 @@ module tb_q8_maxabs_reduce;
 	logic			rst_n;
 	logic			valid_in;
 	logic	[15:0]	x_in		[0:31];
+	logic	[511:0]	x_in_flat;
 	logic			valid_out;
 	logic	[15:0]	amax_out;
 	int				in_idx;
@@ -14,8 +15,12 @@ module tb_q8_maxabs_reduce;
 	int				checked;
 
 	q8_maxabs_reduce dut (
-		.clk(clk), .rst_n(rst_n), .valid_in(valid_in), .x_in(x_in),
+		.clk(clk), .rst_n(rst_n), .valid_in(valid_in), .x_in_flat(x_in_flat),
 		.valid_out(valid_out), .amax_f16_out(amax_out));
+
+	always_comb
+		for (int j = 0; j < 32; j++)
+			x_in_flat[j * 16 +: 16] = x_in[j];
 
 	initial clk = 0;
 	always #5 clk = ~clk;

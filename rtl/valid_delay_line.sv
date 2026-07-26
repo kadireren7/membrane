@@ -20,11 +20,27 @@ module valid_delay_line #(
 
 	logic	[DEPTH - 1:0]	shift;
 
-	always_ff @(posedge clk or negedge rst_n)
-		if (!rst_n)
-			shift <= '0;
-		else
-			shift <= {shift[DEPTH - 2:0], valid_in};
+	// DEPTH=1 needs its own case: `shift[DEPTH-2:0]` is `shift[-1:0]`
+	// when DEPTH=1, an out-of-order (invalid) part-select -- a real bug
+	// caught the first time this module was instantiated with DEPTH=1
+	// (membrane_fp_divider.sv's default), not exercised by any earlier
+	// phase since every prior valid_delay_line instantiation used
+	// DEPTH>1.
+	generate
+		if (DEPTH == 1) begin : gen_depth1
+			always_ff @(posedge clk or negedge rst_n)
+				if (!rst_n)
+					shift <= '0;
+				else
+					shift <= valid_in;
+		end else begin : gen_depth_n
+			always_ff @(posedge clk or negedge rst_n)
+				if (!rst_n)
+					shift <= '0;
+				else
+					shift <= {shift[DEPTH - 2:0], valid_in};
+		end
+	endgenerate
 
 	assign valid_out = shift[DEPTH - 1];
 endmodule
