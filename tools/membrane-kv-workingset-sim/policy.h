@@ -28,6 +28,10 @@ namespace wssim
 enum class policy_t
 {
 	FULL = 0,
+	NO_PREFETCH,	/* Phase 6.3: never proactively fetch anything --
+			 * every ground-truth block not already hot is a
+			 * compulsory synchronous miss (the "exact cache, no
+			 * prefetch" baseline). */
 	SLIDING_WINDOW,
 	RECENCY_SINKS,
 	TOPK_LAG1,
@@ -48,6 +52,18 @@ struct policy_params_t
 	uint32_t	hybrid_freq_top_n = 4;
 	double		heavy_hitter_decay = 0.98;	/* per decode step */
 	double		predictive_budget_multiplier = 1.5;
+	/* Phase 6.3: caps m_heavy_score/m_freq_count at this many tracked
+	 * distinct blocks (a real, standard bounded heavy-hitter-sketch
+	 * technique, e.g. Space-Saving -- not just a performance hack: no
+	 * real system keeps unbounded per-block statistics forever
+	 * either). Without this, per-channel bookkeeping cost grows with
+	 * the number of distinct blocks ever seen (effectively with
+	 * context length), which made a genuine O(context) predicted-
+	 * working-set-size policy still cost O(context^2) internally --
+	 * exactly the kind of blowup that made Phase 6.2's largest
+	 * scenario take 9 real minutes, and would have made this phase's
+	 * 128K-context scenarios intractable. */
+	uint32_t	max_tracked_blocks = 128;
 };
 
 /*
@@ -84,6 +100,7 @@ private:
 	std::vector<uint32_t>	top_heavy_hitters(uint32_t step, uint32_t n) const;
 	std::vector<uint32_t>	top_frequent(uint32_t n) const;
 	uint32_t				predicted_budget() const;
+	void					prune_if_over_cap(uint32_t step);
 };
 
 }	/* namespace wssim */

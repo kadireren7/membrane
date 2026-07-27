@@ -120,6 +120,12 @@ add_subdirectory(tools/membrane-cxl-sim)
 # via an include path only (no link dependency on the cxl-sim binary).
 add_subdirectory(tools/membrane-kv-workingset-sim)
 
+# membrane-kv-exact-sim (Phase 6.3) merges membrane-cxl-sim's shared
+# k_server_resource_t contention model with membrane-kv-workingset-sim's
+# per-channel predictor/hot-cache engine -- also no llama.cpp
+# dependency, built unconditionally.
+add_subdirectory(tools/membrane-kv-exact-sim)
+
 if(MEMBRANE_ENABLE_LLAMA)
   enable_language(CXX)
   if(NOT EXISTS ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/CMakeLists.txt)
@@ -257,4 +263,13 @@ if(MEMBRANE_BUILD_TESTS)
     tools/membrane-kv-workingset-sim/test_workingset_policy.cpp)
   target_link_libraries(test_workingset_policy PRIVATE membrane_wssim_core)
   add_test(NAME test_workingset_policy COMMAND test_workingset_policy)
+
+  # Phase 6.3: concurrent exact-retrieval engine correctness tests
+  # (device capacity enforcement, contention, micro-batching,
+  # deterministic replay) -- hand-built fixtures, no real trace file
+  # dependency, so built unconditionally like the tests above.
+  add_executable(test_exact_engine
+    tools/membrane-kv-exact-sim/test_exact_engine.cpp)
+  target_link_libraries(test_exact_engine PRIVATE membrane_exactsim_core)
+  add_test(NAME test_exact_engine COMMAND test_exact_engine)
 endif()

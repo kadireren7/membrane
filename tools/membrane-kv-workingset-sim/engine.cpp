@@ -39,9 +39,12 @@ static bool	vec_contains(const std::vector<uint32_t> &v, uint32_t x)
 	return (std::find(v.begin(), v.end(), x) != v.end());
 }
 
-scenario_result_t	run_scenario(const attn_trace_t &trace,
+scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 						const model_calibration_t &model,
-						const scenario_config_t &cfg)
+						const scenario_config_t &cfg,
+						std::vector<per_step_calib_t> *out_steps,
+						layer_head_stats_t *out_layer_head,
+						coalescing_stats_t *out_coalescing)
 {
 	scenario_result_t	res{};
 	uint32_t			group_size;
@@ -71,6 +74,21 @@ scenario_result_t	run_scenario(const attn_trace_t &trace,
 			| (uint64_t)k.block_id);
 	};
 
+	std::vector<uint64_t>	layer_hits;
+	std::vector<uint64_t>	layer_checks;
+	std::vector<uint64_t>	head_hits;
+	std::vector<uint64_t>	head_checks;
+	if (out_layer_head != nullptr)
+	{
+		layer_hits.assign(trace.n_layer, 0);
+		layer_checks.assign(trace.n_layer, 0);
+		head_hits.assign(trace.n_head, 0);
+		head_checks.assign(trace.n_head, 0);
+	}
+
+	if (out_coalescing != nullptr)
+		*out_coalescing = coalescing_stats_t{};
+
 	std::vector<double>	step_latencies;
 	uint64_t	total_transferred_bytes = 0;
 	uint64_t	total_hit_checks = 0;
@@ -87,6 +105,8 @@ scenario_result_t	run_scenario(const attn_trace_t &trace,
 	uint64_t	total_prefetched_ok = 0;
 
 	step_latencies.reserve(trace.step_count);
+	if (out_steps != nullptr)
+		out_steps->reserve(trace.step_count);
 	for (uint32_t step = 0; step < trace.step_count; step++)
 	{
 		uint32_t	current_num_blocks = (trace.prompt_len + step + 1
@@ -140,26 +160,99 @@ scenario_result_t	run_scenario(const attn_trace_t &trace,
 				/* Real need this step: ground truth blocks, checked
 				 * against the (now possibly-freshly-prefetched) hot
 				 * cache. */
+				uint64_t	channel_hits_this_step = 0;
+				std::vector<uint32_t>	missed_this_channel;
 				for (uint32_t b : ground_truth)
 				{
 					cache_key_t	key{l, g, b};
 					metadata_checks++;
 					total_hit_checks++;
+					if (out_layer_head != nullptr)
+						layer_checks[l]++;
 					if (cache.contains(key))
 					{
 						cache.touch_hit(key, 1.0);
 						total_hits++;
+						channel_hits_this_step++;
+						if (out_layer_head != nullptr)
+							layer_hits[l]++;
 						continue ;
 					}
 					uint64_t	blk_bytes = (uint64_t)(bytes_per_channel_per_token
 						* cfg.block_size_tokens / compression);
 					exposed_bytes += blk_bytes;
 					total_late_fetches++;
+					if (out_coalescing != nullptr || out_layer_head != nullptr)
+						missed_this_channel.push_back(b);
 					uint64_t	key64 = fetched_key(key);
 					if (ever_fetched.count(key64))
 						total_redundant_fetches++;
 					ever_fetched.insert(key64);
 					cache.insert(key, blk_bytes, 1.0);
+				}
+				if (out_coalescing != nullptr && !missed_this_channel.empty())
+				{
+					uint64_t	blk_bytes = (uint64_t)(bytes_per_channel_per_token
+						* cfg.block_size_tokens / compression);
+					out_coalescing->naive_request_count
+						+= missed_this_channel.size();
+					out_coalescing->real_needed_bytes
+						+= missed_this_channel.size() * blk_bytes;
+					/* Sorted (ground_truth already is): greedily group
+					 * consecutive missed ids into one request whenever
+					 * the gap to the next missed id is within the
+					 * coalescing window -- the request then spans
+					 * [group_min, group_max], paying for any non-missed
+					 * blocks caught inside that span as real padding. */
+					size_t	i = 0;
+					while (i < missed_this_channel.size())
+					{
+						uint32_t	group_min = missed_this_channel[i];
+						uint32_t	group_max = group_min;
+						size_t	j = i + 1;
+						while (j < missed_this_channel.size()
+								&& missed_this_channel[j] - group_max
+									<= cfg.coalescing_window)
+						{
+							group_max = missed_this_channel[j];
+							j++;
+						}
+						out_coalescing->coalesced_request_count++;
+						out_coalescing->transferred_bytes_with_padding
+							+= (uint64_t)(group_max - group_min + 1) * blk_bytes;
+						i = j;
+					}
+				}
+				/* Per-head resolution: a head's individual block is
+				 * "hit" only if it was ALREADY resident before this
+				 * step's misses were serviced -- checked against
+				 * `missed_this_channel` (captured during the
+				 * ground_truth loop above, BEFORE any of this step's
+				 * misses were inserted), not by re-querying the cache
+				 * now, which would trivially read back 100% (every
+				 * ground-truth block, hit or miss, is resident by the
+				 * time this point in the loop is reached -- a real
+				 * bug caught during this phase's own development: an
+				 * earlier version re-queried post-insertion and
+				 * reported every head at exactly 100% hit rate,
+				 * always, which was the tell). */
+				if (out_layer_head != nullptr)
+				{
+					for (uint32_t h = g * group_size;
+							h < (g + 1) * group_size && h < trace.n_head; h++)
+					{
+						const membrane_attntrace_entry_t	*he
+							= trace.at(step, l, h);
+						for (uint32_t k = 0; k < trace.top_k; k++)
+						{
+							if (he[k].block_id == UINT32_MAX)
+								continue ;
+							head_checks[h]++;
+							if (!vec_contains(missed_this_channel,
+									he[k].block_id))
+								head_hits[h]++;
+						}
+					}
 				}
 
 				size_t	inter = 0;
@@ -176,6 +269,8 @@ scenario_result_t	run_scenario(const attn_trace_t &trace,
 		}
 
 		total_transferred_bytes += prefetch_budget_used + exposed_bytes;
+		if (out_steps != nullptr)
+			out_steps->push_back({prefetch_budget_used, exposed_bytes});
 
 		double	metadata_ns = metadata_checks * METADATA_LOOKUP_NS_PER_BLOCK
 			+ metadata_checks * HOTCACHE_LOOKUP_NS_PER_BLOCK;
@@ -220,7 +315,26 @@ scenario_result_t	run_scenario(const attn_trace_t &trace,
 		? (double)(total_prefetch_attempts - total_prefetched_ok)
 			/ total_prefetch_attempts : 0.0;
 	res.additional_link_traffic_bytes = total_wasted_prefetch_bytes;
+
+	if (out_layer_head != nullptr)
+	{
+		out_layer_head->per_layer_hit_rate.resize(trace.n_layer);
+		for (uint32_t l = 0; l < trace.n_layer; l++)
+			out_layer_head->per_layer_hit_rate[l] = layer_checks[l]
+				? (double)layer_hits[l] / layer_checks[l] : 0.0;
+		out_layer_head->per_head_hit_rate.resize(trace.n_head);
+		for (uint32_t h = 0; h < trace.n_head; h++)
+			out_layer_head->per_head_hit_rate[h] = head_checks[h]
+				? (double)head_hits[h] / head_checks[h] : 0.0;
+	}
 	return (res);
+}
+
+scenario_result_t	run_scenario(const attn_trace_t &trace,
+						const model_calibration_t &model,
+						const scenario_config_t &cfg)
+{
+	return (run_scenario_calibration(trace, model, cfg, nullptr, nullptr));
 }
 
 }	/* namespace wssim */

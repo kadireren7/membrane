@@ -48,8 +48,21 @@ struct cache_key_hash_t
  * Host/GPU-resident decompressed hot cache -- component 6 of the
  * near-memory pipeline (docs/phase6-cxl-near-memory.md section 10).
  * Byte-budgeted (`capacity_bytes`), one of four eviction policies.
- * O(log n) hit/insert/evict via an ordered index keyed by each
- * policy's own eviction-priority metric (ascending = evicted first).
+ *
+ * O(log n) hit/insert/evict: an ordered index (`m_order`, a
+ * std::multimap keyed by each policy's own eviction-priority metric,
+ * ascending = evicted first) is maintained INCREMENTALLY -- each
+ * entry stores the iterator into m_order that currently represents
+ * it, so a touch/insert erases and reinserts that one iterator
+ * (O(log n)) instead of rebuilding the whole ordering from scratch.
+ * This replaced an earlier full-rebuild-per-eviction-call design
+ * (O(n log n) per call): correct at Phase 6.2's small real-trace
+ * scale (a few hundred cache entries at most, capacity pressure
+ * rarely even triggered eviction), but a real, measured tractability
+ * blocker at Phase 6.3's larger contexts (128K tokens can genuinely
+ * fill a 256MiB-class cache, unlike Phase 6.2's ~640-token real
+ * traces) -- caught by direct timing measurement during this phase's
+ * own development, not by inspection.
  */
 class hot_cache_t
 {
@@ -79,6 +92,7 @@ private:
 		uint32_t	freq;
 		double		score;
 		bool		protected_segment;	/* SEGMENTED_LRU only */
+		std::multimap<double, cache_key_t>::iterator	order_it;
 	};
 
 	uint64_t				m_capacity;
@@ -88,15 +102,12 @@ private:
 	uint64_t				m_protected_bytes_used;
 
 	std::unordered_map<cache_key_t, entry_t, cache_key_hash_t>	m_entries;
-	/* Eviction-priority ascending index: metric -> key. Rebuilt
-	 * lazily on lookup miss instead of maintained incrementally,
-	 * since this simulator's per-scenario entry counts (bounded by
-	 * capacity_bytes / block_bytes, worst case low tens of thousands
-	 * at this phase's swept configurations) keep an O(n log n) rebuild
-	 * on eviction cheap relative to real-world cache sizes -- a real
-	 * disclosed simplicity/perf tradeoff, not a claim this scales to
-	 * arbitrary cache sizes. */
-	double	metric_for(const cache_key_t &k, const entry_t &e) const;
+	std::multimap<double, cache_key_t>								m_order;
+
+	double	metric_for(const entry_t &e) const;
+	/* Removes `k`'s current position from m_order (if present) and
+	 * reinserts at its up-to-date metric, updating entry_t::order_it. */
+	void	reindex(const cache_key_t &k, entry_t &e);
 	void	evict_until_fits(uint64_t incoming_bytes);
 };
 

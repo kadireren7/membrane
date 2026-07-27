@@ -247,6 +247,96 @@ static void	test_engine_is_deterministic(void)
 	printf("PASS test_engine_is_deterministic\n");
 }
 
+/* Phase 6.3 item 7/18: fetch-coalescing correctness, using
+ * NO_PREFETCH so every ground-truth block is guaranteed a compulsory
+ * miss (deterministic, easy to reason about by hand). One step,
+ * ground truth = {0, 1, 2, 10} (top_k=4 covers exactly these). */
+static attn_trace_t	coalescing_fixture_trace(void)
+{
+	attn_trace_t	t;
+
+	t.model = "coalescing-fixture";
+	t.is_real_capture = false;
+	t.n_layer = 1;
+	t.n_head = 1;
+	t.block_size_tokens = 32;
+	t.prompt_len = 352;	/* block 10 valid: (352+1)/32 = 11 blocks */
+	t.step_count = 1;
+	t.top_k = 4;
+	t.entries = {e(0, 0.4f), e(1, 0.3f), e(2, 0.2f), e(10, 0.1f)};
+	return (t);
+}
+
+static void	test_coalescing_window_zero_never_merges(void)
+{
+	attn_trace_t	t = coalescing_fixture_trace();
+	model_calibration_t	calib{"tiny", 1, 1, 512, 1000.0};
+	scenario_config_t	cfg{};
+
+	cfg.policy = policy_t::NO_PREFETCH;
+	cfg.eviction = eviction_policy_t::LRU;
+	cfg.block_size_tokens = 32;
+	cfg.hot_cache_bytes = 1ull << 30;
+	cfg.warm_tier_is_q8 = true;
+	cfg.coalescing_window = 0;
+
+	coalescing_stats_t	coal{};
+	run_scenario_calibration(t, calib, cfg, nullptr, nullptr, &coal);
+	TEST_ASSERT(coal.naive_request_count == 4, "coal.naive_request_count == 4");
+	TEST_ASSERT(coal.coalesced_request_count == 4,
+		"window=0 must never merge distinct block ids");
+	printf("PASS test_coalescing_window_zero_never_merges\n");
+}
+
+static void	test_coalescing_window_merges_adjacent_only(void)
+{
+	attn_trace_t	t = coalescing_fixture_trace();
+	model_calibration_t	calib{"tiny", 1, 1, 512, 1000.0};
+	scenario_config_t	cfg{};
+
+	cfg.policy = policy_t::NO_PREFETCH;
+	cfg.eviction = eviction_policy_t::LRU;
+	cfg.block_size_tokens = 32;
+	cfg.hot_cache_bytes = 1ull << 30;
+	cfg.warm_tier_is_q8 = true;
+	cfg.coalescing_window = 1;	/* 0,1,2 merge (gaps of 1); 10 stays alone */
+
+	coalescing_stats_t	coal{};
+	run_scenario_calibration(t, calib, cfg, nullptr, nullptr, &coal);
+	TEST_ASSERT(coal.naive_request_count == 4, "coal.naive_request_count == 4");
+	TEST_ASSERT(coal.coalesced_request_count == 2,
+		"window=1 must merge {0,1,2} into one request and leave {10} alone");
+	/* {0,1,2} span is exactly 3 needed blocks, no padding; {10} alone,
+	 * no padding either -- transferred bytes must equal real needed
+	 * bytes exactly for this fixture (no gaps inside any merged span). */
+	TEST_ASSERT(coal.transferred_bytes_with_padding == coal.real_needed_bytes,
+		"this fixture has no internal gaps, so padding must be zero");
+	printf("PASS test_coalescing_window_merges_adjacent_only\n");
+}
+
+static void	test_coalescing_wide_window_pads_gaps(void)
+{
+	attn_trace_t	t = coalescing_fixture_trace();
+	model_calibration_t	calib{"tiny", 1, 1, 512, 1000.0};
+	scenario_config_t	cfg{};
+
+	cfg.policy = policy_t::NO_PREFETCH;
+	cfg.eviction = eviction_policy_t::LRU;
+	cfg.block_size_tokens = 32;
+	cfg.hot_cache_bytes = 1ull << 30;
+	cfg.warm_tier_is_q8 = true;
+	cfg.coalescing_window = 8;	/* gap from 2 to 10 is 8: merges into one */
+
+	coalescing_stats_t	coal{};
+	run_scenario_calibration(t, calib, cfg, nullptr, nullptr, &coal);
+	TEST_ASSERT(coal.coalesced_request_count == 1,
+		"window=8 must merge all four blocks into a single [0,10] span");
+	TEST_ASSERT(coal.transferred_bytes_with_padding > coal.real_needed_bytes,
+		"spanning [0,10] to cover 4 real blocks must pay real padding "
+		"for blocks 3-9");
+	printf("PASS test_coalescing_wide_window_pads_gaps\n");
+}
+
 int	main(void)
 {
 	test_full_returns_all_blocks();
@@ -260,5 +350,8 @@ int	main(void)
 	test_extend_synthetic_is_deterministic();
 	test_oracle_scenario_has_perfect_precision_recall();
 	test_engine_is_deterministic();
+	test_coalescing_window_zero_never_merges();
+	test_coalescing_window_merges_adjacent_only();
+	test_coalescing_wide_window_pads_gaps();
 	return (0);
 }

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "attn_workload.h"
 #include "hotcache.h"
@@ -33,6 +34,13 @@ struct scenario_config_t
 	uint32_t			block_size_tokens;
 	uint64_t			hot_cache_bytes;
 	bool				warm_tier_is_q8;	/* fetched-tier compression */
+	/* Phase 6.3: 0 disables coalescing bookkeeping (default,
+	 * zero-overhead); >=1 groups a channel's compulsory-miss block
+	 * ids that fall within this many block-slots of each other into
+	 * one wider request spanning [min_id, max_id] -- real payload
+	 * padding for any non-missed blocks caught inside that span is
+	 * tracked as "wasted bytes" (see coalescing_stats_t). */
+	uint32_t			coalescing_window = 0;
 };
 
 struct scenario_result_t
@@ -75,6 +83,65 @@ struct scenario_result_t
 scenario_result_t	run_scenario(const attn_trace_t &trace,
 						const model_calibration_t &model,
 						const scenario_config_t &cfg);
+
+/* Phase 6.3: one decode step's real, causally-predicted demand on the
+ * CXL link -- `prefetch_bytes` is dispatched ahead (hidden behind the
+ * previous step's compute if bandwidth allows), `compulsory_miss_bytes`
+ * is exposed synchronously (ground-truth blocks neither already hot
+ * nor successfully prefetched in time). Used by
+ * tools/membrane-kv-exact-sim to calibrate a REAL per-step miss-byte
+ * trace from this single-sequence engine, then replay it inside a
+ * genuine multi-sequence discrete-event simulation with real shared
+ * CXL-link/quant-engine contention (reusing
+ * tools/membrane-cxl-sim/sim_engine.h's k_server_resource_t) --
+ * concurrent sequences share this same real calibrated per-step
+ * demand profile rather than each independently re-running the full
+ * per-channel predictor (see docs/phase6-exact-sparse-retrieval.md for
+ * why: predicted working-set size for every non-FULL policy is
+ * bounded, not context-dependent, so the profile itself is real and
+ * representative, but re-deriving it independently per concurrent
+ * sequence at 128K context x 512 concurrency is not tractable in this
+ * session -- the same kind of calibrate-once-replay-many reduction
+ * Phase 6.1 itself used for its own synthetic sweep). */
+struct per_step_calib_t
+{
+	uint64_t	prefetch_bytes;
+	uint64_t	compulsory_miss_bytes;
+};
+
+/* Per-layer and per-(query)-head hit rate -- layer resolution is a
+ * real per-channel-group average; head resolution additionally checks
+ * each individual query head's OWN real ground truth against whatever
+ * its kv-head-group channel actually had cached (the cache decision
+ * itself stays at channel/kv-group granularity, matching real GQA
+ * physical KV storage -- see attn_workload.h -- but this metric
+ * reports true per-head outcome, not just its group's average). */
+struct layer_head_stats_t
+{
+	std::vector<double>	per_layer_hit_rate;
+	std::vector<double>	per_head_hit_rate;
+};
+
+/* Real, block-id-level fetch-coalescing measurement (section 7 of the
+ * Phase 6.3 spec) -- computed from the actual sorted compulsory-miss
+ * block ids within each channel each step (not a byte-count
+ * approximation), only when cfg.coalescing_window > 0. */
+struct coalescing_stats_t
+{
+	uint64_t	naive_request_count;	/* one request per missed block */
+	uint64_t	coalesced_request_count;	/* after grouping */
+	uint64_t	real_needed_bytes;		/* == compulsory-miss bytes */
+	uint64_t	transferred_bytes_with_padding;	/* includes span gaps */
+};
+
+/* Same engine as run_scenario, with optional additional outputs
+ * (any may be nullptr to skip that bookkeeping). */
+scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
+						const model_calibration_t &model,
+						const scenario_config_t &cfg,
+						std::vector<per_step_calib_t> *out_steps,
+						layer_head_stats_t *out_layer_head,
+						coalescing_stats_t *out_coalescing = nullptr);
 
 }	/* namespace wssim */
 

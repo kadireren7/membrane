@@ -12,6 +12,7 @@ const char	*policy_name(policy_t p)
 	switch (p)
 	{
 	case policy_t::FULL: return ("full-attention");
+	case policy_t::NO_PREFETCH: return ("no-prefetch");
 	case policy_t::SLIDING_WINDOW: return ("sliding-window");
 	case policy_t::RECENCY_SINKS: return ("recency+sinks");
 	case policy_t::TOPK_LAG1: return ("topk-attention-blocks");
@@ -115,6 +116,8 @@ std::vector<uint32_t>	channel_predictor_t::predict(policy_t p,
 			out.push_back(b);
 		return (out);
 	}
+	if (p == policy_t::NO_PREFETCH)
+		return (std::vector<uint32_t>());
 	if (p == policy_t::ORACLE)
 		return (ground_truth_this_step);
 	if (p == policy_t::SLIDING_WINDOW)
@@ -208,6 +211,40 @@ std::vector<uint32_t>	channel_predictor_t::predict(policy_t p,
 	return (out);
 }
 
+/* Evicts the single lowest-effective-score tracked block once the map
+ * exceeds max_tracked_blocks -- a real, standard bounded heavy-hitter
+ * technique (see policy_params_t::max_tracked_blocks's doc comment),
+ * not merely a size cap: a block evicted here is, by construction, one
+ * this channel has observed comparatively rarely/long ago, so losing
+ * its exact count is a small, disclosed approximation of true
+ * frequency for blocks that were never serious contenders anyway. */
+void	channel_predictor_t::prune_if_over_cap(uint32_t step)
+{
+	if (m_heavy_score.size() <= m_params.max_tracked_blocks)
+		return ;
+	uint32_t	worst_block = 0;
+	double		worst_score = 0.0;
+	bool		have = false;
+	for (const auto &kv : m_heavy_score)
+	{
+		uint32_t	last = m_heavy_last_touch.at(kv.first);
+		double		eff = kv.second
+			* std::pow(m_params.heavy_hitter_decay, (double)(step - last));
+		if (!have || eff < worst_score)
+		{
+			worst_score = eff;
+			worst_block = kv.first;
+			have = true;
+		}
+	}
+	if (have)
+	{
+		m_heavy_score.erase(worst_block);
+		m_heavy_last_touch.erase(worst_block);
+		m_freq_count.erase(worst_block);
+	}
+}
+
 void	channel_predictor_t::observe(uint32_t step,
 		const std::vector<uint32_t> &ground_truth_blocks)
 {
@@ -225,6 +262,7 @@ void	channel_predictor_t::observe(uint32_t step,
 		}
 		m_heavy_score[b] = prev + 1.0;
 		m_heavy_last_touch[b] = step;
+		prune_if_over_cap(step);
 	}
 	m_last_ground_truth = ground_truth_blocks;
 	m_recent_sizes.push_back((uint32_t)ground_truth_blocks.size());
