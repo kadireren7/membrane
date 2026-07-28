@@ -38,13 +38,15 @@ struct calibrated_profile_t
 	double								recall;
 	double								mean_working_set_blocks;
 	wssim::layer_head_stats_t				layer_head;
+	wssim::coalescing_stats_t				coalescing;
 	bool								source_is_real_capture;
 };
 
 calibrated_profile_t	calibrate(const wssim::attn_trace_t &trace,
 							const wssim::model_calibration_t &model,
 							const wssim::scenario_config_t &cfg,
-							bool want_layer_head);
+							bool want_layer_head,
+							const wssim::hardware_profile_t *hw = nullptr);
 
 }	/* namespace exactsim */
 

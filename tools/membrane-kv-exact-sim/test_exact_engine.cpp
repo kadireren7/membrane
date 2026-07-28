@@ -60,7 +60,7 @@ static void	test_device_capacity_enforced(void)
 
 	concurrent_result_t	r = run_concurrent(profile, tiny_model(), 32,
 		1.0, cfg);
-	TEST_ASSERT(r.sequences_fit < cfg.concurrency,
+	TEST_ASSERT(r.capacity.sequences_fit < cfg.concurrency,
 		"tiny device budget must not let every sequence fit");
 	TEST_ASSERT(r.device_capacity_bound, "device_capacity_bound must be set");
 	printf("PASS test_device_capacity_enforced\n");
@@ -80,7 +80,7 @@ static void	test_device_capacity_generous_all_fit(void)
 
 	concurrent_result_t	r = run_concurrent(profile, tiny_model(), 32,
 		1.0, cfg);
-	TEST_ASSERT(r.sequences_fit == cfg.concurrency,
+	TEST_ASSERT(r.capacity.sequences_fit == cfg.concurrency,
 		"ample device budget must let every sequence fit");
 	TEST_ASSERT(!r.device_capacity_bound, "must not be device-capacity-bound");
 	printf("PASS test_device_capacity_generous_all_fit\n");
@@ -126,7 +126,7 @@ static void	test_microbatch_runs_and_completes_all_steps(void)
 
 	concurrent_result_t	r = run_concurrent(profile, tiny_model(), 32,
 		1.0, cfg);
-	TEST_ASSERT(r.sequences_fit == cfg.concurrency,
+	TEST_ASSERT(r.capacity.sequences_fit == cfg.concurrency,
 		"ample capacity: every sequence should fit under microbatching too");
 	TEST_ASSERT(r.tokens_per_sec > 0.0, "microbatched run must make progress");
 	printf("PASS test_microbatch_runs_and_completes_all_steps\n");
@@ -152,7 +152,7 @@ static void	test_deterministic_replay(void)
 	TEST_ASSERT(a.p99_latency_ns == b.p99_latency_ns, "p99 must be deterministic");
 	TEST_ASSERT(a.mean_bytes_per_token == b.mean_bytes_per_token,
 		"bytes/token must be deterministic");
-	TEST_ASSERT(a.sequences_fit == b.sequences_fit,
+	TEST_ASSERT(a.capacity.sequences_fit == b.capacity.sequences_fit,
 		"sequences_fit must be deterministic");
 	printf("PASS test_deterministic_replay\n");
 }

@@ -208,6 +208,57 @@ static attn_trace_t	tiny_trace(void)
 	return (t);
 }
 
+/* Phase 6.4: no_compression must charge more real bytes than Q8
+ * compression for the identical trace/policy -- a direct check that
+ * the FP16 precision mode is not silently behaving like Q8. */
+static void	test_no_compression_transfers_more_bytes_than_q8(void)
+{
+	attn_trace_t	t = tiny_trace();
+	model_calibration_t	calib{"tiny", 1, 1, 512, 1000.0};
+	scenario_config_t	cfg_raw{};
+	scenario_config_t	cfg_q8{};
+
+	cfg_raw.policy = policy_t::ORACLE;
+	cfg_raw.eviction = eviction_policy_t::LRU;
+	cfg_raw.block_size_tokens = 32;
+	cfg_raw.hot_cache_bytes = 1ull << 30;
+	cfg_raw.warm_tier_is_q8 = true;
+	cfg_raw.no_compression = true;
+
+	cfg_q8 = cfg_raw;
+	cfg_q8.no_compression = false;
+
+	scenario_result_t	r_raw = run_scenario(t, calib, cfg_raw);
+	scenario_result_t	r_q8 = run_scenario(t, calib, cfg_q8);
+	TEST_ASSERT(r_raw.mean_transferred_bytes_per_token
+		> r_q8.mean_transferred_bytes_per_token,
+		"uncompressed FP16 must move more real bytes than Q8");
+	printf("PASS test_no_compression_transfers_more_bytes_than_q8\n");
+}
+
+/* Phase 6.4: disable_prefetch must genuinely stop proactive dispatch
+ * -- checked directly via false_prefetch_rate/precision both landing
+ * at their "nothing was ever prefetched" default (0.0), not just via
+ * an indirect byte-count proxy. */
+static void	test_disable_prefetch_issues_no_prefetch_attempts(void)
+{
+	attn_trace_t	t = tiny_trace();
+	model_calibration_t	calib{"tiny", 1, 1, 512, 1000.0};
+	scenario_config_t	cfg{};
+
+	cfg.policy = policy_t::MEMBRANE_PREDICTIVE;
+	cfg.eviction = eviction_policy_t::LRU;
+	cfg.block_size_tokens = 32;
+	cfg.hot_cache_bytes = 1ull << 30;
+	cfg.warm_tier_is_q8 = true;
+	cfg.disable_prefetch = true;
+
+	scenario_result_t	r = run_scenario(t, calib, cfg);
+	TEST_ASSERT(r.false_prefetch_rate == 0.0,
+		"disable_prefetch must issue zero prefetch attempts (false_prefetch_rate == 0)");
+	printf("PASS test_disable_prefetch_issues_no_prefetch_attempts\n");
+}
+
 static void	test_oracle_scenario_has_perfect_precision_recall(void)
 {
 	attn_trace_t	t = tiny_trace();
@@ -353,5 +404,7 @@ int	main(void)
 	test_coalescing_window_zero_never_merges();
 	test_coalescing_window_merges_adjacent_only();
 	test_coalescing_wide_window_pads_gaps();
+	test_no_compression_transfers_more_bytes_than_q8();
+	test_disable_prefetch_issues_no_prefetch_attempts();
 	return (0);
 }

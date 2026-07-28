@@ -1,6 +1,8 @@
 #ifndef MEMBRANE_WSSIM_CONFIG_H
 #define MEMBRANE_WSSIM_CONFIG_H
 
+#include <string>
+
 #include "sim_config.h"
 
 /*
@@ -31,6 +33,31 @@ constexpr double HOTCACHE_LOOKUP_NS_PER_BLOCK = 2.0;
  * sensitivity study default (docs/phase6-cxl-near-memory.md section
  * 7's "8 (default)" row). */
 constexpr int	DEFAULT_QUANT_PIPELINES = 8;
+
+/*
+ * Phase 6.4 item 9: the hardware assumptions that previously lived as
+ * compile-time constants (sim_config.h's CXL_LINK_LATENCY_NS/
+ * CXL_LINK_BANDWIDTH_GBPS/NEARMEM_PIPELINE_BYTES_PER_NS, this file's
+ * DEFAULT_QUANT_PIPELINES) are now also available as a runtime value
+ * so the hardware-sensitivity matrix can sweep them without
+ * recompiling. `default_hardware_profile()` reproduces EXACTLY the
+ * old hardcoded values, so every pre-Phase-6.4 call site that doesn't
+ * pass a profile explicitly keeps behaving identically -- this is
+ * additive, not a silent behavior change.
+ */
+struct hardware_profile_t
+{
+	std::string	label = "default";
+	double		cxl_link_latency_ns = sim::CXL_LINK_LATENCY_NS;
+	double		cxl_link_bandwidth_gbps = sim::CXL_LINK_BANDWIDTH_GBPS;
+	double		nearmem_pipeline_bytes_per_ns = sim::NEARMEM_PIPELINE_BYTES_PER_NS;
+	int			quant_pipelines = DEFAULT_QUANT_PIPELINES;
+};
+
+inline hardware_profile_t	default_hardware_profile()
+{
+	return (hardware_profile_t{});
+}
 
 }	/* namespace wssim */
 

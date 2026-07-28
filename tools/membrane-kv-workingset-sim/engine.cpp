@@ -17,18 +17,18 @@ static double	percentile(std::vector<double> v, double p)
 	return (v[idx]);
 }
 
-static double	transfer_ns(uint64_t bytes, int pipelines)
+static double	transfer_ns(uint64_t bytes, const hardware_profile_t &hw)
 {
-	double	effective_bw = std::min(sim::CXL_LINK_BANDWIDTH_GBPS,
-		sim::NEARMEM_PIPELINE_BYTES_PER_NS * pipelines);
-	return (sim::CXL_LINK_LATENCY_NS + (double)bytes / effective_bw);
+	double	effective_bw = std::min(hw.cxl_link_bandwidth_gbps,
+		hw.nearmem_pipeline_bytes_per_ns * hw.quant_pipelines);
+	return (hw.cxl_link_latency_ns + (double)bytes / effective_bw);
 }
 
-static double	bytes_that_fit(double ns_budget, int pipelines)
+static double	bytes_that_fit(double ns_budget, const hardware_profile_t &hw)
 {
-	double	effective_bw = std::min(sim::CXL_LINK_BANDWIDTH_GBPS,
-		sim::NEARMEM_PIPELINE_BYTES_PER_NS * pipelines);
-	double	remaining = ns_budget - sim::CXL_LINK_LATENCY_NS;
+	double	effective_bw = std::min(hw.cxl_link_bandwidth_gbps,
+		hw.nearmem_pipeline_bytes_per_ns * hw.quant_pipelines);
+	double	remaining = ns_budget - hw.cxl_link_latency_ns;
 	if (remaining <= 0.0)
 		return (0.0);
 	return (remaining * effective_bw);
@@ -44,20 +44,24 @@ scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 						const scenario_config_t &cfg,
 						std::vector<per_step_calib_t> *out_steps,
 						layer_head_stats_t *out_layer_head,
-						coalescing_stats_t *out_coalescing)
+						coalescing_stats_t *out_coalescing,
+						const hardware_profile_t *hw_in)
 {
-	scenario_result_t	res{};
-	uint32_t			group_size;
-	uint32_t			n_kv_group;
-	double				compression;
-	double				bytes_per_channel_per_token;
+	scenario_result_t		res{};
+	uint32_t				group_size;
+	uint32_t				n_kv_group;
+	double					compression;
+	double					bytes_per_channel_per_token;
+	hardware_profile_t		hw = hw_in != nullptr ? *hw_in
+		: default_hardware_profile();
 
 	group_size = model.n_head_kv > 0 ? (trace.n_head / model.n_head_kv) : 1;
 	if (group_size == 0)
 		group_size = 1;
 	n_kv_group = model.n_head_kv;
-	compression = cfg.warm_tier_is_q8
-		? sim::Q8_COMPRESSION_RATIO : sim::Q4_COMPRESSION_RATIO;
+	compression = cfg.no_compression ? 1.0
+		: (cfg.warm_tier_is_q8
+			? sim::Q8_COMPRESSION_RATIO : sim::Q4_COMPRESSION_RATIO);
 	bytes_per_channel_per_token = (double)model.bytes_per_token_total
 		/ (double)(model.n_layer * n_kv_group);
 
@@ -112,8 +116,8 @@ scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 		uint32_t	current_num_blocks = (trace.prompt_len + step + 1
 				+ cfg.block_size_tokens - 1) / cfg.block_size_tokens;
 		double	slack_ns = model.compute_ns_per_step;
-		double	slack_bytes = bytes_that_fit(slack_ns,
-			DEFAULT_QUANT_PIPELINES);
+		double	slack_bytes = cfg.disable_prefetch
+			? 0.0 : bytes_that_fit(slack_ns, hw);
 		uint64_t	prefetch_budget_used = 0;
 		uint64_t	metadata_checks = 0;
 		uint64_t	exposed_bytes = 0;
@@ -274,9 +278,16 @@ scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 
 		double	metadata_ns = metadata_checks * METADATA_LOOKUP_NS_PER_BLOCK
 			+ metadata_checks * HOTCACHE_LOOKUP_NS_PER_BLOCK;
+		/* NOTE: decompression time intentionally uses the single-
+		 * pipeline rate here, matching the pre-Phase-6.4 hardcoded
+		 * behavior exactly (transfer_ns's effective bandwidth above
+		 * DOES scale with pipeline count; this term historically did
+		 * not -- preserved as-is rather than silently changed, since
+		 * changing it would shift every previously-reported Phase
+		 * 6.2/6.3 number retroactively without a fresh measurement). */
 		double	exposed_ns = exposed_bytes > 0
-			? transfer_ns(exposed_bytes, DEFAULT_QUANT_PIPELINES)
-			+ (double)exposed_bytes / sim::NEARMEM_PIPELINE_BYTES_PER_NS
+			? transfer_ns(exposed_bytes, hw)
+			+ (double)exposed_bytes / hw.nearmem_pipeline_bytes_per_ns
 			: 0.0;
 		double	memory_ns = metadata_ns + exposed_ns;
 		double	step_latency = std::max(model.compute_ns_per_step, memory_ns);

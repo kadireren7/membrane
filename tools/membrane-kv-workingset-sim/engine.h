@@ -8,6 +8,7 @@
 #include "attn_workload.h"
 #include "hotcache.h"
 #include "policy.h"
+#include "wssim_config.h"
 
 namespace wssim
 {
@@ -41,6 +42,19 @@ struct scenario_config_t
 	 * padding for any non-missed blocks caught inside that span is
 	 * tracked as "wasted bytes" (see coalescing_stats_t). */
 	uint32_t			coalescing_window = 0;
+	/* Phase 6.4: FP16 ("no compression") precision mode -- when true,
+	 * blk_bytes is computed with compression ratio 1.0 instead of
+	 * Q8/Q4, matching the spec's 3-way precision sweep (FP16/all-Q8/
+	 * safe-mixed). */
+	bool				no_compression = false;
+	/* Phase 6.4: separates "exact predictor" (ranking used only to
+	 * decide what to KEEP once something is already being fetched;
+	 * true miss-fetches happen but nothing is proactively fetched
+	 * ahead of need) from "exact predictor + prefetch" (this policy's
+	 * normal behavior) -- when true, the per-step prefetch bandwidth
+	 * budget is forced to 0 regardless of compute-floor slack, so
+	 * predicted-but-not-yet-needed blocks are never dispatched early. */
+	bool				disable_prefetch = false;
 };
 
 struct scenario_result_t
@@ -135,13 +149,18 @@ struct coalescing_stats_t
 };
 
 /* Same engine as run_scenario, with optional additional outputs
- * (any may be nullptr to skip that bookkeeping). */
+ * (any may be nullptr to skip that bookkeeping). `hw`, if nullptr
+ * (the default), uses default_hardware_profile() -- exactly the old
+ * hardcoded sim_config.h/wssim_config.h constants, so every call site
+ * that predates Phase 6.4's hardware-sensitivity matrix keeps behaving
+ * identically. */
 scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 						const model_calibration_t &model,
 						const scenario_config_t &cfg,
 						std::vector<per_step_calib_t> *out_steps,
 						layer_head_stats_t *out_layer_head,
-						coalescing_stats_t *out_coalescing = nullptr);
+						coalescing_stats_t *out_coalescing = nullptr,
+						const hardware_profile_t *hw = nullptr);
 
 }	/* namespace wssim */
 

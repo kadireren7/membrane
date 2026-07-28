@@ -34,6 +34,8 @@
 #include "ggml-backend.h"
 #include "llama.h"
 #include "membrane/attntrace.h"
+#include "membrane/attntrace2.h"
+#include "membrane/hash.h"
 
 typedef struct s_capture_opts
 {
@@ -44,6 +46,12 @@ typedef struct s_capture_opts
 	int			gen_steps;
 	int			block_size;
 	int			top_k;
+	int			v1_format;	/* 0 (default) = write the compact/
+					 * optionally-compressed v2 format
+					 * (membrane/attntrace2.h); 1 = write
+					 * the legacy v1 raw format, kept for
+					 * tools/tests that still want it. */
+	int			no_compress;	/* v2 only: 1 disables DEFLATE. */
 }	capture_opts_t;
 
 static int	die(const char *msg)
@@ -309,8 +317,16 @@ static int	parse_args(int argc, char **argv, capture_opts_t *o)
 	o->block_size = 32;
 	o->top_k = 8;
 	i = 1;
-	while (i + 1 < argc)
+	while (i < argc)
 	{
+		if (strcmp(argv[i], "--no-compress") == 0)
+		{
+			o->no_compress = 1;
+			i += 1;
+			continue ;
+		}
+		if (i + 1 >= argc)
+			return (die("missing value for last option"));
 		if (strcmp(argv[i], "--model") == 0)
 			o->model_path = argv[i + 1];
 		else if (strcmp(argv[i], "--prompt-file") == 0)
@@ -325,6 +341,15 @@ static int	parse_args(int argc, char **argv, capture_opts_t *o)
 			o->block_size = atoi(argv[i + 1]);
 		else if (strcmp(argv[i], "--top-k") == 0)
 			o->top_k = atoi(argv[i + 1]);
+		else if (strcmp(argv[i], "--format") == 0)
+		{
+			if (strcmp(argv[i + 1], "v1") == 0)
+				o->v1_format = 1;
+			else if (strcmp(argv[i + 1], "v2") == 0)
+				o->v1_format = 0;
+			else
+				return (die("--format must be v1 or v2"));
+		}
 		else
 			return (die("unknown option"));
 		i += 2;
@@ -335,7 +360,7 @@ static int	parse_args(int argc, char **argv, capture_opts_t *o)
 			|| o->top_k < 1 || o->top_k > (int)MEMBRANE_ATTNTRACE_MAX_TOPK)
 		return (die("usage: --model M --prompt-file P --out T "
 				"[--n-tokens N] [--gen-steps S] [--block-size B] "
-				"[--top-k K]"));
+				"[--top-k K] [--format v1|v2] [--no-compress]"));
 	return (0);
 }
 
@@ -355,36 +380,107 @@ static llama_context	*make_context(llama_model *model, int n_tokens,
 	return (llama_init_from_model(model, cp));
 }
 
-static int	write_trace(const capture_opts_t &o, const char *model_desc,
-				const cb_state_t &st)
+/* Phase 6.4 item 6: a manifest committed alongside every trace, so a
+ * future reader can verify integrity (SHA-256) and reproduce the
+ * capture exactly (the real command line actually used) without
+ * having to trust the binary trace file alone. */
+static bool	write_manifest(const char *out_path, int argc, char **argv,
+				uint64_t file_size)
 {
-	membrane_attntrace_header_t	h;
+	std::string	manifest_path = std::string(out_path) + ".manifest.json";
+	char		hex[MEMBRANE_SHA256_HEX_LEN + 1];
+	FILE		*mf;
+
+	if (membrane_sha256_file(out_path, hex) != MEMBRANE_OK)
+		return (false);
+	mf = fopen(manifest_path.c_str(), "w");
+	if (mf == NULL)
+		return (false);
+	fprintf(mf, "{\n  \"trace_file\": \"%s\",\n  \"sha256\": \"%s\",\n"
+		"  \"file_size_bytes\": %llu,\n  \"reproduce_command\": \"",
+		out_path, hex, (unsigned long long)file_size);
+	for (int i = 0; i < argc; i++)
+	{
+		if (i > 0)
+			fprintf(mf, " ");
+		fprintf(mf, "%s", argv[i]);
+	}
+	fprintf(mf, "\"\n}\n");
+	fclose(mf);
+	return (true);
+}
+
+static int	write_trace(const capture_opts_t &o, const char *model_desc,
+				const cb_state_t &st, int argc, char **argv)
+{
 	FILE							*f;
 	membrane_status_t				rc;
+	uint32_t						n_layer = st.n_layer;
+	uint32_t						n_head = st.n_head;
+	uint32_t						block_size = st.block_size;
+	uint32_t						prompt_len = (uint32_t)o.n_tokens;
+	uint32_t						step_count = (uint32_t)o.gen_steps;
+	uint32_t						top_k = st.top_k;
 
-	memset(&h, 0, sizeof(h));
-	snprintf(h.model, sizeof(h.model), "%s", model_desc);
-	h.source = MEMBRANE_ATTNTRACE_SOURCE_REAL_CAPTURE;
-	h.n_layer = st.n_layer;
-	h.n_head = st.n_head;
-	h.block_size_tokens = st.block_size;
-	h.prompt_len = (uint32_t)o.n_tokens;
-	h.step_count = (uint32_t)o.gen_steps;
-	h.top_k = st.top_k;
-	h.created_unix_time = (uint64_t)time(NULL);
 	f = fopen(o.out_path, "wb");
 	if (f == NULL)
 		return (die("cannot open output trace file"));
-	rc = membrane_attntrace_write(f, &h, st.entries.data());
+	if (o.v1_format)
+	{
+		membrane_attntrace_header_t	h;
+
+		memset(&h, 0, sizeof(h));
+		snprintf(h.model, sizeof(h.model), "%s", model_desc);
+		h.source = MEMBRANE_ATTNTRACE_SOURCE_REAL_CAPTURE;
+		h.n_layer = n_layer;
+		h.n_head = n_head;
+		h.block_size_tokens = block_size;
+		h.prompt_len = prompt_len;
+		h.step_count = step_count;
+		h.top_k = top_k;
+		h.created_unix_time = (uint64_t)time(NULL);
+		rc = membrane_attntrace_write(f, &h, st.entries.data());
+	}
+	else
+	{
+		membrane_attntrace2_header_t	h;
+
+		memset(&h, 0, sizeof(h));
+		snprintf(h.model, sizeof(h.model), "%s", model_desc);
+		h.source = MEMBRANE_ATTNTRACE_SOURCE_REAL_CAPTURE;
+		h.n_layer = n_layer;
+		h.n_head = n_head;
+		h.block_size_tokens = block_size;
+		h.prompt_len = prompt_len;
+		h.step_count = step_count;
+		h.top_k = top_k;
+		h.created_unix_time = (uint64_t)time(NULL);
+		rc = membrane_attntrace2_write(f, &h, st.entries.data(),
+			o.no_compress ? 0 : 1);
+	}
 	fclose(f);
 	if (rc != MEMBRANE_OK)
 		return (die("trace write failed"));
+
+	FILE	*sf = fopen(o.out_path, "rb");
+	uint64_t	file_size = 0;
+	if (sf != NULL)
+	{
+		fseek(sf, 0, SEEK_END);
+		file_size = (uint64_t)ftell(sf);
+		fclose(sf);
+	}
+	if (!write_manifest(o.out_path, argc, argv, file_size))
+		fprintf(stderr, "membrane-kv-attn-trace-capture: WARNING: "
+			"failed to write manifest\n");
 	fprintf(stderr,
 		"membrane-kv-attn-trace-capture: wrote %u real decode steps "
-		"(model=%s n_layer=%u n_head=%u block=%u top_k=%u), "
-		"tensors seen: max_layer=%u max_head=%u -> %s\n",
-		h.step_count, h.model, h.n_layer, h.n_head, h.block_size_tokens,
-		h.top_k, st.max_layer_seen, st.max_head_seen, o.out_path);
+		"(model=%s n_layer=%u n_head=%u block=%u top_k=%u, format=%s), "
+		"tensors seen: max_layer=%u max_head=%u, file_size=%llu bytes "
+		"-> %s (+ .manifest.json)\n",
+		step_count, model_desc, n_layer, n_head, block_size, top_k,
+		o.v1_format ? "v1" : "v2", st.max_layer_seen, st.max_head_seen,
+		(unsigned long long)file_size, o.out_path);
 	return (0);
 }
 
@@ -432,7 +528,7 @@ int	main(int argc, char **argv)
 		die("tokenization failed");
 	else if (decode_prompt(ctx, tokens, 256) == 0
 			&& capture_steps(ctx, llama_vocab_n_tokens(vocab), st) == 0)
-		rc = write_trace(o, desc, st);
+		rc = write_trace(o, desc, st, argc, argv);
 	llama_free(ctx);
 	llama_model_free(model);
 	llama_backend_free();

@@ -3,6 +3,7 @@
 #include <map>
 
 #include "attn_workload.h"
+#include "membrane/attntrace2.h"
 
 namespace wssim
 {
@@ -19,15 +20,58 @@ static uint32_t	xorshift32(uint32_t *state)
 	return (x);
 }
 
+/* Phase 6.4: v2 (compact, optionally compressed -- membrane/attntrace2.h)
+ * traces are auto-detected by magic number so every caller of
+ * load_attn_trace() keeps working unchanged regardless of which
+ * on-disk format a given file uses. */
+static bool	load_attn_trace_v2(FILE *f, attn_trace_t *out)
+{
+	membrane_attntrace2_header_t	h;
+	size_t							n;
+
+	if (membrane_attntrace2_read_header(f, &h) != MEMBRANE_OK)
+		return (false);
+	n = membrane_attntrace2_entry_count(&h);
+	out->entries.resize(n);
+	if (membrane_attntrace2_read_entries(f, &h, out->entries.data())
+			!= MEMBRANE_OK)
+		return (false);
+	out->model = h.model;
+	out->is_real_capture = (h.source == MEMBRANE_ATTNTRACE_SOURCE_REAL_CAPTURE);
+	out->n_layer = h.n_layer;
+	out->n_head = h.n_head;
+	out->block_size_tokens = h.block_size_tokens;
+	out->prompt_len = h.prompt_len;
+	out->step_count = h.step_count;
+	out->top_k = h.top_k;
+	return (true);
+}
+
 bool	load_attn_trace(const std::string &path, attn_trace_t *out)
 {
 	FILE						*f;
 	membrane_attntrace_header_t	h;
 	size_t						n;
+	uint8_t						magic_buf[4];
+	uint32_t					magic;
 
 	f = fopen(path.c_str(), "rb");
 	if (f == NULL)
 		return (false);
+	if (fread(magic_buf, 1, 4, f) != 4)
+	{
+		fclose(f);
+		return (false);
+	}
+	magic = (uint32_t)magic_buf[0] | ((uint32_t)magic_buf[1] << 8)
+		| ((uint32_t)magic_buf[2] << 16) | ((uint32_t)magic_buf[3] << 24);
+	rewind(f);
+	if (magic == MEMBRANE_ATTNTRACE2_MAGIC)
+	{
+		bool	ok = load_attn_trace_v2(f, out);
+		fclose(f);
+		return (ok);
+	}
 	if (membrane_attntrace_read_header(f, &h) != MEMBRANE_OK)
 	{
 		fclose(f);

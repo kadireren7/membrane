@@ -70,6 +70,12 @@ if(MEMBRANE_ENABLE_TSAN)
 endif()
 
 find_package(Threads REQUIRED)
+# Phase 6.4: zlib for attntrace2.c's optional DEFLATE compression --
+# ubiquitous system library (comparable to libm in availability),
+# added specifically to fix Phase 6.3's real committed-trace-file-size
+# problem (docs/phase6-exact-sparse-retrieval.md section 2/17) at the
+# root rather than trading away capture resolution again.
+find_package(ZLIB REQUIRED)
 
 add_library(membrane_core
   src/block/block.c
@@ -98,9 +104,10 @@ add_library(membrane_core
   src/fpga/quant_backend.c
   src/kvtrace/kvtrace.c
   src/attntrace/attntrace.c
+  src/attntrace/attntrace2.c
 )
 target_include_directories(membrane_core PUBLIC include)
-target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m)
+target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m ZLIB::ZLIB)
 
 add_subdirectory(tools/membrane-bench)
 add_subdirectory(tools/membrane-store-bench)
