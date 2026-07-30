@@ -42,7 +42,7 @@ repository's issues, pull requests, and any other project spaces.
 ## Reporting
 
 Instances of unacceptable behavior may be reported to
-kadirerenaltintas072@gmail.com. All complaints will be reviewed and
+kadirerenaltintas@hotmail.com.tr. All complaints will be reviewed and
 investigated promptly and fairly.
 
 ## Attribution
