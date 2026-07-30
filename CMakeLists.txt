@@ -338,6 +338,13 @@ if(MEMBRANE_BUILD_TESTS)
         $<TARGET_FILE:membrane-kv-exact-sim-verify>
         ${CMAKE_SOURCE_DIR}/benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace
         ${CMAKE_SOURCE_DIR})
-    set_tests_properties(test_interrupted_resume PROPERTIES TIMEOUT 400)
+    # Bumped from 400s: the test now polls (up to 240s in phase 1, up
+    # to 60s in phase 3) for a real completion signal instead of a
+    # fixed sleep, after a fixed 45s sleep was found to produce 0
+    # completed scenarios on GitHub's CI runner (a real runner-speed
+    # gap, not just sanitizer overhead -- it reproduced under a plain
+    # Debug build too). 700s covers both poll ceilings plus real
+    # margin for trace generation/kill/resume/integrity-check overhead.
+    set_tests_properties(test_interrupted_resume PROPERTIES TIMEOUT 700)
   endif()
 endif()

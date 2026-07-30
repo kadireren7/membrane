@@ -114,18 +114,33 @@ else
 	LOG="$PAPER_DIR/build.log"
 	: >"$LOG"
 	compile_ok=1
-	for pass in 1 2; do
-		if ! "$LATEX_BIN" -interaction=nonstopmode -halt-on-error main.tex >>"$LOG" 2>&1; then
+	# Run 3 passes (standard practice for a document with \cite/\ref
+	# cross-references and an inline thebibliography, see the header
+	# comment): the FIRST pass necessarily reports every \cite/\ref as
+	# "undefined" -- that's how LaTeX bootstraps its .aux file, not a
+	# real error -- and only resolves them once a later pass reads that
+	# .aux back in. The undefined-citation/reference check below MUST
+	# only inspect the LAST pass's own output, not the cumulative log
+	# across all passes, or it will misreport pass 1's expected,
+	# transient warnings as a real failure even when the bibliography
+	# is completely correct (a real bug this project's own CI caught).
+	LAST_PASS_LOG="$PAPER_DIR/build-last-pass.log"
+	for pass in 1 2 3; do
+		: >"$LAST_PASS_LOG"
+		if ! "$LATEX_BIN" -interaction=nonstopmode -halt-on-error main.tex >"$LAST_PASS_LOG" 2>&1; then
 			compile_ok=0
+		fi
+		cat "$LAST_PASS_LOG" >>"$LOG"
+		if [ "$compile_ok" -eq 0 ]; then
 			break
 		fi
 	done
 	if [ "$compile_ok" -eq 0 ]; then
 		echo "[FAIL] $LATEX_BIN compilation failed, see $LOG" >&2
 		FAILED=1
-	elif grep -qE "Citation.*undefined|Reference.*undefined" "$LOG"; then
-		echo "[FAIL] undefined citation/reference warning(s) found in $LOG:" >&2
-		grep -E "Citation.*undefined|Reference.*undefined" "$LOG" >&2
+	elif grep -qE "Citation.*undefined|Reference.*undefined" "$LAST_PASS_LOG"; then
+		echo "[FAIL] undefined citation/reference warning(s) found in the FINAL pass (see $LOG for the full 3-pass log):" >&2
+		grep -E "Citation.*undefined|Reference.*undefined" "$LAST_PASS_LOG" >&2
 		FAILED=1
 	elif [ ! -f "$PAPER_DIR/main.pdf" ]; then
 		echo "[FAIL] $LATEX_BIN reported success but main.pdf was not produced" >&2
@@ -133,6 +148,7 @@ else
 	else
 		echo "[PASS] main.pdf built, no undefined citations/references"
 	fi
+	rm -f "$LAST_PASS_LOG"
 fi
 
 echo
