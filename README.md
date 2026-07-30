@@ -47,8 +47,9 @@ MEMBRANE is:
 8. [Repository layout](#repository-layout)
 9. [Technical limitations](#technical-limitations)
 10. [Roadmap](#roadmap)
-11. [Citation](#citation)
-12. [License](#license)
+11. [Open development](#open-development)
+12. [Citation](#citation)
+13. [License](#license)
 
 ## What is MEMBRANE?
 
@@ -251,6 +252,20 @@ purpose exists in [outreach/](outreach/membrane-technical-brief.md) and
 [docs/phase8-hardware-validation-plan.md](docs/phase8-hardware-validation-plan.md)
 (unsent — see [docs/public-release-audit.md](docs/public-release-audit.md)
 for this repository's current release readiness).
+
+## Open development
+
+MEMBRANE remains **fully open source** — there is no private companion
+repository, and none is planned. Stable, citable snapshots are tagged
+releases (`v0.1.0-research` today); active work happens in public
+`experiment/*`, `feature/*`, `fix/*`, and `docs/*` branches of this same
+repository. Branches that haven't merged to `main` may contain
+incomplete, partial, or invalid results — they are research-in-progress,
+not verified claims, until reviewed and merged. See
+[docs/open-development-policy.md](docs/open-development-policy.md) and
+[docs/repository-boundary.md](docs/repository-boundary.md) for the full
+policy, and [docs/research-release-freeze.md](docs/research-release-freeze.md)
+for how this coexists with `v0.1.0-research` staying immutable.
 
 ## Citation
 

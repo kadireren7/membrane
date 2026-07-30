@@ -64,9 +64,43 @@ known TSan/ASLR kernel interaction — see
   `bench:`, `docs:`, `refactor:`, `build:`, `ci:`, `chore:`, `perf:`,
   `research:`.
 
+## Branch naming
+
+MEMBRANE develops fully in the open — there is no private companion
+repository (see [docs/repository-boundary.md](docs/repository-boundary.md),
+[docs/open-development-policy.md](docs/open-development-policy.md)).
+Name branches by what they are:
+
+- `experiment/<name>` — research experiments (new predictors, codecs,
+  simulator variants, hardware-adjacent modeling) whose outcome isn't
+  known yet. Use [EXPERIMENT_TEMPLATE.md](EXPERIMENT_TEMPLATE.md) to
+  record one.
+- `feature/<name>` — new functionality headed toward `main` that isn't
+  itself a research experiment.
+- `fix/<name>` — bug fixes.
+- `docs/<name>` — documentation-only changes.
+
+`main` holds only verified, reviewed changes. Release tags
+(`v0.1.0-research` and later) are immutable snapshots of `main` at a
+point in time — see `docs/research-release-freeze.md`.
+
 ## Pull requests
 
-Keep pull requests scoped to one logical change. Include the `ctest`
-output (or a summary of it) in the PR description when behavior changes.
+Keep pull requests scoped to one logical change. Every pull request into
+`main` must include:
+
+- A hypothesis or linked issue explaining why the change was made.
+- Reproduction commands that work from a clean clone.
+- Test results (`ctest` output, sanitizer runs where applicable).
+- Artifact hashes for any new or changed committed benchmark artifact.
+- A limitations section — what the change does *not* establish.
+- Any negative/null findings encountered, reported with the same
+  visibility as positive ones (see `docs/results-summary.md` §4).
+- Consistency with the project's AI-assistance disclosure
+  (`outreach/ai-assistance-disclosure.md`) — don't introduce text that
+  implies sole human authorship of AI-drafted material, or vice versa.
+- No fabricated or implied hardware claims — anything hardware-adjacent
+  stays inside the gates in `outreach/hardware-claim-gates.md`.
+
 If you change a number in `docs/` or `README.md`, run
 `scripts/verify-results.py` and include its output.
