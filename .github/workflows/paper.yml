@@ -1,0 +1,58 @@
+name: Paper build
+
+"on":
+  push:
+    paths:
+      - 'paper/**'
+      - '.github/workflows/paper.yml'
+  pull_request:
+    paths:
+      - 'paper/**'
+      - '.github/workflows/paper.yml'
+  workflow_dispatch: {}
+
+jobs:
+  build-paper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install Python (for figure/table/verifier scripts)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install TeX Live
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            texlive-latex-base texlive-latex-recommended \
+            texlive-latex-extra texlive-fonts-recommended latexmk
+
+      - name: Regenerate figures and tables
+        run: |
+          python3 paper/scripts/generate-figures.py
+          python3 paper/scripts/generate-tables.py
+
+      - name: Verify figures/tables are up to date with committed source
+        run: |
+          python3 paper/scripts/generate-figures.py --check
+          python3 paper/scripts/generate-tables.py --check
+
+      - name: Run paper verifier
+        run: python3 paper/scripts/verify-paper.py
+
+      - name: Build paper (paper/build.sh)
+        run: ./paper/build.sh
+
+      - name: Upload built PDF
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: membrane-paper-pdf
+          path: |
+            paper/main.pdf
+            paper/build.log
+          if-no-files-found: warn
