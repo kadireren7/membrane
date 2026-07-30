@@ -4,6 +4,11 @@
 build/
 build-*/
 
+# scripts/demo.sh output (logs, generated golden vectors, verilator
+# obj dir, demo-results.json/.md) -- regenerated on every run, default
+# location is demo-output/ at the repo root.
+demo-output/
+
 # Locally-extracted dev tools (iverilog/yosys/nextpnr, obtained via
 # `apt-get download` + `dpkg-deb -x` since this environment has no root
 # access to install them system-wide -- see docs/phase5-fpga-streaming.md

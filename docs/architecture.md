@@ -2,191 +2,191 @@
 
 ## Scope of this document
 
-This document describes what MEMBRANE actually is *right now* (v0.0.1,
-"Phase 0" of the roadmap below), and where it's headed. It is written to be
-honest about the gap between the two — nothing below claims a capability
-that isn't implemented and tested.
+This document describes what MEMBRANE actually is as of Phase 7.1 (this
+research-release phase), with diagrams matching the current code, not the
+Phase 0 block-store-only prototype this document originally described.
+Every diagram below corresponds to real, present source files, named
+inline. Nothing here claims a capability that isn't implemented, tested,
+or (where explicitly labeled) simulated.
 
-## What v0.0.1 is
+For the phase-by-phase research narrative behind each piece, see the
+`docs/phase*.md` files — this document is the current-state summary, not
+a replacement for them.
 
-A standalone, dependency-free C11 library (`membrane_core`) plus a CLI
-(`membrane-bench`) that:
+## Phase history (summary)
 
-- Defines a `membrane_block_t` — a unit of storage with metadata (id,
-  original/stored size, access counters, state, codec, checksum).
-- Defines a pluggable codec interface (`include/membrane/codec.h`) —
-  a small vtable of `compress` / `decompress` / `bound` function pointers,
-  looked up by `membrane_codec_t`.
-- Ships two real codecs: `RAW` (passthrough, the correctness baseline) and
-  `RLE` (run-length encoding, the first real compressor).
-- Ships two placeholder codec IDs (`LZ4`, `BITPACK`) that are registered in
-  the codec table but return "unimplemented" — reserved for later phases,
-  not wired into anything yet.
-- Makes its first per-block decision: if a codec's output is not
-  smaller than the input, the block is stored RAW instead, so
-  incompressible data never expands. (Measured on a 1 GiB 50/50
-  zero/random dataset, this alone moves blind RLE from ~1.0x to ~2.0x
-  effective compression.)
-- Verifies every block round-trips to the original bytes via a CRC32
-  checksum computed over the uncompressed data.
-- Benchmarks compression ratio and throughput (GB/s) via
-  `membrane-bench`, reporting results as JSON.
+- **Phase 0–1**: lossless block store, pluggable codecs (RAW/RLE), a
+  budget-aware LRU store with a file-backed cold tier. Still present
+  (`include/membrane/store.h`, `include/membrane/backend.h`) and exercised
+  by `test_store`/`test_store_backend`/`test_store_concurrent`, but no
+  longer the project's focus.
+- **Phase 2**: real KV-cache tensor capture and compressibility analysis —
+  the negative result that motivated everything after it (blind
+  byte-level compression does not work on real KV data; see
+  [phase2-kv-analysis.md](phase2-kv-analysis.md) and
+  [results-summary.md](results-summary.md) §4).
+- **Phase 3**: llama.cpp-calibrated Q8 KV quantization, adaptive/
+  composition-aware/risk-aware policy variants, cross-model validation
+  (SmolLM2-135M and -360M).
+- **Phase 4**: bit-exact ggml quantization parity, runtime policy
+  calibration, and runtime variance root-causing.
+- **Phase 5**: predictive prefetch, PCIe/FPGA hardware-in-the-loop
+  emulation, and the fully synthesizable FPGA quant/dequant datapath.
+- **Phase 6**: near-memory/CXL appliance simulation, attention working-set
+  analysis, exact sparse KV retrieval at scale, the unified
+  128K-context × 512-concurrency stress sweep, and an out-of-core
+  simulator backend to complete that sweep under real memory constraints.
+- **Phase 7.1** (this phase): research-release packaging — no new
+  experiments, only reproducible presentation of the above (see
+  [phase7-research-release.md](phase7-research-release.md)).
 
-## What v0.0.1 explicitly is NOT
+## A. End-to-end MEMBRANE system
 
-- No LLM runtime integration (no llama.cpp, no vLLM).
-- No GPU/CUDA code.
-- No multi-tier hot/warm/cold engine (the store has single-tier LRU
-  eviction; see "Budget-aware block store" below).
-- No NVMe or CXL storage backend (evicted blocks are dropped, not
-  offloaded).
-- No lossy compression or quantization.
-- No predictive prefetching.
-- No distributed/multi-server memory.
+```mermaid
+flowchart TB
+    subgraph runtime["LLM runtime (real)"]
+        LLAMA["llama.cpp inference\n(SmolLM2-135M / -360M)"]
+    end
 
-These are not abandoned — they're future phases, listed below in order.
+    subgraph capture["Trace capture (real)"]
+        KVCAP["tools/membrane-kv-capture\ntools/membrane-kv-attn-trace-capture"]
+    end
 
-## Why this project exists
+    subgraph policy["Policy engine"]
+        POL["Hot/warm/cold decision\ninclude/membrane/policy.h"]
+    end
 
-LLM inference servers are usually compute-rich but memory-poor: GPU VRAM
-capacity and bandwidth — not FLOPs — cap how much context and how many
-concurrent requests a given piece of hardware can serve, mostly because of
-the KV-cache. Existing engines already support some fixed-configuration
-answers to this (e.g. quantized KV-cache types, static CPU offload). The
-long-term goal here is to turn "what to do with each block of memory" into
-a real-time, per-block decision instead of a static, user-set knob.
+    subgraph hotkv["Hot KV store"]
+        STORE["membrane_store_t\ninclude/membrane/store.h"]
+    end
 
-The first validated claim we're aiming for: **reduce KV-cache memory usage
-by at least 40% while the model keeps working correctly.** Everything past
-that (2x effective capacity, longer context, more concurrent requests) is a
-consequence to measure later, not something assumed up front.
+    subgraph quant["Bit-exact CPU quantization"]
+        QSIMD["src/quant/quant_simd.c\nverified vs. ggml (Phase 4.4)"]
+    end
 
-## Roadmap
+    subgraph retrieval["Exact sparse retrieval (simulated)"]
+        PRED["Predictor + prefetch\ntools/membrane-kv-workingset-sim"]
+        EXACT["Exact discrete-event engine\ntools/membrane-kv-exact-sim"]
+    end
 
-- **Phase 0 (this milestone):** Lossless block store + RAW/RLE codec
-  benchmark, fully local, no LLM dependency.
-- **Phase 1:** Smarter block store — hot/warm/cold state, LRU-style
-  eviction, background compression, trace capture/replay, all still
-  running against synthetic or file-backed data.
-- **Phase 2:** Real KV-cache data — pull actual KV-cache tensors out of a
-  running llama.cpp model and analyze their compressibility (per-layer,
-  per-token-position, K vs V).
-- **Phase 3:** llama.cpp integration — a MEMBRANE KV backend plugged into
-  llama.cpp's block allocator.
-- **Phase 4:** Lossy KV quantization (FP16 → Q8 → Q4) with a measured
-  quality/memory tradeoff per block.
-- **Phase 5:** Predictive prefetch — predict which blocks will be accessed
-  next from access history, layer, token position, and attention pattern.
-- **Phase 6:** FPGA offload for compression/decompression/prefetch.
-- **Phase 7:** CXL memory pooling and ASIC research.
+    subgraph cxl["Near-memory / CXL appliance (simulated)"]
+        CXLSIM["tools/membrane-cxl-sim\nno physical CXL hardware"]
+    end
 
-## Codec interface
+    subgraph compressed["Compressed / cold store"]
+        BACKEND["membrane_backend_t file backend\n(Q8/Q4 compressed blocks)"]
+    end
 
-Codecs are plain C structs of function pointers, registered by
-`membrane_codec_t` in a small lookup table (`src/codecs/codec_registry.c`).
-This keeps the block store and CLI codec-agnostic — adding a new codec
-means writing a `compress`/`decompress`/`bound` triplet and registering it,
-nothing else needs to change. See `include/membrane/codec.h` for the exact
-function signatures.
+    subgraph fpga["FPGA datapath (cosimulated)"]
+        RTL["rtl/membrane_quant_stream_top.sv\nVerilator-cosimulated, not on silicon"]
+    end
 
-## Budget-aware block store (Phase 1.2)
+    LLAMA -->|real KV/attention tensors| KVCAP
+    KVCAP -->|.kvtrace / .attntrace| POL
+    POL -->|promote| STORE
+    POL -->|demote| QSIMD
+    QSIMD --> BACKEND
+    POL -->|miss| PRED
+    PRED --> EXACT
+    EXACT -->|calibrated replay| CXLSIM
+    CXLSIM -.->|hypothetical offload path, simulated only| RTL
+    BACKEND -->|compulsory fetch| EXACT
+```
 
-`membrane_store_t` (`include/membrane/store.h`) holds compressed blocks
-under a fixed byte budget and is the first piece that decides *which*
-blocks stay resident. Design decisions:
+Notes on this diagram: the dotted CXL→FPGA edge is explicitly simulated,
+not a real data path — no component in this project moves real bytes over
+a real PCIe/CXL link. `membrane-cxl-sim` and `membrane-kv-exact-sim` are
+discrete-event simulators calibrated from the real traces `membrane-kv-
+capture`/`membrane-kv-attn-trace-capture` produce; they do not themselves
+run inference.
 
-- **Two physical states, not three tiers.** A block is either RESIDENT
-  (compressed, counted against `budget_bytes`) or gone. There is no
-  file/NVMe backend yet: an evicted block is simply dropped. The
-  roadmap's hot/warm/cold hierarchy is deliberately *not* built as three
-  physical pools here — that would be premature while only RAM exists.
-- **Budget is never exceeded.** `put` compresses first, then evicts the
-  least-recently-used blocks until the new block fits. If it still does
-  not fit (e.g. a single block larger than the whole budget, or every
-  other block pinned), `put` returns `MEMBRANE_ERR_BUDGET_FULL` and any
-  existing data for that id is left intact. Fit checks are written as
-  subtractions (`need <= budget - (resident - old_size)`) so they never
-  overflow `size_t`.
-- **Data structures.** An `id -> store_entry` chained hash index for
-  O(1) lookup, plus an intrusive doubly-linked LRU list threaded through
-  the same entries for O(1) touch/evict. Each `store_entry` owns one
-  `membrane_block_t`, reusing its size/codec/checksum metadata rather
-  than duplicating it.
-- **Thread safety: one mutex + pin/refcount.** A single
-  `pthread_mutex_t` guards the index, LRU list, and accounting. The slow
-  decode runs *outside* the lock: `get` pins the entry (so eviction
-  skips it), releases the lock, decodes with the pure `membrane_block_decode`,
-  then re-locks to unpin. A `remove` or overwrite of a pinned block
-  unlinks it immediately but defers the `free` to the last unpin, so
-  concurrent `get`/`remove` cannot use-after-free. Verified under
-  ThreadSanitizer with a multi-threaded get/put/remove stress test.
-- **Accounting knows the difference between logical and physical.**
-  `resident_bytes` (compressed footprint, the budgeted quantity) versus
-  `logical_bytes` (sum of original sizes); their ratio is the
-  `effective_capacity_ratio` — the headline number for "more logical
-  data than physical budget."
+## B. KV lifecycle (hot → warm → cold, exact miss path)
 
-Deliberately deferred (flagged as premature for this cut): async
-compression workers, prefetch, a pluggable eviction-policy vtable, and
-hash-index resizing.
+```mermaid
+stateDiagram-v2
+    [*] --> Hot_FP16: new KV block written
 
-## Persistent backend and promotion (Phase 1.4)
+    Hot_FP16: Hot (FP16)
+    Warm_Q8: Warm (Q8)
+    Cold_Q4: Cold (Q4)
+    Evicted: Evicted (compressed, off hot path)
 
-Evicted blocks are no longer dropped: with a backend configured, the store
-writes them to a cold tier and loads them back on demand. This is what
-pushes effective capacity *beyond* the RAM budget.
+    Hot_FP16 --> Warm_Q8: demote (cold enough,\nbit-exact Q8_0 quantize)
+    Warm_Q8 --> Hot_FP16: promote (re-accessed,\nbit-exact Q8_0 dequantize)
+    Warm_Q8 --> Cold_Q4: demote further (Q4_0 quantize)
+    Cold_Q4 --> Warm_Q8: promote (Q4_0 dequantize)
+    Warm_Q8 --> Evicted: LRU eviction under budget
+    Cold_Q4 --> Evicted: LRU eviction under budget
 
-- **Backend seam.** `membrane_backend_t` (`include/membrane/backend.h`) is
-  an opaque handle over an internal vtable (`store`/`load`/`remove`/
-  `contains`/`used_bytes`/`destroy`), mirroring the codec vtable. All state
-  lives in the handle — no globals. The only backend today is the file
-  backend; RAM/CXL/FPGA backends would implement the same vtable. The store
-  references but does not own the backend (the caller destroys it after).
-- **File format.** One file per block, named only from the numeric id
-  (16 hex digits — no caller string reaches the path, so there is no
-  traversal surface). A 48-byte little-endian header carries a magic,
-  version, id, sizes, both codecs, the payload checksum, and a CRC32 over
-  the header itself; the payload follows. Writes go to a `.tmp` file that
-  is `fsync`ed and atomically `rename`d into place. On load, a bad magic/
-  version/header-CRC, an id mismatch, or a `stored_size` exceeding the file
-  is rejected as `CORRUPT_DATA`; a corrupted payload is caught later by the
-  block's own checksum at decode. Truncation fails the header read or the
-  size check.
-- **Eviction / promotion with I/O off the lock.** Entries gain a state:
-  RESIDENT, EVICTING, EVICTED, LOADING. The heavy backend read/write runs
-  with the store lock released; the entry is parked in a transient state
-  (EVICTING/LOADING) that its owning thread holds exclusively. Any other
-  thread that finds a transient entry waits on a condition variable and
-  retries, so per-entry I/O is serialized without holding the lock across
-  it, while different entries evict/promote concurrently. `get` on an
-  evicted block loads it, decodes (verifying the checksum) *before*
-  committing, then promotes it resident — evicting other LRU blocks to make
-  room, or serving without promoting if the budget is fully pinned. Backend
-  deletes (unlink) for `remove`/overwrite are done under the lock since they
-  are cheap metadata operations; only the block payload read/write is moved
-  off the lock.
-- **Error safety.** A failed eviction write leaves the block resident
-  (rolled back, counted as `backend_write_failures`). A failed load or a
-  checksum mismatch never yields corrupt data — `get` returns the error and
-  the block stays evicted. `remove` clears both the resident and backend
-  copies; `destroy` removes every record and `.tmp` file. Validated by
-  `membrane-store-bench`: 256 MiB logical held in a 64 MiB budget with a
-  file backend keeps `resident_bytes` pinned to 64 MiB across thousands of
-  evict/promote cycles, every block read back (in scrambled order) with
-  integrity PASS, and no files left behind.
+    Evicted --> ExactMiss: block needed by attention,\nnot resident (compulsory miss)
+    ExactMiss: Exact compulsory fetch\n(no approximation)
+    ExactMiss --> Hot_FP16: fetched block re-admitted
 
-## Memory safety
+    Hot_FP16 --> Predicted: predictor forecasts\nfuture need
+    Predicted: Prefetch issued
+    Predicted --> Hot_FP16: prefetch lands before use\n(hidden under compute floor\nwhen cache sufficient)
+```
 
-The build supports `-DMEMBRANE_ENABLE_SANITIZERS=ON` (AddressSanitizer +
-UndefinedBehaviorSanitizer) and `-DMEMBRANE_ENABLE_TSAN=ON`
-(ThreadSanitizer; mutually exclusive with the ASan build). CI runs a
-plain Debug build and an ASan build on every push. Note: running the
-TSan build on recent kernels may need `setarch -R` to disable ASLR,
-otherwise ThreadSanitizer aborts with "unexpected memory mapping" — this
-is an environment quirk, not a data race.
+Every transition except the two "Predicted" ones is exercised by
+`test_workingset_policy`/`test_exact_engine`; the quantize/dequantize
+edges are the same code path verified bit-exact against ggml in
+`test_ggml_quant_parity`. "Exact miss" never returns a degraded or
+approximated block — it is a real fetch, simulated with real latency
+(link/device/quant-engine wait), not a lossy substitute.
 
-## Memory safety
+## C. FPGA datapath (synthesizable, Verilator-cosimulated)
 
-The build supports an `-DMEMBRANE_ENABLE_ASAN=ON` CMake option that turns
-on AddressSanitizer + UndefinedBehaviorSanitizer. CI runs both a plain
-Debug build and an ASan build on every push.
+```mermaid
+flowchart LR
+    IN["Input stream\n{mode, txn_id, 512-bit data}\nvalid/ready"] --> FIFO_IN["stream_fifo\n(input)"]
+    FIFO_IN --> MAXABS["q8_maxabs_reduce /\nq4_scan"]
+    MAXABS --> SCALE["q8_scale / q4_scale\n(membrane_fp_divider)"]
+    SCALE --> QUANT["q8_quantize_pack /\nq4_pack\n(membrane_fp_multiplier,\nmembrane_fp_adder)"]
+    QUANT --> PACK["Credit-based issue\n(membrane_quant_stream_top.sv)"]
+    PACK --> FIFO_OUT["stream_fifo\n(output)"]
+    FIFO_OUT --> OUT["Output stream\n{txn_id, packed/dequantized data}"]
+
+    DEC_IN["Decode input\n(packed Q8_0/Q4_0)"] --> DEQUANT["q8_dequantize /\nq4_unpack"]
+    DEQUANT --> PACK
+```
+
+All arithmetic blocks (`membrane_fp_adder/divider/multiplier`) are
+from-scratch, bit-exact, purely-integer FP32 primitives — no `real`,
+`shortreal`, or DPI anywhere in this datapath, and the whole hierarchy
+elaborates under yosys 0.33. This diagram is the same module graph
+cosimulated by `rtl/tb/tb_top_verilator.cpp` against
+`src/quant/quant_simd.c` for 520,000 transactions, 0 mismatches (see
+[phase5-synthesizable-fpga.md](phase5-synthesizable-fpga.md) §4). It has
+not been placed or routed on a physical FPGA.
+
+## D. Exact sparse retrieval path
+
+```mermaid
+sequenceDiagram
+    participant Attn as Attention step (calibrated from real trace)
+    participant Predictor as Predictor (working-set policy)
+    participant Cache as Resident cache (hot/warm)
+    participant Prefetch as Prefetch queue
+    participant Device as CXL/near-memory device (simulated)
+    participant Compute as Model compute (real measured floor)
+
+    Attn->>Predictor: which blocks will this step's\nattention likely need?
+    Predictor->>Prefetch: issue prefetch for predicted blocks
+    Prefetch->>Device: async fetch (link + device + quant wait)
+    Attn->>Cache: lookup real needed blocks (top-k, exact)
+    Cache-->>Attn: hit (resident) -- no wait
+    Cache->>Device: miss (compulsory fetch, EXACT --\nnever approximated or dropped)
+    Device-->>Cache: block delivered, admitted resident
+    Cache-->>Attn: block available, attention completes
+    Attn->>Compute: step's own decode compute runs concurrently
+    Note over Attn,Compute: total step latency = max(compute floor,\nretrieval completion) --\nhidden_under_compute_fraction measures\nhow often retrieval finishes first
+```
+
+This is the path `tools/membrane-kv-exact-sim`'s `calibrate()` +
+`run_concurrent()` implement: `calibrate()` walks a real captured trace
+once to build a `calibrated_profile_t` (predictor decisions, ground-truth
+top-k blocks per step); `run_concurrent()` replays that profile across up
+to 512 concurrent sequences with real shared-resource contention (link,
+device, quant-engine queues), never re-touching the raw trace. The
+predictor's precision/recall is measured against ground truth every step
+— it is never assumed correct.

@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: >-
+  If you use MEMBRANE in your research, please cite it using the
+  metadata below.
+title: >-
+  MEMBRANE: A Research Prototype for Mixed-Precision, Exact-Retrieval
+  LLM KV-Cache Memory
+type: software
+authors:
+  - family-names: Altıntaş
+    given-names: Kadir Eren
+repository-code: "https://github.com/kadireren7/membrane"
+version: "0.7.1"
+date-released: "2026-07-30"
+license: Apache-2.0
+abstract: >-
+  MEMBRANE is a research codebase exploring mixed-precision KV-cache
+  tiering, exact (non-approximate) sparse KV retrieval, near-memory/CXL
+  appliance simulation, bit-exact CPU quantization verified against
+  ggml's own reference implementation, and a synthesizable FPGA
+  quant/dequant datapath cosimulated in Verilator. All results are
+  measured against real captured attention/KV traces from actual
+  llama.cpp inference on two open SmolLM2 checkpoints, or explicitly
+  labeled as simulated/assumed where no physical hardware exists. See
+  the repository's README.md and docs/results-summary.md for the full,
+  sourced set of findings, including negative results.
+preferred-citation:
+  type: software
+  title: >-
+    MEMBRANE: A Research Prototype for Mixed-Precision, Exact-Retrieval
+    LLM KV-Cache Memory
+  authors:
+    - family-names: Altıntaş
+      given-names: Kadir Eren
+  repository-code: "https://github.com/kadireren7/membrane"
+  version: "0.7.1"
+  date-released: "2026-07-30"
