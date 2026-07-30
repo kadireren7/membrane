@@ -2,12 +2,13 @@
 
 ## Scope of this document
 
-This document describes what MEMBRANE actually is as of Phase 7.1 (this
-research-release phase), with diagrams matching the current code, not the
-Phase 0 block-store-only prototype this document originally described.
-Every diagram below corresponds to real, present source files, named
-inline. Nothing here claims a capability that isn't implemented, tested,
-or (where explicitly labeled) simulated.
+This document describes what MEMBRANE actually is as of the public
+research-release audit (see `docs/research-release-freeze.md`), with
+diagrams matching the current code, not the Phase 0 block-store-only
+prototype this document originally described. Every diagram below
+corresponds to real, present source files, named inline. Nothing here
+claims a capability that isn't implemented, tested, or (where explicitly
+labeled) simulated.
 
 For the phase-by-phase research narrative behind each piece, see the
 `docs/phase*.md` files — this document is the current-state summary, not
@@ -36,9 +37,23 @@ a replacement for them.
   analysis, exact sparse KV retrieval at scale, the unified
   128K-context × 512-concurrency stress sweep, and an out-of-core
   simulator backend to complete that sweep under real memory constraints.
-- **Phase 7.1** (this phase): research-release packaging — no new
-  experiments, only reproducible presentation of the above (see
+- **Phase 7.1**: research-release packaging — no new experiments, only
+  reproducible presentation of the above (see
   [phase7-research-release.md](phase7-research-release.md)).
+- **Phase 7.2**: academic manuscript — literature research (14
+  independently-verified sources), claim audit, and a complete,
+  citation-resolved paper (see
+  [phase7-academic-paper.md](phase7-academic-paper.md)).
+- **Phase 7.3**: hardware-validation outreach package and physical
+  validation plan (see
+  [phase7-hardware-outreach.md](phase7-hardware-outreach.md) and
+  [phase8-hardware-validation-plan.md](phase8-hardware-validation-plan.md)),
+  followed by an authorship/AI-assistance wording correction and a
+  GitHub Actions verification repair (`bb4df95`, `58ec90b`) confirmed on
+  the real CI runner, and this public-release audit (see
+  [research-release-freeze.md](research-release-freeze.md) and
+  [public-release-audit.md](public-release-audit.md)) — still no new
+  experiments and still no physical FPGA/CXL hardware used.
 
 ## A. End-to-end MEMBRANE system
 

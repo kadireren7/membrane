@@ -1,7 +1,9 @@
 % MEMBRANE manuscript -- single-file LaTeX source.
 %
-% Compiles with a plain `pdflatex main.tex` (run twice for the table of
-% contents/references to settle) -- uses an inline `thebibliography`
+% Compiles with a plain `pdflatex main.tex` (run 2-3 times for
+% citations/references to settle -- paper/build.sh runs 3 passes and
+% checks only the final pass's log, confirmed correct against a real
+% GitHub Actions build) -- uses an inline `thebibliography`
 % environment, not bibtex/biber, specifically so this file has no
 % external bibliography-tool dependency. Uses the generic `article`
 % class deliberately: no specific conference template is copied here

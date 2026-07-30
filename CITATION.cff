@@ -1,7 +1,12 @@
 cff-version: 1.2.0
 message: >-
   If you use MEMBRANE in your research, please cite it using the
-  metadata below.
+  metadata below. No official GitHub release/tag has been published
+  yet -- `version` below is a pre-release research-candidate label,
+  and `commit` names the exact commit this metadata reflects, not a
+  tagged release. See docs/v0.1.0-research-release-plan.md for the
+  proposed first tagged release and docs/research-release-freeze.md
+  for this repository's current release status.
 title: >-
   MEMBRANE: A Research Prototype for Mixed-Precision, Exact-Retrieval
   LLM KV-Cache Memory
@@ -10,8 +15,8 @@ authors:
   - family-names: Altıntaş
     given-names: Kadir Eren
 repository-code: "https://github.com/kadireren7/membrane"
-version: "0.7.1"
-date-released: "2026-07-30"
+version: "0.1.0-research-candidate"
+commit: 58ec90b
 license: Apache-2.0
 abstract: >-
   MEMBRANE is a research codebase exploring mixed-precision KV-cache
@@ -33,5 +38,5 @@ preferred-citation:
     - family-names: Altıntaş
       given-names: Kadir Eren
   repository-code: "https://github.com/kadireren7/membrane"
-  version: "0.7.1"
-  date-released: "2026-07-30"
+  version: "0.1.0-research-candidate"
+  commit: 58ec90b

@@ -1,6 +1,7 @@
 # MEMBRANE
 
 [![CI](https://github.com/kadireren7/membrane/actions/workflows/ci.yml/badge.svg)](https://github.com/kadireren7/membrane/actions/workflows/ci.yml)
+[![Paper Build](https://github.com/kadireren7/membrane/actions/workflows/paper.yml/badge.svg)](https://github.com/kadireren7/membrane/actions/workflows/paper.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 A research prototype for LLM KV-cache memory: a mixed-precision KV-cache
@@ -8,12 +9,15 @@ runtime, exact sparse retrieval, near-memory/CXL simulation, bit-exact CPU
 quantization, and a synthesizable FPGA datapath — all measured against real,
 committed artifacts in this repository, not aspirational claims.
 
-> **Status: research prototype, simulation-heavy.** Every number in this
-> README is sourced to a specific CSV/JSONL artifact and documentation
-> section (section "Key results"). This is not a production system, and no
-> claim here should be read as "real CXL hardware acceleration" — see
+> **Status: public research release, simulation-heavy.** Every number in
+> this README is sourced to a specific CSV/JSONL artifact and
+> documentation section (section "Key results"). The software/simulation
+> work, academic manuscript, and reproducibility tooling are complete and
+> verified (see [docs/research-release-freeze.md](docs/research-release-freeze.md)).
+> This is not a production system, and no claim here should be read as
+> "real CXL hardware acceleration" — see
 > [Technical limitations](#technical-limitations) for exactly what is and
-> isn't real.
+> isn't real, and what physical FPGA/CXL validation would still add.
 
 MEMBRANE is:
 
@@ -183,8 +187,19 @@ rtl/                Synthesizable FPGA RTL + Verilator/Icarus testbenches
 tests/unit/         C/C++ unit tests (ctest-registered)
 docs/               Phase-by-phase research documentation (source of truth)
 benchmarks/         Committed CSV/JSONL results + MANIFEST.json
-paper/              Academic paper skeleton (in progress, citation-needed)
-scripts/            demo.sh, verify-results.py, prepare-release.sh, ...
+paper/              Completed, claim-audited manuscript (main.md/main.tex,
+                    references.bib, figures/tables regenerated from source
+                    CSVs) -- PDF is a GitHub Actions build artifact, not
+                    committed to the repo; see paper/scripts/README.md
+hardware/           FPGA/CXL physical-validation plan, vendor-integration
+                    interface skeletons, results schema (no real hardware
+                    used yet -- see docs/phase8-hardware-validation-plan.md)
+outreach/           Hardware-access outreach package (unsent templates,
+                    research profile, claim gates) -- see
+                    outreach/membrane-technical-brief.md; nothing has
+                    been sent to anyone
+scripts/            demo.sh, verify-results.py, verify-outreach.py,
+                    prepare-release.sh, ...
 third_party/        llama.cpp (git submodule, upstream license applies)
 ```
 
@@ -218,12 +233,24 @@ third_party/        llama.cpp (git submodule, upstream license applies)
 ## Roadmap
 
 See [docs/architecture.md](docs/architecture.md) for the full phased
-history (Phase 0 through 7.1) and
-[docs/phase7-research-release.md](docs/phase7-research-release.md) for
-what this specific release phase changed. No new experiments are planned
-in the immediate term; near-term work is citation research for
-[paper/main.md](paper/main.md)'s Related Work section and closing the
-disclosed gaps in [docs/results-summary.md](docs/results-summary.md) §5.
+history (Phase 0 through 7.3) and
+[docs/research-release-freeze.md](docs/research-release-freeze.md) for
+this repository's current release status. Completed since the initial
+research release: the academic manuscript is finished and
+claim-audited (14 independently-verified citations, no
+`[citation needed]` markers remaining — see
+[paper/claim-audit.md](paper/claim-audit.md)), and `paper/main.pdf` now
+builds successfully as a real GitHub Actions artifact on every push
+(see the Paper Build badge above and
+[docs/phase7-academic-paper.md](docs/phase7-academic-paper.md)). No new
+simulation/experimental work is planned in the immediate term — the
+next substantive evidence this project needs is **physical validation
+on real FPGA and CXL hardware**, which this repository is not yet able
+to do itself. A scoped, claim-limited outreach package for exactly that
+purpose exists in [outreach/](outreach/membrane-technical-brief.md) and
+[docs/phase8-hardware-validation-plan.md](docs/phase8-hardware-validation-plan.md)
+(unsent — see [docs/public-release-audit.md](docs/public-release-audit.md)
+for this repository's current release readiness).
 
 ## Citation
 

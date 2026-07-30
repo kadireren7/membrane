@@ -152,6 +152,20 @@ lcov.info
 htmlcov/
 
 # --------------------------------------------------
+# LaTeX build output (paper/main.pdf is a GitHub Actions build
+# artifact produced by paper/build.sh / .github/workflows/paper.yml,
+# never committed to the repo -- see paper/scripts/README.md)
+# --------------------------------------------------
+paper/main.pdf
+paper/*.aux
+paper/*.out
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.synctex.gz
+paper/*.toc
+paper/figures/generated/*.pdf
+
+# --------------------------------------------------
 # Python tooling used for benchmarks
 # --------------------------------------------------
 __pycache__/

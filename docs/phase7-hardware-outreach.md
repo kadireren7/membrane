@@ -219,3 +219,21 @@ None of this changes any technical/experimental claim's substance —
 divider estimate are unchanged and re-verified. This pass only
 corrected how the project's authorship, development process, and two
 sourcing details were described.
+
+## Update: GitHub Actions verification repair (`58ec90b`, follow-up pass)
+
+This document's "LaTeX/PDF build status" section above (and the
+corresponding bullet under "What's still missing") originally reported
+that the `Paper Build` GitHub Actions workflow "has not been executed."
+That is now out of date: a follow-up pass diagnosed and fixed two real
+CI bugs (a hardcoded test timeout tuned to one machine's speed, and a
+log-scoping bug in `paper/build.sh`'s citation check — see the
+`fix: repair GitHub Actions verification` commit for full detail),
+and confirmed via real
+`gh run` logs that both `CI` (Debug, ASan+UBSan, TSan) and `Paper
+Build` now pass on the actual GitHub Actions runner, with
+`paper/main.pdf` genuinely produced as a real CI build artifact. The
+original text above is left as written (an accurate account of this
+phase's own state at the time) rather than silently edited — this note
+is the correction, following the same disclosure pattern as the
+authorship section above it.

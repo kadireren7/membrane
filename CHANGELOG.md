@@ -5,7 +5,129 @@ commit dates; commit hashes are short and stable. This project does not
 yet follow semantic versioning strictly (pre-1.0, research prototype) --
 version numbers below track phase numbers instead.
 
-## [0.7.1] — Phase 7.1: research release packaging
+## [0.1.0-research-candidate] — Public release audit and freeze
+
+- Full repository consistency audit (README, CHANGELOG, CITATION.cff,
+  `docs/`, `paper/`, `outreach/`, `hardware/`, `scripts/`, workflows,
+  release-metadata files). Found and fixed: stale "paper skeleton"/
+  "citation-needed" wording in README.md and `docs/results-summary.md`
+  (both predated Phase 7.2's completed literature research); a stale
+  "Phase 0 through 7.1" range in README.md and `docs/architecture.md`
+  (three phases behind); `docs/phase7-hardware-outreach.md`'s
+  now-outdated "Paper Build workflow has not been run" claim (corrected
+  via an added note, not a silent rewrite); `paper/main.md`'s stale
+  "draft manuscript" status line; `CITATION.cff`'s `version: "0.7.1"`
+  with a `date-released` implying a release that never happened
+  (changed to `0.1.0-research-candidate` + `commit: 58ec90b`); a
+  missing `.gitignore` entry for `paper/main.pdf` and LaTeX build
+  byproducts.
+- Added `docs/repository-boundary.md` (public/private repository
+  boundary plan — no private repository exists), `docs/research-
+  release-freeze.md` (freeze baseline, scope, and unfreeze conditions),
+  `docs/v0.1.0-research-release-plan.md` (proposed tag plan, no tag
+  created), and `docs/public-release-audit.md` (this audit's full
+  report).
+- `scripts/verify-outreach.py` extended with 5 new checks (12/12 →
+  17/17): no stale "paper skeleton" phrasing, no stale phase range, no
+  broken workflow badge, no false private-repo-exists claim, no false
+  main.pdf-tracked claim. Building these caught 3 real bugs in the
+  checks themselves (see `docs/public-release-audit.md`), fixed before
+  being trusted.
+- Repository cleanliness re-confirmed: no committed build output,
+  stale checkpoint, model file, or oversized file found (unchanged
+  since the Phase 7.1 cleanliness pass).
+- No tag or GitHub Release was created — per this audit's explicit
+  scope, tagging is a separate, later, human-approved step.
+
+## [0.7.3.2] — GitHub Actions verification repair (`58ec90b`)
+
+- Fixed `test_interrupted_resume`'s hardcoded `sleep 45` (tuned to one
+  dev machine's speed) that produced 0 completed checkpoint records on
+  GitHub's hosted CI runner — replaced with adaptive polling for a real
+  completion signal (up to 240s/60s), confirmed non-sanitizer-specific
+  since it also failed under a plain Debug build. `CMakeLists.txt`'s
+  test timeout raised 400s → 700s accordingly.
+- Fixed `paper/build.sh`'s undefined-citation check, which scanned the
+  cumulative log across all `pdflatex` passes and misreported pass 1's
+  expected, transient "undefined" warnings as a real failure even after
+  pass 2 resolved everything — now checks only the final pass's
+  isolated output (3 passes run).
+- Verified via real `gh run` logs for the failing commit (not guessed),
+  and via a mock `pdflatex` reproducing both the real bug and a
+  genuinely broken bibliography (no local LaTeX toolchain exists to
+  test against directly).
+- **Result, confirmed on the real GitHub Actions runner**: `CI` (Debug,
+  ASan+UBSan, TSan) and `Paper Build` both pass; `paper/main.pdf` is now
+  produced as a real CI build artifact.
+
+## [0.7.3.1] — Authorship and AI-assistance wording correction (`bb4df95`)
+
+- Removed "sole author"/"every line of code"/"written from scratch"/
+  "independent researcher" phrasing (`outreach/`, `paper/main.md`,
+  `paper/main.tex`) that could be read as claiming Kadir hand-wrote the
+  codebase without AI assistance. Repositioned everywhere as: Kadir
+  created and leads MEMBRANE, directing architecture, experimental
+  design, and technical decisions, and reviewing every commit, while AI
+  coding agents assisted with implementation and documentation. Added
+  `outreach/ai-assistance-disclosure.md`.
+- Corrected "production quantizer" → "ggml's own reference
+  implementation"; corrected CXL-value sourcing wording (industry-typical
+  assumptions informed by, not literally quoted from, the CXL
+  Consortium's spec); corrected `scripts/demo.sh`'s documented duration
+  from a cherry-picked "~25s" to a re-measured "~25–50s" range.
+- Shortened `outreach/email-templates.md`'s four templates to ~120–180
+  words each; added `outreach/primary-email-template.md`.
+- `scripts/verify-outreach.py` gained 3 checks (12/12 passing) with 3
+  negative tests confirmed caught then reverted.
+
+## [0.7.3] — Phase 7.3: hardware validation outreach package (`6faa0d5`)
+
+- Added `outreach/`: technical brief, one-page summary, four email
+  templates, Kadir's research profile, demo video script, research-talk
+  outline, target-selection framework, empty contact tracker, and a
+  6-file lab evaluation package (`outreach/lab-package/`) — unsent
+  templates; no contact made with any real person or institution.
+- Added `docs/phase8-hardware-validation-plan.md` (3 levels: FPGA
+  sim/impl, real board, CXL platform) and `hardware/` (board-targets,
+  15-step experiment protocol, JSON results schema + a clearly-labeled
+  fictional example fixture, risk register).
+- Added `hardware/vendor-wrapper/`: interface-only AXI4-Stream/
+  AXI4-Lite/DMA skeletons wrapping the existing, cosimulation-verified
+  `membrane_quant_stream_top` — no vendor IP vendored. Elaborates
+  cleanly under yosys together with the full existing `rtl/` hierarchy.
+- Added `outreach/hardware-claim-gates.md` (8 gates mapping which test
+  must pass to which sentence becomes allowed) and
+  `scripts/verify-outreach.py` (9/9 checks at the time, later extended
+  to 12/12 in `bb4df95`).
+- Added `.github/workflows/paper.yml` (CI path to a real paper PDF) and
+  `docs/release-candidate-checklist.md`.
+- No new experiments; no physical hardware used.
+
+## [0.7.2] — Phase 7.2: academic manuscript (`e74d719`)
+
+- Literature research: 14 independently-verified primary sources
+  (arXiv/ACM, each confirmed against its own abstract page) across all
+  15 requested topic areas — `paper/related-work-matrix.md`,
+  `paper/references.bib`. Related Work's `[citation needed]` markers
+  from Phase 7.1 fully resolved; none remain in the manuscript body.
+- Completed `paper/main.md` (abstract, 5 scoped contributions, unified
+  system-design narrative, RQ1–RQ7 evaluation, visible negative-results
+  section, limitations, ethics/artifact disclosure, reproducibility
+  appendix) and produced `paper/main.tex` (single-file compilable
+  LaTeX, generic `article` class, inline bibliography).
+- Added `paper/claim-audit.md` (per-claim wording/type/source/
+  limitation/allowed-vs-prohibited wording for every headline number).
+- Added `paper/scripts/`: dependency-free figure generator (7 SVGs from
+  real CSVs — no matplotlib available in this environment) and table
+  generator (6 tables), plus `paper/scripts/verify-paper.py` (11
+  checks).
+- Added `paper/build.sh` and `paper/submission-options.md` (honest
+  per-venue readiness analysis, no acceptance claims).
+- A real inconsistency was found and fixed during the claim audit: the
+  FPGA pipeline-count sensitivity result is SmolLM2-135M-only by design
+  and is now stated as such everywhere it's cited.
+
+## [0.7.1] — Phase 7.1: research release packaging (`ad6cf5f`)
 
 - Rewrote `README.md`, added `docs/architecture.md` diagrams,
   `docs/reproduction.md`, `docs/results-summary.md`,

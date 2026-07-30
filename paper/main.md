@@ -2,14 +2,17 @@
 
 **Author:** Kadir Eren Altıntaş
 
-**Status:** Phase 7.2 draft manuscript. Every headline number below is
-sourced (see `paper/claim-audit.md`) and machine-checked where possible
-(`paper/scripts/verify-paper.py`, `scripts/verify-results.py`). Related
-Work now cites 14 independently-verified primary sources (see
+**Status:** Complete, claim-audited manuscript. Every headline number
+below is sourced (see `paper/claim-audit.md`) and machine-checked where
+possible (`paper/scripts/verify-paper.py`, `scripts/verify-results.py`).
+Related Work cites 14 independently-verified primary sources (see
 `paper/related-work-matrix.md`, `paper/references.bib`); no citation was
 added without confirming its title/author list/venue against its own
-arXiv or ACM page. This is a research-prototype manuscript, not a
-claim of a production system or of real CXL/FPGA hardware — see
+arXiv or ACM page. `paper/main.pdf` builds successfully as a real
+GitHub Actions artifact on every push (workflow: `Paper Build`; the PDF
+itself is not committed to this repository — see
+`paper/scripts/README.md`). This is a research-prototype manuscript,
+not a claim of a production system or of real CXL/FPGA hardware — see
 §7 (Limitations and Threats to Validity).
 
 ---

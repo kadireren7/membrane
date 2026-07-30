@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Verify the hardware-outreach package: internal links, lab-package
 completeness, hardware-results schema conformance, prohibited-claim/
-hype-word scanning across outreach/ and hardware/, and (added in the
+hype-word scanning across outreach/ and hardware/; (added in the
 Phase 7.3 wording-correction pass) authorship/AI-assistance wording and
 demo-duration consistency across outreach/, paper/, docs/, and
-README.md.
+README.md; and (added in the public-release audit pass) staleness
+checks -- no lingering "paper skeleton" phrasing, no stale "Phase 0
+through N" range behind the real current phase, workflow badges only
+pointing at real workflow files, no claim that a private/companion
+repository currently exists, and no claim that paper/main.pdf is
+committed/tracked (it never is -- verified against git directly).
 
 This does NOT re-check paper/'s citation/claim-audit machinery (see
 paper/scripts/verify-paper.py) or benchmarks/ headline numbers (see
 scripts/verify-results.py) -- it is specific to the outreach/hardware
-materials and the authorship-wording claims layered on top of them.
+materials and the release-consistency claims layered on top of them.
 
 Exit code: 0 if every check passes, 1 otherwise.
 """
@@ -241,7 +246,17 @@ def _wider_corpus():
 # as part of their own "here's what changed and why" disclosure (the
 # same reasoning that excludes outreach/hardware-claim-gates.md from
 # the GATED_CLAIMS scan -- documenting a phrase is not asserting it).
-META_DOCUMENTATION_FILES = {"docs/phase7-hardware-outreach.md"}
+META_DOCUMENTATION_FILES = {
+	"docs/phase7-hardware-outreach.md",
+	# Historical phase-completion record: accurately describes what
+	# Phase 7.1 built AT THE TIME (a paper skeleton) -- not a live
+	# status claim about paper/'s current state.
+	"docs/phase7-research-release.md",
+	# This audit's own report: discusses the "paper skeleton" phrase
+	# and the pre-audit "Phase 0 through 7.1" wording as findings it
+	# corrected, the same documenting-not-asserting reasoning as above.
+	"docs/public-release-audit.md",
+}
 
 
 def _wider_corpus_excluding_meta_docs():
@@ -315,8 +330,110 @@ def _c12():
 	return len(bad) == 0, "; ".join(bad) if bad else "all demo.sh duration mentions are qualified"
 
 
+@check("no live-status doc still describes paper/ as an incomplete 'skeleton'")
+def _c13():
+	bad = []
+	for f in _wider_corpus_excluding_meta_docs():
+		text = f.read_text().lower()
+		if re.search(r"paper.{0,20}skeleton|academic.paper skeleton", text):
+			bad.append(f"{f.relative_to(REPO_ROOT)}: still describes paper/ as a 'skeleton'")
+	return len(bad) == 0, "; ".join(bad) if bad else "no stale 'paper skeleton' phrase in any live-status doc"
+
+
+@check("no live-status doc cites a stale 'Phase 0 through N' range behind the real current phase")
+def _c14():
+	bad = []
+	# The current phase range is at least 7.3 (hardware outreach + the
+	# wording-correction/CI-repair/audit work layered on top of it) --
+	# any doc still citing an earlier upper bound is out of date.
+	for f in _wider_corpus_excluding_meta_docs():
+		text = f.read_text()
+		for m in re.finditer(r"Phase 0\s*(?:[–‐-]+|through)\s*7\.(\d+)", text):
+			if int(m.group(1)) < 3:
+				bad.append(f"{f.relative_to(REPO_ROOT)}: stale 'Phase 0 through 7.{m.group(1)}' (current: 7.3+)")
+	return len(bad) == 0, "; ".join(bad) if bad else "no stale phase-range citation found"
+
+
+@check("every README.md workflow badge points at a workflow file that actually exists")
+def _c15():
+	readme = (REPO_ROOT / "README.md").read_text()
+	bad = []
+	for m in re.finditer(r"actions/workflows/([a-zA-Z0-9_.-]+)/badge\.svg", readme):
+		wf_name = m.group(1)
+		wf_path = REPO_ROOT / ".github" / "workflows" / wf_name
+		if not wf_path.exists():
+			bad.append(f"badge references .github/workflows/{wf_name}, which does not exist")
+	return len(bad) == 0, "; ".join(bad) if bad else "all workflow badges point at real, existing workflow files"
+
+
+@check("no doc claims a private/companion repository (e.g. membrane-labs) currently exists")
+def _c16():
+	# A careful document establishes "membrane-labs does not exist yet"
+	# clearly once (its first mention or opening paragraph), then refers
+	# to it freely afterward without re-hedging every single sentence --
+	# requiring every individual mention to repeat the caveat would make
+	# these documents unreadable. So: at least ONE occurrence's own
+	# nearby window (not the whole file, which risks a coincidental,
+	# unrelated hedge word elsewhere in a long document passing this
+	# check for the wrong reason) must carry a real hedge -- specific,
+	# deliberately narrow phrases, not a generic word like "planned"
+	# that could easily appear elsewhere in the same file by chance.
+	hedge_words = (
+		"does not exist yet", "not yet created", "not been created",
+		"if one comes to exist", "if and when it is", "not created",
+		"repository was created", "no private repository has been",
+	)
+	bad = []
+	for f in _wider_corpus_excluding_meta_docs():
+		text = f.read_text().lower()
+		if "membrane-labs" not in text:
+			continue
+		positions = [m.start() for m in re.finditer("membrane-labs", text)]
+		hedged_somewhere = any(
+			any(h in text[max(0, p - 600): p + 600] for h in hedge_words)
+			for p in positions
+		)
+		if not hedged_somewhere:
+			bad.append(f"{f.relative_to(REPO_ROOT)}: mentions 'membrane-labs' but no occurrence has a not-yet-created hedge nearby")
+	return len(bad) == 0, "; ".join(bad) if bad else "every file mentioning membrane-labs also hedges its non-existence somewhere"
+
+
+@check("no doc claims paper/main.pdf is committed/tracked in the repository")
+def _c17():
+	bad = []
+	tracked_git = set(
+		__import__("subprocess").run(
+			["git", "-C", str(REPO_ROOT), "ls-files", "paper/main.pdf"],
+			capture_output=True, text=True,
+		).stdout.split()
+	)
+	if "paper/main.pdf" in tracked_git:
+		bad.append("paper/main.pdf IS actually tracked by git -- this would itself be a real problem (should be a CI artifact only)")
+	claim_words = ("is committed", "is tracked", "committed to the repo", "committed to this repository", "tracked in the repo")
+	for f in _wider_corpus_excluding_meta_docs():
+		# Strip markdown emphasis markers before matching -- "is **not**
+		# committed" would otherwise hide the negation from a plain
+		# substring search for "not " (the space right after "not" is
+		# consumed by the closing "**" instead).
+		text = f.read_text().lower().replace("*", "").replace("_", "")
+		for phrase in claim_words:
+			# Check EVERY occurrence, not just the first -- a doc can
+			# legitimately use a phrase like "is committed" elsewhere
+			# (e.g. "before anything is committed to RTL") unrelated to
+			# main.pdf; only checking the first match would silently
+			# skip a later, real violation.
+			for m in re.finditer(re.escape(phrase), text):
+				idx = m.start()
+				window = text[max(0, idx - 100):idx]
+				if "main.pdf" in window or "main.pdf" in text[idx:idx + 60]:
+					if "not " not in window and "never " not in window:
+						bad.append(f"{f.relative_to(REPO_ROOT)}: claims main.pdf '{phrase}' without a negation nearby")
+	return len(bad) == 0, "; ".join(bad) if bad else "no doc claims main.pdf is tracked; git confirms it truly isn't"
+
+
 def main():
-	for fn in (_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12):
+	for fn in (_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12,
+			_c13, _c14, _c15, _c16, _c17):
 		fn()
 	print()
 	print(f"{CHECK_COUNT - len(FAILURES)}/{CHECK_COUNT} checks passed")

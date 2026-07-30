@@ -157,9 +157,10 @@ section 3.
 - Worker concurrency in the largest sweeps was constrained by this
   machine's 5.6 GiB RAM, not chosen to reflect a target production
   deployment's parallelism.
-- Related Work in `paper/main.md` is intentionally left with
-  citation-needed markers — a literature survey is explicitly out of
-  scope for this phase, to avoid citing sources not actually checked.
+- Related Work in `paper/main.md` now cites 14 independently-verified
+  primary sources (Phase 7.2 completed the literature survey — see
+  `paper/related-work-matrix.md`); it is not an exhaustive survey of
+  the field, and later sources may still be missing.
 
 ## 6. Hardware implications
 
@@ -185,8 +186,9 @@ say where engineering effort should go first:
 
 ## 7. Next research steps
 
-- Real literature survey for `paper/main.md`'s Related Work (explicitly
-  deferred, not attempted with fabricated citations).
+- Broaden `paper/main.md`'s Related Work further — the Phase 7.2
+  literature survey (14 sources) was thorough but not exhaustive; newer
+  or previously-missed sources may still be worth adding.
 - If real CXL or FPGA hardware becomes available, replace the assumed
   link latency/bandwidth figures with measured ones — every place they
   are used is named in section 5 and in each `phase6-*.md` doc's
