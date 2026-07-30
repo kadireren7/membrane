@@ -186,6 +186,38 @@ regression was introduced. Phase B (designing and evaluating an actual
 alternative) is future work, not started here, and not committed to
 any specific direction from the list in `baseline.md` section 8 yet.
 
+## Phase B1 addendum (this experiment's own follow-on, same branch)
+
+Everything above this section describes Phase A (characterization
+only) and is unchanged, left as originally written per this project's
+own disclosed-not-rewritten convention. Phase B1 implemented candidate
+direction 1 from `baseline.md` section 8 (the power-of-two constant-
+divisor shortcut for `q4_scale`'s `u_div_d`) -- full detail in
+`phase-b1.md` and `results/b1-comparison.md`, summarized here:
+
+- New files only: `rtl/experimental/fp_div/fp32_scale_neg_pow2.sv`,
+  `rtl/experimental/fp_div/q4_scale_b1.sv`,
+  `rtl/experimental/fp_div/membrane_quant_stream_top_b1.sv`,
+  `rtl/tb/tb_fp32_scale_neg_pow2.cpp`,
+  `rtl/experimental/fp_div/tb_top_verilator_variant.cpp`. No production
+  RTL file (`rtl/q4_scale.sv`, `rtl/membrane_quant_stream_top.sv`,
+  `rtl/membrane_fp_divider.sv`) was modified.
+- Component differential test: 2,204,128 cases, 0 mismatches against
+  the real `membrane_fp_divider` RTL for the exact `mx/-8.0f`
+  operation.
+- Full-datapath parity: 520,000/520,000 transactions, 0 fails, for
+  both the baseline and B1 top-level variants (same shared C++
+  testbench source, compiled per-variant).
+- Synthesis (real, both generic and ECP5-mapped, both the standalone
+  unit and the `q4_scale` integration point): standalone-unit ECP5
+  cells -99.8%; `q4_scale`-level ECP5 cells only -2.2% (ABC's
+  technology mapper was already sharing most of the two divider
+  instances' cost in the baseline -- see `results/b1-comparison.md`
+  section 4 for the full explanation).
+- **Decision: CONTINUE** (exact and clean, but the real FPGA-resource-
+  predicting metric shows only a small gain -- see `phase-b1.md`'s own
+  "Decision" section for the full reasoning).
+
 ## Promotion status
 
 `not proposed` -- this remains on `experiment/fp-divider-pipeline`,
@@ -194,4 +226,7 @@ policy (`docs/open-development-policy.md`), but **not merged into
 `main`**. No pull request has been opened. Per
 `docs/research-release-freeze.md`, nothing here is a verified public
 claim of the `v0.1.0-research` release; it is disclosed,
-research-in-progress work on a public branch.
+research-in-progress work on a public branch. Phase B1's own decision
+(CONTINUE, above) is an experiment-internal decision only, per this
+project's contribution policy -- it does not itself authorize or imply
+any merge into `main`.

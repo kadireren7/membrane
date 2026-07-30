@@ -157,6 +157,16 @@ this codebase's own comments, not by assumed impact:
    all) is exact by construction -- essentially zero correctness risk,
    likely the cheapest, safest Phase B starting point, and removes one
    of the 4 divider instances entirely.
+   **Implemented and evaluated in Phase B1** (`phase-b1.md`,
+   `results/b1-comparison.md`, same branch): exact parity confirmed
+   (2,204,128/2,204,128 differential cases, 520,000/520,000 full-
+   datapath transactions, both 0 mismatches), but the real
+   ECP5-mapped resource win at the `q4_scale` integration point turned
+   out small (-2.2%) because yosys's technology mapper was already
+   sharing most of the cost between `q4_scale`'s two divider instances
+   in the baseline -- a real, disclosed, non-obvious finding, not the
+   large win a naive component-level comparison (-99.8%) would suggest.
+   Decision: CONTINUE, not yet promoted to `main`.
 2. **Constant-reciprocal-multiply for `q8_scale`'s `u_div_d`
    (`amax_f32 / 127.0`).** 127 is a fixed, non-power-of-two constant
    known at compile time; a precomputed-reciprocal multiply can replace

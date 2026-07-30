@@ -1,0 +1,5 @@
+scope,variant,generic_total_cells,ecp5_total_cells,LUT4,CCU2C,PFUMX,L6MUX21,FF,divider_instance_count,latency_cycles,initiation_interval,synthesizable
+standalone_unit,baseline_membrane_fp_divider,10234,73629,37998,10173,15848,9577,33,1,1,1,yes
+standalone_unit,b1_fp32_scale_neg_pow2,223,126,65,10,13,5,33,0,1,1,yes
+q4_scale,baseline_q4_scale,21666,74382,38524,10374,15866,9520,98,2,2,1,yes
+q4_scale,b1_q4_scale_b1,11658,72727,37514,10347,15878,8890,98,1,2,1,yes
