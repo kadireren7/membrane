@@ -3,6 +3,7 @@
 #include <queue>
 #include <vector>
 
+#include "bounded_quantile.h"
 #include "exact_engine.h"
 #include "sim_config.h"
 #include "sim_engine.h"
@@ -99,11 +100,21 @@ private:
  * tools/membrane-cxl-sim also depends on). Wait samples are only ever
  * recorded for requests that actually dispatch (misses/prefetches),
  * not every decode step, so memory stays bounded by real traffic
- * volume, not total step count. */
+ * volume, not total step count -- but at the full unified 128K x 512
+ * scale, real traffic volume is itself tens of millions of dispatches
+ * (prefetch alone can fire nearly every step, for every one of 512
+ * sequences), so this used to be a plain std::vector<double> per
+ * resource -- THREE of them (link/device_dram/quant_engine) -- which
+ * is exactly what a real Phase 6.5 smoke test caught overshooting a
+ * declared --memory-budget-mib well past what
+ * bounded_quantile_accumulator_t's fix to seq_latencies/all_latencies
+ * alone accounted for (see docs/phase6-out-of-core-simulator.md).
+ * Phase 6.5: same bounded (spill-if-needed) exact accumulator as
+ * total/kv-overhead latency now backs this too. */
 struct tracked_resource_t
 {
-	sim::k_server_resource_t	res;
-	std::vector<double>		wait_samples_ns;
+	sim::k_server_resource_t		res;
+	bounded_quantile_accumulator_t	wait_acc;
 
 	explicit tracked_resource_t(int k, const char *name)
 		: res(k, name, 0.0) {}
@@ -112,26 +123,15 @@ struct tracked_resource_t
 	{
 		double	completion = res.submit(now, service_ns);
 		double	wait = completion - service_ns - now;
-		wait_samples_ns.push_back(wait > 0.0 ? wait : 0.0);
+		wait_acc.add(wait > 0.0 ? wait : 0.0);
 		return (completion);
 	}
 
-	queue_stats_t	stats(double sim_end_ns) const
+	queue_stats_t	stats(double sim_end_ns)
 	{
-		queue_stats_t		out{};
-		std::vector<double>	sorted = wait_samples_ns;
+		queue_stats_t	out{};
 
-		std::sort(sorted.begin(), sorted.end());
-		auto	pct = [&](double p) -> double
-		{
-			if (sorted.empty())
-				return (0.0);
-			size_t	idx = (size_t)(p * (double)(sorted.size() - 1));
-			return (sorted[idx]);
-		};
-		out.p50_wait_ns = pct(0.50);
-		out.p95_wait_ns = pct(0.95);
-		out.p99_wait_ns = pct(0.99);
+		wait_acc.finish(&out.p50_wait_ns, &out.p95_wait_ns, &out.p99_wait_ns);
 		out.utilization_pct = res.utilization(sim_end_ns);
 		out.requests = res.requests();
 		return (out);
@@ -160,7 +160,30 @@ concurrent_result_t	run_concurrent(const calibrated_profile_t &profile,
 	uint64_t	bytes_per_block = bytes_per_channel_per_token
 		* block_size_tokens / (compression_ratio > 0.0 ? compression_ratio : 1.0);
 
-	std::vector<std::vector<double>>	seq_latencies(N);
+	/* Phase 6.5 item 5/13: bounded (spill-if-needed) exact quantile
+	 * accumulators replace what used to be a
+	 * std::vector<std::vector<double>> holding EVERY completed step's
+	 * latency (up to ~536 MiB at the full unified 128K x 512 scale) --
+	 * see bounded_quantile.h. record_latency() below is the single
+	 * place every completion path (zero-miss, immediate-dispatch
+	 * miss, and flush_quantum's micro-batched completions) reports
+	 * through, so both the existing total-latency percentiles and the
+	 * new compute-normalized KV-overhead percentile (item 13) come
+	 * from the exact same real per-step samples. */
+	bounded_quantile_accumulator_t		total_latency_acc;
+	bounded_quantile_accumulator_t		kv_overhead_acc;
+	uint64_t							hidden_under_compute_count = 0;
+	auto	record_latency = [&](double total_latency_ns)
+	{
+		double	kv_overhead = total_latency_ns - model.compute_ns_per_step;
+
+		if (kv_overhead < 0.0)
+			kv_overhead = 0.0;
+		if (kv_overhead == 0.0)
+			hidden_under_compute_count++;
+		total_latency_acc.add(total_latency_ns);
+		kv_overhead_acc.add(kv_overhead);
+	};
 	std::vector<bool>					seq_capacity_exceeded(N, false);
 
 	std::priority_queue<event_t, std::vector<event_t>, event_cmp_t>	pq;
@@ -252,8 +275,7 @@ concurrent_result_t	run_concurrent(const calibrated_profile_t &profile,
 			{
 				double	step_complete = std::max(reqs[k].compute_ready_ns,
 					completion);
-				seq_latencies[reqs[k].seq].push_back(
-					step_complete - reqs[k].compute_ready_ns
+				record_latency(step_complete - reqs[k].compute_ready_ns
 					+ model.compute_ns_per_step);
 				sim_end_ns = std::max(sim_end_ns, step_complete);
 				completed_steps++;
@@ -320,7 +342,7 @@ concurrent_result_t	run_concurrent(const calibrated_profile_t &profile,
 		if (miss_bytes == 0)
 		{
 			double	step_complete = compute_ready + model.compute_ns_per_step;
-			seq_latencies[s].push_back(step_complete - compute_ready);
+			record_latency(step_complete - compute_ready);
 			sim_end_ns = std::max(sim_end_ns, step_complete);
 			completed_steps++;
 			pq.push({step_complete, event_kind_t::STEP, s, ev.step + 1, 0});
@@ -339,7 +361,7 @@ concurrent_result_t	run_concurrent(const calibrated_profile_t &profile,
 			double	step_complete = std::max(compute_ready
 				+ model.compute_ns_per_step, completion);
 			double	total_lat = step_complete - compute_ready;
-			seq_latencies[s].push_back(total_lat);
+			record_latency(total_lat);
 			sim_end_ns = std::max(sim_end_ns, step_complete);
 			completed_steps++;
 			tail.offer({s, ev.step, prefetch_bytes, miss_bytes, lw, dw, qw,
@@ -359,27 +381,24 @@ concurrent_result_t	run_concurrent(const calibrated_profile_t &profile,
 				0, 0, qid});
 	}
 
-	std::vector<double>	all_latencies;
-	uint64_t			fit_count = 0;
+	uint64_t	fit_count = 0;
 	for (uint32_t s = 0; s < N; s++)
-	{
 		if (!seq_capacity_exceeded[s])
 			fit_count++;
-		for (double v : seq_latencies[s])
-			all_latencies.push_back(v);
-	}
-	std::sort(all_latencies.begin(), all_latencies.end());
-	auto	pct = [&](double p) -> double
-	{
-		if (all_latencies.empty())
-			return (0.0);
-		size_t	idx = (size_t)(p * (double)(all_latencies.size() - 1));
-		return (all_latencies[idx]);
-	};
 
-	out.p50_latency_ns = pct(0.50);
-	out.p95_latency_ns = pct(0.95);
-	out.p99_latency_ns = pct(0.99);
+	total_latency_acc.finish(&out.p50_latency_ns, &out.p95_latency_ns,
+		&out.p99_latency_ns);
+	{
+		double	unused_p50;
+		double	unused_p95;
+
+		kv_overhead_acc.finish(&unused_p50, &unused_p95,
+			&out.incremental_kv_p99_ns);
+	}
+	out.model_compute_floor_ns = model.compute_ns_per_step;
+	out.hidden_under_compute_fraction = completed_steps
+		? (double)hidden_under_compute_count / (double)completed_steps : 0.0;
+
 	out.tokens_per_sec = (sim_end_ns > 0.0 && fit_count > 0)
 		? (double)completed_steps / (sim_end_ns / 1.0e9) : 0.0;
 	out.concurrency = N;

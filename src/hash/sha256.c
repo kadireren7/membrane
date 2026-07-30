@@ -3,13 +3,7 @@
 
 #include "membrane/hash.h"
 
-typedef struct s_sha256_ctx
-{
-	uint32_t	state[8];
-	uint64_t	total_len;
-	uint8_t		buf[64];
-	size_t		buf_len;
-}	sha256_ctx_t;
+typedef membrane_sha256_ctx_t	sha256_ctx_t;
 
 static const uint32_t	g_k[64] = {
 	0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
@@ -169,6 +163,24 @@ static void	sha256_final(sha256_ctx_t *ctx, uint8_t out[MEMBRANE_SHA256_DIGEST_B
 		out[i * 4 + 3] = (uint8_t)(ctx->state[i]);
 		i++;
 	}
+}
+
+void	membrane_sha256_init(membrane_sha256_ctx_t *ctx)
+{
+	sha256_init(ctx);
+}
+
+void	membrane_sha256_update(membrane_sha256_ctx_t *ctx,
+			const uint8_t *data, size_t len)
+{
+	if (len > 0)
+		sha256_update(ctx, data, len);
+}
+
+void	membrane_sha256_final(membrane_sha256_ctx_t *ctx,
+			uint8_t out_digest[MEMBRANE_SHA256_DIGEST_BYTES])
+{
+	sha256_final(ctx, out_digest);
 }
 
 void	membrane_sha256(const uint8_t *data, size_t len,

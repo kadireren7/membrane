@@ -48,6 +48,21 @@ calibrated_profile_t	calibrate(const wssim::attn_trace_t &trace,
 							bool want_layer_head,
 							const wssim::hardware_profile_t *hw = nullptr);
 
+/* Phase 6.5: identical to calibrate() above except it reads the trace
+ * through an attn_trace_reader_t (in-memory/mmap/buffered-streaming --
+ * see attn_trace_reader.h) instead of requiring the whole synthetic-
+ * extended trace resident as one attn_trace_t. Both overloads run the
+ * same wssim::run_scenario_calibration_impl body underneath (engine.cpp),
+ * so their output differs only by whatever the chosen backend's own
+ * disclosed precision is (bit-identical for in-memory/mmap/streaming
+ * on an uncompressed or exactly-quantization-aligned trace -- see
+ * test_attn_trace_reader.cpp's parity tests). */
+calibrated_profile_t	calibrate_streamed(wssim::attn_trace_reader_t &trace,
+							const wssim::model_calibration_t &model,
+							const wssim::scenario_config_t &cfg,
+							bool want_layer_head,
+							const wssim::hardware_profile_t *hw = nullptr);
+
 }	/* namespace exactsim */
 
 #endif

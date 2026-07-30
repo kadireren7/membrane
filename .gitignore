@@ -89,6 +89,20 @@ benchmarks/cache/
 # the generic *.kvtrace rule above.
 !benchmarks/cxl-sim/traces/*.kvtrace
 
+# Phase 6.5: out-of-core synthetic .attntrace3 files
+# (*-unified-128k.attntrace3, ~400-700 MiB each) are deterministically
+# regenerable from the small, committed native *-long.attntrace
+# capture via ensure_synthetic_trace()/extend_synthetic_to_file() --
+# committing them would repeat the exact GitHub push-size problem
+# Phase 6.3 already hit once (docs/phase6-exact-sparse-retrieval.md),
+# for zero benefit since they carry no information beyond the native
+# capture + a fixed seed/step-count/chunk-size. The manifest sidecar
+# lets a resumed run detect a matching cached copy instead of
+# regenerating; both are excluded here since only the generating
+# machine's cache benefits from them.
+benchmarks/cxl-sim/traces/*-unified-128k.attntrace3
+benchmarks/cxl-sim/traces/*-unified-128k.attntrace3.manifest
+
 # --------------------------------------------------
 # Large model and tensor files
 # Never commit model weights or raw KV dumps

@@ -144,6 +144,24 @@ struct concurrent_result_t
 	double						mean_miss_burst_blocks;
 	double						max_miss_burst_blocks;
 	std::vector<tail_sample_t>	tail_samples;	/* worst N by total_latency_ns */
+
+	/* Phase 6.5 item 13: compute-normalized latency -- p50/p95/p99_
+	 * latency_ns above are the existing ABSOLUTE end-to-end figures
+	 * the 10ms success bound is judged against (unchanged); these are
+	 * an ADDITIONAL, purely explanatory breakdown of WHY, not a
+	 * replacement bound. model_compute_floor_ns is the model's own
+	 * single-thread decode compute floor (model.compute_ns_per_step,
+	 * copied here so a CSV row is self-contained); incremental_kv_p99_ns
+	 * is the p99 of max(0, total_latency_ns - model_compute_floor_ns)
+	 * per completed step -- the KV-retrieval overhead EXCLUDING the
+	 * compute floor, not total_p99_ns minus the floor (percentiles do
+	 * not subtract linearly); hidden_under_compute_fraction is the
+	 * fraction of completed steps where that value was exactly 0 (the
+	 * step's real KV traffic fit entirely inside the previous step's
+	 * compute-bound slack). */
+	double						model_compute_floor_ns;
+	double						incremental_kv_p99_ns;
+	double						hidden_under_compute_fraction;
 };
 
 concurrent_result_t	run_concurrent(const calibrated_profile_t &profile,

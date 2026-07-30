@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <deque>
 #include <unordered_set>
 #include <vector>
 
@@ -39,7 +40,68 @@ static bool	vec_contains(const std::vector<uint32_t> &v, uint32_t x)
 	return (std::find(v.begin(), v.end(), x) != v.end());
 }
 
-scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
+/*
+ * Phase 6.5: the scalar trace fields run_scenario_calibration_impl
+ * actually needs -- deliberately NOT attn_trace_t itself, so the same
+ * template body below works whether the caller has a fully in-memory
+ * attn_trace_t or an out-of-core attn_trace_reader_t (see
+ * attn_trace_reader.h's trace_metadata_t, which this mirrors).
+ */
+struct trace_view_t
+{
+	uint32_t	n_layer;
+	uint32_t	n_head;
+	uint32_t	step_count;
+	uint32_t	prompt_len;
+	uint32_t	top_k;
+};
+
+/*
+ * Same real ground-truth-union-per-channel logic as
+ * attn_trace_t::ground_truth_blocks() (attn_workload.h) -- duplicated
+ * here as a free template instead of reused directly because it needs
+ * to run against `at`, a generic per-(step,layer,head) accessor, not
+ * specifically an attn_trace_t. Both implementations must stay in
+ * agreement; the cross-backend parity tests
+ * (test_attn_trace_reader.cpp) are what actually enforces that.
+ */
+template <class AtFn>
+static std::vector<uint32_t>	ground_truth_blocks_via(AtFn &&at,
+					uint32_t top_k, uint32_t n_head, uint32_t step,
+					uint32_t layer, uint32_t kv_group, uint32_t group_size)
+{
+	std::vector<uint32_t>	out;
+
+	for (uint32_t h = kv_group * group_size;
+			h < (kv_group + 1) * group_size && h < n_head; h++)
+	{
+		const membrane_attntrace_entry_t	*e = at(step, layer, h);
+
+		for (uint32_t k = 0; k < top_k; k++)
+			if (e[k].block_id != UINT32_MAX)
+				out.push_back(e[k].block_id);
+	}
+	std::sort(out.begin(), out.end());
+	out.erase(std::unique(out.begin(), out.end()), out.end());
+	return (out);
+}
+
+/*
+ * Phase 6.5: the one real implementation of the 8-stage per-decode-
+ * step pipeline (see run_scenario's doc comment in engine.h) --
+ * templated on `AtFn` (a (step,layer,head) -> const
+ * membrane_attntrace_entry_t* accessor) so run_scenario_calibration()
+ * and run_scenario_calibration_streamed() below are both thin
+ * wrappers around this SAME code, not two maintained copies of it.
+ * Everything below is unchanged from the pre-6.5 single-attn_trace_t
+ * version except the two lines that used to call attn_trace_t's own
+ * methods directly (`trace.ground_truth_blocks(...)` and
+ * `trace.at(...)`), now routed through `at`/ground_truth_blocks_via so
+ * they work against either backend.
+ */
+template <class AtFn>
+static scenario_result_t	run_scenario_calibration_impl(
+						const trace_view_t &trace, AtFn &&at,
 						const model_calibration_t &model,
 						const scenario_config_t &cfg,
 						std::vector<per_step_calib_t> *out_steps,
@@ -71,11 +133,50 @@ scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 		for (uint32_t g = 0; g < n_kv_group; g++)
 			predictors.emplace_back(cfg.block_size_tokens, policy_params_t{});
 
+	/* Phase 6.5 item 5: this set tracks every (layer, kv_group,
+	 * block_id) tuple EVER fetched, across the whole trace, purely to
+	 * detect a later redundant re-fetch of the same tuple -- at the
+	 * unified sweep's 130560-step synthetic extension, block ids keep
+	 * shifting forward every ~4096-step cycle (see extend_synthetic's
+	 * "block 0 stays fixed, everything else shifts" comment), so the
+	 * union of distinct tuples touched grows roughly LINEARLY with
+	 * context length rather than staying bounded by working-set size
+	 * the way the predictor/hot-cache state does -- a real
+	 * unaccounted memory hotspot a --audit-memory run caught (~470
+	 * MiB for one SmolLM2-135M calibrate() call). Bounded here to
+	 * kEverFetchedCap tuples, FIFO-evicted -- a disclosed
+	 * approximation: total_redundant_fetches becomes a LOWER BOUND
+	 * once the cap is exceeded (a genuine redundant fetch of a tuple
+	 * evicted from this tracking window looks like a fresh one), not
+	 * an exact count. Every other metric (latency, capacity, bytes/
+	 * token, hit rate, precision/recall) is unaffected -- none of
+	 * them read `ever_fetched`. */
+	constexpr size_t				kEverFetchedCap = 1000000;
 	std::unordered_set<uint64_t>	ever_fetched;
+	std::deque<uint64_t>			ever_fetched_order;
 	auto	fetched_key = [](const cache_key_t &k) -> uint64_t
 	{
 		return (((uint64_t)k.layer << 40) | ((uint64_t)k.kv_group << 24)
 			| (uint64_t)k.block_id);
+	};
+	/* Returns true if `key64` was already marked fetched (a real
+	 * redundant fetch); always marks it fetched (bounded, FIFO) for
+	 * future checks either way. */
+	auto	mark_fetched = [&](uint64_t key64) -> bool
+	{
+		bool	redundant = ever_fetched.count(key64) != 0;
+
+		if (!redundant)
+		{
+			if (ever_fetched.size() >= kEverFetchedCap)
+			{
+				ever_fetched.erase(ever_fetched_order.front());
+				ever_fetched_order.pop_front();
+			}
+			ever_fetched.insert(key64);
+			ever_fetched_order.push_back(key64);
+		}
+		return (redundant);
 	};
 
 	std::vector<uint64_t>	layer_hits;
@@ -129,7 +230,8 @@ scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 			{
 				channel_predictor_t	&pred = predictors[pred_idx];
 				std::vector<uint32_t>	ground_truth
-					= trace.ground_truth_blocks(step, l, g, group_size);
+					= ground_truth_blocks_via(at, trace.top_k, trace.n_head,
+						step, l, g, group_size);
 				std::vector<uint32_t>	predicted = pred.predict(cfg.policy,
 					step, current_num_blocks, ground_truth);
 
@@ -154,10 +256,8 @@ scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 						total_wasted_prefetch_bytes += blk_bytes;
 					else
 						total_prefetched_ok++;
-					uint64_t	key64 = fetched_key(key);
-					if (ever_fetched.count(key64))
+					if (mark_fetched(fetched_key(key)))
 						total_redundant_fetches++;
-					ever_fetched.insert(key64);
 					cache.insert(key, blk_bytes, 1.0);
 				}
 
@@ -188,10 +288,8 @@ scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 					total_late_fetches++;
 					if (out_coalescing != nullptr || out_layer_head != nullptr)
 						missed_this_channel.push_back(b);
-					uint64_t	key64 = fetched_key(key);
-					if (ever_fetched.count(key64))
+					if (mark_fetched(fetched_key(key)))
 						total_redundant_fetches++;
-					ever_fetched.insert(key64);
 					cache.insert(key, blk_bytes, 1.0);
 				}
 				if (out_coalescing != nullptr && !missed_this_channel.empty())
@@ -246,7 +344,7 @@ scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 							h < (g + 1) * group_size && h < trace.n_head; h++)
 					{
 						const membrane_attntrace_entry_t	*he
-							= trace.at(step, l, h);
+							= at(step, l, h);
 						for (uint32_t k = 0; k < trace.top_k; k++)
 						{
 							if (he[k].block_id == UINT32_MAX)
@@ -339,6 +437,46 @@ scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
 				? (double)head_hits[h] / head_checks[h] : 0.0;
 	}
 	return (res);
+}
+
+static trace_view_t	view_of(const attn_trace_t &trace)
+{
+	return {trace.n_layer, trace.n_head, trace.step_count, trace.prompt_len,
+		trace.top_k};
+}
+
+static trace_view_t	view_of(const trace_metadata_t &md)
+{
+	return {md.n_layer, md.n_head, md.step_count, md.prompt_len, md.top_k};
+}
+
+scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
+						const model_calibration_t &model,
+						const scenario_config_t &cfg,
+						std::vector<per_step_calib_t> *out_steps,
+						layer_head_stats_t *out_layer_head,
+						coalescing_stats_t *out_coalescing,
+						const hardware_profile_t *hw_in)
+{
+	return (run_scenario_calibration_impl(view_of(trace),
+		[&trace](uint32_t step, uint32_t layer, uint32_t head)
+		{ return (trace.at(step, layer, head)); },
+		model, cfg, out_steps, out_layer_head, out_coalescing, hw_in));
+}
+
+scenario_result_t	run_scenario_calibration_streamed(
+						attn_trace_reader_t &trace,
+						const model_calibration_t &model,
+						const scenario_config_t &cfg,
+						std::vector<per_step_calib_t> *out_steps,
+						layer_head_stats_t *out_layer_head,
+						coalescing_stats_t *out_coalescing,
+						const hardware_profile_t *hw_in)
+{
+	return (run_scenario_calibration_impl(view_of(trace.get_metadata()),
+		[&trace](uint32_t step, uint32_t layer, uint32_t head)
+		{ return (trace.at(step, layer, head)); },
+		model, cfg, out_steps, out_layer_head, out_coalescing, hw_in));
 }
 
 scenario_result_t	run_scenario(const attn_trace_t &trace,

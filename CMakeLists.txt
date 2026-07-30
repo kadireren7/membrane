@@ -105,6 +105,7 @@ add_library(membrane_core
   src/kvtrace/kvtrace.c
   src/attntrace/attntrace.c
   src/attntrace/attntrace2.c
+  src/attntrace/attntrace3.c
 )
 target_include_directories(membrane_core PUBLIC include)
 target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m ZLIB::ZLIB)
@@ -271,6 +272,25 @@ if(MEMBRANE_BUILD_TESTS)
   target_link_libraries(test_workingset_policy PRIVATE membrane_wssim_core)
   add_test(NAME test_workingset_policy COMMAND test_workingset_policy)
 
+  # Phase 6.5: out-of-core streaming trace reader + bounded chunk
+  # cache -- LRU/pin/duplicate-load-avoidance correctness and
+  # in-memory/mmap/streaming backend parity, llama-free like the
+  # tests above.
+  #
+  # Note for MEMBRANE_ENABLE_TSAN builds: on this machine's kernel,
+  # ThreadSanitizer's shadow-memory layout can reject an otherwise
+  # ordinary mmap() (or, empirically, ANY TSan-instrumented binary,
+  # not just ones calling mmap directly) as an "unexpected memory
+  # mapping" purely depending on where ASLR happens to place it -- a
+  # known TSan/kernel interaction, not a real data race. Run
+  # `ctest --test-dir build-tsan` itself under `setarch $(uname -m)
+  # -R` (disables ASLR for the whole process tree) rather than
+  # special-casing individual tests here.
+  add_executable(test_attn_trace_reader
+    tools/membrane-kv-workingset-sim/test_attn_trace_reader.cpp)
+  target_link_libraries(test_attn_trace_reader PRIVATE membrane_wssim_core)
+  add_test(NAME test_attn_trace_reader COMMAND test_attn_trace_reader)
+
   # Phase 6.3: concurrent exact-retrieval engine correctness tests
   # (device capacity enforcement, contention, micro-batching,
   # deterministic replay) -- hand-built fixtures, no real trace file
@@ -279,4 +299,45 @@ if(MEMBRANE_BUILD_TESTS)
     tools/membrane-kv-exact-sim/test_exact_engine.cpp)
   target_link_libraries(test_exact_engine PRIVATE membrane_exactsim_core)
   add_test(NAME test_exact_engine COMMAND test_exact_engine)
+
+  # Phase 6.5: calibrate() vs calibrate_streamed() (mmap/streaming
+  # backends) parity.
+  add_executable(test_calibrate_streamed
+    tools/membrane-kv-exact-sim/test_calibrate_streamed.cpp)
+  target_link_libraries(test_calibrate_streamed
+    PRIVATE membrane_exactsim_core)
+  add_test(NAME test_calibrate_streamed COMMAND test_calibrate_streamed)
+
+  # Phase 6.5: bounded (spill-to-disk-if-needed) exact quantile
+  # accumulator -- must match a plain std::sort reference exactly.
+  add_executable(test_bounded_quantile
+    tools/membrane-kv-exact-sim/test_bounded_quantile.cpp)
+  target_link_libraries(test_bounded_quantile PRIVATE membrane_exactsim_core)
+  add_test(NAME test_bounded_quantile COMMAND test_bounded_quantile)
+
+  # Phase 6.5: mem_guard_t -- real /proc-based RSS/memory monitoring
+  # and the escalating action it drives.
+  add_executable(test_mem_guard
+    tools/membrane-kv-exact-sim/test_mem_guard.cpp)
+  target_link_libraries(test_mem_guard PRIVATE membrane_exactsim_core)
+  add_test(NAME test_mem_guard COMMAND test_mem_guard)
+
+  # Phase 6.5 item 14: end-to-end interrupted/resumed sweep +
+  # corrupted-checkpoint rejection, against the REAL binaries and a
+  # REAL (small) native trace already committed to the repo -- see
+  # the script's own header for why this stays fast despite exercising
+  # the real CLI end to end (it only ever waits out the two
+  # analytical, non-calibrate() comparisons).
+  find_program(MEMBRANE_BASH bash)
+  if(MEMBRANE_BASH AND EXISTS
+      ${CMAKE_SOURCE_DIR}/benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace)
+    add_test(NAME test_interrupted_resume
+      COMMAND ${MEMBRANE_BASH}
+        ${CMAKE_SOURCE_DIR}/tools/membrane-kv-exact-sim/test_interrupted_resume.sh
+        $<TARGET_FILE:membrane-kv-exact-sim>
+        $<TARGET_FILE:membrane-kv-exact-sim-verify>
+        ${CMAKE_SOURCE_DIR}/benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace
+        ${CMAKE_SOURCE_DIR})
+    set_tests_properties(test_interrupted_resume PROPERTIES TIMEOUT 400)
+  endif()
 endif()

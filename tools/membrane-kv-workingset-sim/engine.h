@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "attn_trace_reader.h"
 #include "attn_workload.h"
 #include "hotcache.h"
 #include "policy.h"
@@ -155,6 +156,25 @@ struct coalescing_stats_t
  * that predates Phase 6.4's hardware-sensitivity matrix keeps behaving
  * identically. */
 scenario_result_t	run_scenario_calibration(const attn_trace_t &trace,
+						const model_calibration_t &model,
+						const scenario_config_t &cfg,
+						std::vector<per_step_calib_t> *out_steps,
+						layer_head_stats_t *out_layer_head,
+						coalescing_stats_t *out_coalescing = nullptr,
+						const hardware_profile_t *hw = nullptr);
+
+/*
+ * Phase 6.5: identical algorithm to run_scenario_calibration() above --
+ * both are thin wrappers around the SAME templated implementation in
+ * engine.cpp (run_scenario_calibration_impl), so an out-of-core
+ * (attn_trace_reader_t-backed) trace and a fully in-memory attn_trace_t
+ * are guaranteed to run the exact same calibration code, not two
+ * maintained copies of it. Only the trace access differs: this
+ * overload reads through `trace.at()`, which pulls from the reader's
+ * bounded chunk cache instead of one giant resident vector.
+ */
+scenario_result_t	run_scenario_calibration_streamed(
+						attn_trace_reader_t &trace,
 						const model_calibration_t &model,
 						const scenario_config_t &cfg,
 						std::vector<per_step_calib_t> *out_steps,

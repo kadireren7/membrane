@@ -1,5 +1,5 @@
-# Phase 6.4: unified 128K-context x 512-concurrency exact sparse KV
-retrieval stress validation
+# Phase 6.4/6.5: unified 128K-context x 512-concurrency exact sparse KV
+retrieval stress validation -- FINAL, 100% complete for both models
 
 Baseline: commit 36d7207 (Phase 6.3, "validate exact sparse KV
 retrieval at scale"). Phase 6.3's own disclosed gap is the starting
@@ -10,29 +10,23 @@ phase calibrated from real attention. This phase's job was to actually
 run 128K context AND 512 concurrency together, in the same run, and
 report the result honestly -- including if it doesn't meet target.
 
-**Final scope actually completed this session**: SmolLM2-135M's
-unified matrix is **100% complete** (231/231 scenarios: full main
-sweep, layer/head detail, hardware sensitivity). SmolLM2-360M is
-**46% complete** (107/231: both analytical comparisons, and the
-`exact-no-prefetch`/`exact-predictor` comparisons fully, 45/45 each;
-`exact-predictor-prefetch` partial at 11/45; `exact-predictor-
-coalescing` and `oracle` not started). The sweep was stopped by an
-explicit decision, not a silent gap: this development machine has
-5.6GiB RAM, SmolLM2-360M's larger unified trace (~3.7GiB resident)
-left so little headroom that the sweep OOM-killed repeatedly at the
-same point (the first real 360M scenario after trace load) even under
-an automated restart-from-checkpoint loop -- see "Memory-constrained
-execution" below for the full, real account, including four
-consecutive OOM kills and a self-healing retry wrapper that still
-could not reliably make forward progress. Continuing to burn wall
-time chasing a hardware limit that a stronger machine would not hit
-was judged not worth it; the user explicitly chose to stop at this
-point rather than have the bound loosened or the workload shrunk to
-force completion. All real data reported below is real for exactly
-the scope stated -- nothing is extrapolated to cover the missing 360M
-comparisons.
+**Final scope: both models 100% complete -- 462/462 scenarios total
+(231/231 SmolLM2-135M, 231/231 SmolLM2-360M).** Phase 6.4 completed
+SmolLM2-135M's full matrix but stopped SmolLM2-360M at 46% (107/231)
+after repeated real kernel OOM kills on this machine's 5.6GiB RAM --
+see "Completion history" (section 0.1) for the full, undisguised
+account of that gap and how it closed. Phase 6.5
+(`docs/phase6-out-of-core-simulator.md`) replaced the sweep's fully
+in-memory synthetic trace (the actual OOM cause -- ~3.7GiB resident
+for SmolLM2-360M) with a real out-of-core, memory-bounded design and
+used it to genuinely finish the missing 124 SmolLM2-360M scenarios,
+plus recover the two lost tail-sample artifacts (900 real samples
+each, both models) that an earlier real data-loss bug had destroyed.
+No result in this document is extrapolated from the other model or
+from a smaller scale -- every one of the 462 rows is a real, actually
+computed scenario.
 
-Labeling discipline, unchanged from Phase 6.1-6.3: **REAL** (an actual
+Labeling discipline, unchanged from Phase 6.1-6.4: **REAL** (an actual
 measurement), **EXTRAPOLATED** (`extend_synthetic()`, a real trace
 replayed/scaled to a longer synthetic context, explicitly not claimed
 as a new measurement), **SIMULATED** (this phase's own discrete-event
@@ -40,6 +34,51 @@ engines, actually run on this machine), **ORACLE** (the achievable
 upper bound, fed ground truth directly, not a claim a real predictor
 could know the future), or **ASSUMED** (an explicit, cited estimate --
 no real CXL/GPU hardware exists anywhere in this project).
+
+## Completion history (disclosed, not hidden)
+
+This document went through two real, distinct sessions, and both are
+disclosed here rather than silently merged into a single "it always
+worked" narrative:
+
+1. **Phase 6.4** (commit 58fb9b5): built the unified sweep, completed
+   SmolLM2-135M's full 231/231 matrix with zero OOM kills at 1 worker,
+   and got SmolLM2-360M to 107/231 (both analytical rows +
+   `exact-no-prefetch`/`exact-predictor` fully, `exact-predictor-
+   prefetch` at 11/45, `exact-predictor-coalescing`/`oracle` not
+   started) before stopping: the kernel OOM-killed the process **four
+   separate times**, always at the same real, reproducible point
+   (immediately after SmolLM2-360M's ~3.7GiB unified trace finished
+   loading), confirmed via `journalctl` after `dmesg`'s ring buffer
+   missed one kill. A self-healing external retry loop went through
+   over 90 restart attempts with essentially zero net progress in
+   several stretches. The user was asked and explicitly chose to stop
+   at 46% rather than loosen the 10ms bound or shrink the workload.
+   `unified-tail-samples.csv` also lost its captured data at this
+   point (root cause: the file opened in truncate mode on every
+   restart) -- 900 real SmolLM2-135M samples were captured and briefly
+   observed live, then destroyed by the next OOM-triggered restart,
+   with no way to recover the original numbers.
+2. **Phase 6.5** (this document's final state): replaced the sweep's
+   memory architecture (out-of-core `.attntrace3` format + streaming
+   reader + bounded chunk cache + a real `/proc`-based memory guard --
+   full detail in `docs/phase6-out-of-core-simulator.md`), verified it
+   produces byte-identical results to the old in-memory path on real
+   fixture traces, migrated the real, existing 338-scenario checkpoint
+   to the new schema (backfilling only exactly-computable or honestly
+   `"n/a"` fields -- see that document's section 4.1 for the full
+   accounting, including a genuinely truncated real CSV row the
+   migration's own verification caught and self-healed via the
+   checkpoint), then used the new architecture to actually run the
+   missing 124 SmolLM2-360M scenarios to completion (~3.6 hours real
+   wall time, 4 workers adaptively throttled down to 1 under real
+   memory pressure partway through, RSS never exceeding budget by more
+   than the documented ~10% granularity slack) and separately re-ran
+   `exact-predictor-prefetch` for both models (135M: all 45, since the
+   original 900 samples were unrecoverable; 360M: the 11 scenarios
+   whose tail data had never been captured in the first place) to
+   regenerate complete, real 900-sample tail artifacts for **both**
+   models.
 
 ## 0. Scope versus the spec (read this first)
 
@@ -67,7 +106,16 @@ no real CXL/GPU hardware exists anywhere in this project).
   (`tail_tracker_t`, capacity 20/scenario by default) tracks the
   worst-p99-contributing individual (sequence, step) samples for one
   designated comparison (`exact-predictor-prefetch`) across the whole
-  unified matrix, written to a separate CSV (section 5).
+  unified matrix, written to a separate CSV (section 5). **Complete for
+  both models as of Phase 6.5** (900 real samples each, 1,800 total) --
+  the original 135M set was lost to a real data-loss bug and
+  regenerated; 360M's set was completed for the first time.
+- **Compute-normalized latency (Phase 6.5 addition)**: `model_compute_
+  floor_ns`, `incremental_kv_p99_ns`, `hidden_under_compute_fraction`
+  reported alongside the existing absolute p50/p95/p99 columns, purely
+  to separate "the model's own compute floor" from "real KV-retrieval
+  overhead" causally -- the existing 10ms bound is unchanged (section
+  15).
 - **Trace resolution / storage (item 6)**: a real engineering problem
   surfaced and was fixed this phase, disclosed in full below (see
   "Memory-constrained execution"). top-k=4 vs top-k=8 was measured in
@@ -100,7 +148,9 @@ no real CXL/GPU hardware exists anywhere in this project).
   checkpoint rejection, exact-quality replay, full test suite --
   section 13.
 
-### Memory-constrained execution (real, disclosed in full)
+### Memory-constrained execution (real, disclosed in full -- Phase 6.4's
+   original account; see the note at the end of this subsection for
+   how Phase 6.5 actually resolved it)
 
 This machine has 5.6GiB RAM. A single model's real 128K-context,
 top-k=8 unified trace (`n_layer x n_head_kv x top_k x 130,560 steps`,
@@ -170,8 +220,27 @@ This is a genuine hardware-availability constraint of the development
 machine, not a simplification of the workload itself -- the scenario
 matrix, context length, concurrency, and trace resolution actually
 run are exactly as specified; only the fraction of SmolLM2-360M's
-matrix completed is reduced, and that reduction is stated plainly
-throughout this document rather than discovered by the reader.
+matrix completed was reduced, at the time.
+
+**How this was actually resolved (Phase 6.5, not a re-run of the same
+approach)**: the real root cause was never "not enough workers" or
+"not enough retries" -- it was `extend_synthetic()` materializing the
+whole synthetic-extended trace (~2.1-3.7GiB) as one resident
+`std::vector`, regardless of worker count. Phase 6.5
+(`docs/phase6-out-of-core-simulator.md`) replaced that with a real
+chunked, out-of-core trace format streamed through a bounded cache,
+cutting that specific allocation's real measured footprint by ~99%
+(a `--audit-memory` run showed +13.9 MiB instead of +2,151 MiB for the
+exact same generation step), added a real `/proc`-based memory guard
+that throttles workers and shrinks the cache under real pressure
+*before* the kernel would ever need to intervene, and used that
+architecture to genuinely finish the missing 124 SmolLM2-360M
+scenarios -- see section 0's completion history above and the
+out-of-core document for the full account, including two more real
+memory bugs (an unbounded heavy-hitter-tracking set, and three
+unbounded per-resource latency-sample vectors) that a real
+`--audit-memory` run and a real `mem_guard`-triggered stop caught and
+fixed along the way.
 
 ## 1. Unified scenario definition
 
@@ -219,23 +288,41 @@ possibly-inconvenient result the spec asked to be reported honestly
 rather than adjusted away.
 
 SmolLM2-360M shows the same real pattern, more pronounced (its total
-logical KV footprint is larger): `exact-predictor`/all-Q8/8GiB host --
+logical KV footprint is larger): `exact-predictor`/all-Q8/8GiB host,
+**now the complete real table across all 3 device sizes**:
 
 | device size | cap_effective_capacity_ratio | cap_sequences_fit | cap_failure_reason |
 |---|---|---|---|
 | 512GiB | 0.3759 | 0 / 512 | device |
+| 1TiB   | 0.7518 | 0 / 512 | device |
 | 2TiB   | 1.5036 | 512 / 512 | host_cache_degraded |
 
 (`cap_total_logical_kv_bytes` ~2.75TB for 360M vs ~1.55TB for 135M --
-consistent with 360M's larger per-token byte rate and more layers.)
+consistent with 360M's larger per-token byte rate and more layers.
+`cap_effective_capacity_ratio` depends only on device size and
+precision, not on host-cache size or which non-analytical comparison
+is run -- confirmed real across `exact-predictor`, `exact-predictor-
+prefetch`, `exact-predictor-coalescing`, and `oracle`, all four
+showing the identical 0.3759/0.7518/1.5036 progression at this
+precision.)
 
-Full table across every host/device/precision/comparison combination:
-complete for SmolLM2-135M (all 231 scenarios); for SmolLM2-360M,
-complete only for the comparisons/precisions actually run (both
-analytical rows, `exact-no-prefetch`, `exact-predictor` -- 90/225 real
-rows) -- see the top-level scope note for why the remainder
-(`exact-predictor-prefetch` partial, `exact-predictor-coalescing` and
-`oracle` not run) is missing.
+At `fp16` (no compression) rather than `all-Q8`, 360M's capacity story
+is real and meaningfully worse: even the largest tested device (2TiB)
+only reaches `cap_effective_capacity_ratio = 0.7998` (still short of
+1.0, `cap_failure_reason = device`, 0/512 sequences fit) -- unlike
+135M's fp16 case, SmolLM2-360M's uncompressed working set never fits
+within any device size this sweep tested, at any host-cache size (the
+ratio is identical at 64MiB and 8GiB host cache, confirming it is a
+pure device-vs-logical-footprint constraint, not a host-cache
+interaction). This is a real, disclosed, model-specific finding, not
+extrapolated from 135M's more forgiving fp16 numbers.
+
+**Full table across every host/device/precision/comparison
+combination: complete for BOTH models (462/462 scenarios total, 231
+each)** -- SmolLM2-360M's remaining 124 real rows (`exact-predictor-
+prefetch` finishing 34/45, `exact-predictor-coalescing` 45/45, `oracle`
+45/45) were genuinely computed in Phase 6.5, not extrapolated from the
+107 that completed under Phase 6.4.
 
 ## 4. Queue/contention detail
 
@@ -268,59 +355,73 @@ concurrently within a single sequence's own step -- concurrency comes
 from the 512 sequences sharing the same queued resources, not from
 overlapping fetches within one sequence.
 
-SmolLM2-360M's queue detail (`exact-predictor`, all-Q8, 8GiB/2TiB,
-the one comparable generous-cache point real for this model): link
-p50/p95/p99 = 4.36 / 8.41 / 9.13ms, device and quant wait both 0 --
-same qualitative pattern as 135M (link-dominated, device/quant
-negligible), consistent rather than model-specific. Tighter-cache
-360M queue detail was not captured (sweep stopped before those
-scenarios ran).
+SmolLM2-360M's queue detail is now complete across both cache points
+(`exact-predictor-prefetch`, all-Q8):
+
+| host/device | link p50/p95/p99 (ms) | device p99 (ms) | quant p99 (ms) | bottleneck | max miss-burst (blocks) |
+|---|---|---|---|---|---|
+| 64MiB / 2TiB (tight) | 12.00 / 22.91 / 24.76 | 0 | 0 | link | 2,055.3 |
+| 8GiB / 2TiB (generous) | 7.24 / 13.94 / 15.22 | 0.081 | 0.109 | link | 1,646.3 |
+
+Same qualitative pattern as 135M -- link-dominated, device/quant
+negligible even at the tightest cache point -- confirmed consistent
+across models rather than model-specific, now with the full real
+tight-cache 360M data point this document previously lacked (Phase
+6.4 stopped before those scenarios ran; Phase 6.5 completed them).
+360M's tight-cache miss-burst (2,055 blocks) is real and larger than
+135M's tightest point (1,360 blocks), consistent with 360M's larger
+per-token byte rate.
 
 ## 5. Tail-latency drill-down
 
-**REAL**, `benchmarks/cxl-sim/unified-tail-samples.csv` -- the worst
-20 (sequence, step) samples per scenario point for the designated
-`exact-predictor-prefetch` comparison; 900 real samples captured
-across SmolLM2-135M's 45 host/device/precision points.
+**REAL, complete for both models**,
+`benchmarks/cxl-sim/unified-tail-samples.csv` -- the worst 20
+(sequence, step) samples per scenario point for the designated
+`exact-predictor-prefetch` comparison; **1,800 real samples total (900
+per model)** across each model's 45 host/device/precision points.
 
 The single worst sample across all of 135M: sequence 63, step 85,643,
-fp16, smallest host cache (64MiB) x largest device (2TiB) --
-15,087,558 prefetch bytes + 10,602,726 compulsory-miss bytes in one
-step, `link_wait_ns` = 34.23ms (essentially all of the total
-34.65ms latency), device/quant wait both 0. **The worst-p99
-contributor here is unambiguously link queueing** at the smallest
-host-cache point, not device DRAM, quant/dequant, or decompression --
-consistent with section 4's queue breakdown once populated. By
-contrast, the best-case tail sample (largest host cache, small
-context step 551) shows near-zero wait and total latency pinned to
-the compute floor (15.67ms), matching section 10's finding.
+fp16, smallest host cache (64MiB) x mid device (1TiB) -- 15,087,558
+prefetch bytes + 10,602,726 compulsory-miss bytes in one step,
+`link_wait_ns` = 34.23ms (essentially all of the total 34.65ms
+latency), device/quant wait both 0. **The worst-p99 contributor here
+is unambiguously link queueing** at the smallest host-cache point, not
+device DRAM, quant/dequant, or decompression -- consistent with
+section 4's queue breakdown. By contrast, the best-case tail sample
+(1GiB host, 512GiB device) shows total latency pinned to the compute
+floor (15.67ms), matching section 10's finding.
 
-SmolLM2-360M's tail samples: not captured -- the designated
-`exact-predictor-prefetch` comparison only reached 11/45 of its
-360M points before the sweep stopped, and tail sampling for this
-model's points had not yet accumulated a representative set.
+SmolLM2-360M's tail samples are now real and complete too: the single
+worst sample is sequence 477, step 53,576, fp16, smallest host cache
+(64MiB) x largest device (2TiB) -- 24,637,019 prefetch bytes +
+16,715,282 compulsory-miss bytes in one step, `link_wait_ns` =
+53.54ms out of a 54.19ms total latency -- the same qualitative
+pattern as 135M (link-dominated, tightest-cache), at real values ~1.5x
+135M's worst case, consistent with 360M's larger per-token byte rate
+carried through to the tail. 360M's best-case tail sample pins to its
+own compute floor (40.98ms), also matching section 10.
 
-**A real data-loss bug was found (too late to recover the data) while
-finalizing this document.** `unified-tail-samples.csv` opened in
-truncate ("w") mode on every process start, unlike the main results
-CSV (whose rows are durably backed by the checkpoint and replayed on
-resume). Every one of this session's many OOM-triggered restarts
-during the SmolLM2-360M portion (section 0) silently discarded
-whatever tail samples an earlier, successfully-completed run had
-written -- including the full 900-sample SmolLM2-135M set the numbers
-above are drawn from. Those numbers are still real (captured directly
-from the live file with `grep`/`sort` mid-session, before it was
-later overwritten) but the underlying CSV artifact itself is not
-currently reproducible without rerunning SmolLM2-135M's
-`exact-predictor-prefetch` comparison (45 real scenarios, ~75 minutes
-at this machine's demonstrated real per-scenario rate). The root
-cause is fixed in `main.cpp` (tail CSV now appends rather than
-truncates when resuming, mirroring the main CSV's already-correct
-pattern) so future runs will not lose this data across restarts, but
-the fix does not retroactively regenerate what was already lost --
-`benchmarks/cxl-sim/unified-tail-samples.csv` is therefore NOT
-included in this phase's commit rather than shipping a misleadingly
-empty file.
+**A real data-loss bug was found and fixed, and both artifacts were
+regenerated for real (Phase 6.5).** `unified-tail-samples.csv` used to
+open in truncate ("w") mode on every process start, unlike the main
+results CSV (whose rows are durably backed by the checkpoint and
+replayed on resume). Every OOM-triggered restart during Phase 6.4's
+SmolLM2-360M portion silently discarded whatever tail samples an
+earlier, successfully-completed run had written -- including the full
+900-sample SmolLM2-135M set, observed live at the time but not
+recoverable after being overwritten. The root cause is fixed in
+`main.cpp` (the tail CSV now appends rather than truncates when
+resuming, mirroring the main CSV's already-correct pattern), and Phase
+6.5 used the fixed binary plus `--tail-recovery-only` (a real,
+separately-checkpointed re-run targeting exactly the affected
+scenarios -- 45 for 135M since none of its original samples survived,
+11 for 360M since those specific scenarios had never had their tail
+data captured in the first place, both cross-checked against the main
+sweep to avoid re-running or duplicating anything already real and
+intact) to regenerate genuine, complete 900-sample sets for both
+models -- see `docs/phase6-out-of-core-simulator.md` sections 4 and 6
+for the full recovery account, including verification that no
+duplicate or missing rows resulted.
 
 ## 6. Trace resolution (top-k=4 vs top-k=8)
 
@@ -367,9 +468,17 @@ consistent with heads within the same kv-group sharing the group's
 cache decision (section 1's GQA design) while individual heads'
 actual access patterns still vary somewhat.
 
-SmolLM2-360M's layer/head detail: not captured -- this pass runs only
-after a model's full main scenario matrix completes, and 360M's never
-did (stopped at 107/231).
+SmolLM2-360M's layer/head detail is now real and complete too --
+captured once its 231/231 main matrix genuinely finished (Phase 6.5):
+32 layers, 15 query heads. Per-layer hit rate ranges **0.668 - 0.954**,
+also real and non-uniform: layer 0 is the clear outlier-worst (0.668,
+markedly below every other layer -- plausibly the attention-sink layer
+behaving differently under the predictor's working-set model), then
+18 (0.787) and 17 (0.855); the best are layers 11 (0.954), 7 (0.946),
+6 (0.946). Per-head hit rate is tighter, same qualitative pattern as
+135M (0.927-0.954 across the 15 query heads) -- GQA group-sharing
+narrows head-to-head variance relative to layer-to-layer variance in
+both models, not just 135M.
 
 ## 8. Exact quality guard (real inference re-verification)
 
@@ -391,6 +500,9 @@ envelope, not a new regression.
 **REAL**, `benchmarks/cxl-sim/unified-sweep-hardware-sensitivity.csv`
 -- SmolLM2-135M, `exact-predictor-prefetch`, all-Q8, 256MiB host
 cache, 1TiB device, all 10 points actually run (not interpolated).
+135M-only by original design (this matrix isolates hardware
+sensitivity, not per-model behavior, and Phase 6.5's 360M completion
+did not extend it) -- unchanged from Phase 6.4.
 
 | profile | link BW (GB/s) | pipelines | p50 (ms) | p99 (ms) | tok/s | link util % | quant util % | bottleneck |
 |---|---|---|---|---|---|---|---|---|
@@ -419,15 +531,21 @@ generation -- is the assumption worth validating first.
 
 ## 10. Success criteria (targets, not guarantees -- reported honestly)
 
-Final results, for the scope actually completed (SmolLM2-135M full;
-SmolLM2-360M partial -- see the top-level scope note):
+Final results, **both models 100% complete (462/462 scenarios)**:
 
 | criterion | SmolLM2-135M | SmolLM2-360M |
 |---|---|---|
-| 128K x 512 works as a capacity scenario | **yes** -- real, both axes simultaneously, full matrix | **yes** for the comparisons run (90/225 real+analytical rows) |
-| >=100x bytes/token vs full-scan-cxl | **met**, 187x-321x depending on comparison (section 12) | **met**, 405x for the two comparisons that ran (section 12) |
+| 128K x 512 works as a capacity scenario | **yes** -- real, both axes simultaneously, full 231/231 matrix | **yes** -- real, full 231/231 matrix (Phase 6.5 completed the remaining 124) |
+| >=100x bytes/token vs full-scan-cxl | **met**, 187x-321x depending on comparison (section 12) | **met**, 130x-405x across ALL 5 real comparisons now measured (section 12) |
 | exact quality difference = 0 | **met by construction** (fp16, no lossy path) + real Q8/Q4 quality bounds re-verified (section 8) | same |
 | p99 vs 10ms bound | **NOT met** -- root cause below | **NOT met** -- root cause below, larger margin |
+
+**Confirmed across the full real matrix, not just the representative
+points quoted below**: 0 of 225 real (non-analytical) rows meet the
+10ms p99 bound for SmolLM2-135M; 0 of 225 for SmolLM2-360M either --
+every single real scenario for both models misses the bound, for the
+same structural reason detailed next, not a subset or a
+representative sample.
 
 One real, load-bearing finding, most consequential of this phase:
 
@@ -476,17 +594,44 @@ speed, not KV retrieval quality.
 
 Sharded worker pool with atomic work-claiming index, single-mutex-
 guarded shared CSV/checkpoint I/O, SHA-256 trace+config hash staleness
-detection on resume -- design reused unchanged from Phase 6.3. This
-phase's real addition: **per-model trace loading** (section 0) to fit
+detection on resume -- design reused unchanged from Phase 6.3. Phase
+6.4's real addition: **per-model trace loading** (section 0) to fit
 this machine's memory budget, and a bounded tail-latency heap so
 per-scenario memory stays O(concurrency) rather than O(total events)
 even at up to ~66M potential discrete events per scenario
 (130,560 steps x 512 concurrency).
 
-Disk usage: trace files are the v2 compact/compressed format
-(section 6); CSV/checkpoint output for the full unified sweep is
-expected to stay in the low tens of MB (small, bounded records per
-scenario, not per-event).
+**Phase 6.5 real addition (superseding the eager-load path above for
+the actual completion run)**: per-model trace loading itself was still
+not enough -- `extend_synthetic()`'s single `assign()` call materializing
+the full synthetic trace (~2.1GiB for 135M, ~3.7GiB for 360M) plus
+unbounded per-scenario transients (`ever_fetched`, `seq_latencies`/
+`all_latencies`) was the actual cause of the four real OOM kills. Fully
+detailed in `docs/phase6-out-of-core-simulator.md`; summarized here:
+a chunked, checksummed, mmap/streaming-capable trace format
+(`.attntrace3`) replaces the single wide in-RAM vector, a bounded
+LRU chunk cache (sized via `--trace-cache-mib`) replaces per-thread
+full-trace copies, `ever_fetched` was bounded to a 1,000,000-entry FIFO,
+and `seq_latencies`/`all_latencies` were replaced with a bounded,
+spill-to-disk exact-quantile accumulator (`bounded_quantile_accumulator_t`)
+that computes exact p50/p95/p99 via external quickselect rather than
+holding every sample in RAM. A `mem_guard_t` component polls real
+`/proc` state (RSS, MemAvailable, swap, major page faults) and
+escalates through shrink-cache -> reduce-workers -> checkpoint-and-exit
+before the kernel would OOM-kill the process, so recovery from memory
+pressure is a real, controlled code path rather than relying on being
+killed. This is what actually let the remaining 124 SmolLM2-360M
+scenarios and the lost 135M tail-sample artifact complete for real on
+this same 5.6GiB machine, with worker count chosen from a real 1/2/4
+micro-benchmark (section 3.1 of the out-of-core doc) rather than fixed
+at 1.
+
+Disk usage: trace files are the v2 compact/compressed format for
+captured native traces (section 6) and the new v3 chunked format for
+generated synthetic unified-context traces (excluded from the repo via
+`.gitignore` as deterministically regenerable, ~400-700MiB each); CSV/
+checkpoint output for the full unified sweep stayed in the low tens of
+MB throughout (small, bounded records per scenario, not per-event).
 
 ## 12. Main comparisons
 
@@ -529,94 +674,180 @@ still meeting or nearly meeting the >=100x bar depending on which
 baseline is used, reported honestly rather than picking whichever
 baseline makes the number look best.
 
-SmolLM2-360M, same host/device point, the two comparisons that
-completed (`oracle` and `exact-predictor-coalescing` did not run for
-this model):
+SmolLM2-360M, **all five comparisons now complete (231/231)** --
+representative point at 8GiB host cache / 2TiB device, all-Q8:
 
-| comparison | mean bytes/token | reduction vs full-scan-cxl | hit rate |
-|---|---|---|---|
-| full-scan-cxl (analytical) | 2,695,629,824 | 1x | n/a |
-| compressed-full-scan-cxl (analytical) | 1,433,845,651 | 1.88x | n/a |
-| exact-no-prefetch | 6,660,908 | **405x** | 0.090 |
-| exact-predictor | 6,660,908 | **405x** | 0.090 |
+| comparison | mean bytes/token | reduction vs full-scan-cxl | reduction vs compressed | hit rate | precision/recall |
+|---|---|---|---|---|---|
+| full-scan-cxl (analytical) | ~2,695,629,824 | 1x | n/a | n/a | n/a |
+| compressed-full-scan-cxl (analytical) | ~1,433,845,651 | 1.88x | 1x | n/a | n/a |
+| exact-no-prefetch | 6,660,908 | **405x** | 215x | 0.090 | 0 / 0 |
+| exact-predictor | 6,660,908 | **405x** | 215x | 0.090 | 0.601 / 0.903 |
+| exact-predictor-prefetch | 11,008,426 | **245x** | 130x | 0.904 | 0.601 / 0.903 |
+| exact-predictor-coalescing | 11,008,426 | **245x** | 130x | 0.904 | 0.601 / 0.903 |
+| oracle | 6,661,085 | **405x** | 215x | 1.000 | 1.000 / 1.000 |
 
-The >=100x target is met and exceeded for SmolLM2-360M too (405x,
-even higher than 135M's 321x for the same two comparisons), for the
-comparisons that ran. `exact-predictor-prefetch` reached only 11/45
-of its 360M points before the sweep stopped, and
-`exact-predictor-coalescing`/`oracle` did not run at all for this
-model -- their 360M numbers are genuinely absent, not extrapolated
-from 135M's.
+The same real, honest bytes-vs-latency tradeoff seen for 135M holds
+for 360M: prefetching moves more bytes (245x vs 405x reduction) in
+exchange for a much higher hit rate (0.090 -> 0.904), i.e. far fewer
+synchronous blocking misses. `exact-predictor-coalescing` again
+reports identically to `exact-predictor-prefetch` at this specific
+cache/miss-rate point, same reason as 135M (section 12, first table).
+Oracle's bytes/token (6,661,085) is nearly identical to
+`exact-predictor`'s (6,660,908), confirming the real predictor is
+close to the achievable upper bound for 360M too. The >=100x target
+is met and exceeded by every real comparison for SmolLM2-360M, at
+both baselines.
 
-Full table across all host/device/precision points for SmolLM2-135M:
-complete (231/231). For SmolLM2-360M: complete for the two analytical
-rows and `exact-no-prefetch`/`exact-predictor` (90/225 real+
-analytical rows); incomplete for the remaining three comparisons, per
-the top-level scope note.
+Full table across all host/device/precision points: **complete for
+both models (462/462 real+analytical rows total, 231 each)** --
+SmolLM2-135M has been complete since Phase 6.4; SmolLM2-360M's
+remaining 124 rows (`exact-predictor-prefetch`'s last 34,
+`exact-predictor-coalescing`'s full 45, and `oracle`'s full 45) were
+completed in Phase 6.5 via the out-of-core simulator (section 11),
+not extrapolated or estimated from 135M's numbers.
+
+### 12.1 Compute-normalized latency (Phase 6.5 addition)
+
+New, additive-only columns (`model_compute_floor_ns`,
+`total_p99_ns` -- alias of the existing `p99_latency_ns`,
+`incremental_kv_p99_ns`, `hidden_under_compute_fraction`) added per
+item 13 of the Phase 6.5 spec. They do **not** change the existing
+10ms bound or any existing column -- they exist to separate "how much
+of observed p99 is the model's own decode speed" from "how much is
+genuinely exposed KV-retrieval overhead," since section 5/10 already
+show the bound is missed primarily by the former.
+
+`model_compute_floor_ns` is constant per model (135M: 15,673,981.19ns
+= `1e9/63.8` tok/s; 360M: 40,983,606.56ns = `1e9/24.4` tok/s, both
+previously-measured real decode speeds, section 10).
+`incremental_kv_p99_ns` is the p99 of `max(0, total_latency_ns -
+compute_floor_ns)` per step -- the genuinely-exposed KV overhead once
+the model's own compute time is subtracted out.
+`hidden_under_compute_fraction` is the fraction of completed steps
+where that value is exactly 0, i.e. KV retrieval finished entirely
+within the model's own decode time and added no visible latency.
+
+These fields are **only populated for the 124 SmolLM2-360M rows
+computed in Phase 6.5** under the new engine path (`n/a` for all 231
+SmolLM2-135M rows and the 107 pre-6.5 360M rows, which predate these
+columns and were not recomputed -- consistent with the standing
+constraint not to re-run already-complete scenarios). For a
+representative real row (`exact-predictor`, 8GiB/2TiB/all-Q8):
+`total_p99_ns` = `model_compute_floor_ns` exactly (40,983,606.56ns),
+i.e. `incremental_kv_p99_ns` = 0 -- KV overhead is fully hidden under
+compute at the tail for this specific point. Across all 124 real
+rows, `hidden_under_compute_fraction` ranges from 0.001 to 0.983 --
+some scenarios (tight cache, high-miss-rate points) expose KV latency
+on almost every step, others (generous cache points) hide it almost
+completely, confirming this metric genuinely discriminates between
+scenario configurations rather than being a constant.
 
 ## 13. Verification
 
-**REAL**, run after the sweep was stopped (this machine cannot safely
-run sanitizer builds at the same time as the 128K x 512 sweep, per
-section 0):
+**REAL**, final pass run after both models' completion (Phase 6.5),
+covering the original Phase 6.4 suite plus every new out-of-core
+component:
 
-- **Release**: full project rebuild clean; `ctest` -- **22/22 tests
-  pass** (0.01-6.76s each, `test_store_concurrent` the slowest, all
-  unrelated to this phase's changes except `test_attntrace2`,
-  `test_workingset_policy`, `test_exact_engine`).
-- **ASan+UBSan**: `test_attntrace2`, `test_workingset_policy`,
-  `test_exact_engine` all rebuilt clean and pass (5+16+6 = 27
-  assertions), zero memory errors or undefined-behavior findings.
-- **TSan**: same three suites rebuilt clean and pass under
-  `setarch $(uname -m) -R` (this environment's documented ASLR
-  workaround, unchanged from Phase 6.3), zero data races reported.
-  Additionally, the standalone worker-pool synchronization stress
-  test built for Phase 6.3 (2,000 fast synthetic tasks, shared atomic
-  work-claiming index + mutex-guarded checkpoint/CSV writes -- the
-  exact same pattern this phase's `main.cpp` still uses, just
-  restructured into a per-model loop with per-model local atomics)
-  was rebuilt and rerun under TSan this phase: `done_count=2000
-  missing=0`, zero races. The real production sharded binary itself
-  was not run under TSan at 128K x 512 scale this session (same
-  disclosed reason as Phase 6.3: this machine's memory constraints
-  make that combination impractically slow, now further confirmed by
-  this phase's own repeated real OOM kills even in Release mode).
-- **Interrupted/resumed run of the unified scenario itself**: not a
-  synthetic test -- **exercised for real, five times**, by actual
-  OOM kills during this phase's own sweep (four confirmed via
-  `journalctl`, all correctly detected; one`dmesg`-based check missed
-  a kill, a real tooling gap fixed mid-session by switching to
-  `journalctl`). Every single time, the checkpoint correctly preserved
-  all prior progress and the sweep resumed from exactly where it left
-  off, with zero duplicate or lost scenario records (verified: 462
-  distinct scenario ids never repeated across the CSV/checkpoint).
-- **Corrupted-checkpoint rejection**: real test -- a checkpoint file
-  was deliberately corrupted (a truncated duplicate header line, a
-  line of non-JSON garbage, and a scenario line missing its closing
-  quote/row field, appended after 6 real valid records) and loaded.
-  Result: the process did not crash; `load_checkpoint`'s defensive,
-  bounded line-by-line parser silently skipped every malformed line
-  and correctly recovered the 6 valid prior records ("6 already
-  complete"), then proceeded normally. A **separate** real test
-  confirmed **stale-checkpoint rejection** still works correctly: the
-  same file, loaded against a different trace, was correctly detected
-  via trace_hash mismatch ("checkpoint ... is STALE (trace_hash
-  mismatch) -- refusing to resume, starting fresh") and safely
-  discarded rather than used.
+- **Release**: full project rebuild clean; `ctest` -- **28/28 tests
+  pass**, including the six test binaries added in Phase 6.5
+  (`test_attntrace3`, `test_attn_trace_reader`,
+  `test_calibrate_streamed`, `test_bounded_quantile`,
+  `test_mem_guard`, `test_interrupted_resume`) alongside the original
+  22.
+- **ASan+UBSan**: **30/30 tests pass** (28 + 2 sanitizer-only
+  variants), zero memory errors or undefined-behavior findings across
+  the new v3 format code, chunk-cache reader/writer paths, and the
+  spill-to-disk quantile accumulator.
+- **TSan**: **30/30 tests pass** under `setarch $(uname -m) -R`
+  (this environment's documented ASLR workaround, unchanged from
+  Phase 6.3), zero data races reported -- including the shared chunk
+  cache under genuinely concurrent readers (`test_attn_trace_reader`'s
+  duplicate-load-avoidance and throwing-loader tests, which
+  specifically exercise the cache's condition-variable-based
+  dedup/cleanup path under contention). The real production sharded
+  binary itself was still not run under TSan at full 128K x 512 scale
+  this session (same disclosed reason as Phase 6.3/6.4: this
+  machine's memory and time constraints make that combination
+  impractical) -- the shared-cache and worker-pool concurrency
+  patterns it uses are exercised directly by the dedicated tests
+  above instead.
+- **In-memory-vs-out-of-core parity**: real test (`test_calibrate_streamed`)
+  -- the same small trace run through `in_memory_reader_t`,
+  `mmap_reader_t`, and `buffered_streaming_reader_t` produces
+  bit-identical `calibrated_profile_t` output across all three
+  backends, confirming the streaming path is an exact substitute, not
+  an approximation.
+- **Forced-low-memory test**: real (`--audit-memory`, see
+  `docs/phase6-out-of-core-simulator.md` section 2/3) -- a tight
+  `--memory-budget-mib` run against a trace that would overshoot the
+  budget under the old eager-load path stayed within budget under the
+  streaming backend (within a documented ~10% slack factor, section
+  3 of the out-of-core doc), after fixing the `ever_fetched` and
+  `tracked_resource_t` unbounded-growth bugs found via this same
+  auditing process.
+- **Interrupted/resumed run**: both a dedicated real system test
+  (`test_interrupted_resume.sh` -- actual binary, actual trace file,
+  real `SIGKILL` mid-sweep, checkpoint+CSV survival, resume, corrupted-
+  chunk injection, `--repair` round-trip, all passing) and the real
+  historical record from Phase 6.4's own sweep: **exercised for real,
+  five times**, by actual OOM kills (four confirmed via `journalctl`,
+  correctly detected; one `dmesg`-based check missed a kill, fixed
+  mid-session by switching to `journalctl`) plus two further real,
+  unexplained external kills of the Phase 6.5 background tail-recovery
+  process (RSS within budget, no OOM signal; checkpoint correctly
+  preserved progress both times; worked around by switching from the
+  harness's tracked background-task launch to `nohup ... & disown`).
+  Every single time, across both phases, the checkpoint correctly
+  preserved all prior progress and the sweep resumed from exactly
+  where it left off, with zero duplicate or lost scenario records --
+  confirmed on the final artifacts by `membrane-kv-exact-sim-verify`:
+  **0 problems found, 462/462 unique scenarios** in
+  `unified-sweep.csv`/`.ckpt`, and 900/900 (135M/360M)
+  `unified-tail-samples.csv` rows with zero duplicate rows
+  (`sort | uniq -d` empty).
+- **Corrupted-chunk / corrupted-checkpoint rejection**: real tests --
+  `test_attntrace3` bit-flips an individual compressed chunk (rejected
+  via per-chunk CRC32) and separately corrupts the trailing index
+  region (rejected via the file-level SHA-256 over
+  `[index_offset, EOF)`); `test_interrupted_resume.sh` corrupts a
+  checkpoint line and confirms `--repair` recovers cleanly. The
+  original Phase 6.4 checkpoint-corruption test (truncated header,
+  non-JSON garbage line, a scenario line missing a closing field,
+  appended after 6 valid records) still passes unchanged: the process
+  does not crash, `load_checkpoint`'s defensive line parser skips
+  every malformed line and recovers the valid records, and a separate
+  test confirms stale-checkpoint (trace_hash mismatch) rejection still
+  works.
+- **Peak-RSS assertion**: real, wrapped around the forced-low-memory
+  and worker-scaling runs (section 3/3.1 of the out-of-core doc) --
+  actual `/proc/self/status` VmRSS sampling, not estimated.
 - **Deterministic replay**: `test_exact_engine`'s
   `test_deterministic_replay` (bit-identical p50/p99/bytes-per-token/
   sequences-fit across two independent runs of the same config) --
-  passes under Release, ASan+UBSan, and TSan alike.
+  passes under Release, ASan+UBSan, and TSan alike, unchanged by the
+  Phase 6.5 refactor since the in-memory path is a preserved code
+  path, not replaced.
 - **Exact-quality replay**: section 8's real `membrane-kv-quality`
   runs against actual llama.cpp inference on both models -- not
-  simulator-only.
-- **Full existing test suite**: 22/22 via `ctest`, listed above.
+  simulator-only, unaffected by this phase's changes.
+- **Full test suite**: 28/28 Release, 30/30 ASan+UBSan, 30/30 TSan,
+  all listed above.
 
 ## 14. What remains unverified / theoretical
 
 - All CXL link latency/bandwidth figures are **ASSUMED** (published,
   industry-typical ranges) -- no real CXL hardware exists anywhere in
-  this project, same disclosure as every prior phase.
-- The unified sweep's realized worker count (1) is a real constraint
-  of this specific development machine's RAM, not a claim about what
-  a production deployment's parallelism should be.
+  this project, same disclosure as every prior phase; the Phase 6.5
+  out-of-core work changed how the simulator itself uses memory, not
+  any of these hardware assumptions.
+- The unified sweep's realized worker count is a real constraint of
+  this specific development machine's RAM (chosen from a real 1/2/4
+  micro-benchmark, section 3.1 of the out-of-core doc, rather than
+  fixed arbitrarily at 1 as in Phase 6.4), not a claim about what a
+  production deployment's parallelism should be.
+- The chunk cache's ~10% budget-overshoot slack factor (section 3 of
+  the out-of-core doc) is real and measured on this machine's specific
+  allocator/kernel behavior at this scenario's specific access
+  pattern -- not verified to hold at other scales, block sizes, or
+  cache/OS configurations.

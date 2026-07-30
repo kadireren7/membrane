@@ -18,6 +18,26 @@ void				membrane_sha256(const uint8_t *data, size_t len,
 						uint8_t out_digest[MEMBRANE_SHA256_DIGEST_BYTES]);
 
 /*
+ * Incremental SHA-256, for hashing a byte range too large to hold in
+ * memory at once (e.g. an out-of-core trace file's payload region --
+ * see attntrace3.h) -- membrane_sha256() and membrane_sha256_file()
+ * are themselves thin wrappers around this same state machine.
+ */
+typedef struct s_membrane_sha256_ctx
+{
+	uint32_t	state[8];
+	uint64_t	total_len;
+	uint8_t		buf[64];
+	size_t		buf_len;
+}	membrane_sha256_ctx_t;
+
+void				membrane_sha256_init(membrane_sha256_ctx_t *ctx);
+void				membrane_sha256_update(membrane_sha256_ctx_t *ctx,
+						const uint8_t *data, size_t len);
+void				membrane_sha256_final(membrane_sha256_ctx_t *ctx,
+						uint8_t out_digest[MEMBRANE_SHA256_DIGEST_BYTES]);
+
+/*
  * Lowercase hex encoding of `digest`, e.g. for embedding in a policy
  * file or comparing against a documented model hash. `out_hex` must hold
  * at least MEMBRANE_SHA256_HEX_LEN + 1 bytes (the +1 is the NUL).

@@ -1,5 +1,6 @@
 add_library(membrane_wssim_core STATIC
   attn_workload.cpp
+  attn_trace_reader.cpp
   policy.cpp
   hotcache.cpp
   engine.cpp

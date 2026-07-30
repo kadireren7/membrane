@@ -112,6 +112,24 @@ attn_trace_t	regroup_to_block_size(const attn_trace_t &src,
 attn_trace_t	extend_synthetic(const attn_trace_t &src,
 						uint32_t target_step_count, uint32_t seed);
 
+/*
+ * Phase 6.5: out-of-core sibling of extend_synthetic() -- generates the
+ * exact same per-step content (same shared per-step generator, same
+ * xorshift32 stream advanced in the same step/layer/head/k order, NOT
+ * reset per chunk) but writes it straight to a .attntrace3 file one
+ * chunk at a time, holding only `chunk_steps` decode-steps' worth of
+ * entries resident at once instead of materializing all
+ * `target_step_count` at once -- the whole point being that
+ * extend_synthetic()'s output and this function's output are
+ * byte-identical (see the parity test in test_attn_trace_reader.cpp),
+ * just produced under a bounded, not context-length-proportional,
+ * memory footprint.
+ */
+bool	extend_synthetic_to_file(const attn_trace_t &src,
+						uint32_t target_step_count, uint32_t seed,
+						const std::string &path, uint32_t chunk_steps,
+						int compress = 1);
+
 }	/* namespace wssim */
 
 #endif
