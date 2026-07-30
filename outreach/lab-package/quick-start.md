@@ -13,8 +13,9 @@ cd membrane
 This builds the project, runs the bit-exact CPU/ggml quantization
 parity test (100,000+ blocks), runs the full 520,000-transaction FPGA
 Verilator cosimulation, and runs a small exact-retrieval scenario — all
-from small, already-committed fixtures. No model download. ~25 seconds
-on a modest machine. Writes `demo-output/demo-results.json` /
+from small, already-committed fixtures. No model download. Roughly
+25–50 seconds on a modest machine, depending on whether the build cache
+is warm. Writes `demo-output/demo-results.json` /
 `demo-results.md`.
 
 ## What to read next, and why

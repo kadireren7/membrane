@@ -45,6 +45,6 @@ contributor at the time, not decided unilaterally in advance here.
 
 ## Point of contact
 
-Kadir Eren Altıntaş, sole author of MEMBRANE — see
+Kadir Eren Altıntaş, creator and lead of MEMBRANE — see
 `outreach/kadir-research-profile.md` and the repository's `SUPPORT.md`
 for current contact details.

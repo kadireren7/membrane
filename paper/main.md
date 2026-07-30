@@ -97,7 +97,7 @@ search):
 
 1. **A runtime-calibrated, hot/warm/cold KV-cache tiering policy over
    FP16/Q8/Q4 precision**, with the quantize/dequantize path verified
-   bit-exact against a production reference implementation (ggml) across
+   bit-exact against ggml's own reference implementation across
    100,000+ randomized blocks plus every disclosed edge case (§3.2, §5
    RQ2).
 2. **A synthesizable FPGA quantization datapath sharing the identical
@@ -492,7 +492,7 @@ processing, and FPGA quantization. Summarized by category:
   [@liu2024kivi] and KVQuant [@hooper2024kvquant] both achieve
   sub-4-bit KV quantization on real GPUs; MEMBRANE's Q8/Q4 tiers are
   less aggressive but are the only ones in this comparison independently
-  verified bit-exact against a production reference implementation
+  verified bit-exact against ggml's own reference implementation
   across 100,000+ cases.
 - **Retrieval-aware / long-context attention**: Landmark Attention
   [@mohtashami2023landmark] retrieves relevant blocks via a trained
@@ -512,9 +512,11 @@ processing, and FPGA quantization. Summarized by category:
   checked but not yet run on a physical board — a genuine capability gap
   relative to F-BFQ.
 - **CXL specification**: this project's simulated link latency/
-  bandwidth figures are drawn from the CXL Consortium's own published
-  specification [@cxlconsortium2023spec], not from an implementation of
-  it.
+  bandwidth figures are explicit, cited, industry-typical assumptions —
+  informed by the CXL Consortium's published specification
+  [@cxlconsortium2023spec] and standard PCIe-generation bandwidth
+  figures, not a literal quote from either, and not from an
+  implementation of the specification.
 
 ## 9. Ethics and artifact disclosure
 
@@ -535,15 +537,22 @@ processing, and FPGA quantization. Summarized by category:
 - **Energy measurements.** This paper reports no energy/power numbers.
   No energy measurement, estimated or real, appears anywhere in this
   project's artifacts.
-- **AI tool contribution policy (placeholder).** Portions of this
-  project's code, documentation, and this manuscript were produced with
-  the assistance of an AI coding tool (Claude Code) under the direction
-  and review of the sole author. `[placeholder: final AI-contribution
-  disclosure wording to be confirmed against the target venue's specific
-  policy at submission time — policies differ across venues and this
-  project has not yet selected one, see `paper/submission-options.md`]`.
-- **Authorship.** The sole author of this work is Kadir Eren Altıntaş.
-  No co-authors are listed.
+- **AI tool contribution policy (placeholder).** Most of this project's
+  code, documentation, and this manuscript's text were drafted by an AI
+  coding agent (Claude Code) under Kadir Eren Altıntaş's direction —
+  he set the architecture, experimental design, validation criteria,
+  and technical decisions, and reviewed every commit before it went in
+  (see `outreach/ai-assistance-disclosure.md` for the full breakdown).
+  `[placeholder: final AI-contribution disclosure wording to be
+  confirmed against the target venue's specific policy at submission
+  time — policies differ across venues and this project has not yet
+  selected one, see `paper/submission-options.md`]`.
+- **Authorship.** Kadir Eren Altıntaş is the sole human author of this
+  work — the project's creator, lead, and sole owner/maintainer,
+  responsible for its direction and every claim in it. No co-authors
+  are listed. This is a claim about direction and ownership, not a
+  claim that every line of text/code was typed by hand without AI
+  assistance — see `outreach/ai-assistance-disclosure.md`.
 
 ## 10. Conclusion
 
@@ -584,7 +593,7 @@ closest prior art already has.
   RTL cosimulation), yosys 0.33 (for synthesizability checking).
 - **Full commands**: `docs/reproduction.md` (3 levels: quick
   verification, model-backed verification, full research reproduction),
-  `scripts/demo.sh` (~25s quick check), `paper/build.sh` (this
+  `scripts/demo.sh` (~25–50s quick check, depending on cache state), `paper/build.sh` (this
   manuscript's own build).
 - **Expected runtime/RAM/disk**: Level 1 ~2-5 min; Level 2 ~30-90 min;
   Level 3 multi-hour, ~1-2 GiB transient disk, memory-budgeted (default

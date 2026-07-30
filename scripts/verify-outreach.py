@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Verify the Phase 7.3 hardware-outreach package: internal links,
-lab-package completeness, hardware-results schema conformance, and
-prohibited-claim/hype-word scanning across outreach/ and hardware/.
+"""Verify the hardware-outreach package: internal links, lab-package
+completeness, hardware-results schema conformance, prohibited-claim/
+hype-word scanning across outreach/ and hardware/, and (added in the
+Phase 7.3 wording-correction pass) authorship/AI-assistance wording and
+demo-duration consistency across outreach/, paper/, docs/, and
+README.md.
 
-This does NOT re-check paper/ (see paper/scripts/verify-paper.py) or
-benchmarks/ (see scripts/verify-results.py) claims -- it is specific to
-the outreach/hardware materials added in Phase 7.3.
+This does NOT re-check paper/'s citation/claim-audit machinery (see
+paper/scripts/verify-paper.py) or benchmarks/ headline numbers (see
+scripts/verify-results.py) -- it is specific to the outreach/hardware
+materials and the authorship-wording claims layered on top of them.
 
 Exit code: 0 if every check passes, 1 otherwise.
 """
@@ -223,8 +227,96 @@ def _c9():
 	return ok, "bracketed fields present and the never-send-with-a-placeholder warning is present" if ok else "expected bracket fields or warning missing"
 
 
+# Wider corpus for the authorship/dev-process wording checks below --
+# these claims appear across outreach/, paper/, docs/, and README.md,
+# not just outreach/hardware/.
+def _wider_corpus():
+	files = []
+	for pattern in ("outreach/**/*.md", "paper/*.md", "paper/*.tex", "docs/*.md", "README.md"):
+		files.extend(sorted(REPO_ROOT.glob(pattern)))
+	return [f for f in files if f.is_file()]
+
+
+# Phase-summary docs that legitimately QUOTE old, now-corrected wording
+# as part of their own "here's what changed and why" disclosure (the
+# same reasoning that excludes outreach/hardware-claim-gates.md from
+# the GATED_CLAIMS scan -- documenting a phrase is not asserting it).
+META_DOCUMENTATION_FILES = {"docs/phase7-hardware-outreach.md"}
+
+
+def _wider_corpus_excluding_meta_docs():
+	return [f for f in _wider_corpus()
+		if str(f.relative_to(REPO_ROOT)) not in META_DOCUMENTATION_FILES]
+
+
+# Phrases that would misrepresent Kadir's role (implying he hand-wrote
+# every line without AI assistance, or that he's a credentialed/
+# affiliated "independent researcher"). Each maps to a short reason,
+# used only for the failure message.
+PROHIBITED_AUTHORSHIP_PHRASES = {
+	"i personally wrote every line": "implies no AI assistance was used",
+	"wrote every line of code": "implies no AI assistance was used",
+	"authored every line": "implies no AI assistance was used",
+	"i hand-wrote": "implies no AI assistance was used",
+}
+
+# "sole author" alone is fine when qualified (e.g. "sole human author",
+# "sole author of this work" immediately followed by an ownership/
+# direction clarification) -- this set is phrases that are NEVER okay
+# regardless of qualification, checked separately from GATED_CLAIMS.
+BARE_SOLE_AUTHOR_PATTERN = re.compile(r"\bsole author\b(?!\s+is\b)")
+
+
+@check("no phrase implies Kadir hand-wrote all code without AI assistance")
+def _c10():
+	bad = []
+	for f in _wider_corpus_excluding_meta_docs():
+		text = f.read_text().lower()
+		for phrase, reason in PROHIBITED_AUTHORSHIP_PHRASES.items():
+			if phrase in text:
+				bad.append(f"{f.relative_to(REPO_ROOT)}: '{phrase}' ({reason})")
+	return len(bad) == 0, "; ".join(bad) if bad else f"no occurrence of {len(PROHIBITED_AUTHORSHIP_PHRASES)} prohibited authorship phrases"
+
+
+@check("'sole author'/'independent researcher' only appear in an accurate, qualified form")
+def _c11():
+	bad = []
+	for f in _wider_corpus_excluding_meta_docs():
+		text = f.read_text()
+		lower = text.lower()
+		for m in BARE_SOLE_AUTHOR_PATTERN.finditer(lower):
+			window = lower[max(0, m.start() - 40): m.end() + 60]
+			# Accurate forms: "sole human author", "sole author of this
+			# work is <name>" (paper authorship credit -- a legitimate,
+			# different claim from "wrote every line"), or immediately
+			# followed by a clarifying "creator"/"human"/"owner" word.
+			if "human" in window or "creator" in window or "owner" in window or re.search(r"sole author of (this work|)\s*is\b", window):
+				continue
+			bad.append(f"{f.relative_to(REPO_ROOT)}: unqualified 'sole author' near: ...{text[max(0,m.start()-40):m.start()+60]}...")
+		for m in re.finditer(r"\bindependent researcher\b", lower):
+			bad.append(f"{f.relative_to(REPO_ROOT)}: unqualified 'independent researcher'")
+	return len(bad) == 0, "; ".join(bad[:8]) if bad else "no unqualified occurrence"
+
+
+@check("every scripts/demo.sh duration mention is qualified (a range or explicit caveat, not a bare single number)")
+def _c12():
+	bad = []
+	pattern = re.compile(r"~?25\s*(?:-|–|second)")
+	for f in _wider_corpus_excluding_meta_docs():
+		text = f.read_text()
+		lower = text.lower()
+		if "demo.sh" not in lower:
+			continue
+		for m in re.finditer(r"~?25\s*second", lower):
+			window = lower[max(0, m.start() - 80): m.end() + 120]
+			qualified = any(tok in window for tok in ("25–50", "25-50", "depending on", "in that run", "varies", "cache"))
+			if not qualified:
+				bad.append(f"{f.relative_to(REPO_ROOT)}: unqualified '~25 second(s)' near demo.sh mention")
+	return len(bad) == 0, "; ".join(bad) if bad else "all demo.sh duration mentions are qualified"
+
+
 def main():
-	for fn in (_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9):
+	for fn in (_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12):
 		fn()
 	print()
 	print(f"{CHECK_COUNT - len(FAILURES)}/{CHECK_COUNT} checks passed")

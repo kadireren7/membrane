@@ -107,8 +107,8 @@ stated at the scope it can actually support (full comparison:
 \begin{enumerate}
 \item A runtime-calibrated, hot/warm/cold KV-cache tiering policy over
   FP16/Q8/Q4 precision, with the quantize/dequantize path verified
-  bit-exact against a production reference (ggml) across 100{,}000+
-  randomized blocks plus every disclosed edge case.
+  bit-exact against ggml's own reference implementation across
+  100{,}000+ randomized blocks plus every disclosed edge case.
 \item A synthesizable FPGA quantization datapath sharing the identical
   bit-exact arithmetic as the CPU reference, cosimulated in Verilator
   across 520{,}000 transactions with zero mismatches -- to our
@@ -192,7 +192,9 @@ prefetch \emph{decision} is predicted.
 simulator modeling link/device/quant-engine queues with real simulated
 contention, calibrated once from a real captured trace. No physical CXL
 hardware exists in this project; link figures are cited, industry-typical
-ranges from the CXL Consortium's own specification \cite{cxlconsortium2023spec}.
+assumptions informed by the CXL Consortium's specification
+\cite{cxlconsortium2023spec} and standard PCIe-generation bandwidth
+figures, not a literal quote from either.
 
 \subsection{FPGA datapath} A fully synthesizable, purely-integer
 fixed-point Q8/Q4 encode/decode pipeline, confirmed to elaborate under
@@ -386,12 +388,17 @@ HuggingFaceTB checkpoints, not redistributed by this project (see
 from short, non-sensitive, project-authored prompts. Benchmark
 generation: every cited artifact's generating command is recorded in
 \texttt{benchmarks/MANIFEST.json}. Energy: no energy/power number
-appears anywhere in this project. AI tool contribution policy: portions
-of this project's code, documentation, and manuscript were produced with
-AI-coding-tool assistance (Claude Code) under the sole author's direction
-and review -- \emph{[placeholder: final disclosure wording pending venue
-selection, see paper/submission-options.md]}. Authorship: sole author,
-Kadir Eren Altınta\c{s}; no co-authors.
+appears anywhere in this project. AI tool contribution policy: most of
+this project's code, documentation, and manuscript text was drafted by
+an AI coding agent (Claude Code) under Kadir Eren Altınta\c{s}'s
+direction -- he set the architecture, experimental design, validation
+criteria, and technical decisions, and reviewed every commit (see
+\texttt{outreach/ai-assistance-disclosure.md}) -- \emph{[placeholder:
+final disclosure wording pending venue selection, see
+paper/submission-options.md]}. Authorship: Kadir Eren Altınta\c{s} is
+the sole human author, project creator/lead/owner; no co-authors. This
+is a claim about direction and ownership, not that every line was typed
+by hand without AI assistance.
 
 \section{Conclusion}
 
@@ -423,7 +430,7 @@ for verification builds.
 \textbf{Environment:} this project's own development machine, 5.6\,GiB
 RAM; gcc/clang, CMake $\geq$3.16, Verilator, yosys 0.33.
 \textbf{Full commands:} \texttt{docs/reproduction.md} (3 levels),
-\texttt{scripts/demo.sh} ($\sim$25s quick check), \texttt{paper/build.sh}.
+\texttt{scripts/demo.sh} ($\sim$25--50s quick check, depending on cache state), \texttt{paper/build.sh}.
 \textbf{Expected runtime/RAM/disk:} Level 1 $\sim$2--5 min; Level 2
 $\sim$30--90 min; Level 3 multi-hour, $\sim$1--2\,GiB transient disk,
 768\,MiB default memory budget.

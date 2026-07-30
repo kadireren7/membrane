@@ -115,7 +115,11 @@ number available.
 (100,000+ blocks vs. ggml), the full 520,000-transaction FPGA Verilator
 cosimulation, and a small committed-fixture exact-retrieval scenario
 (`test_exact_engine`). Measured on the development machine: **~25
-seconds** end-to-end. `--full` additionally runs the complete ctest suite
+seconds** end-to-end in that specific run (a later re-measurement found
+this varies roughly 25–50 seconds depending on whether the
+llama.cpp-enabled build cache is warm — see
+`docs/phase7-hardware-outreach.md`'s wording-correction note). `--full`
+additionally runs the complete ctest suite
 (28 tests); measured at **~85 seconds**. Neither mode downloads a model
 or runs a multi-hour sweep — those are Level 2/3 in
 `docs/reproduction.md`, run manually and explicitly. The quant-parity and
@@ -142,7 +146,9 @@ of this document's accompanying task log):
 - Release build: **28/28** tests passed.
 - ASan+UBSan build: **30/30** tests passed.
 - TSan build (under `setarch -R`): **30/30** tests passed.
-- `scripts/demo.sh --quick`: all 4 steps PASS, ~25s.
+- `scripts/demo.sh --quick`: all 4 steps PASS, ~25s in that run (see
+  the note above — later measurements found ~25–50s depending on cache
+  state).
 - `scripts/verify-results.py`: **13/13** checks passed (after the fix
   described above).
 - `scripts/prepare-release.sh --dry-run`: all non-git-state checks

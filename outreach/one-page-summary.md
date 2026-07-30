@@ -10,7 +10,7 @@ requests; GPU memory capacity, not compute, is usually the real ceiling.
 ## Contribution
 
 A per-block memory decision engine combining (1) mixed-precision KV
-tiering verified bit-exact against a production quantizer, and (2)
+tiering verified bit-exact against ggml's reference quantizer, and (2)
 **exact, non-approximate** sparse retrieval — a predictor prefetches,
 but every needed block is exactly fetched on a miss, never dropped.
 Simulated at 128K context × 512 concurrency; the same quantization math

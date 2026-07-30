@@ -21,9 +21,10 @@ After cloning the repository, read these files in this order:
   `docs/phase8-hardware-validation-plan.md` (the 3-level plan this
   package supports), `outreach/hardware-claim-gates.md` (exactly which
   claims are and aren't allowed yet).
-- **What command to run**: `scripts/demo.sh --quick` (~25 seconds, no
-  model download, no hardware needed) to confirm the software side
-  works before considering any hardware commitment.
+- **What command to run**: `scripts/demo.sh --quick` (~25–50 seconds
+  depending on cache state, no model download, no hardware needed) to
+  confirm the software side works before considering any hardware
+  commitment.
 - **What hardware is needed**: see `required-hardware.md` — in short,
   an FPGA board + Vivado/Quartus (Level A/B), and/or a CXL Type-3 device
   or emulation platform (Level C).

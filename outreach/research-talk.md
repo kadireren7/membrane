@@ -53,8 +53,9 @@ this talk (tie forward to slide 11).
 
 Discrete-event simulator, calibrated from real captured attention
 traces. All link latency/bandwidth figures: cited, assumed,
-industry-typical ranges from the CXL Consortium's own spec. No physical
-CXL device used anywhere in this project.
+industry-typical ranges — informed by the CXL Consortium's spec and
+standard PCIe-generation bandwidth, not a literal quote from either. No
+physical CXL device used anywhere in this project.
 
 ## Slide 8 — Exact sparse retrieval
 

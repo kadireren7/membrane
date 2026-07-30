@@ -146,3 +146,76 @@ anywhere in this repository.
 - `hardware/vendor-wrapper/`'s AXI4-Lite responder is explicitly
   flagged in its own file as an unverified hand-written FSM, not a
   protocol-checker-verified implementation.
+
+## Authorship and AI-assistance wording correction (follow-up pass)
+
+A follow-up pass, before anything in this package was sent to anyone,
+reviewed the outreach/paper/docs wording for honesty and naturalness
+and corrected several things:
+
+- **Authorship framing.** The original materials described Kadir as
+  "sole author" of MEMBRANE in a way that, read alongside phrases like
+  "every line of code... was authored... by Kadir" and "written from
+  scratch," could be read as claiming he hand-typed the entire
+  codebase without AI assistance. In practice, this project makes heavy
+  use of AI coding agents (Claude Code) for implementation and
+  documentation, under Kadir's direction. Every occurrence of this
+  framing across `outreach/`, `paper/main.md`, and `paper/main.tex` was
+  rewritten to the more accurate: Kadir created and leads MEMBRANE,
+  directing architecture, experimental design, validation criteria, and
+  technical decisions, and reviewing every commit — while an AI coding
+  agent drafted most of the actual code/documentation text under that
+  direction. A new `outreach/ai-assistance-disclosure.md` spells out
+  this division of labor explicitly, including what a human still needs
+  to understand and defend versus what automated tooling checks.
+- **"Independent researcher."** Removed everywhere it appeared
+  (`outreach/email-templates.md`, twice) — Kadir is not a credentialed
+  or institutionally-affiliated researcher yet, and the phrase read as
+  more claim than is accurate. Replaced with "systems programming
+  student (42 İstanbul)" framing, consistent with
+  `outreach/kadir-research-profile.md`.
+- **"Production quantizer"/"production reference implementation."**
+  Replaced with "ggml's own reference implementation" / "ggml reference
+  quantizer" in `paper/main.md`, `paper/main.tex`, and
+  `outreach/one-page-summary.md` — ggml is a real, widely-used
+  open-source reference implementation, but "production" implied a
+  formality/certification that was never actually claimed or verified.
+- **CXL-value sourcing.** Some CXL link latency/bandwidth figures are
+  informed by standard PCIe-generation bandwidth math, not literally
+  quoted from the CXL Consortium's specification text. Wording that
+  said figures were "drawn from the CXL Consortium's own published
+  specification" was corrected, everywhere it appeared, to "informed by
+  the CXL Consortium's specification and standard PCIe-generation
+  bandwidth figures, not a literal quote from either."
+- **Demo duration.** `scripts/demo.sh --quick` was documented as "~25
+  seconds" based on an early, warm-build-cache measurement. A fresh,
+  cold-cache re-measurement during this pass showed it can take up to
+  ~51 seconds when the `MEMBRANE_ENABLE_LLAMA` build needs fresh
+  configuration (27s warm-cache vs. 51s cold-cache, both real
+  measurements taken during this pass). Every mention across
+  `outreach/`, `paper/main.md`, `paper/main.tex`, and
+  `docs/phase7-research-release.md` (the latter kept as a historical
+  record with an added caveat, not silently rewritten) now states a
+  ~25–50 second range instead of a single cherry-picked number.
+- **Email templates.** Shortened from ~250 words to ~120–180 words
+  each, first paragraph simplified, metric-stacking reduced, and
+  repeated defensive disclaimers ("no obligation," "not a sales
+  conversation," "as a favor") trimmed to appear at most once per
+  email. A new `outreach/primary-email-template.md` provides a single,
+  general-purpose ~150-word template for recipients who don't cleanly
+  fit one of the four category-specific ones.
+- **Verification.** `scripts/verify-outreach.py` gained three new
+  checks (no phrase implies unassisted hand-authorship; "sole
+  author"/"independent researcher" only in accurate/qualified form;
+  every demo-duration mention is qualified) — 12/12 checks pass. Three
+  new negative tests were run and confirmed caught before being
+  reverted: an injected "I personally wrote every line of code"
+  phrase, an injected fake `REAL_HARDWARE`-labeled result, and an
+  injected unqualified "~25 seconds" demo claim.
+
+None of this changes any technical/experimental claim's substance —
+462/462 scenarios, 520,000 transactions, 100,000+-block parity, the
+187x-405x traffic reduction figures, and the ~73,600-LUT-class-cell
+divider estimate are unchanged and re-verified. This pass only
+corrected how the project's authorship, development process, and two
+sourcing details were described.

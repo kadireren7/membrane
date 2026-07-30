@@ -2,8 +2,7 @@
 
 A short, factual introduction for anyone deciding whether to respond to
 an outreach email or review the MEMBRANE repository. No academic degree,
-institutional title, or publication is claimed here — none exist yet,
-and this document is deliberately written to not imply otherwise.
+institutional title, or publication is claimed here — none exist yet.
 
 ## Background
 
@@ -11,20 +10,31 @@ and this document is deliberately written to not imply otherwise.
   peer-learning software engineering curriculum (no lectures, no
   professors — project- and peer-review-based, C/C++-heavy in its early
   curriculum).
-- Primary technical background: **C/C++ and systems-level development**
-  — memory management, concurrency, low-level performance work. MEMBRANE
-  itself (the project this outreach is about) is written from scratch in
-  C11 (core library) and C++17 (simulators/tools), plus SystemVerilog
-  RTL for the FPGA datapath.
-- Prior relevant experience: a brief background involving **İHA-1**
-  (unmanned aerial vehicle) work — mentioned here only because it
-  involved real-time/embedded systems experience relevant to this
-  project's hardware ambitions, not elaborated further since it is not
-  the focus of this research.
-- **Sole author of MEMBRANE** — every line of code, every document, and
-  every benchmark artifact in the repository was authored or directed by
-  Kadir; there are no co-authors or additional contributors as of this
-  writing.
+- Primary technical interest: **C/C++ and systems-level development**
+  — memory management, concurrency, and low-level performance work,
+  which is what pulled me toward KV-cache memory as a problem in the
+  first place.
+- A brief prior background involving **İHA-1** (unmanned aerial
+  vehicle) work — mentioned only because it's where the real-time/
+  embedded-systems experience relevant to this project's hardware
+  ambitions comes from, not elaborated further since it isn't the focus
+  of this research.
+
+## Role on MEMBRANE
+
+I created and lead MEMBRANE as an AI-assisted systems research project.
+I directed the architecture, experimental design, validation criteria,
+technical decisions, and release process, while using AI coding agents
+to assist with implementation and documentation. I'm the sole human
+owner and maintainer of the project — there are no other people
+involved as of this writing — and every commit, benchmark, and claim in
+the repository was reviewed and directed under that ownership before it
+went in. I did not hand-write every line myself, and I'm not going to
+claim otherwise; what I take responsibility for is understanding the
+design well enough to defend it, and catching it when a claim goes
+further than the evidence supports (see
+`outreach/ai-assistance-disclosure.md` for the fuller breakdown of what
+that division of labor actually looked like).
 
 ## Research interests
 
@@ -71,6 +81,8 @@ Not funding, not a job, not co-authorship on unrelated work. Specifically:
 
 - Repository: https://github.com/kadireren7/membrane
 - Paper draft: `paper/main.md` / `paper/main.tex`
-- Quick demo (no model download, ~25s): `scripts/demo.sh --quick`
+- Quick demo (no model download): `scripts/demo.sh --quick` — takes
+  roughly 25–50 seconds depending on whether the ggml-parity build
+  needs fresh configuration.
 - Contact: see the repository's `SUPPORT.md` / `SECURITY.md` for the
   current maintainer contact address.

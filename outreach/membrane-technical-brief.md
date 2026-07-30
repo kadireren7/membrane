@@ -1,7 +1,7 @@
 # MEMBRANE — Technical Brief
 
 **Author:** Kadir Eren Altıntaş · **Repository:** https://github.com/kadireren7/membrane
-· **Paper:** `paper/main.md` / `paper/main.tex` · **Demo:** `scripts/demo.sh` (~25s, no model download)
+· **Paper:** `paper/main.md` / `paper/main.tex` · **Demo:** `scripts/demo.sh` (~25–50s depending on cache state, no model download)
 
 This is a request for hardware access and research collaboration, not a
 product pitch. Every claim below is labeled by evidence class
@@ -39,7 +39,7 @@ accelerate.
 | **RTL simulation (cosimulation)** | `membrane_quant_stream_top` (the full Q8/Q4 encode/decode datapath) cosimulated in Verilator against the CPU reference: 520,000 transactions, 0 mismatches. |
 | **Synthesis check (yosys, no P&R)** | The full RTL hierarchy elaborates cleanly under yosys 0.33. Real, measured `synth_ecp5` technology-mapped cell counts exist for the individual arithmetic modules (e.g. the FP32 divider: ~73,600 LUT-class cells) — **not** an Fmax or timing-closure result. |
 | **Discrete-event simulation** | A unified 128K-context × 512-concurrency sweep (462/462 scenarios, both models) modeling a near-memory/CXL appliance's queueing/contention, calibrated from real traces. |
-| **Assumed CXL values** | All CXL link latency/bandwidth figures are cited, industry-typical ranges from the CXL Consortium's own published specification — no real CXL device was used anywhere in this project. |
+| **Assumed CXL values** | All CXL link latency/bandwidth figures are explicit, cited, industry-typical assumptions — informed by the CXL Consortium's published specification and standard PCIe-generation bandwidth figures, not measurements or a literal quote from either — no real CXL device was used anywhere in this project. |
 | **Unverified hardware claims** | No physical FPGA board, no place-and-route, no real PCIe DMA, no real CXL hardware. This is exactly the gap this outreach is about. |
 
 ## 4. Key results (all sourced; see `benchmarks/MANIFEST.json` and `paper/claim-audit.md`)

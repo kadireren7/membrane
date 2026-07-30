@@ -35,8 +35,8 @@ links to a real file in this repo" — don't just imply it.*
 - Let it run on camera, unedited, showing the four real steps (build,
   quant parity, FPGA Verilator cosim, exact-retrieval scenario) and
   their PASS lines.
-- Point out the elapsed time (~25 seconds) and that no model was
-  downloaded.
+- Point out the elapsed time (roughly 25–50 seconds depending on
+  whether the build cache is warm) and that no model was downloaded.
 
 *Script note: this is the one segment that is a completely live,
 unedited demonstration — no cuts that could hide a failure.*
