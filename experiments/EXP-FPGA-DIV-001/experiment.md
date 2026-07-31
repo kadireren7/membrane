@@ -268,6 +268,62 @@ variable-divisor operation in the Q4_0 path) -- full detail in
   queueing/scheduling improvement before promotion -- see
   `phase-b2.md`'s own "Decision" section for the full reasoning).
 
+## Phase B3 addendum (this experiment's own follow-on, same branch)
+
+Everything above this section (Phase A, Phase B1, Phase B2) is unchanged,
+left as originally written per this project's own disclosed-not-rewritten
+convention. Phase B2's own decision flagged ONE remaining weakness: full
+serialization while a Q4_0 encode transaction is in flight collaterally
+slows Q8_0 encode/decode and Q4_0 decode ~1.9-2.6x, purely a queueing/
+scheduling cost, not the iterative divider's own latency. Phase B3
+addressed exactly that -- full detail in `phase-b3-root-cause.md` (root
+cause) and `phase-b3.md` (design, results, decision), summarized here:
+
+- New files only: `rtl/experimental/fp_div/membrane_completion_reorder.sv`
+  (a small, bounded, direct-mapped completion reorder buffer, depth 1/2/4/8
+  tested) and `rtl/experimental/fp_div/membrane_quant_stream_top_b3.sv`
+  (decouples Q8_0 encode/decode and Q4_0 decode issuance from Q4_0
+  encode's in-flight status, keeping global in-order retirement via the new
+  reorder buffer instead of B2's full-issuance-block). `q4_scale_b2.sv` and
+  `fp32_div_iterative_exact.sv` (B2's own divider/scale unit) are
+  BYTE-IDENTICAL, not modified. No production RTL file was modified.
+- Root cause (re-derived from reading the actual B2 RTL, not assumed):
+  B2's single `q4enc_inflight` bit gates issuance of ALL modes, held high
+  for a Q4_0 encode transaction's full (now variable, 3-473+ cycle)
+  latency, purely to guarantee its two completion sources never collide
+  on the single-word output-FIFO write port -- conflating "must not retire
+  out of turn" with "must not issue or compute at all."
+- Full-datapath parity: 1,110,000/1,110,000 transactions, 0 fails/drops/
+  duplicates, at EVERY tested depth (1, 2, 4, 8), including a new
+  reset-while-multiple-queues-non-empty test (meaningless for
+  baseline/B1/B2, which never have more than one transaction outstanding
+  across modes) -- this phase's workload is deliberately larger and more
+  adversarial (dense Q4-encode bursts, dense alternating patterns) than
+  Phase B2's own 520,000-txn number, and baseline/B1/B2 were re-run against
+  the SAME new workload for a fair, apples-to-apples comparison.
+- **The honest finding**: REORDER_DEPTH 1 and 2 are real, measured
+  REGRESSIONS vs. B2 (worse on every per-mode metric) -- the buffer's flat
+  +1-cycle-per-transaction tax isn't offset by that small a concurrency
+  window at this workload's Q4_0-encode frequency. Only depth>=4 is a real
+  improvement: overall cycles/transaction -4.03% (depth 4) to -4.73%
+  (depth 8) vs. B2, Q8_ENC collateral slowdown 2.580x -> 2.376x/2.341x.
+  Depth 8 (evaluated because depth 4's own depth-bound stall was a real
+  6.75%) shows diminishing returns once the bottleneck becomes the
+  structurally-unavoidable single-divider-busy cost (81-82% of all
+  cycles), not buffer capacity.
+- **Also honest**: the reorder buffer's own area cost (14,959 ECP5 cells
+  standalone at the selected depth=4) is LARGER than the entire
+  `q4_scale_b2` unit B2 already shrank to 2,268 cells -- an ESTIMATED
+  combined system-level area reduction of ~-76.8% vs. baseline at depth 4,
+  down from B2's own measured -96.9% at the `q4_scale` level alone. Still
+  a large win over baseline, but a measurable erosion of "B2's area
+  advantage, preserved."
+- **Decision: CONTINUE** (correct, bounded, and a real but modest
+  throughput win at the right depth -- but that depth has to be chosen
+  correctly [1-2 regress], and the buffering needed to get the win is not
+  yet area-efficient enough to call this ready for promotion; see
+  `phase-b3.md` section 9 and `decision.md` for the full reasoning).
+
 ## Promotion status
 
 `not proposed` -- this remains on `experiment/fp-divider-pipeline`,
@@ -281,4 +337,5 @@ research-in-progress work on a public branch. Phase B1's own decision
 project's contribution policy -- it does not itself authorize or imply
 any merge into `main`. Phase B2's own decision (CONTINUE, above) carries
 the same status: experiment-internal only, no merge into `main`
-authorized or implied by it.
+authorized or implied by it. Phase B3's own decision (CONTINUE, above)
+carries the same status too.
