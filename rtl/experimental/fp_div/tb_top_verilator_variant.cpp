@@ -38,7 +38,11 @@
 #include <vector>
 #include <string>
 #include <algorithm>
-#if defined(MEMBRANE_B3_VARIANT)
+#if defined(MEMBRANE_B4_VARIANT)
+#include "Vmembrane_quant_stream_top_b4.h"
+typedef Vmembrane_quant_stream_top_b4	DutType;
+static const char	*VARIANT_NAME = "membrane_quant_stream_top_b4 (Phase B4: radix-4 exact Q4 divider, B2-style scheduling)";
+#elif defined(MEMBRANE_B3_VARIANT)
 #include "Vmembrane_quant_stream_top_b3.h"
 typedef Vmembrane_quant_stream_top_b3	DutType;
 #ifndef MEMBRANE_B3_LABEL

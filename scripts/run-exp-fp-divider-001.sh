@@ -49,6 +49,15 @@
 #                  whole-top synthesis attempt per B3 depth (marked
 #                  UNAVAILABLE on timeout, same precedent as baseline/B1/B2
 #                  never completing whole-top synthesis either).
+#   --phase b4     Phase B4: replaces Phase B2's radix-2 (1 quotient
+#                  bit/cycle) iterative Q4 divider with an exact radix-4
+#                  (2 quotient bits/cycle) one
+#                  (rtl/experimental/fp_div/fp32_div_iterative_radix4_exact.sv),
+#                  using B2's OWN full-serialization scheduling unchanged
+#                  (no Phase B3 reorder buffer -- B3 was rejected as an
+#                  architecture, see decision.md). New 3-way differential
+#                  test (baseline vs. B2 radix-2 vs. B4 radix-4) plus
+#                  baseline+B1+B2+B4 full-datapath comparison.
 #   --skip-build   assume binaries already built under $BUILD_DIR; only
 #                  re-run them. (Unconditional -- use --resume instead
 #                  if you want per-artifact existence checks.)
@@ -107,8 +116,8 @@ while [ $# -gt 0 ]; do
 	shift
 done
 
-if [ "$PHASE" != "b1" ] && [ "$PHASE" != "b2" ] && [ "$PHASE" != "b3" ]; then
-	echo "error: --phase b1, b2, or b3 required (got: '${PHASE}')" >&2
+if [ "$PHASE" != "b1" ] && [ "$PHASE" != "b2" ] && [ "$PHASE" != "b3" ] && [ "$PHASE" != "b4" ]; then
+	echo "error: --phase b1, b2, b3, or b4 required (got: '${PHASE}')" >&2
 	exit 1
 fi
 
@@ -856,8 +865,248 @@ EOF
 	echo "See experiments/EXP-FPGA-DIV-001/phase-b3.md and results/b3-comparison.md for the committed numbers this script reproduces."
 }
 
+# =============================================================================
+# Phase B4
+# =============================================================================
+run_phase_b4()
+{
+	local DIFF_BIN="$BUILD_DIR/tb_fp32_div_iterative_radix4_exact"
+	local DIFF_BASELINE_OBJ="$BUILD_DIR/b4-baseline-obj"
+	local DIFF_B2_OBJ="$BUILD_DIR/b4-b2-obj"
+	local DIFF_B4_OBJ="$BUILD_DIR/b4-cand-obj"
+	local TOP_BASELINE_OBJ="$BUILD_DIR/top-baseline-obj"
+	local TOP_B1_OBJ="$BUILD_DIR/top-b1-obj"
+	local TOP_B2_OBJ="$BUILD_DIR/top-b2-obj"
+	local TOP_B4_OBJ="$BUILD_DIR/top-b4-obj"
+
+	if need_build "$DIFF_BIN"; then
+		stage "build: 3-way differential test (membrane_fp_divider vs. fp32_div_iterative_exact vs. fp32_div_iterative_radix4_exact)"
+		rm -rf "$DIFF_BASELINE_OBJ" "$DIFF_B2_OBJ" "$DIFF_B4_OBJ"
+		"$VERILATOR_BIN" --cc -Wno-fatal --Mdir "$DIFF_BASELINE_OBJ" \
+			--top-module membrane_fp_divider \
+			"$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv"
+		"$VERILATOR_BIN" --cc -Wno-fatal --Mdir "$DIFF_B2_OBJ" \
+			--top-module fp32_div_iterative_exact \
+			"$REPO_ROOT/rtl/experimental/fp_div/fp32_div_iterative_exact.sv"
+		"$VERILATOR_BIN" --cc -Wno-fatal --Mdir "$DIFF_B4_OBJ" \
+			--top-module fp32_div_iterative_radix4_exact \
+			"$REPO_ROOT/rtl/experimental/fp_div/fp32_div_iterative_radix4_exact.sv"
+		make -C "$DIFF_BASELINE_OBJ" -f Vmembrane_fp_divider.mk Vmembrane_fp_divider__ALL.a -j2
+		make -C "$DIFF_B2_OBJ" -f Vfp32_div_iterative_exact.mk Vfp32_div_iterative_exact__ALL.a -j2
+		make -C "$DIFF_B4_OBJ" -f Vfp32_div_iterative_radix4_exact.mk Vfp32_div_iterative_radix4_exact__ALL.a -j2
+		g++ -O2 -std=c++17 \
+			-I "$VINC" -I "$VINC/vltstd" \
+			-I "$DIFF_BASELINE_OBJ" -I "$DIFF_B2_OBJ" -I "$DIFF_B4_OBJ" \
+			-I "$REPO_ROOT/include" \
+			"$REPO_ROOT/rtl/tb/tb_fp32_div_iterative_radix4_exact.cpp" \
+			"$REPO_ROOT/src/codecs/f16convert.c" \
+			"$VINC/verilated.cpp" "$VINC/verilated_threads.cpp" \
+			"$DIFF_BASELINE_OBJ/Vmembrane_fp_divider__ALL.a" \
+			"$DIFF_B2_OBJ/Vfp32_div_iterative_exact__ALL.a" \
+			"$DIFF_B4_OBJ/Vfp32_div_iterative_radix4_exact__ALL.a" \
+			-pthread -lpthread -latomic \
+			-o "$DIFF_BIN"
+	fi
+
+	local COMMON_SRC=(
+		"$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_adder.sv"
+		"$REPO_ROOT/rtl/membrane_fp_divider.sv" "$REPO_ROOT/rtl/membrane_fp_multiplier.sv"
+		"$REPO_ROOT/rtl/stream_fifo.sv" "$REPO_ROOT/rtl/valid_delay_line.sv"
+		"$REPO_ROOT/rtl/q4_pack.sv" "$REPO_ROOT/rtl/q4_scan.sv"
+		"$REPO_ROOT/rtl/q4_unpack.sv" "$REPO_ROOT/rtl/q8_dequantize.sv"
+		"$REPO_ROOT/rtl/q8_maxabs_reduce.sv" "$REPO_ROOT/rtl/q8_quantize_pack.sv"
+		"$REPO_ROOT/rtl/q8_scale.sv"
+	)
+
+	if need_build "$TOP_BASELINE_OBJ/Vtop_baseline"; then
+		stage "build: full-datapath test (baseline membrane_quant_stream_top, reused)"
+		rm -rf "$TOP_BASELINE_OBJ"
+		"$VERILATOR_BIN" --cc --exe --build -j 2 -Wno-fatal --Mdir "$TOP_BASELINE_OBJ" \
+			--top-module membrane_quant_stream_top \
+			"${COMMON_SRC[@]}" "$REPO_ROOT/rtl/q4_scale.sv" "$REPO_ROOT/rtl/membrane_quant_stream_top.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/tb_top_verilator_variant.cpp" \
+			-o Vtop_baseline
+	fi
+	if need_build "$TOP_B1_OBJ/Vtop_b1"; then
+		stage "build: full-datapath test (B1 membrane_quant_stream_top_b1, reused)"
+		rm -rf "$TOP_B1_OBJ"
+		"$VERILATOR_BIN" --cc --exe --build -j 2 -Wno-fatal --Mdir "$TOP_B1_OBJ" \
+			--top-module membrane_quant_stream_top_b1 \
+			"${COMMON_SRC[@]}" \
+			"$REPO_ROOT/rtl/experimental/fp_div/fp32_scale_neg_pow2.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/q4_scale_b1.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/membrane_quant_stream_top_b1.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/tb_top_verilator_variant.cpp" \
+			-CFLAGS "-DMEMBRANE_B1_VARIANT" \
+			-o Vtop_b1
+	fi
+	if need_build "$TOP_B2_OBJ/Vtop_b2"; then
+		stage "build: full-datapath test (B2 membrane_quant_stream_top_b2, reused)"
+		rm -rf "$TOP_B2_OBJ"
+		"$VERILATOR_BIN" --cc --exe --build -j 2 -Wno-fatal --Mdir "$TOP_B2_OBJ" \
+			--top-module membrane_quant_stream_top_b2 \
+			"${COMMON_SRC[@]}" \
+			"$REPO_ROOT/rtl/experimental/fp_div/fp32_scale_neg_pow2.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/fp32_div_iterative_exact.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/q4_scale_b2.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/membrane_quant_stream_top_b2.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/tb_top_verilator_variant.cpp" \
+			-CFLAGS "-DMEMBRANE_B2_VARIANT" \
+			-o Vtop_b2
+	fi
+	if need_build "$TOP_B4_OBJ/Vtop_b4"; then
+		stage "build: full-datapath test (B4 membrane_quant_stream_top_b4)"
+		rm -rf "$TOP_B4_OBJ"
+		"$VERILATOR_BIN" --cc --exe --build -j 2 -Wno-fatal --Mdir "$TOP_B4_OBJ" \
+			--top-module membrane_quant_stream_top_b4 \
+			"${COMMON_SRC[@]}" \
+			"$REPO_ROOT/rtl/experimental/fp_div/fp32_scale_neg_pow2.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/fp32_div_iterative_radix4_exact.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/q4_scale_b4.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/membrane_quant_stream_top_b4.sv" \
+			"$REPO_ROOT/rtl/experimental/fp_div/tb_top_verilator_variant.cpp" \
+			-CFLAGS "-DMEMBRANE_B4_VARIANT" \
+			-o Vtop_b4
+	fi
+
+	local DIFF_RANDOM_COUNT DIFF_GENERAL_COUNT DIFF_Q4DIST_COUNT N_PER_MODE N_MIX N_ADV
+	if [ "$MODE" = "quick" ]; then
+		DIFF_RANDOM_COUNT=2000
+		DIFF_GENERAL_COUNT=500
+		DIFF_Q4DIST_COUNT=200
+		N_PER_MODE=500
+		N_MIX=200
+		N_ADV=200
+	else
+		DIFF_RANDOM_COUNT=4200000
+		DIFF_GENERAL_COUNT=200000
+		DIFF_Q4DIST_COUNT=50000
+		N_PER_MODE=200000
+		N_MIX=100000
+		N_ADV=70000
+	fi
+	gen_datapath_vectors "$N_PER_MODE"
+
+	stage "3-way differential test ($MODE: $DIFF_RANDOM_COUNT random(num=1, reproduces B2's 2.2M + >=2M additional) + $DIFF_GENERAL_COUNT random(general) + $DIFF_Q4DIST_COUNT q4-dist cases)"
+	"$DIFF_BIN" "$DIFF_RANDOM_COUNT" "$DIFF_GENERAL_COUNT" "$DIFF_Q4DIST_COUNT"
+
+	stage "full-datapath test, baseline ($MODE: N_PER_MODE=$N_PER_MODE N_MIX=$N_MIX N_ADV=$N_ADV)"
+	"$TOP_BASELINE_OBJ/Vtop_baseline" "$N_PER_MODE" "$N_MIX" "$N_ADV"
+	stage "full-datapath test, B1 variant ($MODE: N_PER_MODE=$N_PER_MODE N_MIX=$N_MIX N_ADV=$N_ADV)"
+	"$TOP_B1_OBJ/Vtop_b1" "$N_PER_MODE" "$N_MIX" "$N_ADV"
+	stage "full-datapath test, B2 variant ($MODE: N_PER_MODE=$N_PER_MODE N_MIX=$N_MIX N_ADV=$N_ADV)"
+	"$TOP_B2_OBJ/Vtop_b2" "$N_PER_MODE" "$N_MIX" "$N_ADV"
+	stage "full-datapath test, B4 variant ($MODE: N_PER_MODE=$N_PER_MODE N_MIX=$N_MIX N_ADV=$N_ADV)"
+	"$TOP_B4_OBJ/Vtop_b4" "$N_PER_MODE" "$N_MIX" "$N_ADV"
+
+	local SYNTH_DIR="$BUILD_DIR/synth"
+	mkdir -p "$SYNTH_DIR"
+
+	if [ "$MODE" = "quick" ]; then
+		stage "synthesis smoke test (elaboration only, no full synth_ecp5 -- see --full)"
+		cat >"$SYNTH_DIR/elab-b4-standalone.ys" <<EOF
+read_verilog -sv rtl/experimental/fp_div/fp32_div_iterative_radix4_exact.sv
+hierarchy -check -top fp32_div_iterative_radix4_exact
+EOF
+		yosys_run "elaborate fp32_div_iterative_radix4_exact" "$SYNTH_DIR/elab-b4-standalone.ys"
+		cat >"$SYNTH_DIR/elab-q4scale-b4.ys" <<EOF
+read_verilog -sv rtl/membrane_fp_pkg.sv rtl/membrane_fp_divider.sv rtl/valid_delay_line.sv rtl/experimental/fp_div/fp32_scale_neg_pow2.sv rtl/experimental/fp_div/fp32_div_iterative_radix4_exact.sv rtl/experimental/fp_div/q4_scale_b4.sv
+hierarchy -check -top q4_scale_b4
+EOF
+		yosys_run "elaborate q4_scale_b4" "$SYNTH_DIR/elab-q4scale-b4.ys"
+	else
+		stage "full synthesis matrix (generic + ECP5, standalone unit + q4_scale, baseline/B2/B4 -- several minutes, real synth_ecp5 memory cost, run sequentially not in parallel)"
+
+		local variant src top
+		for variant in baseline b2 b4; do
+			case "$variant" in
+			baseline)
+				src="rtl/valid_delay_line.sv rtl/membrane_fp_divider.sv"
+				top="membrane_fp_divider"
+				;;
+			b2)
+				src="rtl/experimental/fp_div/fp32_div_iterative_exact.sv"
+				top="fp32_div_iterative_exact"
+				;;
+			b4)
+				src="rtl/experimental/fp_div/fp32_div_iterative_radix4_exact.sv"
+				top="fp32_div_iterative_radix4_exact"
+				;;
+			esac
+
+			cat >"$SYNTH_DIR/standalone-$variant-b4run-generic.ys" <<EOF
+read_verilog -sv $src
+hierarchy -check -top $top
+proc; opt
+synth -top $top
+stat
+EOF
+			yosys_run "standalone $variant ($top), generic" "$SYNTH_DIR/standalone-$variant-b4run-generic.ys"
+
+			cat >"$SYNTH_DIR/standalone-$variant-b4run-ecp5.ys" <<EOF
+read_verilog -sv $src
+hierarchy -check -top $top
+synth_ecp5 -top $top
+stat
+EOF
+			yosys_run "standalone $variant ($top), ECP5" "$SYNTH_DIR/standalone-$variant-b4run-ecp5.ys"
+		done
+
+		for variant in baseline b1 b2 b4; do
+			case "$variant" in
+			baseline)
+				src="rtl/membrane_fp_pkg.sv rtl/membrane_fp_divider.sv rtl/valid_delay_line.sv rtl/q4_scale.sv"
+				top="q4_scale"
+				;;
+			b1)
+				src="rtl/membrane_fp_pkg.sv rtl/membrane_fp_divider.sv rtl/valid_delay_line.sv rtl/experimental/fp_div/fp32_scale_neg_pow2.sv rtl/experimental/fp_div/q4_scale_b1.sv"
+				top="q4_scale_b1"
+				;;
+			b2)
+				src="rtl/membrane_fp_pkg.sv rtl/membrane_fp_divider.sv rtl/valid_delay_line.sv rtl/experimental/fp_div/fp32_scale_neg_pow2.sv rtl/experimental/fp_div/fp32_div_iterative_exact.sv rtl/experimental/fp_div/q4_scale_b2.sv"
+				top="q4_scale_b2"
+				;;
+			b4)
+				src="rtl/membrane_fp_pkg.sv rtl/membrane_fp_divider.sv rtl/valid_delay_line.sv rtl/experimental/fp_div/fp32_scale_neg_pow2.sv rtl/experimental/fp_div/fp32_div_iterative_radix4_exact.sv rtl/experimental/fp_div/q4_scale_b4.sv"
+				top="q4_scale_b4"
+				;;
+			esac
+
+			cat >"$SYNTH_DIR/q4scale-$variant-b4run-generic.ys" <<EOF
+read_verilog -sv $src
+hierarchy -check -top $top
+proc; opt
+synth -top $top
+stat
+EOF
+			yosys_run "q4_scale $variant ($top), generic" "$SYNTH_DIR/q4scale-$variant-b4run-generic.ys"
+
+			cat >"$SYNTH_DIR/q4scale-$variant-b4run-ecp5.ys" <<EOF
+read_verilog -sv $src
+hierarchy -check -top $top
+synth_ecp5 -top $top
+stat
+EOF
+			yosys_run "q4_scale $variant ($top), ECP5" "$SYNTH_DIR/q4scale-$variant-b4run-ecp5.ys"
+		done
+
+		stage "whole-top synthesis attempt, membrane_quant_stream_top_b4 (soft timeout, UNAVAILABLE not a failure -- same precedent as baseline/B1/B2/B3)"
+		cat >"$SYNTH_DIR/top-b4-ecp5.ys" <<EOF
+read_verilog -sv rtl/membrane_fp_pkg.sv rtl/membrane_fp_divider.sv rtl/membrane_fp_adder.sv rtl/membrane_fp_multiplier.sv rtl/valid_delay_line.sv rtl/stream_fifo.sv rtl/q4_pack.sv rtl/q4_scan.sv rtl/q4_unpack.sv rtl/q8_dequantize.sv rtl/q8_maxabs_reduce.sv rtl/q8_quantize_pack.sv rtl/q8_scale.sv rtl/experimental/fp_div/fp32_scale_neg_pow2.sv rtl/experimental/fp_div/fp32_div_iterative_radix4_exact.sv rtl/experimental/fp_div/q4_scale_b4.sv rtl/experimental/fp_div/membrane_quant_stream_top_b4.sv
+hierarchy -check -top membrane_quant_stream_top_b4
+synth_ecp5 -top membrane_quant_stream_top_b4
+stat
+EOF
+		yosys_run_soft "whole-top membrane_quant_stream_top_b4, ECP5" "$SYNTH_DIR/top-b4-ecp5.ys" 300 || true
+	fi
+
+	stage "done (phase b4, $MODE)"
+	echo "See experiments/EXP-FPGA-DIV-001/phase-b4.md and results/b4-comparison.md for the committed numbers this script reproduces."
+}
+
 case "$PHASE" in
 b1) run_phase_b1 ;;
 b2) run_phase_b2 ;;
 b3) run_phase_b3 ;;
+b4) run_phase_b4 ;;
 esac

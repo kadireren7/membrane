@@ -324,6 +324,52 @@ cause) and `phase-b3.md` (design, results, decision), summarized here:
   yet area-efficient enough to call this ready for promotion; see
   `phase-b3.md` section 9 and `decision.md` for the full reasoning).
 
+## Phase B4 addendum (this experiment's own follow-on, same branch)
+
+Everything above this section (Phase A, B1, B2, B3) is unchanged, left as
+originally written per this project's own disclosed-not-rewritten
+convention (`decision.md` separately records that Phase B3's own CONTINUE
+call there is now superseded by REJECT_ARCHITECTURE on reflection -- see
+that file, not edited here). Phase B4 tests the alternative to B3: instead
+of adding scheduling complexity around an unchanged, slow divider, make
+the divider itself faster, with zero new scheduling logic. Full detail in
+`phase-b4.md`, summarized here:
+
+- New files only: `rtl/experimental/fp_div/fp32_div_iterative_radix4_exact.sv`
+  (an exact radix-4 iterative divider -- 2 quotient bits/cycle, 13-cycle
+  main iteration, vs. Phase B2's 1 bit/cycle, 26-cycle iteration),
+  `rtl/experimental/fp_div/q4_scale_b4.sv`, `rtl/experimental/fp_div/membrane_quant_stream_top_b4.sv`
+  (structurally identical to B2's own top level -- same full-serialization
+  `q4enc_inflight` scheduling, NO Phase B3 reorder buffer anywhere), plus
+  a new 3-way differential testbench
+  (`rtl/tb/tb_fp32_div_iterative_radix4_exact.cpp`). No production RTL
+  file, and no Phase B2/B3 experimental file, was modified.
+- 3-way differential test (`membrane_fp_divider` vs. B2's radix-2 vs. B4's
+  radix-4, all driven simultaneously every case): 4,456,685 cases
+  (reproduces B2's own 2,456,685-case scope plus 2,000,000 additional
+  random cases), **0 mismatches in either pairing**. B4's own general-path
+  latency measures ~15 cycles vs. B2's ~28-29 -- essentially half, exactly
+  as the halved iteration count predicts.
+- Full-datapath parity: 1,110,000/1,110,000 transactions, 0 fails/drops/
+  duplicates, on the identical adversarial workload Phase B3 used for its
+  own comparison.
+- **The headline result**: overall cycles/transaction falls 32.13% vs. B2
+  (11.395 -> 7.734) -- roughly 7-8x the size of Phase B3's own best result
+  (-4.03% at its selected queue depth) -- while costing only +25.0% ECP5
+  cells vs. B2 at the `q4_scale` integration point (2,836 vs. 2,268, vs.
+  Phase B3's reorder buffer alone costing MORE area than the entire unit
+  it protected). B2's own area advantage over baseline is barely eroded
+  (`q4_scale` ECP5: -96.95% at B2 -> -96.19% at B4, vs. Phase B3's
+  estimated combined -76.8%).
+- **Decision: PROMOTE_CANDIDATE** (exact parity against two references
+  simultaneously, clean full datapath, a large real throughput win at a
+  small real area cost, no new scheduling complexity -- see `phase-b4.md`
+  section 8 and `decision.md` for the full reasoning). This is the
+  strongest result of any Phase B sub-phase to date, but PROMOTE_CANDIDATE
+  here means "ready to be considered for promotion in a future, separate,
+  explicitly-authorized step" -- not an authorization to merge now (see
+  "Promotion status" below, unchanged by this phase's own decision).
+
 ## Promotion status
 
 `not proposed` -- this remains on `experiment/fp-divider-pipeline`,
@@ -337,5 +383,9 @@ research-in-progress work on a public branch. Phase B1's own decision
 project's contribution policy -- it does not itself authorize or imply
 any merge into `main`. Phase B2's own decision (CONTINUE, above) carries
 the same status: experiment-internal only, no merge into `main`
-authorized or implied by it. Phase B3's own decision (CONTINUE, above)
-carries the same status too.
+authorized or implied by it. Phase B3's own decision (CONTINUE in this
+file's own text above, superseded by REJECT_ARCHITECTURE in `decision.md`)
+carries the same status too. Phase B4's own decision (PROMOTE_CANDIDATE,
+above) ALSO carries the same status -- experiment-internal only; no merge
+into `main`, and no pull request, is authorized or implied by any decision
+recorded in this experiment, including this one.
