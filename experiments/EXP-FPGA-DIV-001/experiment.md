@@ -218,6 +218,56 @@ divisor shortcut for `q4_scale`'s `u_div_d`) -- full detail in
   predicting metric shows only a small gain -- see `phase-b1.md`'s own
   "Decision" section for the full reasoning).
 
+## Phase B2 addendum (this experiment's own follow-on, same branch)
+
+Everything above this section (Phase A, Phase B1) is unchanged, left as
+originally written per this project's own disclosed-not-rewritten
+convention. Phase B2 implemented the ONE remaining candidate from Phase
+B1's scope note: `q4_scale`'s `u_div_id` (`id = 1/d`, the last genuinely
+variable-divisor operation in the Q4_0 path) -- full detail in
+`phase-b2.md` and `results/b2-comparison.md`, summarized here:
+
+- New files only: `rtl/experimental/fp_div/fp32_div_iterative_exact.sv`
+  (a synthesizable, multi-cycle, exact radix-2 restoring-division FP32
+  divider with a real in_valid/in_ready/out_valid/out_ready handshake),
+  `rtl/experimental/fp_div/q4_scale_b2.sv`, `rtl/experimental/fp_div/membrane_quant_stream_top_b2.sv`,
+  `rtl/tb/tb_fp32_div_iterative_exact.cpp`. `rtl/experimental/fp_div/tb_top_verilator_variant.cpp`
+  (already shared by Phase B1) gained a third compile-time variant
+  (`-DMEMBRANE_B2_VARIANT`) plus per-mode latency instrumentation and a
+  new "reset while Q4_0 encode divider busy" test stage -- both additions
+  are harmless/inert for the baseline and B1 builds it already covered.
+  No production RTL file (`rtl/q4_scale.sv`, `rtl/membrane_quant_stream_top.sv`,
+  `rtl/membrane_fp_divider.sv`, `rtl/q8_scale.sv`) was modified.
+- Component differential test: 2,456,685 cases (including a full specials
+  x specials cross product and a real Q4_0 runtime `d`-distribution
+  sample), 0 mismatches against the real `membrane_fp_divider` RTL for
+  the exact `1.0f/d` operation.
+- Full-datapath parity: 520,000/520,000 transactions, 0 fails, for
+  baseline/B1/B2 top-level variants, including a new dedicated
+  "reset while Q4_0 encode divider busy" check (not just the existing
+  reset-mid-stream-during-Q8-encode test).
+- Synthesis (real, both generic and ECP5-mapped, standalone unit and
+  `q4_scale` integration point): standalone-unit ECP5 cells -98.0%;
+  **`q4_scale`-level ECP5 cells -96.9%** (dramatically larger than Phase
+  B1's own -2.2%, because Phase B2 removes the actual wide-combinational-
+  divide cost itself, not one of two similar instances of it -- 0
+  `membrane_fp_divider` instances remain anywhere in `q4_scale_b2.sv`).
+  Whole-top-level synthesis was attempted but timed out under this
+  session's memory constraints (marked `UNAVAILABLE`/`not_attempted`, not
+  silently omitted) -- same precedent as Phase A/B1, which also only
+  synthesized the standalone and `q4_scale` levels.
+- Real, measured cost: Q4_0 encode's own mean latency rose ~39x (12 ->
+  473 cycles, full-datapath test), and -- honestly disclosed, not
+  glossed over -- the three OTHER modes (byte-identical RTL to
+  production) also slowed ~1.9x (mean ~12 -> ~22.8 cycles) purely from
+  this phase's full-serialization scheduling choice (block all issuance
+  while one Q4_0 encode transaction is in flight), a queueing cost, not
+  a divider-speed cost.
+- **Decision: CONTINUE** (exact and clean, large real area win, but the
+  serialization scheduling's collateral cost on unrelated modes needs a
+  queueing/scheduling improvement before promotion -- see
+  `phase-b2.md`'s own "Decision" section for the full reasoning).
+
 ## Promotion status
 
 `not proposed` -- this remains on `experiment/fp-divider-pipeline`,
@@ -229,4 +279,6 @@ claim of the `v0.1.0-research` release; it is disclosed,
 research-in-progress work on a public branch. Phase B1's own decision
 (CONTINUE, above) is an experiment-internal decision only, per this
 project's contribution policy -- it does not itself authorize or imply
-any merge into `main`.
+any merge into `main`. Phase B2's own decision (CONTINUE, above) carries
+the same status: experiment-internal only, no merge into `main`
+authorized or implied by it.

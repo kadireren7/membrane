@@ -196,3 +196,15 @@ small differential run, small integration check, synthesis elaboration
 only) or `--phase b1 --full` (the exact numbers in this document: 2.2M+
 differential cases, full 520,000-transaction datapath test per variant,
 complete synthesis matrix).
+
+## Phase B2 forward pointer
+
+Everything above this section is unchanged, left as originally written
+per this project's own disclosed-not-rewritten convention. The one
+divider instance this phase explicitly left untouched --
+`q4_scale`'s `u_div_id` (`id = 1/d`, a variable-divisor operation) -- is
+exactly what Phase B2 targets next, with a synthesizable multi-cycle
+iterative divider instead of another combinational shortcut (`1/d` has
+no constant-divisor structure to exploit the way `mx/-8.0f` did here).
+See `phase-b2.md` and `experiment.md`'s own "Phase B2 addendum" section
+for the full result -- not repeated here.

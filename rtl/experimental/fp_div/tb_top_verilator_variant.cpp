@@ -1,16 +1,23 @@
-// EXP-FPGA-DIV-001 Phase B1: full-datapath parity test, equivalent in
+// EXP-FPGA-DIV-001 Phase B1/B2: full-datapath parity test, equivalent in
 // scope to rtl/tb/tb_top_verilator.cpp (that file is NOT modified by
 // this experiment), parametrized at COMPILE TIME by
-// `MEMBRANE_B1_VARIANT` to build against either the production
-// membrane_quant_stream_top or the Phase B1
-// membrane_quant_stream_top_b1 (see
-// rtl/experimental/fp_div/membrane_quant_stream_top_b1.sv). This is
-// "the same testbench" in the sense the experiment spec asks for: one
-// C++ source, compiled twice (see scripts/run-exp-fp-divider-001.sh),
-// identical checks and randomized-backpressure/reset-injection/
-// ordering/credit-accounting logic against both variants, so any
-// difference in the two runs' results is attributable to the RTL
-// change alone, not to a testbench divergence.
+// `MEMBRANE_B1_VARIANT`/`MEMBRANE_B2_VARIANT` to build against the
+// production membrane_quant_stream_top, the Phase B1
+// membrane_quant_stream_top_b1, or the Phase B2
+// membrane_quant_stream_top_b2 (see
+// rtl/experimental/fp_div/membrane_quant_stream_top_b1.sv /
+// _b2.sv). This is "the same testbench" in the sense the experiment
+// spec asks for: one C++ source, compiled three ways (see
+// scripts/run-exp-fp-divider-001.sh), identical checks and randomized-
+// backpressure/reset-injection/ordering/credit-accounting logic against
+// every variant, so any difference in the runs' results is attributable
+// to the RTL change alone, not to a testbench divergence. This file's
+// generic issue/retire tracking (see run_mode() below) does not assume
+// any fixed per-mode latency, so it needed no logic change at all to
+// also validate Phase B2's variable-latency, single-in-flight-per-mode
+// Q4_0 encode retirement -- only the per-mode latency instrumentation
+// below (added for Phase B2's own reporting needs, harmless for
+// baseline/B1 too) and the DUT type selection are new.
 //
 // Runs the same coverage rtl/tb/tb_top_verilator.cpp does: >=100,000
 // transactions per mode (Q8 encode, Q8 decode, Q4 encode, Q4 decode)
@@ -18,10 +25,10 @@
 // backpressure, with an explicit reset-mid-stream flush test, checking
 // id/mode/data on every retirement and the input-FIFO/output-FIFO
 // credit-accounting assertions already built into
-// membrane_quant_stream_top(_b1).sv itself. Running the SAME mixed set
-// of all 4 modes against the B1 top-level is what confirms the Q8
-// paths (byte-identical RTL in both tops) are unaffected by the Q4-only
-// change, not a separate test.
+// membrane_quant_stream_top(_b1/_b2).sv itself. Running the SAME mixed
+// set of all 4 modes against the B1/B2 top-levels is what confirms the
+// Q8 paths (byte-identical RTL in every top) are unaffected by the
+// Q4-only change, not a separate test.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -30,7 +37,12 @@
 #include <random>
 #include <vector>
 #include <string>
-#ifdef MEMBRANE_B1_VARIANT
+#include <algorithm>
+#if defined(MEMBRANE_B2_VARIANT)
+#include "Vmembrane_quant_stream_top_b2.h"
+typedef Vmembrane_quant_stream_top_b2	DutType;
+static const char	*VARIANT_NAME = "membrane_quant_stream_top_b2 (Phase B2: iterative exact Q4 divider)";
+#elif defined(MEMBRANE_B1_VARIANT)
 #include "Vmembrane_quant_stream_top_b1.h"
 typedef Vmembrane_quant_stream_top_b1	DutType;
 static const char	*VARIANT_NAME = "membrane_quant_stream_top_b1 (Phase B1: neg-pow2 Q4 scale)";
@@ -233,6 +245,7 @@ struct InFlightTxn
 	int		mode;
 	int		blk;
 	uint16_t	id;
+	uint64_t	issue_cycle;
 };
 
 static DutType	*g_dut;
@@ -244,12 +257,36 @@ static std::chrono::steady_clock::time_point	g_last_heartbeat;
 static uint64_t	g_total_planned;
 static std::string	g_stage;
 
+// Per-mode retire-latency stats (issue cycle -> retire cycle), added
+// for Phase B2's own reporting needs (Q4 encode's latency is no longer
+// fixed at L_MAX -- this measures it directly instead of assuming it);
+// harmless bookkeeping for baseline/B1 too, where it's expected to come
+// out constant (==L_MAX) for every mode.
+struct ModeLatencyStats
+{
+	uint64_t	count = 0;
+	uint64_t	sum = 0;
+	uint64_t	min_c = UINT64_MAX;
+	uint64_t	max_c = 0;
+};
+static ModeLatencyStats	g_mode_latency[4];
+
+static void	record_mode_latency(int mode, uint64_t lat)
+{
+	ModeLatencyStats	&s = g_mode_latency[mode];
+
+	s.count++;
+	s.sum += lat;
+	s.min_c = std::min(s.min_c, lat);
+	s.max_c = std::max(s.max_c, lat);
+}
+
 static void	heartbeat(void)
 {
 	auto	now = std::chrono::steady_clock::now();
 	double	since_hb = std::chrono::duration<double>(now - g_last_heartbeat).count();
 
-	if (since_hb >= 60.0)
+	if (since_hb >= 8.0)
 	{
 		double	elapsed = std::chrono::duration<double>(now - g_start_time).count();
 		double	rate = g_checked > 0 ? (double)g_checked / elapsed : 0.0;
@@ -335,6 +372,7 @@ static void	run_mode(int fixed_mode, int count)
 			t.mode = mode;
 			t.blk = issued % N_PER_MODE;
 			t.id = (uint16_t)(next_id & 0xFFFFu);
+			t.issue_cycle = g_cycle;
 			inflight.push_back(t);
 			issued++;
 			next_id++;
@@ -365,6 +403,7 @@ static void	run_mode(int fixed_mode, int count)
 						t.mode, got_mode, (unsigned long)g_cycle);
 					g_fails++;
 				}
+				record_mode_latency(t.mode, g_cycle - t.issue_cycle);
 				head++;
 				checked_local++;
 				g_checked++;
@@ -449,6 +488,58 @@ int	main(int argc, char **argv)
 			(unsigned long)g_fails);
 	}
 
+	// Reset while a Q4_0 encode transaction is mid-flight -- the one
+	// scenario specific to Phase B2's variable-latency iterative
+	// divider (task item 6: "reset while divider busy"). For
+	// baseline/B1 this Q4_0 encode transaction would already have
+	// finished well before cycle 15 (fixed ~12-cycle latency), so this
+	// stage degenerates harmlessly into another ordinary reset-mid-
+	// stream check for those variants; for B2 it lands solidly inside
+	// the iterative divider's 26-cycle iteration (general path, since
+	// block 0's mx is essentially never exactly a NaN/Inf/zero
+	// early-out case). Checks: no stale out_valid during/after reset,
+	// in_ready comes back once reset deasserts, and normal operation
+	// (checked by every subsequent run_mode() stage, 0 fails required)
+	// resumes cleanly afterward.
+	{
+		bool	a, r;
+		uint32_t	words[16];
+
+		fprintf(stderr, "[stage] reset while Q4_0 encode divider busy\n");
+		build_in_data(MODE_Q4_ENC, 0, words);
+		g_dut->in_valid = 1;
+		g_dut->in_mode = MODE_Q4_ENC;
+		g_dut->in_id = 0xBEEF & 0xFFFF;
+		for (int w = 0; w < 16; w++)
+			g_dut->in_data[w] = words[w];
+		g_dut->out_ready = 1;
+		step_cycle(a, r);	// issue cycle
+		g_dut->in_valid = 0;
+		for (int i = 0; i < 15; i++)
+			step_cycle(a, r);	// well inside the iterative divider's 26-cycle iteration for B2
+		g_dut->rst_n = 0;
+		for (int i = 0; i < 5; i++)
+		{
+			g_dut->eval();
+			if (g_dut->out_valid)
+			{
+				fprintf(stderr, "FAIL: out_valid asserted during reset while Q4_0 encode divider was busy\n");
+				g_fails++;
+			}
+			step_cycle(a, r);
+		}
+		g_dut->rst_n = 1;
+		step_cycle(a, r);
+		g_dut->eval();
+		if (!g_dut->in_ready)
+		{
+			fprintf(stderr, "FAIL: in_ready not asserted one cycle after reset deassertion (post Q4_0-encode-busy reset)\n");
+			g_fails++;
+		}
+		fprintf(stderr, "[stage] reset while Q4_0 encode divider busy done (fails so far: %lu)\n",
+			(unsigned long)g_fails);
+	}
+
 	g_stage = "Q8_ENC";
 	fprintf(stderr, "[stage] Q8 encode: %d transactions\n", N_PER_MODE);
 	run_mode(MODE_Q8_ENC, N_PER_MODE);
@@ -481,6 +572,23 @@ int	main(int argc, char **argv)
 
 	double	elapsed = std::chrono::duration<double>(
 		std::chrono::steady_clock::now() - g_start_time).count();
+
+	static const char	*mode_names[4] = { "Q8_ENC", "Q8_DEC", "Q4_ENC", "Q4_DEC" };
+
+	printf("=== per-mode retire latency (issue cycle -> retire cycle) ===\n");
+	for (int m = 0; m < 4; m++)
+	{
+		ModeLatencyStats	&s = g_mode_latency[m];
+		double	mean = s.count ? (double)s.sum / (double)s.count : 0.0;
+
+		printf("  %-8s count=%-8lu min=%-6lu mean=%-10.3f max=%-6lu cycles/txn=%.3f\n",
+			mode_names[m], (unsigned long)s.count,
+			(unsigned long)(s.count ? s.min_c : 0), mean,
+			(unsigned long)s.max_c, mean);
+	}
+	printf("total cycles this run: %lu, total transactions checked: %lu, overall cycles/transaction: %.3f\n",
+		(unsigned long)g_cycle, (unsigned long)g_checked,
+		g_checked ? (double)g_cycle / (double)g_checked : 0.0);
 
 	if (g_fails == 0)
 		printf("PASS: %s Verilator cosim, %lu transactions, 0 fails, %.1fs\n",
