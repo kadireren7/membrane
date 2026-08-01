@@ -42,6 +42,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+        # No later step needs authenticated git access (no push, no
+        # fetch of another private ref) -- only a local cmake
+        # configure/build and the CodeQL init/analyze actions run after
+        # this, so the checkout token is not kept around.
+        #
         # No `submodules:` option set (actions/checkout@v4 defaults to
         # not fetching submodules) -- deliberate. The build below uses
         # MEMBRANE_ENABLE_LLAMA's own default (OFF), the same default

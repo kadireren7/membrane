@@ -27,19 +27,26 @@ comments on the diff. **Advisory only**:
   explicitly disabled in the config. It comments; it does not push
   commits.
 - Scoped to the current PR's diff only, with `path_filters` de-prioritizing
-  generated/vendored/large-data paths (see `.coderabbit.yaml` for the
-  full list: `third_party/**`, build output, model weight file
-  extensions, committed benchmark CSV/JSON, the paper's built PDF and
-  LaTeX byproducts, and raw experiment result artifacts) and
-  `path_instructions` carrying this project's own review priorities (see
-  below).
-- **Installation status**: the CodeRabbit GitHub App is **not yet
-  installed** on `kadireren7/membrane` as of this document being written
-  (verified: no webhook, no prior CodeRabbit comment on any existing
-  PR). Installing it requires Kadir to authorize it through the GitHub
-  UI/marketplace — that step could not be performed as part of preparing
-  this configuration. `.coderabbit.yaml` will take effect automatically
-  once the app is installed; no further repository change is needed.
+  generated/large-data paths (see `.coderabbit.yaml` for the full list:
+  build output, model weight file extensions, committed benchmark
+  CSV/JSON, the paper's built PDF and LaTeX byproducts, and raw
+  experiment result artifacts) and `path_instructions` carrying this
+  project's own review priorities (see below). `third_party/**` is
+  deliberately **not** filtered out: CodeRabbit's own docs do not
+  document whether an inclusion pattern reliably overrides an earlier
+  exclusion pattern, and this project needs `third_party/llama.cpp`
+  submodule-pointer changes (the only thing that can ever appear in a
+  diff under `third_party/`, since it's a single git submodule with no
+  other tracked files) to stay in review scope, per the high-priority
+  `path_instructions` rule below.
+- **Installation status**: the CodeRabbit GitHub App is **installed and
+  operational** on `kadireren7/membrane` — confirmed by real PR summary,
+  walkthrough, and line-by-line review comments on PR #4.
+  `.coderabbit.yaml` was initially prepared before installation (when
+  the app had not yet been authorized through the GitHub UI/marketplace);
+  installation completed during PR #4. It remains advisory only: no
+  auto-approve, no auto-merge, not a required merge check, and no
+  authority to write code to this repository.
 
 ### 2. GitHub CodeQL — static security/quality analysis
 
@@ -102,7 +109,7 @@ finding is real and whether it's been addressed.
 | `build-and-test (Debug)` (ci.yml) | **Required** (recommended branch protection, see below — not yet applied) |
 | `build-and-test (ASan)` (ci.yml) | **Required** (recommended, not yet applied) |
 | `thread-sanitizer` (ci.yml) | **Required** (recommended, not yet applied) |
-| CodeQL (`codeql.yml`) | **Required** once branch protection is applied — its real check name (`CodeQL analysis (c-cpp)`) is now confirmed from this change's own first real run (PR #4, commit `b2c6292`, 0 alerts), so it's included in the recommendation below — not yet applied |
+| CodeQL (`codeql.yml`) | **Required** once branch protection is applied — its real check name (`CodeQL analysis (c-cpp)`) is confirmed from a completed run with 0 alerts, so it's included in the recommendation below — not yet applied |
 | CodeRabbit | **Never required.** Advisory only, by design (see above). |
 | Paper build (`paper.yml`) | Not applicable to most PRs (path-filtered to `paper/**`); not a proposed required check for `main` in general. |
 
@@ -118,9 +125,9 @@ applied via the GitHub API as part of this change — enabling required
 status checks changes how every future push/PR to `main` behaves for the
 whole repository, which is a decision left to Kadir to apply
 consciously rather than as a side effect of adding these two review
-tools. See that section for the exact settings to enable, and the one
-missing manual step (installing the CodeRabbit App) that should happen
-before or alongside it.
+tools. See that section for the exact settings to enable. (The
+CodeRabbit App is already installed — see "Installation status" above —
+so no manual step remains before applying this.)
 
 ## Privacy / secrets
 
@@ -148,8 +155,10 @@ document — not exercised, per the reasoning above).
 
 - `build-and-test (Debug)`, `build-and-test (ASan)`, `thread-sanitizer` —
   from `main`'s own CI history (pre-existing, `ci.yml`).
-- `CodeQL analysis (c-cpp)` — from this change's own first real run (PR
-  #4, commit `b2c6292`, `codeql.yml`; 0 alerts on that first run).
+- `CodeQL analysis (c-cpp)` — from `codeql.yml`'s own first completed
+  run, 0 alerts. See that run's own GitHub Actions log for the exact PR
+  and commit, rather than pinning a specific SHA here that the next
+  push would make stale.
 
 Recommended settings:
 

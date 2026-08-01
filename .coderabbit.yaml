@@ -1,15 +1,13 @@
 # CodeRabbit configuration for MEMBRANE.
 #
-# Status as of this file's creation: the CodeRabbit GitHub App is NOT
-# installed on this repository yet (verified: no webhook, no prior
-# CodeRabbit comment on any existing PR). Installing it requires Kadir to
-# authorize it through the GitHub UI (https://github.com/marketplace/coderabbitai
-# or the CodeRabbit dashboard) -- an app-install/OAuth action this file
-# cannot perform. This config is prepared in advance so review behavior
-# is correct from the very first PR once the app is installed. Validate
-# this file against CodeRabbit's current schema
-# (https://docs.coderabbit.ai/reference/yaml-template) after installing,
-# since the product's config surface changes over time.
+# Status: the CodeRabbit GitHub App is installed and operational on
+# kadireren7/membrane -- confirmed by real review comments on PR #4.
+# This file was initially prepared before installation (when the app
+# was not yet authorized through the GitHub UI); installation completed
+# during PR #4, and this file has been reviewed against a real
+# CodeRabbit run since. Advisory only: no auto-merge, not a required
+# merge check, no authority to write code to this repository (see
+# below and docs/automated-pr-review.md).
 #
 # Design intent (see docs/automated-pr-review.md for the full policy):
 # advisory only -- CodeRabbit never blocks a merge, never approves a PR,
@@ -96,11 +94,22 @@ reviews:
   # scope) -- nothing here broadens that to a full-repository scan.
   #
   # path_filters: lower priority / excluded from review. Generated
-  # output, vendored code, and large committed data artifacts, none of
-  # which is hand-written logic a line-by-line review meaningfully
-  # improves.
+  # output and large committed data artifacts, none of which is
+  # hand-written logic a line-by-line review meaningfully improves.
+  #
+  # Deliberately NOT excluding third_party/** here: CodeRabbit's own
+  # docs (https://docs.coderabbit.ai/configuration/path-instructions,
+  # https://docs.coderabbit.ai/reference/configuration) do not specify
+  # whether a later un-prefixed inclusion pattern reliably overrides an
+  # earlier `!`-prefixed exclusion, so a broad exclusion here cannot be
+  # trusted to still let the path_instructions rule below ("Any change
+  # under third_party/llama.cpp -- flag with high priority") apply.
+  # third_party/ contains only the llama.cpp git submodule (a single
+  # gitlink entry, no other files), so a PR diff there is always just
+  # the "Subproject commit <sha>" pointer bump this project most wants
+  # reviewed -- there is no generated/noisy content under third_party/
+  # to filter out in practice.
   path_filters:
-    - "!third_party/**"
     - "!build/**"
     - "!build-*/**"
     - "!**/*.gguf"
