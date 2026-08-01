@@ -1,6 +1,8 @@
 #define _DEFAULT_SOURCE
 
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -156,10 +158,14 @@ static void	test_failed_write_keeps_resident(void)
 	membrane_backend_t	*ro;
 	membrane_store_t	*s;
 	char				rodir[] = "/tmp/membrane-ro-XXXXXX";
+	int					dirfd;
 
 	TEST_ASSERT(mkdtemp(rodir) != NULL, "temp dir");
+	/* fchmod(dirfd, ...) below, not repeated chmod(rodir, ...): no TOCTOU window. */
+	dirfd = open(rodir, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+	TEST_ASSERT(dirfd >= 0, "open temp dir by descriptor");
 	ro = membrane_backend_file_create(rodir);
-	TEST_ASSERT(ro != NULL && chmod(rodir, 0500) == 0, "make backend dir read-only");
+	TEST_ASSERT(ro != NULL && fchmod(dirfd, 0500) == 0, "make backend dir read-only");
 	s = make_store(BLK, ro);
 	put_random(s, 1, 1);
 	TEST_ASSERT(membrane_store_put(s, 2, (const uint8_t *)"x", 1) != MEMBRANE_OK
@@ -168,8 +174,44 @@ static void	test_failed_write_keeps_resident(void)
 	check_get(s, 1, 1);
 	membrane_store_destroy(s);
 	membrane_backend_destroy(ro);
-	chmod(rodir, 0700);
+	TEST_ASSERT(fchmod(dirfd, 0700) == 0, "restore backend dir permissions");
+	close(dirfd);
 	rmdir(rodir);
+}
+
+/* Regression test for the fd-based fix above: simulates an attacker racing
+ * between two path-based operations by unlinking the directory and planting
+ * a symlink at the same name, then checks the held fd is unaffected and a
+ * fresh O_NOFOLLOW open refuses the planted symlink. */
+static void	test_dirfd_immune_to_path_swap(void)
+{
+	char		victim[] = "/tmp/membrane-toctou-victim-XXXXXX";
+	char		swapped[] = "/tmp/membrane-toctou-swapped-XXXXXX";
+	int			dirfd;
+	int			reopen_fd;
+	struct stat	st;
+
+	TEST_ASSERT(mkdtemp(victim) != NULL, "victim temp dir");
+	TEST_ASSERT(mkdtemp(swapped) != NULL, "swap-target temp dir");
+	dirfd = open(victim, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+	TEST_ASSERT(dirfd >= 0, "open victim dir by descriptor");
+	TEST_ASSERT(fchmod(dirfd, 0500) == 0, "fchmod victim to read-only via fd");
+	TEST_ASSERT(rmdir(victim) == 0, "attacker frees the path");
+	TEST_ASSERT(symlink(swapped, victim) == 0, "attacker plants a symlink at the old path");
+	reopen_fd = open(victim, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+	/* ELOOP: O_NOFOLLOW hit a symlink. ENOTDIR: combined with O_DIRECTORY,
+	 * some kernels reject the un-followed symlink node as "not a
+	 * directory" before ELOOP would apply. Either means the same thing
+	 * here: the planted symlink was not opened. */
+	TEST_ASSERT(reopen_fd < 0 && (errno == ELOOP || errno == ENOTDIR),
+		"O_NOFOLLOW refuses to follow the planted symlink");
+	TEST_ASSERT(fchmod(dirfd, 0700) == 0, "fchmod via the held fd is unaffected by the swap");
+	TEST_ASSERT(fstat(dirfd, &st) == 0 && (st.st_mode & 0777) == 0700,
+		"the held fd still refers to the original directory, not the symlink target");
+	TEST_ASSERT(stat(swapped, &st) == 0, "symlink target untouched by our fchmod");
+	close(dirfd);
+	unlink(victim);
+	rmdir(swapped);
 }
 
 static void	test_overwrite_evicted(membrane_backend_t *be)
@@ -238,6 +280,7 @@ int	main(void)
 	test_overwrite_evicted(be);
 	membrane_backend_destroy(be);
 	test_failed_write_keeps_resident();
+	test_dirfd_immune_to_path_swap();
 	test_remove_and_cleanup();
 	rmdir(g_dir);
 	return (0);
