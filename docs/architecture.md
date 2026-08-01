@@ -174,6 +174,25 @@ cosimulated by `rtl/tb/tb_top_verilator.cpp` against
 [phase5-synthesizable-fpga.md](phase5-synthesizable-fpga.md) §4). It has
 not been placed or routed on a physical FPGA.
 
+**Pending candidate, not yet on `main` (this diagram describes `main`'s
+current state, unchanged above)**: branch `feature/q4-radix4-divider`
+proposes replacing `q4_scale`'s two `membrane_fp_divider` instances with
+`membrane_fp_scale_neg_pow2.sv` (an exact power-of-two shortcut for the
+constant `mx/-8.0f` operation) and `membrane_fp_divider_radix4.sv` (an
+exact, multi-cycle, two-quotient-bit-per-cycle iterative divider for the
+variable `1/d` operation), plus the minimal Q4_0-encode issue-serialization
+change ("Ordering guarantee" in `membrane_quant_stream_top.sv`'s own header
+comment) that divider's variable latency requires. `q8_scale.sv` and the
+external `membrane_quant_stream_top` port list are unchanged. Source:
+EXP-FPGA-DIV-001 (`experiments/EXP-FPGA-DIV-001/`), Phase B1/B4 —
+SIMULATED/SYNTHESIZED only (Verilator cosimulation + yosys generic/ECP5
+cell counts), no real FPGA hardware or place-and-route data, same
+disclosure as the rest of this section. See
+`experiments/EXP-FPGA-DIV-001/promotion-plan.md` and
+`promotion-comparison.md` for the full detail. Pull request
+[#2](https://github.com/kadireren7/membrane/pull/2) is open against
+`main`; the change is not merged.
+
 ## D. Exact sparse retrieval path
 
 ```mermaid
