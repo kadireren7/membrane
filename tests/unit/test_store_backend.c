@@ -198,6 +198,9 @@ static void	test_dirfd_immune_to_path_swap(void)
 	TEST_ASSERT(dirfd >= 0, "open victim dir by descriptor");
 	swapped_fd = open(swapped, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
 	TEST_ASSERT(swapped_fd >= 0, "open swap-target dir by descriptor");
+	/* Baseline swapped at a mode distinct from mkdtemp()'s default (0700) --
+	 * otherwise a bug that fchmod'd the wrong fd to 0700 would go unnoticed. */
+	TEST_ASSERT(fchmod(swapped_fd, 0500) == 0, "set swap-target baseline mode via fd");
 	TEST_ASSERT(fchmod(dirfd, 0500) == 0, "fchmod victim to read-only via fd");
 	TEST_ASSERT(rmdir(victim) == 0, "attacker frees the path");
 	TEST_ASSERT(symlink(swapped, victim) == 0, "attacker plants a symlink at the old path");
@@ -211,7 +214,8 @@ static void	test_dirfd_immune_to_path_swap(void)
 	TEST_ASSERT(fchmod(dirfd, 0700) == 0, "fchmod via the held fd is unaffected by the swap");
 	TEST_ASSERT(fstat(dirfd, &st) == 0 && (st.st_mode & 0777) == 0700,
 		"the held fd still refers to the original directory, not the symlink target");
-	TEST_ASSERT(fstat(swapped_fd, &st) == 0, "symlink target untouched by our fchmod");
+	TEST_ASSERT(fstat(swapped_fd, &st) == 0 && (st.st_mode & 0777) == 0500,
+		"symlink target mode unchanged by our fchmod");
 	close(dirfd);
 	close(swapped_fd);
 	unlink(victim);
