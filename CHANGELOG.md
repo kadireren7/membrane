@@ -5,6 +5,39 @@ commit dates; commit hashes are short and stable. This project does not
 yet follow semantic versioning strictly (pre-1.0, research prototype) --
 version numbers below track phase numbers instead.
 
+## [Unreleased, candidate v0.2.0-research] — Q4_0 exact radix-4 divider (branch `feature/q4-radix4-divider`, not merged)
+
+- **Not part of `v0.1.0-research`; not merged into `main`; no PR open.**
+  Listed here for visibility only, per this project's open-development
+  policy (`docs/open-development-policy.md`) -- see
+  `experiments/EXP-FPGA-DIV-001/promotion-plan.md` and
+  `promotion-comparison.md` on branch `experiment/fp-divider-pipeline`
+  (not present on this branch) for the authoritative detail.
+- Origin: `experiment/fp-divider-pipeline` (EXP-FPGA-DIV-001) characterized
+  the FPGA datapath's general-purpose `membrane_fp_divider` and evaluated
+  four alternatives (B1-B4); B3's completion-reorder-buffer scheduling was
+  rejected (real correctness, disproportionate area cost); B2's radix-2
+  iterative divider was superseded by B4's radix-4 one.
+- Proposed change (this branch only): `q4_scale.sv`'s two divider call
+  sites move from `membrane_fp_divider` to a new
+  `membrane_fp_scale_neg_pow2.sv` (exact power-of-two shortcut, constant
+  divisor) and a new `membrane_fp_divider_radix4.sv` (exact, multi-cycle,
+  two-quotient-bit-per-cycle iterative divider, variable divisor), plus
+  the minimal Q4_0-encode issue-serialization change that divider's
+  variable latency requires in `membrane_quant_stream_top.sv`. `q8_scale.sv`
+  and `membrane_quant_stream_top`'s external port list are unchanged.
+- Verification reproduced fresh on the clean branch (not copied from the
+  experiment): 204,128/204,128 (quick) and separately the full
+  2,204,128/2,204,128 B1 differential cases, 0 mismatches;
+  4,456,685/4,456,685 B4 differential cases (vs. the real
+  `membrane_fp_divider`), 0 mismatches; 520,000/520,000 production
+  full-datapath Verilator transactions, 0 fails; yosys generic + ECP5
+  synthesis at both the standalone-divider and `q4_scale`-integration
+  granularity.
+- SIMULATED/SYNTHESIZED only -- no real FPGA hardware, no place-and-route,
+  no Fmax claim, same disclosure convention as every other FPGA-related
+  entry in this changelog.
+
 ## [0.1.0-research-candidate] — Public release audit and freeze
 
 - Full repository consistency audit (README, CHANGELOG, CITATION.cff,

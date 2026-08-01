@@ -253,6 +253,20 @@ purpose exists in [outreach/](outreach/membrane-technical-brief.md) and
 (unsent — see [docs/public-release-audit.md](docs/public-release-audit.md)
 for this repository's current release readiness).
 
+One exception, in progress: `experiment/fp-divider-pipeline`
+(EXP-FPGA-DIV-001) characterized the FPGA datapath's general-purpose
+divider and evaluated four alternatives; branch `feature/q4-radix4-divider`
+now proposes bringing the strongest result (an exact radix-4 iterative Q4_0
+divider, -96.2% simulated ECP5 cells vs. baseline at the `q4_scale`
+integration point, 4.4M+ differential cases and 520,000/520,000
+full-datapath transactions reproduced with 0 mismatches) into `main` as a
+candidate `v0.2.0-research` change — see `experiments/EXP-FPGA-DIV-001/
+promotion-plan.md` and `promotion-comparison.md` on branch
+`experiment/fp-divider-pipeline` (not present on this branch; kept there
+per this project's own audit-docs-stay-on-the-experiment-branch
+convention). Still SIMULATED/SYNTHESIZED only, no real FPGA hardware, not
+merged, no PR open as of this writing.
+
 ## Open development
 
 MEMBRANE remains **fully open source** — there is no private companion
