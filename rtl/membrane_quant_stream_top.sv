@@ -1,12 +1,13 @@
-// Phase 5.3: membrane_quant_stream_top -- the single top-level streaming
-// pipeline for MEMBRANE's FPGA quantization datapath. One valid/ready
-// input stream carrying {mode, transaction id, 512-bit data} feeds four
-// mode-selected sub-pipelines (Q8 encode, Q8 decode, Q4 encode, Q4
-// decode), each built entirely from this phase's synthesizable, bit-
-// exact building blocks (membrane_fp_divider/multiplier/adder,
-// membrane_fp_pkg's F16<->F32 and int<->F32 functions, and the six
-// rewired q8_*/q4_* modules) -- no `real`/`shortreal`/DPI anywhere in
-// this file or anything it instantiates.
+// Phase 5.3 (revised by EXP-FPGA-DIV-001): membrane_quant_stream_top --
+// the single top-level streaming pipeline for MEMBRANE's FPGA
+// quantization datapath. One valid/ready input stream carrying {mode,
+// transaction id, 512-bit data} feeds four mode-selected sub-pipelines
+// (Q8 encode, Q8 decode, Q4 encode, Q4 decode), each built entirely from
+// this project's synthesizable, bit-exact building blocks
+// (membrane_fp_divider/multiplier/adder, membrane_fp_scale_neg_pow2,
+// membrane_fp_divider_radix4, membrane_fp_pkg's F16<->F32 and int<->F32
+// functions, and the six rewired q8_*/q4_* modules) -- no `real`/
+// `shortreal`/DPI anywhere in this file or anything it instantiates.
 //
 // ---- data format (one shared 512-bit bus both directions) ----
 // in_data/out_data are always 512 bits regardless of mode:
@@ -22,37 +23,74 @@
 // A single fixed-width bus (rather than per-mode port widths) was
 // chosen so this module's port list, and any DMA engine feeding it,
 // stays mode-independent -- see docs/phase5-synthesizable-fpga.md's
-// CPU/FPGA partition section for the rationale.
+// CPU/FPGA partition section for the rationale. This external contract
+// -- port list, widths, mode encoding, and this data format -- is
+// unchanged by the divider replacement below (EXP-FPGA-DIV-001); see
+// experiments/EXP-FPGA-DIV-001/promotion-plan.md item 6.
 //
 // ---- mode encoding ----
 //   2'b00 = Q8_0 encode      2'b01 = Q8_0 decode
 //   2'b10 = Q4_0 encode      2'b11 = Q4_0 decode
 //
 // ---- ordering guarantee ----
-// Exactly one transaction is issued (popped from the input FIFO into
-// the compute datapath) per cycle. Each of the four sub-pipelines is
-// individually latency-padded (see L_MAX / *_pad arrays below) so that
-// EVERY mode takes the exact same fixed number of cycles, L_MAX, from
-// issue to result. Because issue order is preserved by the input FIFO
-// and every transaction takes the identical fixed latency regardless
-// of mode, results necessarily retire in the same order they were
-// issued -- output ordering is preserved by construction, not by an
-// explicit reorder buffer. (DIV_DELAY/MUL_DELAY are hardcoded to 1
-// throughout this module, matching every DELAY value this phase's
-// vector tests were actually run against; the L_MAX=7 and per-chain
-// padding constants below are only correct for that specific
-// configuration -- disclosed, not made a top-level parameter, to keep
-// the padding arithmetic trivially checkable by inspection rather than
-// a general but untested formula.)
+// Exactly one transaction is issued (popped from the input FIFO into the
+// compute datapath) per cycle. Q8_0 encode, Q8_0 decode, and Q4_0 decode
+// are individually latency-padded (see L_MAX / *_pad arrays below) so
+// that all THREE of those modes take the exact same fixed number of
+// cycles, L_MAX, from issue to result, and share one tag_pipe delay
+// register that guarantees in-order retirement among themselves with no
+// reorder buffer.
+//
+// Q4_0 encode is handled OUTSIDE that shared mechanism, because its own
+// divider (membrane_fp_divider_radix4, inside q4_scale.sv) is a
+// multi-cycle, variable-latency, single-in-flight module rather than a
+// fixed-DELAY pipe -- see q4_scale.sv's own header for why. Instead:
+//   1. A Q4_0 encode transaction is only ISSUED when in_flight==0 (no
+//      fixed-latency-mode transaction currently outstanding in the
+//      shared tag_pipe) and no other Q4_0 encode transaction is already
+//      in flight (`q4enc_inflight`).
+//   2. Once issued, `q4enc_inflight` goes high and issuance of ANY
+//      transaction (any mode) is blocked until this Q4_0 encode
+//      transaction fully retires.
+//   3. Its result retires the instant q4_pack_valid pulses (a direct
+//      connection, not routed through tag_pipe), competing for the
+//      shared output FIFO write port with tag_pipe's own retire_fire --
+//      but by construction (2) guarantees these two retire sources can
+//      never actually collide on the same cycle: tag_pipe cannot be
+//      draining a REAL (non-bubble) entry while q4enc_inflight is high,
+//      because nothing was allowed to issue into it during that window
+//      (checked directly by this file's own `` `ifndef SYNTHESIS ``
+//      assertion, not just argued here).
+// This fully serializes Q4_0 encode against every other transaction
+// (including other Q4_0 encodes) -- the simplest correct way to keep
+// global in-order retirement without a real reorder buffer, at a real,
+// measured, disclosed throughput cost to Q8_0 encode/decode and Q4_0
+// decode while a Q4_0 encode transaction is outstanding (see
+// experiments/EXP-FPGA-DIV-001/promotion-comparison.md). A bounded
+// completion-reorder-buffer alternative was evaluated and rejected --
+// its area cost exceeded the entire divider it was meant to protect for
+// only a small throughput gain (experiments/EXP-FPGA-DIV-001/decision.md,
+// Phase B3).
+//
+// Because issue order is preserved by the input FIFO and every
+// transaction retires in the order it was issued (via one of the two
+// mechanisms above), output ordering is preserved by construction across
+// ALL four modes, not just the three fixed-latency ones.
+// (DIV_DELAY/MUL_DELAY are hardcoded to 1 throughout this module,
+// matching every DELAY value this project's vector tests are actually
+// run against; the L_MAX=7 and per-chain padding constants below are
+// only correct for that specific configuration -- disclosed, not made a
+// top-level parameter, to keep the padding arithmetic trivially
+// checkable by inspection rather than a general but untested formula.)
 //
 // ---- backpressure / no-loss guarantee ----
-// A transaction is only issued once the output FIFO has a RESERVED
-// slot for it (in_flight + out_fifo_occupancy < OUT_FIFO_DEPTH is
-// checked before every issue, see `issue_fire`), so the output FIFO
-// can never overflow and an accepted (in_ready-acknowledged) input can
-// never be silently dropped -- it is always parked in the input FIFO
+// A transaction is only issued once the output FIFO has a RESERVED slot
+// for it (occupancy + in_flight + q4enc_inflight < OUT_FIFO_DEPTH is
+// checked before every issue, see `issue_fire`/`slot_ok`), so the output
+// FIFO can never overflow and an accepted (in_ready-acknowledged) input
+// can never be silently dropped -- it is always parked in the input FIFO
 // until it is safe to issue. Both FIFOs are the same stream_fifo.sv
-// building block used throughout Phase 5.2/5.3.
+// building block used throughout this project.
 //
 // ---- error flag ----
 // out_error is a single, honestly-scoped status bit, not a general
@@ -134,29 +172,49 @@ module membrane_quant_stream_top #(
 
 	assign {out_mode, out_id, out_data, out_error} = out_fifo_out_word;
 
-	// ---- issue gating: reserve an output-FIFO slot before issuing ----
+	// ---- Q4_0 encode in-flight tracking -- see this file's header for
+	// why Q4_0 encode is fully serialized against everything else. ----
+	logic	q4enc_inflight;
+
+	// ---- issue gating: reserve an output-FIFO slot before issuing, AND
+	// serialize Q4_0 encode against everything else -- see this file's
+	// header for why. ----
 	logic	issue_fire;
+	logic	tagpipe_issue_fire;
 	int		in_flight;
 	int		occ_i;
 	int		flight_i;
+	logic	slot_ok;
 
 	always_comb begin
 		occ_i = out_fifo_occ;
 		flight_i = in_flight;
-		issue_fire = in_fifo_out_valid && ((occ_i + flight_i) < OUT_FIFO_DEPTH);
+		// Reserve a slot for a Q4_0 encode transaction too (it writes
+		// the output FIFO via its own direct path, see
+		// q4enc_direct_retire below) -- otherwise the output FIFO
+		// could overflow exactly the way this module's own backpressure
+		// guarantee (header comment) warns against.
+		slot_ok = (occ_i + flight_i + (q4enc_inflight ? 1 : 0)) < OUT_FIFO_DEPTH;
+		if (mode_pop == MODE_Q4_ENC)
+			issue_fire = in_fifo_out_valid && slot_ok && !q4enc_inflight && (flight_i == 0);
+		else
+			issue_fire = in_fifo_out_valid && slot_ok && !q4enc_inflight;
 	end
 
+	assign tagpipe_issue_fire = issue_fire && (mode_pop != MODE_Q4_ENC);
 	assign in_fifo_out_ready = issue_fire;
 
-	// ---- shared id/mode/valid tag delay pipe (depth L_MAX) ----
+	// ---- shared id/mode/valid tag delay pipe (depth L_MAX), used ONLY
+	// by the three fixed-latency modes (Q8 encode, Q8 decode, Q4
+	// decode) -- Q4_0 encode never enters this pipe. ----
 	localparam int TAG_W = 1 + 2 + ID_WIDTH;
 	logic	[TAG_W-1:0]	tag_pipe	[0:L_MAX-1];
 
 	// Must reset to a clean, non-X valid bit: without this, retire_fire
 	// (tag_pipe's top bit) stays X for the first L_MAX cycles after
 	// power-on, which corrupts the in_flight credit counter below --
-	// `issue_fire && !retire_fire` evaluates to X (neither true nor
-	// false) whenever retire_fire is X, so NEITHER branch of the
+	// `tagpipe_issue_fire && !retire_fire` evaluates to X (neither true
+	// nor false) whenever retire_fire is X, so NEITHER branch of the
 	// increment/decrement `if/else if` fires and an issued transaction's
 	// credit is silently never reserved. Caught by this module's own
 	// in_flight-range assertion during bring-up, not by a data-mismatch
@@ -167,7 +225,7 @@ module membrane_quant_stream_top #(
 			for (int k = 0; k < L_MAX; k++)
 				tag_pipe[k] <= '0;
 		end else begin
-			tag_pipe[0] <= {issue_fire, mode_pop, id_pop};
+			tag_pipe[0] <= {tagpipe_issue_fire, mode_pop, id_pop};
 			for (int k = L_MAX - 1; k > 0; k--)
 				tag_pipe[k] <= tag_pipe[k - 1];
 		end
@@ -182,13 +240,24 @@ module membrane_quant_stream_top #(
 	always_ff @(posedge clk or negedge rst_n) begin
 		if (!rst_n)
 			in_flight <= 0;
-		else if (issue_fire && !retire_fire)
+		else if (tagpipe_issue_fire && !retire_fire)
 			in_flight <= in_flight + 1;
-		else if (!issue_fire && retire_fire)
+		else if (!tagpipe_issue_fire && retire_fire)
 			in_flight <= in_flight - 1;
 	end
 
-	assign out_fifo_in_valid = retire_fire;
+	// ---- Q4_0 encode in-flight flag: set on issue, cleared when its
+	// own datapath (q4_pack, see below) finally retires it. ----
+	always_ff @(posedge clk or negedge rst_n) begin
+		if (!rst_n)
+			q4enc_inflight <= 1'b0;
+		else if (issue_fire && mode_pop == MODE_Q4_ENC)
+			q4enc_inflight <= 1'b1;
+		else if (q4_pack_valid)
+			q4enc_inflight <= 1'b0;
+	end
+
+	assign out_fifo_in_valid = retire_fire || q4enc_direct_retire;
 
 	// ---- shared 32-lane F16 unpack of the issued transaction ----
 	logic	[15:0]	x_in_issue	[0:31];
@@ -227,7 +296,9 @@ module membrane_quant_stream_top #(
 	assign x_in_issue[31] = data_pop[511:496];
 
 	// =====================================================================
-	// Q8_0 encode chain: maxabs(5) -> scale(1) -> quantize_pack(1) = 7 = L_MAX
+	// Q8_0 encode chain: UNCHANGED -- maxabs(5) -> scale(1) ->
+	// quantize_pack(1) = 7 = L_MAX, still retiring through the shared
+	// tag_pipe.
 	// =====================================================================
 	logic	q8enc_valid_in;
 	assign q8enc_valid_in = issue_fire && (mode_pop == MODE_Q8_ENC);
@@ -292,7 +363,8 @@ module membrane_quant_stream_top #(
 		q8_err_final <= q8_err_raw;
 
 	// =====================================================================
-	// Q8_0 decode chain: dequantize(1), padded by 6 to reach L_MAX=7
+	// Q8_0 decode chain: UNCHANGED -- dequantize(1), padded by 6 to reach
+	// L_MAX=7, still retiring through the shared tag_pipe.
 	// =====================================================================
 	logic	q8dec_valid_in;
 	assign q8dec_valid_in = issue_fire && (mode_pop == MODE_Q8_DEC);
@@ -332,7 +404,11 @@ module membrane_quant_stream_top #(
 		q8dec_pad[Q8DEC_PAD - 1];
 
 	// =====================================================================
-	// Q4_0 encode chain: scan(0) -> scale(2) -> pack(2) = 4, padded by 3
+	// Q4_0 encode chain: scan(0, combinational) -> q4_scale (VARIABLE
+	// latency: membrane_fp_scale_neg_pow2 + membrane_fp_divider_radix4,
+	// see q4_scale.sv's own header) -> pack(2). Retires DIRECTLY
+	// (q4enc_direct_retire), not through tag_pipe/L_MAX padding -- see
+	// this file's header.
 	// =====================================================================
 	logic	q4enc_valid_in;
 	assign q4enc_valid_in = issue_fire && (mode_pop == MODE_Q4_ENC);
@@ -344,28 +420,33 @@ module membrane_quant_stream_top #(
 	logic			q4_scale_valid;
 	logic	[15:0]	q4_d_f16;
 	logic	[31:0]	q4_id_f32;
+	logic			q4_scale_busy;
 
 	q4_scale #(.DIV_DELAY(1)) u_q4_scale (
 		.clk(clk), .rst_n(rst_n), .valid_in(q4enc_valid_in),
 		.mx_f32(q4_mx_f32), .valid_out(q4_scale_valid),
-		.d_f16_out(q4_d_f16), .id_f32_out(q4_id_f32));
+		.d_f16_out(q4_d_f16), .id_f32_out(q4_id_f32), .busy(q4_scale_busy));
 
-	// x_in delayed 2 cycles to match q4_scale's own 2-cycle latency
-	// (two chained membrane_fp_divider instances, DIV_DELAY=1 each).
-	logic	[15:0]	q4_x_d	[0:1][0:31];
+	// x_in held stable from issue until q4_scale_valid finally fires
+	// (variable latency) -- captured only at issue (q4enc_valid_in), safe
+	// because only one Q4_0 encode transaction is ever in flight (this
+	// file's own issue-gating guarantee).
+	logic	[15:0]	q4enc_x_hold	[0:31];
+	logic	[ID_WIDTH-1:0]	q4enc_id_hold;
 
 	always_ff @(posedge clk) begin
-		for (int j = 0; j < 32; j++)
-			q4_x_d[0][j] <= x_in_issue[j];
-		for (int j = 0; j < 32; j++)
-			q4_x_d[1][j] <= q4_x_d[0][j];
+		if (q4enc_valid_in) begin
+			for (int j = 0; j < 32; j++)
+				q4enc_x_hold[j] <= x_in_issue[j];
+			q4enc_id_hold <= id_pop;
+		end
 	end
 
 	logic	[511:0]	q4_x_final_flat;
 
 	always_comb
 		for (int j = 0; j < 32; j++)
-			q4_x_final_flat[j * 16 +: 16] = q4_x_d[1][j];
+			q4_x_final_flat[j * 16 +: 16] = q4enc_x_hold[j];
 
 	logic			q4_pack_valid;
 	logic	[143:0]	q4_packed;
@@ -376,8 +457,9 @@ module membrane_quant_stream_top #(
 		.valid_out(q4_pack_valid), .packed_out(q4_packed));
 
 	// Error flag: d NaN/Inf, captured when q4_scale_valid pulses, delayed
-	// 2 cycles to match q4_pack's own latency (its multiplier+adder
-	// chain), landing on the same cycle as q4_pack_valid/q4_packed.
+	// 2 cycles to match q4_pack's own FIXED latency (its multiplier+adder
+	// chain, unaffected by this change -- only q4_scale's own latency
+	// changed), landing on the same cycle as q4_pack_valid/q4_packed.
 	logic	q4_err_raw;
 	logic	[1:0]	q4_err_d2	[0:1];
 
@@ -388,35 +470,19 @@ module membrane_quant_stream_top #(
 		q4_err_d2[1] <= q4_err_d2[0];
 	end
 
-	localparam int Q4ENC_PAD = L_MAX - 4;
-	logic	[144:0]	q4enc_pad	[0:Q4ENC_PAD - 1];
+	logic	q4enc_final_err;
+	assign q4enc_final_err = q4_err_d2[1][0];
 
-	always_ff @(posedge clk) begin
-		q4enc_pad[0] <= {q4_err_d2[1][0], q4_packed};
-		for (int k = Q4ENC_PAD - 1; k > 0; k--)
-			q4enc_pad[k] <= q4enc_pad[k - 1];
-	end
-
-	logic			q4enc_final_valid;
-	logic	[143:0]	q4enc_final_data;
-	logic			q4enc_final_err;
-
-	// q4_pack_valid is padded alongside the data/err bundle above (same
-	// depth), read out through its own tiny shift register so the three
-	// stay aligned without widening the 145-bit array further.
-	logic	[Q4ENC_PAD - 1:0]	q4enc_valid_pad;
-
-	always_ff @(posedge clk) begin
-		q4enc_valid_pad[0] <= q4_pack_valid;
-		for (int k = Q4ENC_PAD - 1; k > 0; k--)
-			q4enc_valid_pad[k] <= q4enc_valid_pad[k - 1];
-	end
-
-	assign q4enc_final_valid = q4enc_valid_pad[Q4ENC_PAD - 1];
-	assign {q4enc_final_err, q4enc_final_data} = q4enc_pad[Q4ENC_PAD - 1];
+	// Direct retirement: q4_pack_valid IS this transaction's retire
+	// signal (no padding, no tag_pipe). See this file's header for why
+	// this can never collide with tag_pipe's own retire_fire on the same
+	// cycle.
+	logic	q4enc_direct_retire;
+	assign q4enc_direct_retire = q4_pack_valid;
 
 	// =====================================================================
-	// Q4_0 decode chain: unpack(1), padded by 6 to reach L_MAX=7
+	// Q4_0 decode chain: UNCHANGED -- unpack(1), padded by 6 to reach
+	// L_MAX=7, still retiring through the shared tag_pipe.
 	// =====================================================================
 	logic	q4dec_valid_in;
 	assign q4dec_valid_in = issue_fire && (mode_pop == MODE_Q4_DEC);
@@ -453,32 +519,33 @@ module membrane_quant_stream_top #(
 	assign {q4dec_final_valid, q4dec_final_err, q4dec_final_data} =
 		q4dec_pad[Q4DEC_PAD - 1];
 
-	// ---- output mux: mode_sel picks which padded chain result retires ----
+	// ---- output mux: mode_sel (tag_pipe-driven, never Q4_0 encode)
+	// picks which of the three fixed-latency chains retires; Q4_0
+	// encode retires via its own direct path, arbitrated below. ----
 	logic	[511:0]	result_data;
 	logic			result_error;
 
 	always_comb begin
-		case (mode_sel)
-			MODE_Q8_ENC: begin
-				result_data = {240'h0, q8_packed};
-				result_error = q8_err_final;
-			end
-			MODE_Q8_DEC: begin
-				result_data = q8dec_final_data;
-				result_error = q8dec_final_err;
-			end
-			MODE_Q4_ENC: begin
-				result_data = {368'h0, q4enc_final_data};
-				result_error = q4enc_final_err;
-			end
-			default: begin // MODE_Q4_DEC
-				result_data = q4dec_final_data;
-				result_error = q4dec_final_err;
-			end
-		endcase
+		if (mode_sel == MODE_Q8_ENC) begin
+			result_data = {240'h0, q8_packed};
+			result_error = q8_err_final;
+		end else if (mode_sel == MODE_Q8_DEC) begin
+			result_data = q8dec_final_data;
+			result_error = q8dec_final_err;
+		end else begin // MODE_Q4_DEC (MODE_Q4_ENC never appears in mode_sel, see header)
+			result_data = q4dec_final_data;
+			result_error = q4dec_final_err;
+		end
 	end
 
-	assign out_fifo_in_word = {mode_sel, id_sel, result_data, result_error};
+	// q4enc_direct_retire takes priority in this mux only in the sense
+	// that it is a SEPARATE, always-safe-to-check condition -- per this
+	// file's header, retire_fire (tag_pipe) is guaranteed 0 whenever
+	// q4enc_direct_retire is 1, so there is no real arbitration conflict
+	// to resolve, just a 2-way OR/mux.
+	assign out_fifo_in_word = q4enc_direct_retire
+		? {MODE_Q4_ENC, q4enc_id_hold, {368'h0, q4_packed}, q4enc_final_err}
+		: {mode_sel, id_sel, result_data, result_error};
 
 	// ---- correctness assertions (also serves task item 7: property
 	// checks -- no accepted-input loss, no stale output, output valid
@@ -492,21 +559,25 @@ module membrane_quant_stream_top #(
 `ifndef SYNTHESIS
 	always_ff @(posedge clk) begin
 		if (rst_n && retire_fire) begin
-			case (mode_sel)
-				MODE_Q8_ENC: assert (q8_qp_valid)
+			if (mode_sel == MODE_Q8_ENC)
+				assert (q8_qp_valid)
 					else $error("membrane_quant_stream_top: Q8 encode latency mismatch at retire");
-				MODE_Q8_DEC: assert (q8dec_final_valid)
+			else if (mode_sel == MODE_Q8_DEC)
+				assert (q8dec_final_valid)
 					else $error("membrane_quant_stream_top: Q8 decode latency mismatch at retire");
-				MODE_Q4_ENC: assert (q4enc_final_valid)
-					else $error("membrane_quant_stream_top: Q4 encode latency mismatch at retire");
-				MODE_Q4_DEC: assert (q4dec_final_valid)
+			else
+				assert (q4dec_final_valid)
 					else $error("membrane_quant_stream_top: Q4 decode latency mismatch at retire");
-				default: ;
-			endcase
 		end
 		if (rst_n)
 			assert (in_flight >= 0 && in_flight <= OUT_FIFO_DEPTH)
 				else $error("membrane_quant_stream_top: in_flight credit counter out of range");
+		// retire_fire and q4enc_direct_retire must never collide -- this
+		// is the structural claim this file's header makes; assert it
+		// directly rather than only arguing it in prose.
+		if (rst_n)
+			assert (!(retire_fire && q4enc_direct_retire))
+				else $error("membrane_quant_stream_top: tag_pipe retire and Q4 encode direct retire collided -- serialization invariant broken");
 	end
 `endif
 endmodule
