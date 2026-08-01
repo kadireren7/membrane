@@ -1,0 +1,87 @@
+# CodeQL static analysis (security-focused), advanced/custom setup.
+#
+# GitHub's "default setup" for code scanning was checked before adding
+# this file (`GET /repos/kadireren7/membrane/code-scanning/default-setup`)
+# and returned `"state":"not-configured"` -- no default-setup CodeQL scan
+# was running for this repository, so this advanced workflow does not
+# duplicate one. If default setup is ever turned on for this repo in the
+# GitHub UI, this file should be removed first (GitHub does not allow
+# both at once for the same language).
+#
+# This workflow is a STATIC ANALYSIS check, not a substitute for this
+# project's own Debug/ASan+UBSan/TSan ctest suites in ci.yml -- it finds
+# a different class of issue (pattern-based security/quality queries over
+# the compiled source) and does not run any of this project's own tests,
+# benchmarks, or simulators. In particular it must never run
+# tools/membrane-kv-exact-sim's 128K-context x 512-concurrency sweep, download
+# any model file, or run any research reproduction script -- it only
+# compiles the code (CodeQL needs a real compile to build its database for
+# a compiled language) and analyzes the result.
+name: CodeQL
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, off-peak (05:00 UTC Monday) -- catches query-pack updates
+    # and anything not caught by push/pull_request triggers.
+    - cron: '0 5 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: CodeQL analysis (c-cpp)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # No `submodules:` option set (actions/checkout@v4 defaults to
+        # not fetching submodules) -- deliberate. The build below uses
+        # MEMBRANE_ENABLE_LLAMA's own default (OFF), the same default
+        # this project's own CI "Debug"/"ASan" jobs in ci.yml already
+        # build under, so third_party/llama.cpp is neither checked out
+        # nor compiled here. CodeQL therefore only ever analyzes this
+        # project's own C/C++ sources, never the vendored dependency's --
+        # third_party findings are structurally impossible to mix into
+        # this project's own results, not just filtered out after the
+        # fact.
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          build-mode: manual
+          # Autobuild was considered, per this project's own preference
+          # for trying it first, and deliberately not used: this
+          # project's top-level CMakeLists.txt requires an explicit
+          # CMAKE_BUILD_TYPE and specific configure step (see ci.yml's
+          # own "Configure (Debug)" step), which CodeQL's generic
+          # autobuild heuristics for CMake projects are not guaranteed to
+          # reproduce correctly. A deterministic manual build -- the
+          # exact same configure/build commands this project's own CI
+          # "Debug" job already runs and already passes -- is more
+          # reliable than an autobuild attempt with a real chance of
+          # silently building the wrong configuration (or nothing at
+          # all), so it's used directly rather than attempted-then-
+          # abandoned in this same workflow run.
+
+      - name: Configure (Debug, no LLAMA -- same defaults as ci.yml's own Debug job)
+        run: cmake -S . -B build-codeql -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build (compile only -- no ctest, no benchmark or simulator run)
+        run: cmake --build build-codeql -j
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:c-cpp"

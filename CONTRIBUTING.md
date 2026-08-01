@@ -104,3 +104,21 @@ Keep pull requests scoped to one logical change. Every pull request into
 
 If you change a number in `docs/` or `README.md`, run
 `scripts/verify-results.py` and include its output.
+
+## Automated PR review
+
+Every pull request goes through the same sequence:
+
+1. The PR is opened.
+2. Normal CI runs (`.github/workflows/ci.yml`: Debug, ASan+UBSan, TSan).
+3. CodeQL runs (`.github/workflows/codeql.yml`: static security/quality
+   analysis of the C/C++ sources).
+4. CodeRabbit leaves review comments (PR summary, walkthrough, and
+   line-by-line findings).
+5. Findings are either fixed, or explicitly acknowledged and dismissed
+   with a reason in the PR thread — a bot comment is not itself a
+   decision.
+6. The PR is merged once all required checks pass — see
+   [docs/automated-pr-review.md](docs/automated-pr-review.md) for exactly
+   which checks are required vs. advisory, and why CodeRabbit's own
+   findings are never a merge blocker.

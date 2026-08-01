@@ -1,0 +1,178 @@
+# CodeRabbit configuration for MEMBRANE.
+#
+# Status as of this file's creation: the CodeRabbit GitHub App is NOT
+# installed on this repository yet (verified: no webhook, no prior
+# CodeRabbit comment on any existing PR). Installing it requires Kadir to
+# authorize it through the GitHub UI (https://github.com/marketplace/coderabbitai
+# or the CodeRabbit dashboard) -- an app-install/OAuth action this file
+# cannot perform. This config is prepared in advance so review behavior
+# is correct from the very first PR once the app is installed. Validate
+# this file against CodeRabbit's current schema
+# (https://docs.coderabbit.ai/reference/yaml-template) after installing,
+# since the product's config surface changes over time.
+#
+# Design intent (see docs/automated-pr-review.md for the full policy):
+# advisory only -- CodeRabbit never blocks a merge, never approves a PR,
+# never merges a PR, and never pushes a code change of its own. Every
+# setting below that could make the bot take an action beyond posting a
+# comment is explicitly disabled.
+
+language: "en-US"
+early_access: false
+
+reviews:
+  # "chill" is CodeRabbit's own lower-noise profile: fewer nitpick/style
+  # comments than "assertive", while still surfacing real findings --
+  # matches the task's own "yüksek güvenli bulgulara öncelik, gereksiz
+  # nit/style yorumları düşük" requirement directly, rather than trying
+  # to hand-tune verbosity another way.
+  profile: chill
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    base_branches: []
+
+  # Never posts a formal blocking "Request changes" GitHub review state --
+  # findings stay as advisory comments, never a merge-blocking review
+  # decision.
+  request_changes_workflow: false
+
+  high_level_summary: true
+  review_status: true
+  review_progress: true
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: true
+  poem: false
+
+  # Never posts a failing commit status -- CodeRabbit's own activity can
+  # never become a required/blocking GitHub check by way of this.
+  commit_status: true
+  fail_commit_status: false
+
+  # No automatic label or reviewer mutation -- comments only.
+  suggested_labels: true
+  auto_apply_labels: false
+  suggested_reviewers: true
+  auto_assign_reviewers: false
+
+  abort_on_close: true
+
+  # "Finishing touches" are CodeRabbit's own code-writing/auto-fix
+  # features (docstring generation, unit-test generation, autofix
+  # commits, CI-failure autofix, merge-conflict autofix). ALL disabled:
+  # this bot must never write to the repository, only comment on it.
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+
+  # Pre-merge checks stay in "warning" mode everywhere (CodeRabbit's own
+  # non-blocking mode) -- never "error", which would make CodeRabbit a
+  # merge gate. No mandatory review-approval requirement is configured
+  # here or in GitHub branch protection (see docs/automated-pr-review.md).
+  pre_merge_checks:
+    docstrings:
+      mode: warning
+    title:
+      mode: warning
+    description:
+      mode: warning
+    issue_assessment:
+      mode: warning
+
+  # Only the current PR's actual diff is reviewed (CodeRabbit's default
+  # scope) -- nothing here broadens that to a full-repository scan.
+  #
+  # path_filters: lower priority / excluded from review. Generated
+  # output, vendored code, and large committed data artifacts, none of
+  # which is hand-written logic a line-by-line review meaningfully
+  # improves.
+  path_filters:
+    - "!third_party/**"
+    - "!build/**"
+    - "!build-*/**"
+    - "!**/*.gguf"
+    - "!**/*.bin"
+    - "!**/*.pt"
+    - "!**/*.safetensors"
+    - "!cache/**"
+    - "!benchmarks/**/*.csv"
+    - "!benchmarks/**/*.json"
+    - "!paper/main.pdf"
+    - "!paper/**/*.aux"
+    - "!paper/**/*.log"
+    - "!paper/**/*.out"
+    - "!paper/**/*.toc"
+    - "!paper/**/*.bbl"
+    - "!paper/**/*.blg"
+    - "!paper/**/*.fls"
+    - "!paper/**/*.fdb_latexmk"
+    - "!**/*.log"
+    - "!experiments/**/results/**"
+
+  # path_instructions: project-specific review guidance, applied on top
+  # of (not instead of) CodeRabbit's normal review. Kept in this repo
+  # (not only in CodeRabbit's own dashboard) so it's version-controlled
+  # and reviewable like any other project policy.
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        This is MEMBRANE, a research project studying LLM inference
+        KV-cache compression, with simulated/synthesized-only (not
+        fabricated) FPGA and CXL hardware components. This project is
+        strict about not overclaiming what has actually been measured.
+        When reviewing, flag (do not silently accept) any of the
+        following:
+
+        1. Wording that claims or implies a real, physical FPGA board,
+           real CXL hardware, or a measured Fmax/timing-closure result
+           exists anywhere in this project. None does -- every hardware
+           result in this repository is a simulation or a Yosys/ABC
+           synthesis-tool cell count, never a physical measurement. See
+           docs/phase8-hardware-validation-plan.md and hardware/README.md.
+        2. Text that conflates generic Yosys/ABC synthesized cell counts
+           (a synthesis-tool proxy for area, not a vendor place-and-route
+           result) with real vendor LUT counts, real Fmax, or real power
+           numbers.
+        3. Loose or inconsistent use of "exact" / "simulated" /
+           "estimated" / "measured" -- this project treats these as
+           distinct, load-bearing claims about what was actually
+           verified, not interchangeable adjectives.
+        4. Any change that disables, skips, weakens the assertions in, or
+           reduces the scope of an existing test, or that adds
+           `continue-on-error`, disables a CI step, or adds/broadens a
+           sanitizer suppression -- flag as HIGH priority and ask for
+           explicit justification in the PR description.
+        5. Any change under third_party/llama.cpp -- flag with high
+           priority and confirm it's intentional; this project treats
+           that submodule as a vendored, unmodified dependency.
+        6. Any change that touches, moves, or redefines the
+           `v0.1.0-research` git tag or attempts to alter the commit it
+           points to.
+        7. Wording that contradicts this project's own AI-assistance
+           authorship disclosure (outreach/ai-assistance-disclosure.md)
+           -- either implying the codebase was hand-written with no AI
+           agent assistance, or implying no human review/direction
+           occurred.
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CONTRIBUTING.md"
+      - "docs/**/*.md"
