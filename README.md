@@ -264,8 +264,10 @@ candidate `v0.2.0-research` change — see `experiments/EXP-FPGA-DIV-001/
 promotion-plan.md` and `promotion-comparison.md` on branch
 `experiment/fp-divider-pipeline` (not present on this branch; kept there
 per this project's own audit-docs-stay-on-the-experiment-branch
-convention). Still SIMULATED/SYNTHESIZED only, no real FPGA hardware, not
-merged, no PR open as of this writing.
+convention). Still SIMULATED/SYNTHESIZED only, no real FPGA hardware.
+Pull request [#2](https://github.com/kadireren7/membrane/pull/2) is open
+against `main`; the change is not merged and is not part of
+`v0.1.0-research`.
 
 ## Open development
 

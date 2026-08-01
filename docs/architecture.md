@@ -189,8 +189,9 @@ SIMULATED/SYNTHESIZED only (Verilator cosimulation + yosys generic/ECP5
 cell counts), no real FPGA hardware or place-and-route data, same
 disclosure as the rest of this section. See
 `experiments/EXP-FPGA-DIV-001/promotion-plan.md` and
-`promotion-comparison.md` for the full detail; not merged, no PR open as
-of this writing.
+`promotion-comparison.md` for the full detail. Pull request
+[#2](https://github.com/kadireren7/membrane/pull/2) is open against
+`main`; the change is not merged.
 
 ## D. Exact sparse retrieval path
 

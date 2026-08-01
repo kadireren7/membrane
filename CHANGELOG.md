@@ -7,7 +7,9 @@ version numbers below track phase numbers instead.
 
 ## [Unreleased, candidate v0.2.0-research] — Q4_0 exact radix-4 divider (branch `feature/q4-radix4-divider`, not merged)
 
-- **Not part of `v0.1.0-research`; not merged into `main`; no PR open.**
+- **Not part of `v0.1.0-research`; not merged into `main`.** Pull request
+  [#2](https://github.com/kadireren7/membrane/pull/2) is open against
+  `main` (head `feature/q4-radix4-divider`); the change is not merged.
   Listed here for visibility only, per this project's open-development
   policy (`docs/open-development-policy.md`) -- see
   `experiments/EXP-FPGA-DIV-001/promotion-plan.md` and
