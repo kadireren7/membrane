@@ -5,16 +5,20 @@ commit dates; commit hashes are short and stable. This project does not
 yet follow semantic versioning strictly (pre-1.0, research prototype) --
 version numbers below track phase numbers instead.
 
-## [Unreleased, candidate v0.2.0-research] — Q4_0 exact radix-4 divider (branch `feature/q4-radix4-divider`, not merged)
+## [Unreleased, candidate v0.2.0-research] — Q4_0 exact radix-4 divider
 
-- **Not part of `v0.1.0-research`; not merged into `main`.** Pull request
-  [#2](https://github.com/kadireren7/membrane/pull/2) is open against
-  `main` (head `feature/q4-radix4-divider`); the change is not merged.
-  Listed here for visibility only, per this project's open-development
-  policy (`docs/open-development-policy.md`) -- see
-  `experiments/EXP-FPGA-DIV-001/promotion-plan.md` and
-  `promotion-comparison.md` on branch `experiment/fp-divider-pipeline`
-  (not present on this branch) for the authoritative detail.
+- **Merged into `main`** via pull request
+  [#2](https://github.com/kadireren7/membrane/pull/2)
+  (`rtl: replace Q4 combinational dividers with exact radix-4 datapath`,
+  squash commit `f96c695`), originally developed on branch
+  `feature/q4-radix4-divider`. Still not part of the tagged
+  `v0.1.0-research` release (that tag is frozen, see
+  `docs/research-release-freeze.md`) -- listed here as a candidate
+  `v0.2.0-research` change, per this project's open-development policy
+  (`docs/open-development-policy.md`). See
+  `experiments/EXP-FPGA-DIV-001/README.md` (index),
+  `promotion-plan.md`, and `promotion-comparison.md` for the authoritative
+  detail.
 - Origin: `experiment/fp-divider-pipeline` (EXP-FPGA-DIV-001) characterized
   the FPGA datapath's general-purpose `membrane_fp_divider` and evaluated
   four alternatives (B1-B4); B3's completion-reorder-buffer scheduling was

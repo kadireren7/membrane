@@ -155,7 +155,7 @@ approximated block — it is a real fetch, simulated with real latency
 flowchart LR
     IN["Input stream\n{mode, txn_id, 512-bit data}\nvalid/ready"] --> FIFO_IN["stream_fifo\n(input)"]
     FIFO_IN --> MAXABS["q8_maxabs_reduce /\nq4_scan"]
-    MAXABS --> SCALE["q8_scale / q4_scale\n(membrane_fp_divider)"]
+    MAXABS --> SCALE["q8_scale (membrane_fp_divider) /\nq4_scale (membrane_fp_scale_neg_pow2,\nmembrane_fp_divider_radix4)"]
     SCALE --> QUANT["q8_quantize_pack /\nq4_pack\n(membrane_fp_multiplier,\nmembrane_fp_adder)"]
     QUANT --> PACK["Credit-based issue\n(membrane_quant_stream_top.sv)"]
     PACK --> FIFO_OUT["stream_fifo\n(output)"]
@@ -174,24 +174,24 @@ cosimulated by `rtl/tb/tb_top_verilator.cpp` against
 [phase5-synthesizable-fpga.md](phase5-synthesizable-fpga.md) §4). It has
 not been placed or routed on a physical FPGA.
 
-**Pending candidate, not yet on `main` (this diagram describes `main`'s
-current state, unchanged above)**: branch `feature/q4-radix4-divider`
-proposes replacing `q4_scale`'s two `membrane_fp_divider` instances with
+**`q4_scale`'s divider replacement (reflected in the diagram above)**:
+`q4_scale`'s two `membrane_fp_divider` instances were replaced with
 `membrane_fp_scale_neg_pow2.sv` (an exact power-of-two shortcut for the
 constant `mx/-8.0f` operation) and `membrane_fp_divider_radix4.sv` (an
 exact, multi-cycle, two-quotient-bit-per-cycle iterative divider for the
 variable `1/d` operation), plus the minimal Q4_0-encode issue-serialization
 change ("Ordering guarantee" in `membrane_quant_stream_top.sv`'s own header
-comment) that divider's variable latency requires. `q8_scale.sv` and the
-external `membrane_quant_stream_top` port list are unchanged. Source:
+comment) that divider's variable latency requires. `q8_scale.sv` (still
+`membrane_fp_divider`, both instances) and the external
+`membrane_quant_stream_top` port list are unchanged. Source:
 EXP-FPGA-DIV-001 (`experiments/EXP-FPGA-DIV-001/`), Phase B1/B4 —
 SIMULATED/SYNTHESIZED only (Verilator cosimulation + yosys generic/ECP5
 cell counts), no real FPGA hardware or place-and-route data, same
-disclosure as the rest of this section. See
-`experiments/EXP-FPGA-DIV-001/promotion-plan.md` and
-`promotion-comparison.md` for the full detail. Pull request
-[#2](https://github.com/kadireren7/membrane/pull/2) is open against
-`main`; the change is not merged.
+disclosure as the rest of this section. Merged via pull request
+[#2](https://github.com/kadireren7/membrane/pull/2) (squash commit
+`f96c695`); see `experiments/EXP-FPGA-DIV-001/README.md` for the full
+research-record index and `promotion-plan.md`/`promotion-comparison.md`
+for the detailed integration plan and reproduced comparison.
 
 ## D. Exact sparse retrieval path
 
