@@ -102,7 +102,7 @@ finding is real and whether it's been addressed.
 | `build-and-test (Debug)` (ci.yml) | **Required** (recommended branch protection, see below — not yet applied) |
 | `build-and-test (ASan)` (ci.yml) | **Required** (recommended, not yet applied) |
 | `thread-sanitizer` (ci.yml) | **Required** (recommended, not yet applied) |
-| CodeQL (`codeql.yml`) | **Required**, but only after its exact check name is confirmed from a real run and added to branch protection (see below) — not yet applied |
+| CodeQL (`codeql.yml`) | **Required** once branch protection is applied — its real check name (`CodeQL analysis (c-cpp)`) is now confirmed from this change's own first real run (PR #4, commit `b2c6292`, 0 alerts), so it's included in the recommendation below — not yet applied |
 | CodeRabbit | **Never required.** Advisory only, by design (see above). |
 | Paper build (`paper.yml`) | Not applicable to most PRs (path-filtered to `paper/**`); not a proposed required check for `main` in general. |
 
@@ -143,19 +143,19 @@ Prepared for Kadir to review and apply (or ask this session to apply,
 since admin access to do so was confirmed available while preparing this
 document — not exercised, per the reasoning above).
 
-**Verified real check names** (from `GET
-/repos/kadireren7/membrane/commits/{main-sha}/check-runs` against a real,
-completed run):
+**Verified real check names**, all confirmed from real, completed runs
+(`GET /repos/kadireren7/membrane/commits/{sha}/check-runs`):
 
-- `build-and-test (Debug)`
-- `build-and-test (ASan)`
-- `thread-sanitizer`
+- `build-and-test (Debug)`, `build-and-test (ASan)`, `thread-sanitizer` —
+  from `main`'s own CI history (pre-existing, `ci.yml`).
+- `CodeQL analysis (c-cpp)` — from this change's own first real run (PR
+  #4, commit `b2c6292`, `codeql.yml`; 0 alerts on that first run).
 
 Recommended settings:
 
 - Require a pull request before merging.
 - Required status checks: `build-and-test (Debug)`, `build-and-test
-  (ASan)`, `thread-sanitizer`.
+  (ASan)`, `thread-sanitizer`, `CodeQL analysis (c-cpp)`.
 - Require branches to be up to date before merging.
 - Require conversation resolution before merging.
 - Block force pushes to `main`.
@@ -163,10 +163,6 @@ Recommended settings:
 
 **Deliberately not required, for now** (per this change's own scope):
 
-- CodeQL as a required check — add its exact check name (visible only
-  after `codeql.yml` runs for real at least once) once confirmed; adding
-  an unverified/guessed check name to branch protection can silently
-  block all merges if the name is wrong.
 - CodeRabbit approval — CodeRabbit is an external service with no
   formal "approve" state configured (see above); making it required
   would turn an advisory tool into a hard merge lock outside this
