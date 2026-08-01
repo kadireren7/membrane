@@ -188,6 +188,7 @@ static void	test_dirfd_immune_to_path_swap(void)
 	char		victim[] = "/tmp/membrane-toctou-victim-XXXXXX";
 	char		swapped[] = "/tmp/membrane-toctou-swapped-XXXXXX";
 	int			dirfd;
+	int			swapped_fd;
 	int			reopen_fd;
 	struct stat	st;
 
@@ -195,6 +196,8 @@ static void	test_dirfd_immune_to_path_swap(void)
 	TEST_ASSERT(mkdtemp(swapped) != NULL, "swap-target temp dir");
 	dirfd = open(victim, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
 	TEST_ASSERT(dirfd >= 0, "open victim dir by descriptor");
+	swapped_fd = open(swapped, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+	TEST_ASSERT(swapped_fd >= 0, "open swap-target dir by descriptor");
 	TEST_ASSERT(fchmod(dirfd, 0500) == 0, "fchmod victim to read-only via fd");
 	TEST_ASSERT(rmdir(victim) == 0, "attacker frees the path");
 	TEST_ASSERT(symlink(swapped, victim) == 0, "attacker plants a symlink at the old path");
@@ -208,8 +211,9 @@ static void	test_dirfd_immune_to_path_swap(void)
 	TEST_ASSERT(fchmod(dirfd, 0700) == 0, "fchmod via the held fd is unaffected by the swap");
 	TEST_ASSERT(fstat(dirfd, &st) == 0 && (st.st_mode & 0777) == 0700,
 		"the held fd still refers to the original directory, not the symlink target");
-	TEST_ASSERT(stat(swapped, &st) == 0, "symlink target untouched by our fchmod");
+	TEST_ASSERT(fstat(swapped_fd, &st) == 0, "symlink target untouched by our fchmod");
 	close(dirfd);
+	close(swapped_fd);
 	unlink(victim);
 	rmdir(swapped);
 }
