@@ -106,28 +106,23 @@ finding is real and whether it's been addressed.
 
 | Check | Blocking? |
 |---|---|
-| `build-and-test (Debug)` (ci.yml) | **Required** (recommended branch protection, see below — not yet applied) |
-| `build-and-test (ASan)` (ci.yml) | **Required** (recommended, not yet applied) |
-| `thread-sanitizer` (ci.yml) | **Required** (recommended, not yet applied) |
-| CodeQL (`codeql.yml`) | **Required** once branch protection is applied — its real check name (`CodeQL analysis (c-cpp)`) is confirmed from a completed run with 0 alerts, so it's included in the recommendation below — not yet applied |
+| `build-and-test (Debug)` (ci.yml) | **Required** — active in the `main-protection` repository ruleset (see below). |
+| `build-and-test (ASan)` (ci.yml) | **Required** — active in the `main-protection` repository ruleset. |
+| `thread-sanitizer` (ci.yml) | **Required** — active in the `main-protection` repository ruleset. |
+| CodeQL (`codeql.yml`) | **Required** — active in the `main-protection` repository ruleset; real check name confirmed as `CodeQL analysis (c-cpp)`. |
 | CodeRabbit | **Never required.** Advisory only, by design (see above). |
-| Paper build (`paper.yml`) | Not applicable to most PRs (path-filtered to `paper/**`); not a proposed required check for `main` in general. |
+| Paper build (`paper.yml`) | Not applicable to most PRs (path-filtered to `paper/**`); not a required check for `main`. |
 
 No bot — CodeRabbit or CodeQL — has been granted auto-merge authority
 anywhere in this repository.
 
-## Branch protection: recommended, not yet applied
+## Branch protection: active
 
-See this document's own "Recommended branch protection for `main`"
-section for the exact rule set prepared for `main`, including the real,
-verified check names for the three existing CI jobs. It has **not** been
-applied via the GitHub API as part of this change — enabling required
-status checks changes how every future push/PR to `main` behaves for the
-whole repository, which is a decision left to Kadir to apply
-consciously rather than as a side effect of adding these two review
-tools. See that section for the exact settings to enable. (The
-CodeRabbit App is already installed — see "Installation status" above —
-so no manual step remains before applying this.)
+See this document's own "Main branch protection (active)" section below
+for the exact rule set enforced on `main`, including the real, verified
+check names. Applied via the GitHub API as a single repository ruleset
+(`main-protection`) on 2026-08-01, after PR #4 (which added CodeRabbit
+and CodeQL) merged and its own checks were confirmed green on `main`.
 
 ## Privacy / secrets
 
@@ -144,31 +139,44 @@ so no manual step remains before applying this.)
   its requested permission scope in the GitHub App install screen before
   accepting.
 
-## Recommended branch protection for `main`
+## Main branch protection (active)
 
-Prepared for Kadir to review and apply (or ask this session to apply,
-since admin access to do so was confirmed available while preparing this
-document — not exercised, per the reasoning above).
+Applied 2026-08-01 as a single GitHub **repository ruleset** named
+`main-protection` (id `20201573`, `enforcement: active`), not classic
+branch protection — chosen because this repository has no existing
+classic protection or other ruleset on `main`, and a ruleset is
+GitHub's current mechanism (a repository can mix both, but doing so for
+the same branch risks two overlapping policies enforcing the same
+thing, which this repository deliberately avoids).
 
-**Verified real check names**, all confirmed from real, completed runs
+**Verified real check names**, confirmed from real, completed runs
 (`GET /repos/kadireren7/membrane/commits/{sha}/check-runs`):
 
 - `build-and-test (Debug)`, `build-and-test (ASan)`, `thread-sanitizer` —
   from `main`'s own CI history (pre-existing, `ci.yml`).
-- `CodeQL analysis (c-cpp)` — from `codeql.yml`'s own first completed
-  run, 0 alerts. See that run's own GitHub Actions log for the exact PR
-  and commit, rather than pinning a specific SHA here that the next
-  push would make stale.
+- `CodeQL analysis (c-cpp)` — from `codeql.yml`'s own completed runs.
+  See the workflow's own GitHub Actions run history and the repository's
+  Security → Code scanning tab for current alert status rather than a
+  count pinned here, which the next scan would make stale.
 
-Recommended settings:
+Active settings:
 
-- Require a pull request before merging.
+- Require a pull request before merging (0 required approving reviews —
+  no reviewer-count requirement is imposed).
 - Required status checks: `build-and-test (Debug)`, `build-and-test
   (ASan)`, `thread-sanitizer`, `CodeQL analysis (c-cpp)`.
 - Require branches to be up to date before merging.
 - Require conversation resolution before merging.
 - Block force pushes to `main`.
 - Block branch deletion for `main`.
+
+**Owner/admin bypass**: the repository's Admin role can bypass this
+ruleset (`bypass_mode: always`), so an emergency direct push or
+force-push to `main` remains possible without disabling protection
+repository-wide first. This exists as a safety valve for a
+single-developer repository, not as the recommended path — routine
+development, including Kadir's own changes, should still go through a
+pull request like any other.
 
 **Deliberately not required, for now** (per this change's own scope):
 
@@ -177,7 +185,7 @@ Recommended settings:
   would turn an advisory tool into a hard merge lock outside this
   project's own control.
 - A minimum human-reviewer count, signed commits, auto-merge, and linear
-  history — none of these were asked for, and none is added here.
+  history — none of these were asked for, and none is enabled.
 
 ## Third-party app permission hygiene
 
