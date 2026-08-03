@@ -1,52 +1,54 @@
 #!/usr/bin/env bash
 #
-# Reproduction script for EXP-FPGA-DIV-002 (Q8_0 divider-pair baseline +
-# feasibility study, experiments/EXP-FPGA-DIV-002/). Phase A only: no
-# production RTL is modified or synthesized as an alternative here -- this
-# reproduces the CHARACTERIZATION and DIFFERENTIAL FEASIBILITY measurements
-# (experiments/EXP-FPGA-DIV-002/baseline.md), same "no new divider variant
-# written" scope as the experiment itself. Modeled on
-# scripts/verify-q4-radix4-divider.sh's own structure/conventions
-# (EXP-FPGA-DIV-001), not a copy -- this experiment measures a candidate
-# space rather than gating a promoted production integration.
+# Reproduction script for EXP-FPGA-DIV-002 (experiments/EXP-FPGA-DIV-002/).
 #
-# Usage: scripts/run-exp-q8-divider-002.sh [--quick|--full] [--resume]
-#            [--output-dir <dir>]
+# Usage: scripts/run-exp-q8-divider-002.sh [--phase a|b1] [--quick|--full]
+#            [--resume] [--output-dir <dir>]
 #
-#   --quick   (default) CI-sized: a focused feasibility subset (~100K
-#             cases, seconds), a Q8-focused smoke slice of the full
-#             520,000-transaction datapath test (still runs the whole
-#             thing -- it is cheap, ~13-30s, no reason to shrink it, same
-#             reasoning verify-q4-radix4-divider.sh's own comment gives),
-#             and a synthesis smoke test (elaboration only, no
-#             synth_ecp5).
-#   --full    Research-sized: reproduces this experiment's own full scope
-#             (2,000,000+ random cases + 50,000 runtime-distribution
-#             cases for the feasibility differential) plus the full
-#             generic+ECP5 synthesis matrix (standalone
-#             membrane_fp_divider, q8_scale, and a best-effort,
-#             time-bounded full-top-level attempt -- see this script's
-#             own TOP_SYNTH_TIMEOUT_S, matching baseline.md section 4's
-#             own disclosed UNAVAILABLE result for that last one).
+#   --phase a   (default, preserves this script's original behavior)
+#             Phase A: characterization + differential FEASIBILITY study.
+#             No production RTL is modified or synthesized as an
+#             alternative -- reproduces baseline.md's own measurements
+#             (no new divider variant written, "characterize first" scope).
+#   --phase b1  Phase B1: builds and measures the experimental dual
+#             exact-radix-4 Q8_0 divider variant
+#             (rtl/experimental/q8_div/q8_scale_dual_radix4.sv,
+#             rtl/experimental/q8_div/membrane_quant_stream_top_q8_dual_radix4.sv)
+#             against the unmodified production baseline -- differential
+#             test (d/id bit-exactness), full-datapath cosimulation (both
+#             variants), and a synthesis matrix. See phase-b1.md.
 #
-# No production RTL file is modified by this script. No new divider
-# variant is written, synthesized, or promoted -- this only re-drives the
-# existing rtl/membrane_fp_divider.sv / rtl/membrane_fp_multiplier.sv RTL
-# (via rtl/tb/tb_q8_scale_feasibility.cpp) and re-synthesizes the existing
-# rtl/membrane_fp_divider.sv / rtl/q8_scale.sv / rtl/membrane_quant_stream_top.sv
-# RTL, unchanged.
+#   --quick   (default) CI-sized: small case/transaction counts, synthesis
+#             smoke (elaboration only, no synth_ecp5).
+#   --full    Research-sized: for --phase a, reproduces this experiment's
+#             own full scope (2,000,000+ random + 50,000 runtime-
+#             distribution feasibility cases) plus the full generic+ECP5
+#             synthesis matrix. For --phase b1, reproduces phase-b1.md's
+#             own full scope (4,050,239+ differential cases, 1,310,000+
+#             full-datapath transactions per variant, full generic+ECP5
+#             synthesis matrix, best-effort time-bounded full-top attempt).
+#
+# No production RTL file is modified by this script, in either phase --
+# Phase B1 only builds/synthesizes/tests the new files under
+# rtl/experimental/q8_div/, alongside the unmodified production RTL for
+# comparison.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+PHASE="a"
 MODE="quick"
 RESUME=0
-BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002"
+BUILD_DIR=""
 
 while [ $# -gt 0 ]; do
 	case "$1" in
+	--phase)
+		shift
+		PHASE="$1"
+		;;
 	--quick) MODE="quick" ;;
 	--full) MODE="full" ;;
 	--resume) RESUME=1 ;;
@@ -65,6 +67,22 @@ while [ $# -gt 0 ]; do
 	esac
 	shift
 done
+
+case "$PHASE" in
+a | b1) ;;
+*)
+	echo "error: unknown --phase '$PHASE' (expected 'a' or 'b1')" >&2
+	exit 1
+	;;
+esac
+
+if [ -z "$BUILD_DIR" ]; then
+	if [ "$PHASE" = "b1" ]; then
+		BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002-b1"
+	else
+		BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002"
+	fi
+fi
 
 YOSYS="$REPO_ROOT/tools/.local-yosys/usr/bin/yosys"
 VERILATOR_BIN=""
@@ -107,6 +125,8 @@ need_build() {
 
 VINC="$REPO_ROOT/tools/.local-verilator/usr/share/verilator/include"
 FAILS=0
+
+if [ "$PHASE" = "a" ]; then
 
 # =============================================================================
 # 1. Differential feasibility tool (rtl/tb/tb_q8_scale_feasibility.cpp):
@@ -326,6 +346,257 @@ if [ "$MODE" = "full" ]; then
 	python3 "$REPO_ROOT/scripts/verify-outreach.py" || FAILS=$((FAILS + 1))
 	python3 "$REPO_ROOT/paper/scripts/verify-paper.py" || FAILS=$((FAILS + 1))
 fi
+
+fi	# PHASE = a
+
+if [ "$PHASE" = "b1" ]; then
+
+EXP_DIR="$REPO_ROOT/rtl/experimental/q8_div"
+
+# =============================================================================
+# 1. Component differential test: baseline rtl/q8_scale.sv vs. experimental
+#    rtl/experimental/q8_div/q8_scale_dual_radix4.sv (rtl/tb/tb_q8_scale_dual_radix4.cpp).
+#    Compiled with Verilator's --assert flag so the experimental module's own
+#    `` `ifndef SYNTHESIS `` structural assertions (result-rendezvous /
+#    atomic-acceptance invariants, see that file's own header) are actually
+#    exercised, not silently skipped (the existing Phase A / verify-q4-radix4-
+#    divider.sh builds in this repo do NOT pass --assert -- disclosed here as
+#    a real gap those scripts have, not repeated in this one).
+# =============================================================================
+stage "build: q8_scale vs q8_scale_dual_radix4 differential test"
+B1_BASE_OBJ="$BUILD_DIR/q8scale-base-obj"
+B1_DUAL_OBJ="$BUILD_DIR/q8scale-dual-obj"
+B1_DIFF_BIN="$BUILD_DIR/tb_q8_scale_dual_radix4"
+if need_build "$B1_DIFF_BIN"; then
+	rm -rf "$B1_BASE_OBJ" "$B1_DUAL_OBJ"
+	"$VERILATOR_BIN" --cc --assert -Wno-fatal --Mdir "$B1_BASE_OBJ" --top-module q8_scale \
+		"$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv" "$REPO_ROOT/rtl/q8_scale.sv"
+	"$VERILATOR_BIN" --cc --assert -Wno-fatal --Mdir "$B1_DUAL_OBJ" --top-module q8_scale_dual_radix4 \
+		"$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" "$EXP_DIR/q8_scale_dual_radix4.sv"
+	make -C "$B1_BASE_OBJ" -f Vq8_scale.mk Vq8_scale__ALL.a -j2
+	make -C "$B1_DUAL_OBJ" -f Vq8_scale_dual_radix4.mk Vq8_scale_dual_radix4__ALL.a -j2
+	g++ -O2 -std=c++17 -I "$VINC" -I "$VINC/vltstd" -I "$B1_BASE_OBJ" -I "$B1_DUAL_OBJ" -I "$REPO_ROOT/include" \
+		"$REPO_ROOT/rtl/tb/tb_q8_scale_dual_radix4.cpp" "$REPO_ROOT/src/codecs/f16convert.c" \
+		"$VINC/verilated.cpp" "$VINC/verilated_threads.cpp" \
+		"$B1_BASE_OBJ/Vq8_scale__ALL.a" "$B1_DUAL_OBJ/Vq8_scale_dual_radix4__ALL.a" \
+		-pthread -lpthread -latomic -o "$B1_DIFF_BIN"
+fi
+
+if [ "$MODE" = "full" ]; then
+	B1_RAND1=2000000; B1_RAND2=2000000; B1_RUNTIME=50000
+else
+	B1_RAND1=20000; B1_RAND2=20000; B1_RUNTIME=2000
+fi
+stage "q8_scale vs q8_scale_dual_radix4 differential ($MODE: random1=$B1_RAND1 random2=$B1_RAND2 runtime_dist=$B1_RUNTIME). Progress heartbeats every 5s."
+"$B1_DIFF_BIN" "$B1_RAND1" "$B1_RAND2" "$B1_RUNTIME" | tee "$BUILD_DIR/b1-differential.log"
+grep -q "^PASS:" "$BUILD_DIR/b1-differential.log" || { echo "FAIL: q8_scale_dual_radix4 differential test"; FAILS=$((FAILS + 1)); }
+
+# =============================================================================
+# 2. Full-datapath test: baseline membrane_quant_stream_top vs. experimental
+#    membrane_quant_stream_top_q8_dual_radix4
+#    (rtl/experimental/q8_div/tb_top_verilator_q8_variant.cpp, one C++ source
+#    compiled twice via -DMEMBRANE_Q8DUAL_VARIANT, same technique
+#    EXP-FPGA-DIV-001 used for its own B1-B4 variants).
+# =============================================================================
+stage "build: full-datapath test, baseline variant"
+B1_TOP_BASE_OBJ="$BUILD_DIR/top-base-obj"
+if need_build "$B1_TOP_BASE_OBJ/Vtop_baseline"; then
+	rm -rf "$B1_TOP_BASE_OBJ"
+	"$VERILATOR_BIN" --cc --exe --build --assert -j 2 -Wno-fatal --Mdir "$B1_TOP_BASE_OBJ" \
+		--top-module membrane_quant_stream_top \
+		"$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_adder.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv" "$REPO_ROOT/rtl/membrane_fp_multiplier.sv" \
+		"$REPO_ROOT/rtl/stream_fifo.sv" "$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/q4_pack.sv" "$REPO_ROOT/rtl/q4_scale.sv" "$REPO_ROOT/rtl/q4_scan.sv" "$REPO_ROOT/rtl/q4_unpack.sv" \
+		"$REPO_ROOT/rtl/q8_dequantize.sv" "$REPO_ROOT/rtl/q8_maxabs_reduce.sv" "$REPO_ROOT/rtl/q8_quantize_pack.sv" "$REPO_ROOT/rtl/q8_scale.sv" \
+		"$REPO_ROOT/rtl/membrane_fp_scale_neg_pow2.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" "$REPO_ROOT/rtl/membrane_quant_stream_top.sv" \
+		"$EXP_DIR/tb_top_verilator_q8_variant.cpp" -o Vtop_baseline
+fi
+
+stage "build: full-datapath test, experimental dual-radix4 Q8 variant"
+B1_TOP_DUAL_OBJ="$BUILD_DIR/top-dual-obj"
+if need_build "$B1_TOP_DUAL_OBJ/Vtop_q8dual"; then
+	rm -rf "$B1_TOP_DUAL_OBJ"
+	"$VERILATOR_BIN" --cc --exe --build --assert -j 2 -Wno-fatal --Mdir "$B1_TOP_DUAL_OBJ" \
+		--top-module membrane_quant_stream_top_q8_dual_radix4 \
+		-CFLAGS "-DMEMBRANE_Q8DUAL_VARIANT" \
+		"$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_adder.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv" "$REPO_ROOT/rtl/membrane_fp_multiplier.sv" \
+		"$REPO_ROOT/rtl/stream_fifo.sv" "$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/q4_pack.sv" "$REPO_ROOT/rtl/q4_scale.sv" "$REPO_ROOT/rtl/q4_scan.sv" "$REPO_ROOT/rtl/q4_unpack.sv" \
+		"$REPO_ROOT/rtl/q8_dequantize.sv" "$REPO_ROOT/rtl/q8_maxabs_reduce.sv" "$REPO_ROOT/rtl/q8_quantize_pack.sv" \
+		"$REPO_ROOT/rtl/membrane_fp_scale_neg_pow2.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" \
+		"$EXP_DIR/q8_scale_dual_radix4.sv" "$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4.sv" \
+		"$EXP_DIR/tb_top_verilator_q8_variant.cpp" -o Vtop_q8dual
+fi
+
+if [ "$MODE" = "full" ]; then
+	B1_N_PER_MODE=250000; B1_N_MIX=100000; B1_N_ADV=70000
+else
+	B1_N_PER_MODE=500; B1_N_MIX=200; B1_N_ADV=100
+fi
+
+VECDIR="$BUILD_DIR/vectors"
+if need_build "$VECDIR/gen_top_x"; then
+	cc -O2 -I "$REPO_ROOT/include" -o "$VECDIR/gen_top_x" "$REPO_ROOT/rtl/tb/gen_top_x_vectors.c" "$REPO_ROOT/src/codecs/f16convert.c"
+	cc -O2 -I "$REPO_ROOT/include" -o "$VECDIR/gen_pack" "$REPO_ROOT/rtl/tb/gen_pack_vectors.c" "$REPO_ROOT/src/codecs/f16convert.c" "$REPO_ROOT/src/quant/quant_simd.c"
+	cc -O2 -I "$REPO_ROOT/include" -o "$VECDIR/gen_dequant" "$REPO_ROOT/rtl/tb/gen_dequant_vectors.c" "$REPO_ROOT/src/codecs/f16convert.c" "$REPO_ROOT/src/quant/quant_simd.c"
+	cc -O2 -I "$REPO_ROOT/include" -o "$VECDIR/gen_q4pack" "$REPO_ROOT/rtl/tb/gen_q4pack_vectors.c" "$REPO_ROOT/src/codecs/f16convert.c" "$REPO_ROOT/src/quant/quant_simd.c"
+	cc -O2 -I "$REPO_ROOT/include" -o "$VECDIR/gen_q4unpack" "$REPO_ROOT/rtl/tb/gen_q4unpack_vectors.c" "$REPO_ROOT/src/codecs/f16convert.c" "$REPO_ROOT/src/quant/quant_simd.c"
+fi
+if need_build "$VECDIR/top_x_b1.txt"; then
+	"$VECDIR/gen_top_x" "$B1_N_PER_MODE" "$VECDIR/top_x_b1.txt"
+	"$VECDIR/gen_pack" "$VECDIR/top_x_b1.txt" "$VECDIR/top_q8pack_b1.txt"
+	"$VECDIR/gen_dequant" "$VECDIR/top_q8pack_b1.txt" "$VECDIR/top_q8dequant_b1.txt"
+	"$VECDIR/gen_q4pack" "$VECDIR/top_x_b1.txt" "$VECDIR/top_q4pack_b1.txt"
+	"$VECDIR/gen_q4unpack" "$VECDIR/top_q4pack_b1.txt" "$VECDIR/top_q4unpack_b1.txt"
+fi
+# tb_top_verilator_q8_variant.cpp reads its golden vectors from fixed /tmp
+# paths (same long-standing convention as rtl/tb/tb_top_verilator.cpp).
+cp "$VECDIR/top_x_b1.txt" /tmp/top_x_120k.txt
+cp "$VECDIR/top_q8pack_b1.txt" /tmp/top_q8pack_120k.txt
+cp "$VECDIR/top_q8dequant_b1.txt" /tmp/top_q8dequant_120k.txt
+cp "$VECDIR/top_q4pack_b1.txt" /tmp/top_q4pack_120k.txt
+cp "$VECDIR/top_q4unpack_b1.txt" /tmp/top_q4unpack_120k.txt
+
+B1_TOTAL_TXN=$((B1_N_PER_MODE * 4 + B1_N_MIX + B1_N_ADV * 3))
+stage "full-datapath test, BASELINE ($MODE: $B1_TOTAL_TXN transactions). Heartbeats every 8s."
+"$B1_TOP_BASE_OBJ/Vtop_baseline" "$B1_N_PER_MODE" "$B1_N_MIX" "$B1_N_ADV" | tee "$BUILD_DIR/b1-full-datapath-baseline.log"
+grep -q "^PASS:" "$BUILD_DIR/b1-full-datapath-baseline.log" || { echo "FAIL: baseline full-datapath test"; FAILS=$((FAILS + 1)); }
+
+stage "full-datapath test, EXPERIMENTAL dual-radix4 Q8 ($MODE: $B1_TOTAL_TXN transactions). Heartbeats every 8s."
+"$B1_TOP_DUAL_OBJ/Vtop_q8dual" "$B1_N_PER_MODE" "$B1_N_MIX" "$B1_N_ADV" | tee "$BUILD_DIR/b1-full-datapath-dual.log"
+grep -q "^PASS:" "$BUILD_DIR/b1-full-datapath-dual.log" || { echo "FAIL: experimental dual-radix4 Q8 full-datapath test"; FAILS=$((FAILS + 1)); }
+
+# =============================================================================
+# 3. Synthesis matrix (task item 8): A. baseline membrane_fp_divider
+#    standalone, B. membrane_fp_divider_radix4 standalone, C. baseline
+#    q8_scale, D. experimental q8_scale_dual_radix4, E. experimental
+#    top-level (best-effort).
+# =============================================================================
+TOP_SYNTH_TIMEOUT_S=1500
+
+if [ "$MODE" = "full" ]; then
+	stage "synthesis matrix (generic + ECP5): A/B/C/D standalone + integration, E best-effort full top"
+
+	run_synth() {
+		local label="$1" top="$2" flow="$3"	# flow: generic|ecp5
+		shift 3
+		local files=("$@")
+		local ys="$BUILD_DIR/synth/${label}-${flow}.ys"
+		local log="$BUILD_DIR/synth/${label}-${flow}.log"
+
+		{
+			echo "read_verilog -sv ${files[*]}"
+			echo "hierarchy -check -top $top"
+			if [ "$flow" = "generic" ]; then
+				echo "proc; opt"
+				echo "synth -top $top"
+			else
+				echo "synth_ecp5 -top $top"
+			fi
+			echo "stat"
+		} >"$ys"
+		"$YOSYS" -s "$ys" | tee "$log"
+	}
+
+	# A. baseline membrane_fp_divider standalone
+	run_synth "a-divider-baseline" membrane_fp_divider generic "$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv"
+	run_synth "a-divider-baseline" membrane_fp_divider ecp5 "$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv"
+
+	# B. membrane_fp_divider_radix4 standalone
+	run_synth "b-divider-radix4" membrane_fp_divider_radix4 generic "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv"
+	run_synth "b-divider-radix4" membrane_fp_divider_radix4 ecp5 "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv"
+
+	# C. baseline q8_scale
+	run_synth "c-q8scale-baseline" q8_scale generic "$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv" "$REPO_ROOT/rtl/q8_scale.sv"
+	run_synth "c-q8scale-baseline" q8_scale ecp5 "$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv" "$REPO_ROOT/rtl/q8_scale.sv"
+
+	# D. experimental q8_scale_dual_radix4
+	run_synth "d-q8scale-dual-radix4" q8_scale_dual_radix4 generic "$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" "$EXP_DIR/q8_scale_dual_radix4.sv"
+	run_synth "d-q8scale-dual-radix4" q8_scale_dual_radix4 ecp5 "$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" "$EXP_DIR/q8_scale_dual_radix4.sv"
+
+	# Performance/regression gate, wide tolerance (yosys/ABC ordering is
+	# not perfectly deterministic run-to-run, same caveat every prior
+	# phase's own gate documents). Ranges derived from this branch's own
+	# freshly-measured numbers (see phase-b1.md).
+	check_cell_range() {
+		local label="$1" log="$2" lo="$3" hi="$4"
+		local n
+		n=$(grep -A1 "Number of cells:" "$log" | head -1 | awk '{print $NF}')
+		if [ -z "$n" ]; then
+			echo "FAIL: could not read cell count for $label from $log"
+			FAILS=$((FAILS + 1))
+			return
+		fi
+		if [ "$n" -lt "$lo" ] || [ "$n" -gt "$hi" ]; then
+			echo "FAIL: $label ECP5 cells=$n outside expected [$lo,$hi]"
+			FAILS=$((FAILS + 1))
+		else
+			echo "PASS: $label ECP5 cells=$n within [$lo,$hi]"
+		fi
+	}
+	check_cell_range "B: membrane_fp_divider_radix4 standalone" "$BUILD_DIR/synth/b-divider-radix4-ecp5.log" 1000 2200
+	check_cell_range "D: q8_scale_dual_radix4" "$BUILD_DIR/synth/d-q8scale-dual-radix4-ecp5.log" 2000 6000
+
+	# E. experimental top-level: best-effort, time-bounded (same
+	# precedent as every prior phase's own whole-top attempt).
+	stage "E. experimental top-level synth_ecp5: best-effort, bounded at ${TOP_SYNTH_TIMEOUT_S}s"
+	cat >"$BUILD_DIR/synth/e-top-dual-ecp5.ys" <<EOF
+read_verilog -sv $REPO_ROOT/rtl/membrane_fp_pkg.sv $REPO_ROOT/rtl/membrane_fp_adder.sv $REPO_ROOT/rtl/membrane_fp_divider.sv $REPO_ROOT/rtl/membrane_fp_multiplier.sv $REPO_ROOT/rtl/stream_fifo.sv $REPO_ROOT/rtl/valid_delay_line.sv $REPO_ROOT/rtl/q4_pack.sv $REPO_ROOT/rtl/q4_scale.sv $REPO_ROOT/rtl/q4_scan.sv $REPO_ROOT/rtl/q4_unpack.sv $REPO_ROOT/rtl/q8_dequantize.sv $REPO_ROOT/rtl/q8_maxabs_reduce.sv $REPO_ROOT/rtl/q8_quantize_pack.sv $REPO_ROOT/rtl/membrane_fp_scale_neg_pow2.sv $REPO_ROOT/rtl/membrane_fp_divider_radix4.sv $EXP_DIR/q8_scale_dual_radix4.sv $EXP_DIR/membrane_quant_stream_top_q8_dual_radix4.sv
+hierarchy -check -top membrane_quant_stream_top_q8_dual_radix4
+synth_ecp5 -top membrane_quant_stream_top_q8_dual_radix4
+stat
+EOF
+	if timeout "$TOP_SYNTH_TIMEOUT_S" "$YOSYS" -s "$BUILD_DIR/synth/e-top-dual-ecp5.ys" >"$BUILD_DIR/synth/e-top-dual-ecp5.log" 2>&1; then
+		echo "E. experimental top-level synth_ecp5 completed -- see the log for real numbers"
+	else
+		rc=$?
+		if [ "$rc" -eq 124 ]; then
+			echo "UNAVAILABLE: E. experimental top-level synth_ecp5 timed out after ${TOP_SYNTH_TIMEOUT_S}s (expected, same precedent as baseline's own whole-top attempts -- not a script failure)"
+		else
+			echo "FAIL: E. experimental top-level synth_ecp5 exited with unexpected error code $rc"
+			FAILS=$((FAILS + 1))
+		fi
+	fi
+else
+	stage "synthesis smoke test (elaboration only, no full synth_ecp5 -- see --full)"
+	cat >"$BUILD_DIR/synth/elab-b1-divider-radix4.ys" <<EOF
+read_verilog -sv $REPO_ROOT/rtl/membrane_fp_divider_radix4.sv
+hierarchy -check -top membrane_fp_divider_radix4
+EOF
+	"$YOSYS" -s "$BUILD_DIR/synth/elab-b1-divider-radix4.ys"
+	cat >"$BUILD_DIR/synth/elab-b1-q8scale-dual.ys" <<EOF
+read_verilog -sv $REPO_ROOT/rtl/membrane_fp_pkg.sv $REPO_ROOT/rtl/membrane_fp_divider_radix4.sv $EXP_DIR/q8_scale_dual_radix4.sv
+hierarchy -check -top q8_scale_dual_radix4
+EOF
+	"$YOSYS" -s "$BUILD_DIR/synth/elab-b1-q8scale-dual.ys"
+	cat >"$BUILD_DIR/synth/elab-b1-top-dual.ys" <<EOF
+read_verilog -sv $REPO_ROOT/rtl/membrane_fp_pkg.sv $REPO_ROOT/rtl/membrane_fp_adder.sv $REPO_ROOT/rtl/membrane_fp_divider.sv $REPO_ROOT/rtl/membrane_fp_multiplier.sv $REPO_ROOT/rtl/stream_fifo.sv $REPO_ROOT/rtl/valid_delay_line.sv $REPO_ROOT/rtl/q4_pack.sv $REPO_ROOT/rtl/q4_scale.sv $REPO_ROOT/rtl/q4_scan.sv $REPO_ROOT/rtl/q4_unpack.sv $REPO_ROOT/rtl/q8_dequantize.sv $REPO_ROOT/rtl/q8_maxabs_reduce.sv $REPO_ROOT/rtl/q8_quantize_pack.sv $REPO_ROOT/rtl/membrane_fp_scale_neg_pow2.sv $REPO_ROOT/rtl/membrane_fp_divider_radix4.sv $EXP_DIR/q8_scale_dual_radix4.sv $EXP_DIR/membrane_quant_stream_top_q8_dual_radix4.sv
+hierarchy -check -top membrane_quant_stream_top_q8_dual_radix4
+EOF
+	"$YOSYS" -s "$BUILD_DIR/synth/elab-b1-top-dual.ys"
+fi
+
+# =============================================================================
+# 4. Local CI-equivalent verification (--full only).
+# =============================================================================
+if [ "$MODE" = "full" ]; then
+	stage "local verification: Debug/Release/ASan+UBSan/TSan ctest, ggml quant parity, verify-*.py"
+	for cfg in build-debug build build-asan build-tsan; do
+		if [ -d "$REPO_ROOT/$cfg" ]; then
+			cmake --build "$REPO_ROOT/$cfg" -j "$(nproc)"
+			if [ "$cfg" = "build-tsan" ]; then
+				setarch "$(uname -m)" -R ctest --test-dir "$REPO_ROOT/$cfg" --output-on-failure || FAILS=$((FAILS + 1))
+			else
+				ctest --test-dir "$REPO_ROOT/$cfg" --output-on-failure || FAILS=$((FAILS + 1))
+			fi
+		else
+			echo "note: $cfg not configured, skipping (run cmake -S . -B $cfg first for full coverage)"
+		fi
+	done
+	python3 "$REPO_ROOT/scripts/verify-results.py" || FAILS=$((FAILS + 1))
+	python3 "$REPO_ROOT/scripts/verify-outreach.py" || FAILS=$((FAILS + 1))
+	python3 "$REPO_ROOT/paper/scripts/verify-paper.py" || FAILS=$((FAILS + 1))
+fi
+
+fi	# PHASE = b1
 
 echo
 if [ "$FAILS" -eq 0 ]; then

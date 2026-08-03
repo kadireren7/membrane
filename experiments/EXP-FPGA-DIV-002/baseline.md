@@ -297,3 +297,19 @@ matching EXP-FPGA-DIV-001's own precedent precisely (`baseline.md`
 section 8's candidate list there was proposal-only; its later Phase
 B1-B4 sub-phases each required their own separate authorization to
 proceed).
+
+## 8. Phase B1 follow-up (candidate E, implemented and measured)
+
+Everything above (sections 1-7) is this phase's own original,
+analysis-only record and is unchanged. Candidate E (dual exact radix-4
+dividers) was later implemented and measured in a separate,
+separately-authorized phase: see [phase-b1.md](../phase-b1.md) and
+`results/b1-comparison.md`. This section 5's own ESTIMATED
+~3,000-4,000-ECP5-cell extrapolation for the two-instance-parallel
+configuration is now superseded by a real integration measurement:
+**2,775 ECP5 cells** (below the extrapolated range), a **-97.76%**
+reduction vs. this baseline's own freshly-confirmed 123,742-cell
+`q8_scale` number, at a real, measured initiation-interval cost of 16
+cycles (vs. this baseline's own II=1) and 0 d/id mismatches across
+4,052,224 differential cases. Phase B1's own decision:
+`PROMOTE_CANDIDATE` (experiment-branch-only).

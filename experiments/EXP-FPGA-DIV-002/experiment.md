@@ -275,3 +275,17 @@ policy (`docs/open-development-policy.md`), but **not merged into
 scope. Per `docs/research-release-freeze.md`, nothing here is a
 verified public claim of the `v0.1.0-research` release; it is
 disclosed, research-in-progress work on a public branch.
+
+## Phase B1 (follow-up)
+
+This Phase A record above is unchanged and historical. Phase A's own
+`NEXT_DUAL_RADIX4` decision (section "Decision" above) was carried out as
+a separate, later phase: see [phase-b1.md](phase-b1.md) for the full
+record. Headline: `rtl/membrane_fp_divider_radix4` (reused unmodified) in
+a new `q8_scale_dual_radix4` variant is bit-exact with baseline `q8_scale`
+across 4,052,224 differential cases (0 mismatches), reduces `q8_scale`'s
+own ECP5 footprint by -97.76% (123,742 -> 2,775 cells, a real integration
+measurement), at a measured 16x initiation-interval cost and a real,
+disclosed collateral slowdown on other in-flight-serialized modes.
+Phase B1's own decision: `PROMOTE_CANDIDATE` (experiment-branch-only, not
+a `main`-merge authorization).
