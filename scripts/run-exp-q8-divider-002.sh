@@ -17,6 +17,13 @@
 #             against the unmodified production baseline -- differential
 #             test (d/id bit-exactness), full-datapath cosimulation (both
 #             variants), and a synthesis matrix. See phase-b1.md.
+#   --phase b2  Phase B2: builds and measures the scheduler-improved variant
+#             (rtl/experimental/q8_div/membrane_quant_stream_top_q8_dual_radix4_b2.sv,
+#             Phase B1's own q8_scale_dual_radix4.sv reused unmodified)
+#             against BOTH the unmodified production baseline and Phase B1's
+#             own full-serialization variant -- one 3-way-comparable
+#             correctness+performance tool (10 traffic profiles, percentile
+#             latency stats), plus a synthesis matrix. See phase-b2.md.
 #
 #   --quick   (default) CI-sized: small case/transaction counts, synthesis
 #             smoke (elaboration only, no synth_ecp5).
@@ -27,9 +34,13 @@
 #             own full scope (4,050,239+ differential cases, 1,310,000+
 #             full-datapath transactions per variant, full generic+ECP5
 #             synthesis matrix, best-effort time-bounded full-top attempt).
+#             For --phase b2, reproduces phase-b2.md's own full scope
+#             (4,000,000+ correctness transactions per variant across three
+#             variants, a 10-profile performance matrix, full generic+ECP5
+#             synthesis matrix, best-effort time-bounded full-top attempt).
 #
-# No production RTL file is modified by this script, in either phase --
-# Phase B1 only builds/synthesizes/tests the new files under
+# No production RTL file is modified by this script, in any phase -- Phase
+# B1/B2 only build/synthesize/test the new files under
 # rtl/experimental/q8_div/, alongside the unmodified production RTL for
 # comparison.
 set -euo pipefail
@@ -69,9 +80,9 @@ while [ $# -gt 0 ]; do
 done
 
 case "$PHASE" in
-a | b1) ;;
+a | b1 | b2) ;;
 *)
-	echo "error: unknown --phase '$PHASE' (expected 'a' or 'b1')" >&2
+	echo "error: unknown --phase '$PHASE' (expected 'a', 'b1', or 'b2')" >&2
 	exit 1
 	;;
 esac
@@ -79,6 +90,8 @@ esac
 if [ -z "$BUILD_DIR" ]; then
 	if [ "$PHASE" = "b1" ]; then
 		BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002-b1"
+	elif [ "$PHASE" = "b2" ]; then
+		BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002-b2"
 	else
 		BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002"
 	fi
@@ -597,6 +610,210 @@ if [ "$MODE" = "full" ]; then
 fi
 
 fi	# PHASE = b1
+
+if [ "$PHASE" = "b2" ]; then
+
+EXP_DIR="$REPO_ROOT/rtl/experimental/q8_div"
+
+# =============================================================================
+# 1. Build three Verilated variants of the shared correctness+performance
+#    tool (baseline / Phase B1 full-serialization / Phase B2 scheduler-
+#    improved), one C++ source compiled three times via -DMEMBRANE_B1_VARIANT
+#    / -DMEMBRANE_B2_VARIANT (same technique Phase B1 used for its own
+#    2-way baseline/B1 tool). Each build checks its OWN DUT against the
+#    SAME golden vectors with the SAME strict FIFO-order id/mode/data
+#    checks -- if all three report 0 mismatches, they agree with each other
+#    by transitivity (see tb_top_verilator_q8_b2_variant.cpp's own header).
+# =============================================================================
+stage "build: baseline/B1/B2 correctness+performance tool (3 variants)"
+B2_BASE_OBJ="$BUILD_DIR/top-base-obj"
+B2_B1_OBJ="$BUILD_DIR/top-b1-obj"
+B2_B2_OBJ="$BUILD_DIR/top-b2-obj"
+
+if need_build "$B2_BASE_OBJ/Vtb_baseline"; then
+	rm -rf "$B2_BASE_OBJ"
+	"$VERILATOR_BIN" --cc --exe --build --assert -j 2 -Wno-fatal --Mdir "$B2_BASE_OBJ" \
+		--top-module membrane_quant_stream_top \
+		"$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_adder.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv" "$REPO_ROOT/rtl/membrane_fp_multiplier.sv" \
+		"$REPO_ROOT/rtl/stream_fifo.sv" "$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/q4_pack.sv" "$REPO_ROOT/rtl/q4_scale.sv" "$REPO_ROOT/rtl/q4_scan.sv" "$REPO_ROOT/rtl/q4_unpack.sv" \
+		"$REPO_ROOT/rtl/q8_dequantize.sv" "$REPO_ROOT/rtl/q8_maxabs_reduce.sv" "$REPO_ROOT/rtl/q8_quantize_pack.sv" "$REPO_ROOT/rtl/q8_scale.sv" \
+		"$REPO_ROOT/rtl/membrane_fp_scale_neg_pow2.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" "$REPO_ROOT/rtl/membrane_quant_stream_top.sv" \
+		"$EXP_DIR/tb_top_verilator_q8_b2_variant.cpp" -o Vtb_baseline
+fi
+
+if need_build "$B2_B1_OBJ/Vtb_b1"; then
+	rm -rf "$B2_B1_OBJ"
+	"$VERILATOR_BIN" --cc --exe --build --assert -j 2 -Wno-fatal --Mdir "$B2_B1_OBJ" \
+		--top-module membrane_quant_stream_top_q8_dual_radix4 \
+		-CFLAGS "-DMEMBRANE_B1_VARIANT" \
+		"$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_adder.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv" "$REPO_ROOT/rtl/membrane_fp_multiplier.sv" \
+		"$REPO_ROOT/rtl/stream_fifo.sv" "$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/q4_pack.sv" "$REPO_ROOT/rtl/q4_scale.sv" "$REPO_ROOT/rtl/q4_scan.sv" "$REPO_ROOT/rtl/q4_unpack.sv" \
+		"$REPO_ROOT/rtl/q8_dequantize.sv" "$REPO_ROOT/rtl/q8_maxabs_reduce.sv" "$REPO_ROOT/rtl/q8_quantize_pack.sv" \
+		"$REPO_ROOT/rtl/membrane_fp_scale_neg_pow2.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" \
+		"$EXP_DIR/q8_scale_dual_radix4.sv" "$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4.sv" \
+		"$EXP_DIR/tb_top_verilator_q8_b2_variant.cpp" -o Vtb_b1
+fi
+
+if need_build "$B2_B2_OBJ/Vtb_b2"; then
+	rm -rf "$B2_B2_OBJ"
+	"$VERILATOR_BIN" --cc --exe --build --assert -j 2 -Wno-fatal --Mdir "$B2_B2_OBJ" \
+		--top-module membrane_quant_stream_top_q8_dual_radix4_b2 \
+		-CFLAGS "-DMEMBRANE_B2_VARIANT" \
+		"$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_adder.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv" "$REPO_ROOT/rtl/membrane_fp_multiplier.sv" \
+		"$REPO_ROOT/rtl/stream_fifo.sv" "$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/q4_pack.sv" "$REPO_ROOT/rtl/q4_scale.sv" "$REPO_ROOT/rtl/q4_scan.sv" "$REPO_ROOT/rtl/q4_unpack.sv" \
+		"$REPO_ROOT/rtl/q8_dequantize.sv" "$REPO_ROOT/rtl/q8_maxabs_reduce.sv" "$REPO_ROOT/rtl/q8_quantize_pack.sv" \
+		"$REPO_ROOT/rtl/membrane_fp_scale_neg_pow2.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" \
+		"$EXP_DIR/q8_scale_dual_radix4.sv" "$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4_b2.sv" \
+		"$EXP_DIR/tb_top_verilator_q8_b2_variant.cpp" -o Vtb_b2
+fi
+
+if [ "$MODE" = "full" ]; then
+	B2_N_PER_MODE=600000; B2_N_MIX=400000; B2_N_ADV=200000; B2_N_PROFILE=200000
+else
+	B2_N_PER_MODE=15000; B2_N_MIX=20000; B2_N_ADV=3000; B2_N_PROFILE=2000
+fi
+
+VECDIR="$BUILD_DIR/vectors"
+if need_build "$VECDIR/gen_top_x"; then
+	cc -O2 -I "$REPO_ROOT/include" -o "$VECDIR/gen_top_x" "$REPO_ROOT/rtl/tb/gen_top_x_vectors.c" "$REPO_ROOT/src/codecs/f16convert.c"
+	cc -O2 -I "$REPO_ROOT/include" -o "$VECDIR/gen_pack" "$REPO_ROOT/rtl/tb/gen_pack_vectors.c" "$REPO_ROOT/src/codecs/f16convert.c" "$REPO_ROOT/src/quant/quant_simd.c"
+	cc -O2 -I "$REPO_ROOT/include" -o "$VECDIR/gen_dequant" "$REPO_ROOT/rtl/tb/gen_dequant_vectors.c" "$REPO_ROOT/src/codecs/f16convert.c" "$REPO_ROOT/src/quant/quant_simd.c"
+	cc -O2 -I "$REPO_ROOT/include" -o "$VECDIR/gen_q4pack" "$REPO_ROOT/rtl/tb/gen_q4pack_vectors.c" "$REPO_ROOT/src/codecs/f16convert.c" "$REPO_ROOT/src/quant/quant_simd.c"
+	cc -O2 -I "$REPO_ROOT/include" -o "$VECDIR/gen_q4unpack" "$REPO_ROOT/rtl/tb/gen_q4unpack_vectors.c" "$REPO_ROOT/src/codecs/f16convert.c" "$REPO_ROOT/src/quant/quant_simd.c"
+fi
+if need_build "$VECDIR/top_x_b2.txt"; then
+	"$VECDIR/gen_top_x" "$B2_N_PER_MODE" "$VECDIR/top_x_b2.txt"
+	"$VECDIR/gen_pack" "$VECDIR/top_x_b2.txt" "$VECDIR/top_q8pack_b2.txt"
+	"$VECDIR/gen_dequant" "$VECDIR/top_q8pack_b2.txt" "$VECDIR/top_q8dequant_b2.txt"
+	"$VECDIR/gen_q4pack" "$VECDIR/top_x_b2.txt" "$VECDIR/top_q4pack_b2.txt"
+	"$VECDIR/gen_q4unpack" "$VECDIR/top_q4pack_b2.txt" "$VECDIR/top_q4unpack_b2.txt"
+fi
+# tb_top_verilator_q8_b2_variant.cpp reads its golden vectors from fixed
+# /tmp paths (same long-standing convention as every prior phase's own
+# full-datapath tool).
+cp "$VECDIR/top_x_b2.txt" /tmp/top_x_120k.txt
+cp "$VECDIR/top_q8pack_b2.txt" /tmp/top_q8pack_120k.txt
+cp "$VECDIR/top_q8dequant_b2.txt" /tmp/top_q8dequant_120k.txt
+cp "$VECDIR/top_q4pack_b2.txt" /tmp/top_q4pack_120k.txt
+cp "$VECDIR/top_q4unpack_b2.txt" /tmp/top_q4unpack_120k.txt
+
+B2_CORRECTNESS_PLANNED=$((B2_N_PER_MODE * 4 + B2_N_MIX + B2_N_ADV * 6 + 128))
+stage "baseline correctness+performance run ($MODE: ~$B2_CORRECTNESS_PLANNED correctness transactions + 10-profile matrix). Heartbeats every 5s."
+"$B2_BASE_OBJ/Vtb_baseline" "$B2_N_PER_MODE" "$B2_N_MIX" "$B2_N_ADV" "$B2_N_PROFILE" | tee "$BUILD_DIR/b2-baseline.log"
+grep -q "^PASS" "$BUILD_DIR/b2-baseline.log" || { echo "FAIL: baseline correctness+performance run"; FAILS=$((FAILS + 1)); }
+
+stage "Phase B1 (full-serialization) correctness+performance run ($MODE)"
+"$B2_B1_OBJ/Vtb_b1" "$B2_N_PER_MODE" "$B2_N_MIX" "$B2_N_ADV" "$B2_N_PROFILE" | tee "$BUILD_DIR/b2-b1.log"
+grep -q "^PASS" "$BUILD_DIR/b2-b1.log" || { echo "FAIL: Phase B1 correctness+performance run"; FAILS=$((FAILS + 1)); }
+
+stage "Phase B2 (scheduler-improved) correctness+performance run ($MODE)"
+"$B2_B2_OBJ/Vtb_b2" "$B2_N_PER_MODE" "$B2_N_MIX" "$B2_N_ADV" "$B2_N_PROFILE" | tee "$BUILD_DIR/b2-b2.log"
+grep -q "^PASS" "$BUILD_DIR/b2-b2.log" || { echo "FAIL: Phase B2 correctness+performance run"; FAILS=$((FAILS + 1)); }
+
+# =============================================================================
+# 2. Synthesis matrix (task item 9): A. Phase B1's q8_scale_dual_radix4
+#    (component reference, reused unmodified), B/C. Phase B2's full
+#    top-level (the scheduler logic lives inline in this one module, not a
+#    separable sub-hierarchy -- see phase-b2.md for why B and C are the
+#    same real synthesis target here, reported once rather than duplicated).
+# =============================================================================
+TOP_SYNTH_TIMEOUT_S=1500
+
+if [ "$MODE" = "full" ]; then
+	stage "synthesis matrix (generic + ECP5): A. q8_scale_dual_radix4, B/C. Phase B2 full top-level (best-effort)"
+
+	run_synth() {
+		local label="$1" top="$2" flow="$3"
+		shift 3
+		local files=("$@")
+		local ys="$BUILD_DIR/synth/${label}-${flow}.ys"
+		local log="$BUILD_DIR/synth/${label}-${flow}.log"
+
+		{
+			echo "read_verilog -sv ${files[*]}"
+			echo "hierarchy -check -top $top"
+			if [ "$flow" = "generic" ]; then
+				echo "proc; opt"
+				echo "synth -top $top"
+			else
+				echo "synth_ecp5 -top $top"
+			fi
+			echo "stat"
+		} >"$ys"
+		"$YOSYS" -s "$ys" | tee "$log"
+	}
+
+	run_synth "a-q8scale-dual-radix4" q8_scale_dual_radix4 generic "$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" "$EXP_DIR/q8_scale_dual_radix4.sv"
+	run_synth "a-q8scale-dual-radix4" q8_scale_dual_radix4 ecp5 "$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" "$EXP_DIR/q8_scale_dual_radix4.sv"
+
+	check_cell_range() {
+		local label="$1" log="$2" lo="$3" hi="$4"
+		local n
+		n=$(grep -A1 "Number of cells:" "$log" | head -1 | awk '{print $NF}')
+		if [ -z "$n" ]; then
+			echo "FAIL: could not read cell count for $label from $log"
+			FAILS=$((FAILS + 1))
+			return
+		fi
+		if [ "$n" -lt "$lo" ] || [ "$n" -gt "$hi" ]; then
+			echo "FAIL: $label ECP5 cells=$n outside expected [$lo,$hi]"
+			FAILS=$((FAILS + 1))
+		else
+			echo "PASS: $label ECP5 cells=$n within [$lo,$hi]"
+		fi
+	}
+	check_cell_range "A: q8_scale_dual_radix4" "$BUILD_DIR/synth/a-q8scale-dual-radix4-ecp5.log" 2000 6000
+
+	stage "B/C. Phase B2 full top-level synth_ecp5: best-effort, bounded at ${TOP_SYNTH_TIMEOUT_S}s"
+	cat >"$BUILD_DIR/synth/bc-top-b2-ecp5.ys" <<EOF
+read_verilog -sv $REPO_ROOT/rtl/membrane_fp_pkg.sv $REPO_ROOT/rtl/membrane_fp_adder.sv $REPO_ROOT/rtl/membrane_fp_divider.sv $REPO_ROOT/rtl/membrane_fp_multiplier.sv $REPO_ROOT/rtl/stream_fifo.sv $REPO_ROOT/rtl/valid_delay_line.sv $REPO_ROOT/rtl/q4_pack.sv $REPO_ROOT/rtl/q4_scale.sv $REPO_ROOT/rtl/q4_scan.sv $REPO_ROOT/rtl/q4_unpack.sv $REPO_ROOT/rtl/q8_dequantize.sv $REPO_ROOT/rtl/q8_maxabs_reduce.sv $REPO_ROOT/rtl/q8_quantize_pack.sv $REPO_ROOT/rtl/membrane_fp_scale_neg_pow2.sv $REPO_ROOT/rtl/membrane_fp_divider_radix4.sv $EXP_DIR/q8_scale_dual_radix4.sv $EXP_DIR/membrane_quant_stream_top_q8_dual_radix4_b2.sv
+hierarchy -check -top membrane_quant_stream_top_q8_dual_radix4_b2
+synth_ecp5 -top membrane_quant_stream_top_q8_dual_radix4_b2
+stat
+EOF
+	if timeout "$TOP_SYNTH_TIMEOUT_S" "$YOSYS" -s "$BUILD_DIR/synth/bc-top-b2-ecp5.ys" >"$BUILD_DIR/synth/bc-top-b2-ecp5.log" 2>&1; then
+		echo "B/C. Phase B2 full top-level synth_ecp5 completed -- see the log for real numbers"
+	else
+		rc=$?
+		if [ "$rc" -eq 124 ]; then
+			echo "UNAVAILABLE: B/C. Phase B2 full top-level synth_ecp5 timed out after ${TOP_SYNTH_TIMEOUT_S}s (expected, same precedent as Phase A/B1's own whole-top attempts -- not a script failure)"
+		else
+			echo "FAIL: B/C. Phase B2 full top-level synth_ecp5 exited with unexpected error code $rc"
+			FAILS=$((FAILS + 1))
+		fi
+	fi
+else
+	stage "synthesis smoke test (elaboration only, no full synth_ecp5 -- see --full)"
+	cat >"$BUILD_DIR/synth/elab-b2-top.ys" <<EOF
+read_verilog -sv $REPO_ROOT/rtl/membrane_fp_pkg.sv $REPO_ROOT/rtl/membrane_fp_adder.sv $REPO_ROOT/rtl/membrane_fp_divider.sv $REPO_ROOT/rtl/membrane_fp_multiplier.sv $REPO_ROOT/rtl/stream_fifo.sv $REPO_ROOT/rtl/valid_delay_line.sv $REPO_ROOT/rtl/q4_pack.sv $REPO_ROOT/rtl/q4_scale.sv $REPO_ROOT/rtl/q4_scan.sv $REPO_ROOT/rtl/q4_unpack.sv $REPO_ROOT/rtl/q8_dequantize.sv $REPO_ROOT/rtl/q8_maxabs_reduce.sv $REPO_ROOT/rtl/q8_quantize_pack.sv $REPO_ROOT/rtl/membrane_fp_scale_neg_pow2.sv $REPO_ROOT/rtl/membrane_fp_divider_radix4.sv $EXP_DIR/q8_scale_dual_radix4.sv $EXP_DIR/membrane_quant_stream_top_q8_dual_radix4_b2.sv
+hierarchy -check -top membrane_quant_stream_top_q8_dual_radix4_b2
+EOF
+	"$YOSYS" -s "$BUILD_DIR/synth/elab-b2-top.ys"
+fi
+
+# =============================================================================
+# 3. Local CI-equivalent verification (--full only).
+# =============================================================================
+if [ "$MODE" = "full" ]; then
+	stage "local verification: Debug/Release/ASan+UBSan/TSan ctest, ggml quant parity, verify-*.py"
+	for cfg in build-debug build build-asan build-tsan; do
+		if [ -d "$REPO_ROOT/$cfg" ]; then
+			cmake --build "$REPO_ROOT/$cfg" -j "$(nproc)"
+			if [ "$cfg" = "build-tsan" ]; then
+				setarch "$(uname -m)" -R ctest --test-dir "$REPO_ROOT/$cfg" --output-on-failure || FAILS=$((FAILS + 1))
+			else
+				ctest --test-dir "$REPO_ROOT/$cfg" --output-on-failure || FAILS=$((FAILS + 1))
+			fi
+		else
+			echo "note: $cfg not configured, skipping (run cmake -S . -B $cfg first for full coverage)"
+		fi
+	done
+	python3 "$REPO_ROOT/scripts/verify-results.py" || FAILS=$((FAILS + 1))
+	python3 "$REPO_ROOT/scripts/verify-outreach.py" || FAILS=$((FAILS + 1))
+	python3 "$REPO_ROOT/paper/scripts/verify-paper.py" || FAILS=$((FAILS + 1))
+fi
+
+fi	# PHASE = b2
 
 echo
 if [ "$FAILS" -eq 0 ]; then

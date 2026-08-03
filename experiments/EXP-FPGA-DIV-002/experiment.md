@@ -289,3 +289,28 @@ measurement), at a measured 16x initiation-interval cost and a real,
 disclosed collateral slowdown on other in-flight-serialized modes.
 Phase B1's own decision: `PROMOTE_CANDIDATE` (experiment-branch-only, not
 a `main`-merge authorization).
+
+## Phase B2 (follow-up)
+
+Phase B1's own disclosed collateral slowdown (Q8_0 decode +48.3%, Q4_0
+decode +47.5%, Q4_0 encode +8.2%) was addressed as a separate, later
+phase: see [phase-b2.md](phase-b2.md) for the full record. Headline: a
+bounded, sequence-number-tagged scheduler
+(`rtl/experimental/q8_div/membrane_quant_stream_top_q8_dual_radix4_b2.sv`,
+`q8_scale_dual_radix4.sv` reused unmodified from Phase B1) lets Q8_0/Q4_0
+decode and Q4_0 encode issue independently of an in-flight Q8_0/Q4_0
+encode while preserving strict output ordering (confirmed the real
+contract, not assumed) via one hold register per encode engine plus a
+shared, small (depth 1 or 2, both evaluated) hold queue for the decode
+classes -- explicitly smaller than every reorder-buffer configuration
+EXP-FPGA-DIV-001 Phase B3 already rejected. Real result across four full
+6,250,000-transaction runs (baseline/B1/B2 depth=1/B2 depth=2): 0
+mismatches, 0 ordering errors; >=25%-vs-B1 overall cycles/transaction
+improvement met on every mixed-traffic profile (28.5-36.6%); the strict
+<=10%-collateral-vs-baseline target is met (and exceeded) at light
+Q8_0-encode density but not at 20-25% density (residual 16-26%, having
+eliminated 67-77% of Phase B1's own collateral cost), for a real,
+disclosed architectural reason (input-FIFO queueing behind Q8_0/Q4_0
+encode's own single-in-flight service time, not shadow-queue depth,
+dominates once `IN_FIFO_DEPTH=16` is the binding constraint). Phase B2's
+own decision: `CONTINUE` (experiment-branch-only).
