@@ -314,3 +314,47 @@ disclosed architectural reason (input-FIFO queueing behind Q8_0/Q4_0
 encode's own single-in-flight service time, not shadow-queue depth,
 dominates once `IN_FIFO_DEPTH=16` is the binding constraint). Phase B2's
 own decision: `CONTINUE` (experiment-branch-only).
+
+## Phase B3 (follow-up)
+
+Phase B2's own residual collateral slowdown at 20-25% Q8_0-encode
+density (16-26%) was targeted as a separate, later phase: see
+[phase-b3.md](phase-b3.md) for the full record. A software reference
+model of Phase B2's own scheduling rules
+(`scripts/b3-hol-model.py`, cross-validated within ~6-9% of the real
+RTL's own measured latencies) quantified the root cause: 58-63% of all
+input-stalled cycles at 20-25% density are directly caused by the FIFO
+head targeting a busy Q8_0/Q4_0-encode engine while a mean of 4.4-5.4
+resource-independent younger transactions sit ready behind it
+(`results/b3-hol-profile.csv`, `results/b3-hol-analysis.md`). Three
+bounded issue-selection candidates were built on top of this evidence
+and evaluated against baseline/B1/B2 at real scale (six full
+8,042,500-transaction Verilator cosim runs, 0 mismatches/ordering
+errors/drops/duplicates/reset failures/starvation violations across all
+six):
+`rtl/experimental/q8_div/membrane_quant_stream_top_q8_dual_radix4_b3_l2.sv`
+(2-entry bounded lookahead),
+`..._b3_l4.sv` (4-entry bounded lookahead), and
+`..._b3_split.sv` (independent mode-split ingress queues, `q8_scale_dual_radix4.sv`
+reused unmodified from Phase B1 in all three). Real, counter-to-hypothesis
+result: **bounded lookahead (l2/l4) makes collateral WORSE than Phase B2,
+not better** -- at 20-25% density it exceeds B2's own residual slowdown
+on every mode measured, and even regresses pure single-mode streams
+(+2.4-23.3%) where there is nothing to bypass, because enabling bypass
+increases pressure on the same bounded shadow-retirement structure Phase
+B2 already used, and the lookahead window's own priority-encode/
+compaction logic adds constant per-issue latency independent of whether
+a bypass ever fires (see phase-b3.md's own "Why lookahead makes
+collateral worse, not better" section for the full analysis). **Split
+ingress queues avoid both problems** and are the one candidate that
+performs better than B2: it meets the <=10% collateral bar at 20%
+density (not 25%), meets the >=15%-vs-B2 density-range improvement
+target (17.8%/21.4% at 20%/25%), and is strictly faster than B2 on every
+pure stream (-30% to -47%) -- but it does not meet the strict full
+20-25%-density collateral bound, nor the adversarial-HOL
+50%-stall-cycle-reduction bound (best available proxy: 15.6%). Phase
+B3's own decision: `CONTINUE` (experiment-branch-only), with B3-split
+identified as the one candidate worth building on if this line of work
+continues, and the shadow-retirement structure (not head-of-line
+blocking itself) identified as the now-dominant residual constraint at
+25% density.

@@ -236,14 +236,14 @@ module membrane_quant_stream_top_q8_dual_radix4_b2 #(
 		shadow_hold_occ = '0;
 		for (int k = 0; k < SHADOW_DEPTH; k++)
 			if (shadow_hold_valid[k])
-				shadow_hold_occ = shadow_hold_occ + 1'(1);
+				shadow_hold_occ = shadow_hold_occ + 1;
 	end
 
 	always_comb begin
 		occ_i = out_fifo_occ;
 		flight_i = in_flight;
 		slot_ok = (occ_i + flight_i + (q8enc_pending ? 1 : 0)
-			+ (q4enc_pending ? 1 : 0) + int'(shadow_hold_occ)) < OUT_FIFO_DEPTH;
+			+ (q4enc_pending ? 1 : 0) + shadow_hold_occ) < OUT_FIFO_DEPTH;
 		if (mode_pop == MODE_Q8_ENC)
 			issue_fire = in_fifo_out_valid && slot_ok && !q8enc_pending;
 		else if (mode_pop == MODE_Q4_ENC)
@@ -332,10 +332,10 @@ module membrane_quant_stream_top_q8_dual_radix4_b2 #(
 			shadow_reserved_count <= '0;
 		else if ((tagpipe_issue_fire && primary_pending)
 				&& !(shadow_clear_direct || shadow_any_hold_retire))
-			shadow_reserved_count <= shadow_reserved_count + 1'(1);
+			shadow_reserved_count <= shadow_reserved_count + 1;
 		else if (!(tagpipe_issue_fire && primary_pending)
 				&& (shadow_clear_direct || shadow_any_hold_retire))
-			shadow_reserved_count <= shadow_reserved_count - 1'(1);
+			shadow_reserved_count <= shadow_reserved_count - 1;
 	end
 
 	// ---- shared 32-lane F16 unpack of the issued transaction ----
