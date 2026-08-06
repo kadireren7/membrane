@@ -358,3 +358,81 @@ identified as the one candidate worth building on if this line of work
 continues, and the shadow-retirement structure (not head-of-line
 blocking itself) identified as the now-dominant residual constraint at
 25% density.
+
+## Phase B4 (follow-up)
+
+Two independent parts, in order (Part A committed and verified before
+Part B's own performance data was interpreted, per this phase's own
+explicit task requirement): see [phase-b4.md](phase-b4.md) for the full
+record.
+
+**Part A (provenance safety)**: fixed the real defect Phase B3's own
+reproduction found -- `--phase b3 --quick` had silently overwritten the
+committed 8,042,500-transaction canonical results with a 125,750-
+transaction quick-mode run, because `scripts/run-exp-q8-divider-002.sh`'s
+own `RESULTS_DIR` pointed straight at the canonical
+`experiments/EXP-FPGA-DIV-002/results/` directory unconditionally, every
+run, regardless of mode. Redesigned so every run's own artifacts live
+under a run-scoped staging directory
+(`build-exp-q8-divider-002/<phase>/<quick|full>/<run-id>/`), never the
+canonical directory directly; canonical promotion is now a separate,
+explicit `--promote-results` step, hard-gated on run mode, test results,
+real transaction counts, source-file integrity, and independent schema
+validation, publishing a diff before any canonical write and swapping
+files in atomically (per-file). A provenance manifest
+(`scripts/gen-run-manifest.py`) and independent validator
+(`scripts/verify-exp-q8-divider-002-results.py`) back every run; a
+5-test regression suite (`scripts/test-exp-q8-divider-002-provenance.sh`)
+proves the fix against the real script, not a simulation of it. Real
+bugs found and fixed during this work (disclosed in phase-b4.md and
+results/b4-run-provenance.md): a `set -e`/`timeout` interaction in the
+regression-test script itself, a relative-path bypass of the canonical-
+directory guard, an overly strict git-commit check that could not
+accommodate this task's own required "commit Part A, then promote Part
+B" sequencing, and a promotion-record path bug found while promoting
+Part B's own real results for the first time.
+
+**Part B (retirement pressure)**: a software reference model of
+B3-split's own scheduling rules
+(`scripts/b4-retirement-model.py`) quantified the real bottleneck behind
+Phase B3's own remaining 20-25%-density collateral gap: **strict in-order
+retirement dominates at every density measured (65.6-80.5% of stall
+cycles, increasing with density)**, not head-of-line blocking (already
+addressed by B3-split's own mode-split queues), not downstream
+backpressure (negligible even under sustained heavy backpressure), and
+not ingress arbitration or sequence bookkeeping (both ~0 by
+construction in this architecture). Reading B3-split's own RTL found the
+real, addressable mechanism: its Q8_0/Q4_0 encode hold registers
+unconditionally captured every completion for at least one extra cycle
+before checking if it was already its turn to retire, extending the
+same engine's own effective back-to-back service time. Three bounded
+candidates were built on B3-split (task's own required base, kept
+unchanged) and evaluated at real scale (seven full 8,382,500-transaction
+Verilator cosim runs, 0 mismatches/ordering errors/drops/duplicates/
+reset failures/starvation violations across all seven):
+`rtl/experimental/q8_div/membrane_quant_stream_top_q8_dual_radix4_b4_r1.sv`
+(single decode-class completion register, replacing B3-split's own
+4-entry shadow array), `..._b4_r2.sv` (fixed 2-entry completion queue),
+`..._b4_r3.sv` (direct-retire bypass for the encode hold registers,
+storage unchanged). Real result: **R3 is a genuine, if partial,
+improvement over B3-split** (4.5-4.8% faster overall at 20-25% density,
+meets the <=10% collateral bar at 20% density on all three modes, the
+closest of any candidate to the 25%-density bar, zero pure-stream
+regression) but does not meet the strict 25%-density collateral bound,
+the >=10%-overall-improvement bound, or the >=35%-adversarial-reduction
+preferred bound. **R1 and R2 are real, measured regressions**, not
+improvements -- R1 severely so (a measured -84.3% adversarial-retirement
+regression: removing shadow capacity down to one slot saturates
+immediately under dense mixed traffic). R1+R3 was not built as a
+follow-up candidate: R1 alone is a severe regression, not a
+neutral-or-mild one, so there is no plausible mechanism by which
+stacking it under R3 would beat R3 alone (disclosed reasoning, not an
+assumption). Isolated-wrapper synthesis (stubbed dividers, real
+scheduler logic) found R1/R2/R3's relative area delta vs. B3-split
+physically coherent with each candidate's own storage change (R1 -5,240
+cells, R2 -3,632, R3 +1,138, ESTIMATED from a disclosed non-
+representative absolute baseline). `q8_scale_dual_radix4`'s own -97.76%
+area reduction is untouched by any B4 candidate. Phase B4's own
+decision: `CONTINUE` (experiment-branch-only), with R3 (direct-retire
+bypass) identified as the one candidate worth building on if this line
+of work continues.
