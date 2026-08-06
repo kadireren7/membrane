@@ -2,8 +2,10 @@
 #
 # Reproduction script for EXP-FPGA-DIV-002 (experiments/EXP-FPGA-DIV-002/).
 #
-# Usage: scripts/run-exp-q8-divider-002.sh [--phase a|b1] [--quick|--full]
-#            [--resume] [--output-dir <dir>]
+# Usage: scripts/run-exp-q8-divider-002.sh [--phase a|b1|b2|b3]
+#            [--quick|--full] [--resume] [--output-dir <dir>]
+#            [--run-id <id>] [--promote-results] [--force-promote]
+#            [--dry-run] [--print-output-dir]
 #
 #   --phase a   (default, preserves this script's original behavior)
 #             Phase A: characterization + differential FEASIBILITY study.
@@ -51,6 +53,14 @@
 #             variants, a 15-profile performance matrix, full generic+ECP5
 #             synthesis matrix, best-effort time-bounded full-top attempts).
 #
+# --run-id <id>, --promote-results, --force-promote, --dry-run,
+# --print-output-dir: see the "provenance-safe output-directory scheme"
+# comment below (task item 1). Default output root is
+# build-exp-q8-divider-002/<phase>/<quick|full>/<run-id>/ (a fresh run-id
+# per invocation unless --run-id is given); canonical
+# experiments/EXP-FPGA-DIV-002/results/ is updated ONLY via
+# --promote-results (requires --full), never automatically.
+#
 # No production RTL file is modified by this script, in any phase -- Phase
 # B1/B2/B3 only build/synthesize/test the new files under
 # rtl/experimental/q8_div/, alongside the unmodified production RTL for
@@ -65,6 +75,11 @@ PHASE="a"
 MODE="quick"
 RESUME=0
 BUILD_DIR=""
+RUN_ID=""
+PROMOTE=0
+FORCE_PROMOTE=0
+DRY_RUN=0
+PRINT_OUTPUT_DIR=0
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -79,6 +94,14 @@ while [ $# -gt 0 ]; do
 		shift
 		BUILD_DIR="$1"
 		;;
+	--run-id)
+		shift
+		RUN_ID="$1"
+		;;
+	--promote-results) PROMOTE=1 ;;
+	--force-promote) FORCE_PROMOTE=1 ;;
+	--dry-run) DRY_RUN=1 ;;
+	--print-output-dir) PRINT_OUTPUT_DIR=1 ;;
 	-h | --help)
 		sed -n '2,40p' "$0"
 		exit 0
@@ -99,16 +122,58 @@ a | b1 | b2 | b3) ;;
 	;;
 esac
 
+# ---- provenance-safe output-directory scheme (Phase B4, task item 1) ----
+#
+# A quick smoke run and a research-scale full run for the SAME phase must
+# never be able to collide on disk or on a committed results/ path -- this
+# is the direct, structural fix for the real defect Phase B3's own
+# reproduction found (`--phase b3 --quick` silently overwrote the
+# committed 8,042,500-transaction canonical results with a 125,750-
+# transaction quick-mode run, via a RESULTS_DIR that pointed straight at
+# experiments/EXP-FPGA-DIV-002/results/ unconditionally, every run,
+# regardless of --quick/--full). Fixed two ways, both required:
+#   1. Every run's OWN artifacts (build outputs, logs, and any phase-
+#      specific "results" files a phase generates) live under a
+#      run-scoped, mode-scoped directory that is NEVER the canonical
+#      committed results/ directory: build-exp-q8-divider-002/<phase>/
+#      <quick|full>/<run-id>/, unless --output-dir explicitly overrides
+#      it (still never the canonical directory -- see promote_results()).
+#   2. Canonical committed results (experiments/EXP-FPGA-DIV-002/results/)
+#      are updated ONLY by an explicit, separately-gated --promote-results
+#      step (see promote_results() below), never as an automatic side
+#      effect of running the script in any mode.
+if [ -z "$RUN_ID" ]; then
+	RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+fi
+CANONICAL_RESULTS_DIR="$REPO_ROOT/experiments/EXP-FPGA-DIV-002/results"
 if [ -z "$BUILD_DIR" ]; then
-	if [ "$PHASE" = "b1" ]; then
-		BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002-b1"
-	elif [ "$PHASE" = "b2" ]; then
-		BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002-b2"
-	elif [ "$PHASE" = "b3" ]; then
-		BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002-b3"
-	else
-		BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002"
-	fi
+	BUILD_DIR="$REPO_ROOT/build-exp-q8-divider-002/$PHASE/$MODE/$RUN_ID"
+fi
+# Resolve to an absolute, normalized path before comparing -- a relative
+# --output-dir (e.g. "experiments/EXP-FPGA-DIV-002/results/evil") must be
+# caught just as reliably as an absolute one. realpath -m tolerates a
+# path that does not exist yet (BUILD_DIR is typically created later).
+BUILD_DIR_ABS="$(realpath -m "$BUILD_DIR")"
+case "$BUILD_DIR_ABS" in
+"$CANONICAL_RESULTS_DIR" | "$CANONICAL_RESULTS_DIR"/*)
+	echo "error: --output-dir must not point inside the canonical results directory ($CANONICAL_RESULTS_DIR) -- use --promote-results to publish a completed full run instead" >&2
+	exit 1
+	;;
+esac
+BUILD_DIR="$BUILD_DIR_ABS"
+# Every phase-generated "results" file is staged here, never written
+# directly to $CANONICAL_RESULTS_DIR; only promote_results() copies from
+# here into the canonical directory, and only under --promote-results.
+RESULTS_STAGING_DIR="$BUILD_DIR/results-staging"
+
+if [ "$PRINT_OUTPUT_DIR" -eq 1 ]; then
+	echo "$BUILD_DIR"
+	exit 0
+fi
+
+if [ "$PROMOTE" -eq 1 ] && [ "$MODE" != "full" ]; then
+	echo "error: --promote-results requires --full (a quick run's artifacts can never be canonical, per task item 1)" >&2
+	exit 1
 fi
 
 YOSYS="$REPO_ROOT/tools/.local-yosys/usr/bin/yosys"
@@ -137,7 +202,42 @@ if [ -z "$VERILATOR_BIN" ]; then
 	exit 1
 fi
 
-mkdir -p "$BUILD_DIR" "$BUILD_DIR/synth" "$BUILD_DIR/vectors"
+YOSYS_VERSION="$("$YOSYS" -V 2>&1 | head -1)"
+VERILATOR_VERSION="$("$VERILATOR_BIN" --version 2>&1 | head -1)"
+GIT_COMMIT_START="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+GIT_BRANCH_START="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+START_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RUN_COMMAND_LINE="$0 $*"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+	echo "=== DRY RUN -- nothing will be built, run, or written ==="
+	echo "phase:              $PHASE"
+	echo "mode:                $MODE"
+	echo "run_id:              $RUN_ID"
+	echo "git_commit:          $GIT_COMMIT_START"
+	echo "branch:              $GIT_BRANCH_START"
+	echo "output_dir:          $BUILD_DIR"
+	echo "results_staging_dir: $RESULTS_STAGING_DIR"
+	echo "canonical_results:   $CANONICAL_RESULTS_DIR"
+	echo "resume:              $RESUME"
+	echo "promote_requested:   $PROMOTE"
+	if [ "$PROMOTE" -eq 1 ]; then
+		echo
+		echo "promotion gates that WOULD be checked (see promote_results()):"
+		echo "  - run_mode == full"
+		echo "  - all tests passed (FAILS == 0)"
+		echo "  - completed_transactions >= phase threshold"
+		echo "  - git HEAD unchanged since run start"
+		echo "  - source file hashes unchanged since run start"
+		echo "  - staged results pass scripts/verify-exp-q8-divider-002-results.py"
+		echo "  - destination diff shown before any write"
+		[ "$FORCE_PROMOTE" -eq 1 ] && echo "  - --force-promote requested: would bypass ONLY the source-file-unchanged check, loudly"
+	fi
+	echo "tool_versions: yosys=[$YOSYS_VERSION] verilator=[$VERILATOR_VERSION]"
+	exit 0
+fi
+
+mkdir -p "$BUILD_DIR" "$BUILD_DIR/synth" "$BUILD_DIR/vectors" "$RESULTS_STAGING_DIR"
 
 stage() { echo; echo "== $(date '+%H:%M:%S') [stage] $* =="; }
 
@@ -147,6 +247,177 @@ need_build() {
 		stage "resume: '$artifact' already exists, skipping rebuild"
 		return 1
 	fi
+	return 0
+}
+
+# ---- provenance manifest + promotion helpers (task items 1-2) ----
+
+hash_tree() {
+	# Deterministic sha256 of a fixed file list, one "hash  path" line per
+	# file (relative to $REPO_ROOT), sorted -- used both to snapshot
+	# source files before a run and to detect mid-run source/result
+	# mutation at promotion time.
+	local f
+	for f in "$@"; do
+		if [ -f "$f" ]; then
+			sha256sum "$f" | awk -v p="${f#"$REPO_ROOT"/}" '{print $1"  "p}'
+		fi
+	done | sort -k2
+}
+
+write_run_manifest() {
+	# Args: variant_list (space-separated), expected_txn, completed_txn,
+	# source_files (space-separated, already realpath'd). Sets global
+	# SOURCE_HASH_FILES as a side effect so a later promote_results call
+	# in the same script invocation re-hashes the identical file set.
+	local variants="$1" expected_txn="$2" completed_txn="$3"
+	shift 3
+	SOURCE_HASH_FILES="$*"
+	local completed_ts
+	completed_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	local status="PASS"
+	[ "$FAILS" -eq 0 ] || status="FAIL"
+	python3 "$REPO_ROOT/scripts/gen-run-manifest.py" \
+		--out "$BUILD_DIR/run-manifest.json" \
+		--experiment-id "EXP-FPGA-DIV-002" \
+		--phase "$PHASE" \
+		--variants "$variants" \
+		--run-mode "$MODE" \
+		--canonical false \
+		--git-commit "$GIT_COMMIT_START" \
+		--git-dirty "$(git -C "$REPO_ROOT" diff --quiet -- rtl scripts experiments && git -C "$REPO_ROOT" diff --cached --quiet -- rtl scripts experiments && echo false || echo true)" \
+		--branch "$GIT_BRANCH_START" \
+		--started-at "$START_TS" \
+		--completed-at "$completed_ts" \
+		--hostname "$(hostname)" \
+		--tool-versions "yosys=$YOSYS_VERSION" "verilator=$VERILATOR_VERSION" \
+		--command "$RUN_COMMAND_LINE" \
+		--run-id "$RUN_ID" \
+		--expected-transactions "$expected_txn" \
+		--completed-transactions "$completed_txn" \
+		--failures "$FAILS" \
+		--status "$status" \
+		--source-hashes-file <(hash_tree "$@") \
+		--result-hashes-file <(hash_tree "$RESULTS_STAGING_DIR"/*)
+	stage "wrote $BUILD_DIR/run-manifest.json (run_mode=$MODE canonical=false)"
+}
+
+promote_results() {
+	# Args: destination-file-basenames (space-separated, relative to
+	# $RESULTS_STAGING_DIR and $CANONICAL_RESULTS_DIR), min_expected_txn,
+	# variant_list (space-separated, same value passed to
+	# write_run_manifest earlier this run).
+	local files="$1" min_txn="$2" variants="$3"
+	stage "promote-results: validating staged $PHASE results before touching canonical $CANONICAL_RESULTS_DIR"
+
+	if [ "$MODE" != "full" ]; then
+		echo "PROMOTE-REFUSED: run_mode='$MODE' (must be 'full')" >&2
+		FAILS=$((FAILS + 1))
+		return 1
+	fi
+	if [ "$FAILS" -ne 0 ]; then
+		echo "PROMOTE-REFUSED: $FAILS test(s) failed this run" >&2
+		return 1
+	fi
+
+	local manifest="$BUILD_DIR/run-manifest.json"
+	if [ ! -f "$manifest" ]; then
+		echo "PROMOTE-REFUSED: no run-manifest.json at $manifest -- this run was interrupted, incomplete, or never reached its own manifest-writing step" >&2
+		FAILS=$((FAILS + 1))
+		return 1
+	fi
+	local completed_txn
+	completed_txn="$(python3 -c "import json; print(json.load(open('$manifest'))['completed_transactions'])")"
+	if [ "$completed_txn" -lt "$min_txn" ]; then
+		echo "PROMOTE-REFUSED: completed_transactions=$completed_txn below required minimum $min_txn" >&2
+		FAILS=$((FAILS + 1))
+		return 1
+	fi
+
+	local head_now
+	head_now="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+	if [ "$head_now" != "$GIT_COMMIT_START" ]; then
+		echo "PROMOTE-REFUSED: git HEAD moved during this run (started at $GIT_COMMIT_START, now $head_now) -- artifacts no longer correspond to a single commit" >&2
+		FAILS=$((FAILS + 1))
+		return 1
+	fi
+
+	local src_before src_after
+	src_before="$(python3 -c "import json; print(json.load(open('$manifest'))['source_file_hashes_blob'])" 2>/dev/null || true)"
+	# shellcheck disable=SC2086
+	src_after="$(hash_tree $SOURCE_HASH_FILES)"
+	if [ "$src_before" != "$src_after" ]; then
+		if [ "$FORCE_PROMOTE" -eq 1 ]; then
+			echo "WARNING: --force-promote used to bypass a source-file-changed-during-execution mismatch. This is the ONLY check --force-promote may bypass; every other gate (mode/tests/transactions/git-commit/schema/result-file-integrity) remains hard-enforced. Promoting anyway." >&2
+		else
+			echo "PROMOTE-REFUSED: a source file this run depends on changed after the run started (re-run, or pass --force-promote to override loudly if you are certain this is safe)" >&2
+			FAILS=$((FAILS + 1))
+			return 1
+		fi
+	fi
+
+	# Results-integrity check (never force-bypassable, unlike the source
+	# check above): the staged results this run itself produced must be
+	# byte-identical to what was hashed into the manifest the moment the
+	# run finished -- guards against something else touching
+	# $RESULTS_STAGING_DIR between run completion and promotion time.
+	local res_before res_after
+	res_before="$(python3 -c "import json; print(json.load(open('$manifest'))['result_file_hashes_blob'])" 2>/dev/null || true)"
+	res_after="$(hash_tree "$RESULTS_STAGING_DIR"/*)"
+	if [ "$res_before" != "$res_after" ]; then
+		echo "PROMOTE-REFUSED: staged result files changed after this run's manifest was written -- not promotable under any flag" >&2
+		FAILS=$((FAILS + 1))
+		return 1
+	fi
+
+	if ! python3 "$REPO_ROOT/scripts/verify-exp-q8-divider-002-results.py" --staging "$RESULTS_STAGING_DIR" --manifest "$manifest" --phase "$PHASE" --require-canonical=false; then
+		echo "PROMOTE-REFUSED: staged results failed scripts/verify-exp-q8-divider-002-results.py" >&2
+		FAILS=$((FAILS + 1))
+		return 1
+	fi
+
+	echo "-- destination diff (staged vs. current canonical), shown before any write --"
+	local f
+	for f in $files; do
+		if [ -f "$CANONICAL_RESULTS_DIR/$f" ]; then
+			diff -u "$CANONICAL_RESULTS_DIR/$f" "$RESULTS_STAGING_DIR/$f" || true
+		else
+			echo "(new canonical file) $f"
+		fi
+	done
+
+	local incoming="$CANONICAL_RESULTS_DIR/.incoming-$PHASE-$RUN_ID"
+	rm -rf "$incoming"
+	mkdir -p "$incoming"
+	for f in $files; do
+		cp "$RESULTS_STAGING_DIR/$f" "$incoming/$f"
+	done
+	python3 "$REPO_ROOT/scripts/gen-run-manifest.py" \
+		--out "$incoming/${PHASE}-promotion-record.json" \
+		--experiment-id "EXP-FPGA-DIV-002" --phase "$PHASE" --variants "$variants" \
+		--run-mode "full" --canonical true \
+		--git-commit "$GIT_COMMIT_START" --git-dirty false --branch "$GIT_BRANCH_START" \
+		--started-at "$START_TS" --completed-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		--hostname "$(hostname)" --tool-versions "yosys=$YOSYS_VERSION" "verilator=$VERILATOR_VERSION" \
+		--command "$RUN_COMMAND_LINE" --run-id "$RUN_ID" \
+		--expected-transactions "$min_txn" --completed-transactions "$completed_txn" \
+		--failures 0 --status PASS \
+		--source-hashes-file <(hash_tree $SOURCE_HASH_FILES) \
+		--result-hashes-file <(hash_tree "$incoming"/*)
+
+	# Atomic per-file publish: each mv is a single rename(2) on the same
+	# filesystem. This is NOT a single filesystem transaction across the
+	# whole file set (POSIX has no such primitive without extra tooling
+	# this project does not depend on) -- disclosed honestly: validation
+	# happens BEFORE any destination file is touched, and every individual
+	# file swap is atomic, but a crash between two of the mv's below could
+	# leave a mixed canonical set. This is the real, disclosed limit of
+	# "atomic" here, not glossed over as perfect.
+	for f in $files "${PHASE}-promotion-record.json"; do
+		mv -f "$incoming/$f" "$CANONICAL_RESULTS_DIR/$f"
+	done
+	rmdir "$incoming"
+	stage "PROMOTED: $files -> $CANONICAL_RESULTS_DIR (run_id=$RUN_ID commit=$GIT_COMMIT_START)"
 	return 0
 }
 
@@ -373,6 +644,16 @@ if [ "$MODE" = "full" ]; then
 	python3 "$REPO_ROOT/scripts/verify-outreach.py" || FAILS=$((FAILS + 1))
 	python3 "$REPO_ROOT/paper/scripts/verify-paper.py" || FAILS=$((FAILS + 1))
 fi
+
+A_COMPLETED_TXN=$((FEAS_RANDOM + FEAS_RUNTIME + 520000))
+write_run_manifest "characterization" "$A_COMPLETED_TXN" "$A_COMPLETED_TXN" \
+	"$REPO_ROOT/rtl/valid_delay_line.sv" "$REPO_ROOT/rtl/membrane_fp_divider.sv" "$REPO_ROOT/rtl/membrane_fp_multiplier.sv" \
+	"$REPO_ROOT/rtl/membrane_quant_stream_top.sv" "$REPO_ROOT/rtl/tb/tb_q8_scale_feasibility.cpp" "$REPO_ROOT/rtl/tb/tb_top_verilator.cpp" "$0"
+# No canonical results/ artifacts are auto-generated by Phase A (its own
+# real numbers are hand-transcribed into experiment.md/baseline.md, not
+# machine-written to disk by this script) -- --promote-results is a no-op
+# here, disclosed rather than silently accepted.
+[ "$PROMOTE" -eq 1 ] && echo "note: --promote-results is a no-op for --phase a (no script-generated canonical results file exists for this phase)"
 
 fi	# PHASE = a
 
@@ -623,6 +904,17 @@ if [ "$MODE" = "full" ]; then
 	python3 "$REPO_ROOT/paper/scripts/verify-paper.py" || FAILS=$((FAILS + 1))
 fi
 
+B1_COMPLETED_TXN=$((B1_RAND1 + B1_RAND2 + B1_RUNTIME + B1_TOTAL_TXN * 2))
+write_run_manifest "baseline b1" "$B1_COMPLETED_TXN" "$B1_COMPLETED_TXN" \
+	"$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" "$REPO_ROOT/rtl/q8_scale.sv" \
+	"$EXP_DIR/q8_scale_dual_radix4.sv" "$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4.sv" \
+	"$EXP_DIR/tb_q8_scale_dual_radix4.cpp" "$EXP_DIR/tb_top_verilator_q8_variant.cpp" "$0"
+# No canonical results/ artifacts are auto-generated by Phase B1 (its own
+# real numbers are hand-transcribed into phase-b1.md, not machine-written
+# to disk by this script) -- --promote-results is a no-op here, disclosed
+# rather than silently accepted.
+[ "$PROMOTE" -eq 1 ] && echo "note: --promote-results is a no-op for --phase b1 (no script-generated canonical results file exists for this phase)"
+
 fi	# PHASE = b1
 
 if [ "$PHASE" = "b2" ]; then
@@ -827,12 +1119,30 @@ if [ "$MODE" = "full" ]; then
 	python3 "$REPO_ROOT/paper/scripts/verify-paper.py" || FAILS=$((FAILS + 1))
 fi
 
+B2_COMPLETED_TXN=$((B2_CORRECTNESS_PLANNED * 3))
+write_run_manifest "baseline b1 b2" "$B2_COMPLETED_TXN" "$B2_COMPLETED_TXN" \
+	"$REPO_ROOT/rtl/membrane_fp_pkg.sv" "$REPO_ROOT/rtl/membrane_fp_divider_radix4.sv" "$REPO_ROOT/rtl/q8_scale.sv" "$REPO_ROOT/rtl/membrane_quant_stream_top.sv" \
+	"$EXP_DIR/q8_scale_dual_radix4.sv" "$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4.sv" "$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4_b2.sv" \
+	"$EXP_DIR/tb_top_verilator_q8_b2_variant.cpp" "$0"
+# No canonical results/ artifacts are auto-generated by Phase B2 (its own
+# real numbers are hand-transcribed into phase-b2.md, not machine-written
+# to disk by this script) -- --promote-results is a no-op here, disclosed
+# rather than silently accepted.
+[ "$PROMOTE" -eq 1 ] && echo "note: --promote-results is a no-op for --phase b2 (no script-generated canonical results file exists for this phase)"
+
 fi	# PHASE = b2
 
 if [ "$PHASE" = "b3" ]; then
 
 EXP_DIR="$REPO_ROOT/rtl/experimental/q8_div"
-RESULTS_DIR="$REPO_ROOT/experiments/EXP-FPGA-DIV-002/results"
+# Provenance fix (task item 1): this used to point straight at the
+# canonical committed results/ directory and was written on EVERY run,
+# quick or full -- exactly the defect that let `--phase b3 --quick`
+# silently overwrite the committed 8,042,500-transaction canonical
+# results with a 125,750-transaction quick-mode run. Now always a
+# run-scoped staging directory; see promote_results() below for the only
+# path that may touch $CANONICAL_RESULTS_DIR.
+RESULTS_DIR="$RESULTS_STAGING_DIR"
 mkdir -p "$RESULTS_DIR"
 
 # =============================================================================
@@ -1055,7 +1365,35 @@ if [ "$MODE" = "full" ]; then
 	python3 "$REPO_ROOT/paper/scripts/verify-paper.py" || FAILS=$((FAILS + 1))
 fi
 
+# =============================================================================
+# 5. Provenance manifest + optional canonical promotion (task items 1-2).
+# =============================================================================
+B3_COMPLETED_TXN=0
+if [ -f "$RESULTS_DIR/b3-correctness.json" ]; then
+	B3_COMPLETED_TXN=$(python3 -c "import json,sys; d=json.load(open('$RESULTS_DIR/b3-correctness.json')); print(sum(v['transactions_checked'] for k,v in d.items() if k != '_meta'))")
+fi
+B3_MIN_TXN=30000000	# 5,000,000 per candidate x 6 candidates, task item 7's own minimum
+write_run_manifest \
+	"baseline b1 b2 b3l2 b3l4 b3split" \
+	"$B3_MIN_TXN" "$B3_COMPLETED_TXN" \
+	$COMMON_SRCS "$REPO_ROOT/rtl/q8_scale.sv" "$REPO_ROOT/rtl/membrane_quant_stream_top.sv" \
+	"$EXP_DIR/q8_scale_dual_radix4.sv" "$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4.sv" \
+	"$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4_b2.sv" \
+	"$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4_b3_l2.sv" \
+	"$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4_b3_l4.sv" \
+	"$EXP_DIR/membrane_quant_stream_top_q8_dual_radix4_b3_split.sv" \
+	"$EXP_DIR/tb_top_verilator_q8_b3_variant.cpp" \
+	"$REPO_ROOT/scripts/gen-b3-artifacts.py" "$REPO_ROOT/scripts/gen-b3-synthesis-csv.py" \
+	"$REPO_ROOT/scripts/b3-hol-model.py" "$0"
+
+if [ "$PROMOTE" -eq 1 ]; then
+	promote_results \
+		"b3-correctness.json b3-performance.csv b3-candidate-comparison.md b3-synthesis.csv b3-hol-profile.csv" \
+		"$B3_MIN_TXN" "baseline b1 b2 b3l2 b3l4 b3split" || true
+fi
+
 fi	# PHASE = b3
+
 
 echo
 if [ "$FAILS" -eq 0 ]; then
