@@ -81,8 +81,16 @@ reviews:
   # merge gate. No mandatory review-approval requirement is configured
   # here or in GitHub branch protection (see docs/automated-pr-review.md).
   pre_merge_checks:
+    # "off" (not "warning"): this project is C11/C++/SystemVerilog/RTL,
+    # not a docstring-per-function codebase, and the generic 80%
+    # docstring-coverage threshold (reviews.pre_merge_checks.docstrings,
+    # https://docs.coderabbit.ai/reference/yaml-template) isn't a
+    # meaningful quality signal here -- confirmed by reading the current
+    # official schema (mode: off|warning|error) before making this
+    # change, not guessed. Every other pre-merge check and all normal
+    # review behavior stays exactly as before.
     docstrings:
-      mode: warning
+      mode: off
     title:
       mode: warning
     description:
