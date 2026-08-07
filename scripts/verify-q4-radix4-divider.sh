@@ -29,16 +29,19 @@
 #             every push.
 #
 # Threshold policy (task item 8): thresholds are derived from this
-# project's own measured EXP-FPGA-DIV-001 Phase B4 results (b4-synthesis.csv,
-# b4-differential.json -- see the membrane-research URL above), reproduced
-# fresh on this branch (not copied blindly) with a generous tolerance --
-# not brittle exact-cell equality, since yosys is not perfectly
-# deterministic run-to-run/version-to-version (ABC's own internal ordering
-# can shift cell counts by a handful of cells even for byte-identical RTL
-# -- observed directly while preparing this script, see that same
-# research record's promotion-comparison.md). No real hardware Fmax claim
-# is made or gated on here -- there is no place-and-route tool in this
-# environment (unchanged disclosure from every EXP-FPGA-DIV-001 phase).
+# project's own synthesis-tool-measured EXP-FPGA-DIV-001 Phase B4 results
+# (b4-synthesis.csv, b4-differential.json -- see the membrane-research URL
+# above) -- Yosys/ABC-synthesized ECP5 technology-mapped cell counts for
+# the standalone divider and q4_scale integration, not vendor LUT counts,
+# reproduced fresh on this branch (not copied blindly) with a generous
+# tolerance -- not brittle exact-cell equality, since yosys is not
+# perfectly deterministic run-to-run/version-to-version (ABC's own
+# internal ordering can shift cell counts by a handful of cells even for
+# byte-identical RTL -- observed directly while preparing this script,
+# see that same research record's promotion-comparison.md). No real
+# hardware Fmax claim is made or gated on here -- there is no
+# place-and-route tool in this environment (unchanged disclosure from
+# every EXP-FPGA-DIV-001 phase).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

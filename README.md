@@ -39,7 +39,7 @@ usage, the academic paper, and the outreach package — is not maintained
 
 ## Architecture
 
-```
+```text
 LLM runtime (llama.cpp, real inference)
         |  captured KV/attention traces
         v
@@ -53,7 +53,7 @@ Full diagram set (KV lifecycle, FPGA datapath detail): `docs/architecture.md`.
 
 ## Repository layout
 
-```
+```text
 include/membrane/   Public C headers (block store, codecs, quant, traces)
 src/                Core C11 library implementation
 tools/              CLI tools (simulators, capture, quantization benches --
@@ -88,7 +88,7 @@ had to stay.
 | Production RTL full-pipeline cosimulation | 520,000 transactions, 0 mismatches, Verilator vs. real C quantizer reference | MEASURED_BY_TOOL | Maintained |
 | Q4_0 radix-4 divider exactness (promoted) | 4,456,685 differential cases, 0 mismatches | MEASURED_BY_TOOL | Maintained, [PR #2](https://github.com/kadireren7/membrane/pull/2) |
 | Q4_0 radix-4 divider area | -96.2% ECP5 cells at the `q4_scale` integration point (74,382 → 2,836), synthesis-tool proxy | MEASURED_BY_TOOL (proxy, not physical) | Maintained, promoted |
-| Exact sparse-retrieval traffic reduction | 187x-405x vs. full-scan-CXL at the 8GiB-host/2TiB-device point (unified 128K-context x 512-concurrency sweep) | SIMULATED | Maintained data (`benchmarks/`) |
+| Sparse-retrieval traffic reduction (simulated) | 187x-405x vs. full-scan-CXL at the 8GiB-host/2TiB-device point (unified 128K-context x 512-concurrency sweep); retrieval itself is exact (non-approximate) by construction, the traffic-reduction number is simulated | SIMULATED | Maintained data (`benchmarks/`) |
 | Q8_0 dual-divider area reduction — **RESEARCH ONLY, not merged** | -97.76% ECP5 cells at the `q8_scale` integration point, bit-exact (4,052,224 cases, 0 mismatches) — scheduler collateral cost unresolved | MEASURED_BY_TOOL (proxy, not physical) | Research only — [kadireren7/membrane-research](https://github.com/kadireren7/membrane-research), `EXP-FPGA-DIV-002` |
 
 No result above implies physical FPGA hardware, physical CXL hardware,

@@ -111,6 +111,10 @@ running it, not assumed from the file list alone.)
 
 ## Q4_0 radix-4 divider regression gate
 
+**Working directory:** repo root.
+**Dependencies:** Yosys and Verilator (same as the cosimulation step
+above).
+
 ```bash
 scripts/verify-q4-radix4-divider.sh --quick
 ```
@@ -124,18 +128,39 @@ research record this promotion came from
 (`EXP-FPGA-DIV-001`) is not duplicated here — see "Research
 reproduction" below.
 
+- **Expected time:** ~1 minute in `--quick` mode (measured: 66s).
+- **Expected output:** ends with `=== ALL CHECKS PASSED (quick mode) ===`.
+- **Success signal:** that line, exit code 0.
+
 ## Maintained release verification
+
+**Working directory:** repo root.
+**Dependencies:** none beyond what the earlier sections already need
+(`--dry-run` doesn't build or test anything itself — it previews the
+checklist a real run would execute).
 
 ```bash
 scripts/prepare-release.sh --dry-run
 ```
 
-Runs the full pre-release checklist this project holds every tagged
-release to: clean working tree, test suite, `scripts/verify-results.py`
-(headline-claim vs. artifact checks), `benchmarks/MANIFEST.json`
-freshness, a repository-wide relative-markdown-link check, a large-file
-check, and release-metadata presence. See `docs/release-candidate-checklist.md`
-for the full release process this script is one gate of.
+`--dry-run` is a **preview only**: it skips the test suite (step 2/8)
+and reports what a full run would do, without building or running
+anything itself. It still executes steps 3-8 for real: clean-tree
+check, `scripts/verify-results.py` (headline-claim vs. artifact
+checks), `benchmarks/MANIFEST.json` freshness, a repository-wide
+relative-markdown-link check, a large-file check, and release-metadata
+presence.
+
+- **Expected time:** a few seconds (measured: 2.6s) for `--dry-run`;
+  the test suite step alone (skipped here) is the same as the "Unit
+  test suite" section above, ~1-2 minutes.
+- **Expected output:** `Checks: N/6 passed (--dry-run: test suite
+  skipped)`, `N`=6 only on a clean working tree (uncommitted local
+  changes are the one thing `--dry-run` still fails on, by design).
+- Run `scripts/prepare-release.sh` without `--dry-run` to execute the
+  complete checklist for real, including the test suite. See
+  `docs/release-candidate-checklist.md` for the full release process
+  this script is one gate of.
 
 ## Research reproduction
 

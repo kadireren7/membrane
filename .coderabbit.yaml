@@ -76,10 +76,12 @@ reviews:
     resolve_merge_conflict:
       enabled: false
 
-  # Pre-merge checks stay in "warning" mode everywhere (CodeRabbit's own
-  # non-blocking mode) -- never "error", which would make CodeRabbit a
-  # merge gate. No mandatory review-approval requirement is configured
-  # here or in GitHub branch protection (see docs/automated-pr-review.md).
+  # Every enabled pre-merge check stays in "warning" mode (CodeRabbit's
+  # own non-blocking mode) -- never "error", which would make CodeRabbit
+  # a merge gate. `docstrings` below is intentionally disabled (mode:
+  # off), not "warning" -- see its own comment for why. No mandatory
+  # review-approval requirement is configured here or in GitHub branch
+  # protection (see docs/automated-pr-review.md).
   pre_merge_checks:
     # "off" (not "warning"): this project is C11/C++/SystemVerilog/RTL,
     # not a docstring-per-function codebase, and the generic 80%

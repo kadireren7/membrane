@@ -59,6 +59,17 @@ scoped to building and using the current library.
 is the active research laboratory — every experiment (complete and
 ongoing), exploratory RTL, simulator, the paper, and the outreach
 package, with full SHA256-verified provenance back to this repository.
+**The verification record itself lives in that repository, not this
+one** (a hash-verification manifest for content originating here has no
+reason to duplicate into the repository it's verifying against —
+`membrane-research`'s own `provenance/import-manifest.json` and
+`provenance/source-map.md` are the actual per-file source-commit and
+content-hash records, and `scripts/verify-provenance.py` there
+re-checks every entry in CI on every push). This repository's own
+[`migration/removal-dependency-check.json`](../migration/removal-dependency-check.json)
+is a different artifact with a different purpose: it records which
+removal candidates were build/test/CI-safe to delete from *here*, not
+a hash manifest — it deliberately contains no SHA256 fields.
 
 **Research is continuing.** This split is not a wind-down of research —
 it is a relocation of where research happens, so it can keep expanding
@@ -67,10 +78,11 @@ work happens in `kadireren7/membrane-research` going forward, not in new
 `experiment/*` branches here. Existing `experiment/*` branches in this
 repository (`experiment/q8-divider-pipeline`,
 `experiment/fp-divider-pipeline`) are preserved, not deleted — per Rule
-1 below, both are also mirrored (SHA256-verified, not just referenced)
-into `kadireren7/membrane-research`, so their content is available from
-either repository even though this one remains their authoritative git
-history.
+1 below, both are also mirrored (SHA256-verified — see
+`kadireren7/membrane-research`'s own `provenance/` records linked
+above, not just referenced) into `kadireren7/membrane-research`, so
+their content is available from either repository even though this one
+remains their authoritative git history.
 
 This revisits the "public branches of this same repository" model the
 historical decision above put in place — not the private-repository
