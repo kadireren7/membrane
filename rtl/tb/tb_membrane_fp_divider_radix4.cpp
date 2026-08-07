@@ -4,11 +4,12 @@
 // 13-cycle main iteration). Both are Verilated from their own real RTL --
 // a genuine RTL-vs-RTL bit-exactness check, not RTL-vs-idealized-math.
 //
-// Originates from EXP-FPGA-DIV-001 Phase B4
-// (experiments/EXP-FPGA-DIV-001/phase-b4.md), which ran this same case
-// set as a 3-way comparison also including Phase B2's radix-2 divider
+// Originates from EXP-FPGA-DIV-001 Phase B4 (full research record:
+// https://github.com/kadireren7/membrane-research/tree/main/experiments/EXP-FPGA-DIV-001,
+// phase-b4.md), which ran this same case set as a 3-way comparison also
+// including Phase B2's radix-2 divider
 // (rtl/experimental/fp_div/fp32_div_iterative_exact.sv, not promoted --
-// see experiments/EXP-FPGA-DIV-001/promotion-audit.md). Trimmed to the
+// see that same research record's promotion-audit.md). Trimmed to the
 // 2-way production form here: B2's divider is not part of the production
 // tree, so it is not a reference in this test. Every case category B2's
 // own comparison covered (boundary sweep, specials cross product, powers
@@ -343,8 +344,8 @@ int	main(int argc, char **argv)
 	// Defaults reproduce the same case counts EXP-FPGA-DIV-001 Phase B4
 	// used for its own (3-way) --full run; a CI-bounded subset is passed
 	// via argv by scripts/verify-q4-radix4-divider.sh instead of changing
-	// these defaults -- see that script and
-	// experiments/EXP-FPGA-DIV-001/promotion-plan.md item 7.
+	// these defaults -- see that script and that research record's
+	// promotion-plan.md item 7.
 	uint64_t	random_count = 4200000;
 	uint64_t	general_random_count = 200000;
 	uint64_t	q4_dist_count = 50000;

@@ -1,0 +1,1974 @@
+{
+  "generated_by": "migration/removal-dependency-check.json -- Gate D dependency audit",
+  "description": "For every file the Gate B migration inventory classified as destined for membrane-research (and sourced from origin/main, i.e. actually present on this cleanup branch), checks whether it is required by the maintained build (CMakeLists.txt), maintained tests (tests/unit, CMakeLists.txt test block), maintained CI (.github/workflows/*.yml), or maintained release verification (scripts/prepare-release.sh and the scripts it invokes) before authorizing removal. Real finding: the original inventory's classification of tools/membrane-kv-*, benchmarks/**, paper/**, and docs/phase*.md as research-only was WRONG in the sense that mattered for this repository -- all four are load-bearing for the maintained build/test/CI/release pipeline, discovered by this audit, not assumed. Only a much smaller set (outreach/**, scripts/verify-outreach.py, tools/membrane-fpga-runtime/**, rtl/tb/tb_q8_scale.sv, experiments/EXP-FPGA-DIV-001/**) is actually free of such a dependency and is removed in the companion commit.",
+  "v0.1.0_research_tag_check": "untouched -- this audit and the removal it authorizes only ever operate on the working tree of chore/repository-focus-and-research-split; no tag was read, moved, or altered.",
+  "total_candidates_checked": 218,
+  "verdict_summary": {
+    "BLOCKED": 167,
+    "SAFE": 51
+  },
+  "entries": [
+    {
+      "source_path": "benchmarks/MANIFEST.json",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/MANIFEST.json",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/attn-quality-report.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/attn-quality-report.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/exact-sweep-layer-head-detail.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/exact-sweep-layer-head-detail.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/exact-sweep.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/exact-sweep.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/quality-reverify/phase6.4-135m.jsonl",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/quality-reverify/phase6.4-135m.jsonl",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/quality-reverify/phase6.4-360m.jsonl",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/quality-reverify/phase6.4-360m.jsonl",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/quality-reverify/quality-reverify-135m.jsonl",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/quality-reverify/quality-reverify-135m.jsonl",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/quality-reverify/quality-reverify-360m.jsonl",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/quality-reverify/quality-reverify-360m.jsonl",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/sweep-report.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/sweep-report.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace.manifest.json",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace.manifest.json",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16.attntrace",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16.attntrace",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16.kvtrace",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16.kvtrace",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/traces/SmolLM2-360M-Instruct-f16-long.attntrace",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/traces/SmolLM2-360M-Instruct-f16-long.attntrace",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/traces/SmolLM2-360M-Instruct-f16-long.attntrace.manifest.json",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/traces/SmolLM2-360M-Instruct-f16-long.attntrace.manifest.json",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/traces/SmolLM2-360M-Instruct-f16.attntrace",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/traces/SmolLM2-360M-Instruct-f16.attntrace",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/traces/SmolLM2-360M-Instruct-f16.kvtrace",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/traces/SmolLM2-360M-Instruct-f16.kvtrace",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/unified-sweep-hardware-sensitivity.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/unified-sweep-hardware-sensitivity.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/unified-sweep-layer-head-detail.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/unified-sweep-layer-head-detail.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/unified-sweep.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/unified-sweep.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/unified-tail-recovery-135m.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/unified-tail-recovery-135m.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/unified-tail-recovery-360m.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/unified-tail-recovery-360m.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/unified-tail-samples.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/unified-tail-samples.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/workingset-context-sweep.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/workingset-context-sweep.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/cxl-sim/workingset-sweep.csv",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/cxl-sim/workingset-sweep.csv",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/kv/prompts/code.txt",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/kv/prompts/code.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/kv/prompts/distractor.txt",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/kv/prompts/distractor.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/kv/prompts/longcontext.txt",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/kv/prompts/longcontext.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/kv/prompts/natural.txt",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/kv/prompts/natural.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/kv/prompts/recall.txt",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/kv/prompts/recall.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/kv/prompts/repeat.txt",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/kv/prompts/repeat.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/kv/prompts/secrets.txt",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/kv/prompts/secrets.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/kv/prompts/short.txt",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/kv/prompts/short.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "benchmarks/results/phase1-store-summary.md",
+      "classification": "generated-result",
+      "original_decision": "move",
+      "destination_path": "benchmarks/results/phase1-store-summary.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_tests_and_release",
+      "reason": "tests/unit test_interrupted_resume (CMakeLists.txt) requires benchmarks/cxl-sim/traces/SmolLM2-135M-Instruct-f16-long.attntrace; scripts/verify-results.py and scripts/generate-benchmark-manifest.py (invoked by scripts/prepare-release.sh, maintained release verification) read benchmarks/ broadly."
+    },
+    {
+      "source_path": "docs/open-development-policy.md",
+      "classification": "shared-policy",
+      "original_decision": "move+revise",
+      "destination_path": "docs/open-development-policy.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase2-kv-analysis.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase2-kv-analysis.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase2-kv-byteplane.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase2-kv-byteplane.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase2-kv-entropy.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase2-kv-entropy.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase2-kv-predictive.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase2-kv-predictive.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase3-adaptive-kv.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase3-adaptive-kv.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase3-composition-aware.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase3-composition-aware.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase3-cross-model.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase3-cross-model.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase3-kv-q8-quality.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase3-kv-q8-quality.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase3-kv-q8.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase3-kv-q8.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase3-risk-aware.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase3-risk-aware.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase4-ggml-quant-parity.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase4-ggml-quant-parity.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase4-runtime-calibration.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase4-runtime-calibration.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase4-runtime-policy.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase4-runtime-policy.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase4-runtime-variance.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase4-runtime-variance.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase5-fpga-streaming.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase5-fpga-streaming.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase5-hardware-datapath.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase5-hardware-datapath.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase5-pcie-hardware-loop.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase5-pcie-hardware-loop.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase5-quant-engine.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase5-quant-engine.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase5-synthesizable-fpga.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase5-synthesizable-fpga.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase6-attention-working-set.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase6-attention-working-set.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase6-cxl-near-memory.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase6-cxl-near-memory.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase6-exact-sparse-retrieval.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase6-exact-sparse-retrieval.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase6-out-of-core-simulator.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase6-out-of-core-simulator.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase6-unified-stress.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase6-unified-stress.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase7-academic-paper.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase7-academic-paper.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase7-hardware-outreach.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase7-hardware-outreach.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase7-research-release.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase7-research-release.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/phase8-hardware-validation-plan.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "docs/phase8-hardware-validation-plan.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "docs/research-release-freeze.md",
+      "classification": "shared-policy",
+      "original_decision": "move+revise",
+      "destination_path": "docs/research-release-freeze.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_source_comments_and_process_docs",
+      "reason": "Referenced in comments throughout maintained src/*.c, include/membrane/*.h, tests/unit/test_ggml_quant_parity.c, tools/membrane-quant-bench/main.c, and CMakeLists.txt itself, plus from maintained release-process docs (CHANGELOG.md, docs/release-candidate-checklist.md, docs/public-release-audit.md, docs/v0.1.0-research-release-plan.md). Severing these safely needs a dedicated pass (updating every comment reference), out of scope for this cleanup pass -- see final report."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/README.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/README.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/baseline.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/baseline.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/decision.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/decision.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/experiment.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/experiment.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/phase-b1.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/phase-b1.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/phase-b2.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/phase-b2.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/phase-b3-root-cause.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/phase-b3-root-cause.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/phase-b3.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/phase-b3.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/phase-b4.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/phase-b4.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/promotion-audit.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/promotion-audit.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/promotion-comparison.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/promotion-comparison.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/promotion-plan.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/promotion-plan.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b1-comparison.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b1-comparison.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b2-comparison.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b2-comparison.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b2-differential.json",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b2-differential.json",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b2-full-datapath.json",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b2-full-datapath.json",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b3-comparison.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b3-comparison.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b3-full-datapath.json",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b3-full-datapath.json",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b3-performance.csv",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b3-performance.csv",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b3-synthesis.csv",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b3-synthesis.csv",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b4-comparison.md",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b4-comparison.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b4-differential.json",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b4-differential.json",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b4-full-datapath.json",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b4-full-datapath.json",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/b4-synthesis.csv",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/b4-synthesis.csv",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/baseline-synthesis.txt",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/baseline-synthesis.txt",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "experiments/EXP-FPGA-DIV-001/results/synthesis.csv",
+      "classification": "historical-research",
+      "original_decision": "move",
+      "destination_path": "experiments/EXP-FPGA-DIV-001/results/synthesis.csv",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Only comment-level (non-executable, `#`-prefixed) references remain in scripts/verify-q4-radix4-divider.sh; no maintained build/test/CI reads these files at runtime. Companion fix: update that script's header comments to point at kadireren7/membrane-research."
+    },
+    {
+      "source_path": "hardware/README.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/README.md",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "hardware/board-targets.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/board-targets.md",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "hardware/experiment-protocol.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/experiment-protocol.md",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "hardware/results-example.json",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/results-example.json",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "hardware/results-schema.json",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/results-schema.json",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "hardware/risk-register.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/risk-register.md",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "hardware/vendor-wrapper/README.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/vendor-wrapper/README.md",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "hardware/vendor-wrapper/axi_lite_ctrl.sv",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/vendor-wrapper/axi_lite_ctrl.sv",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "hardware/vendor-wrapper/axi_stream_adapter.sv",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/vendor-wrapper/axi_stream_adapter.sv",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "hardware/vendor-wrapper/dma_command_if.sv",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/vendor-wrapper/dma_command_if.sv",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "hardware/vendor-wrapper/membrane_core_wrapper.sv",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "hardware/vendor-wrapper/membrane_core_wrapper.sv",
+      "verdict": "BLOCKED",
+      "reason_code": "unclassified",
+      "reason": "No specific rule matched; treated conservatively as blocked pending manual review."
+    },
+    {
+      "source_path": "outreach/ai-assistance-disclosure.md",
+      "classification": "active-research",
+      "original_decision": "move+summarize-in-membrane",
+      "destination_path": "outreach/ai-assistance-disclosure.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/contact-tracker.csv",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/contact-tracker.csv",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/demo-video-script.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/demo-video-script.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/email-templates.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/email-templates.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/hardware-claim-gates.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/hardware-claim-gates.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/kadir-research-profile.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/kadir-research-profile.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/lab-package/README.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/lab-package/README.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/lab-package/collaboration-scope.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/lab-package/collaboration-scope.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/lab-package/expected-artifacts.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/lab-package/expected-artifacts.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/lab-package/experiment-checklist.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/lab-package/experiment-checklist.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/lab-package/quick-start.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/lab-package/quick-start.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/lab-package/required-hardware.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/lab-package/required-hardware.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/membrane-technical-brief.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/membrane-technical-brief.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/one-page-summary.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/one-page-summary.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/primary-email-template.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/primary-email-template.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/research-talk.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/research-talk.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "outreach/target-selection.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "outreach/target-selection.md",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced by any .github/workflows/*.yml or scripts/prepare-release.sh step. Moves together with scripts/verify-outreach.py."
+    },
+    {
+      "source_path": "paper/build.sh",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/build.sh",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/claim-audit.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/claim-audit.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/figures/README.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/figures/README.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/figures/generated/bytes_per_token_comparison.svg",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/figures/generated/bytes_per_token_comparison.svg",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/figures/generated/capacity_across_device_sizes.svg",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/figures/generated/capacity_across_device_sizes.svg",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/figures/generated/oracle_vs_predictor_gap.svg",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/figures/generated/oracle_vs_predictor_gap.svg",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/figures/generated/p99_vs_host_cache.svg",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/figures/generated/p99_vs_host_cache.svg",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/figures/generated/pipeline_sensitivity.svg",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/figures/generated/pipeline_sensitivity.svg",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/figures/generated/quality_capacity_pareto.svg",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/figures/generated/quality_capacity_pareto.svg",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/figures/generated/system_architecture.svg",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/figures/generated/system_architecture.svg",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/main.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/main.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/main.tex",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/main.tex",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/references.bib",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/references.bib",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/related-work-matrix.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/related-work-matrix.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/scripts/README.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/scripts/README.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/scripts/generate-figures.py",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/scripts/generate-figures.py",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/scripts/generate-tables.py",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/scripts/generate-tables.py",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/scripts/svg_chart.py",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/scripts/svg_chart.py",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/scripts/verify-paper.py",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/scripts/verify-paper.py",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/submission-options.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/submission-options.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/tables/hardware-datapath-verification.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/tables/hardware-datapath-verification.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/tables/limitations.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/tables/limitations.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/tables/major-results.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/tables/major-results.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/tables/negative-result-summary.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/tables/negative-result-summary.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/tables/related-work-comparison.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/tables/related-work-comparison.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "paper/tables/unified-stress-results.md",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "paper/tables/unified-stress-results.md",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_ci",
+      "reason": ".github/workflows/paper.yml (active CI workflow, path-triggered on paper/**) builds and verifies this directory on every push/PR touching it."
+    },
+    {
+      "source_path": "rtl/tb/tb_q8_scale.sv",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "rtl/tb/tb_q8_scale.sv",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not referenced in CMakeLists.txt, any test, or any maintained script."
+    },
+    {
+      "source_path": "scripts/verify-outreach.py",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "scripts/verify-outreach.py",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "Not invoked by any CI workflow or scripts/prepare-release.sh; only checks outreach/ and hardware/ content, both retained or moving separately."
+    },
+    {
+      "source_path": "tools/membrane-cxl-sim/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-cxl-sim/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-cxl-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-cxl-sim/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-cxl-sim/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-cxl-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-cxl-sim/sim_config.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-cxl-sim/sim_config.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-cxl-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-cxl-sim/sim_engine.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-cxl-sim/sim_engine.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-cxl-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-cxl-sim/sim_engine.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-cxl-sim/sim_engine.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-cxl-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-cxl-sim/workload.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-cxl-sim/workload.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-cxl-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-cxl-sim/workload.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-cxl-sim/workload.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-cxl-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-fpga-runtime/build.sh",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-fpga-runtime/build.sh",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "No CMakeLists.txt, not referenced by add_subdirectory anywhere; only referenced from docs/phase5-pcie-hardware-loop.md (itself retained/blocked, not this file)."
+    },
+    {
+      "source_path": "tools/membrane-fpga-runtime/fpga_emu_device.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-fpga-runtime/fpga_emu_device.cpp",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "No CMakeLists.txt, not referenced by add_subdirectory anywhere; only referenced from docs/phase5-pcie-hardware-loop.md (itself retained/blocked, not this file)."
+    },
+    {
+      "source_path": "tools/membrane-fpga-runtime/fpga_emu_device.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-fpga-runtime/fpga_emu_device.h",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "No CMakeLists.txt, not referenced by add_subdirectory anywhere; only referenced from docs/phase5-pcie-hardware-loop.md (itself retained/blocked, not this file)."
+    },
+    {
+      "source_path": "tools/membrane-fpga-runtime/fpga_runtime.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-fpga-runtime/fpga_runtime.cpp",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "No CMakeLists.txt, not referenced by add_subdirectory anywhere; only referenced from docs/phase5-pcie-hardware-loop.md (itself retained/blocked, not this file)."
+    },
+    {
+      "source_path": "tools/membrane-fpga-runtime/fpga_runtime.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-fpga-runtime/fpga_runtime.h",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "No CMakeLists.txt, not referenced by add_subdirectory anywhere; only referenced from docs/phase5-pcie-hardware-loop.md (itself retained/blocked, not this file)."
+    },
+    {
+      "source_path": "tools/membrane-fpga-runtime/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-fpga-runtime/main.cpp",
+      "verdict": "SAFE",
+      "reason_code": null,
+      "reason": "No CMakeLists.txt, not referenced by add_subdirectory anywhere; only referenced from docs/phase5-pcie-hardware-loop.md (itself retained/blocked, not this file)."
+    },
+    {
+      "source_path": "tools/membrane-hw-sim/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-hw-sim/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-hw-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-hw-sim/main.c",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-hw-sim/main.c",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-hw-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-analyze/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-analyze/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-analyze is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-analyze/main.c",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-analyze/main.c",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-analyze is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-attn-quality/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-attn-quality/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-attn-quality is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-attn-quality/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-attn-quality/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-attn-quality is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-attn-trace-capture/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-attn-trace-capture/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-attn-trace-capture is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-attn-trace-capture/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-attn-trace-capture/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-attn-trace-capture is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-capture/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-capture/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-capture is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-capture/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-capture/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-capture is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/bounded_quantile.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/bounded_quantile.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/bounded_quantile.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/bounded_quantile.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/calibrate.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/calibrate.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/calibrate.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/calibrate.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/exact_engine.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/exact_engine.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/exact_engine.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/exact_engine.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/integrity_tool.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/integrity_tool.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/mem_guard.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/mem_guard.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/mem_guard.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/mem_guard.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/test_bounded_quantile.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/test_bounded_quantile.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/test_calibrate_streamed.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/test_calibrate_streamed.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/test_exact_engine.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/test_exact_engine.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/test_interrupted_resume.sh",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/test_interrupted_resume.sh",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-exact-sim/test_mem_guard.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-exact-sim/test_mem_guard.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-exact-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-quality/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-quality/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-quality is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-quality/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-quality/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-quality is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-runtime-optimizer/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-runtime-optimizer/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-runtime-optimizer is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-runtime-optimizer/checkpoint.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-runtime-optimizer/checkpoint.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-runtime-optimizer is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-runtime-optimizer/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-runtime-optimizer/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-runtime-optimizer is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-runtime-optimizer/test_checkpoint.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-runtime-optimizer/test_checkpoint.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-runtime-optimizer is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-runtime/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-runtime/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-runtime is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-runtime/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-runtime/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-runtime is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-sensitivity/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-sensitivity/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-sensitivity is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-sensitivity/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-sensitivity/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-sensitivity is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-trace-capture/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-trace-capture/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-trace-capture is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-trace-capture/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-trace-capture/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-trace-capture is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-variance/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-variance/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-variance is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-variance/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-variance/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-variance is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/attn_trace_reader.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/attn_trace_reader.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/attn_trace_reader.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/attn_trace_reader.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/attn_workload.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/attn_workload.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/attn_workload.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/attn_workload.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/checkpoint.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/checkpoint.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/engine.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/engine.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/engine.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/engine.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/hotcache.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/hotcache.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/hotcache.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/hotcache.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/main.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/main.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/policy.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/policy.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/policy.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/policy.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/test_attn_trace_reader.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/test_attn_trace_reader.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/test_hotcache.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/test_hotcache.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/test_workingset_policy.cpp",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/test_workingset_policy.cpp",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-kv-workingset-sim/wssim_config.h",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-kv-workingset-sim/wssim_config.h",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-kv-workingset-sim is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-policy-export/CMakeLists.txt",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-policy-export/CMakeLists.txt",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-policy-export is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    },
+    {
+      "source_path": "tools/membrane-policy-export/main.c",
+      "classification": "active-research",
+      "original_decision": "move",
+      "destination_path": "tools/membrane-policy-export/main.c",
+      "verdict": "BLOCKED",
+      "reason_code": "maintained_build",
+      "reason": "tools/membrane-policy-export is wired into top-level CMakeLists.txt (add_subdirectory) and/or has unconditional maintained tests depending on it (see CMakeLists.txt tests/* block)."
+    }
+  ]
+}

@@ -130,11 +130,15 @@ A pull request from any branch type into `main` must include, per
 4. Artifact hashes for any new/changed committed benchmark artifact.
 5. A limitations section — what the change does *not* establish.
 6. Any negative/null findings encountered, reported honestly.
-7. Consistency with the project's AI-assistance disclosure
-   (`outreach/ai-assistance-disclosure.md`) — no new text implying sole
+7. Consistency with the project's AI-assistance disclosure (this
+   repository's own README.md "AI-assisted development" section, and
+   the full version at `kadireren7/membrane-research`'s
+   `outreach/ai-assistance-disclosure.md`) — no new text implying sole
    human authorship of AI-drafted material, and vice versa.
-8. No fabricated or implied hardware claims — anything hardware-adjacent
-   stays inside the gates in `outreach/hardware-claim-gates.md`.
+8. No fabricated or implied hardware claims — see README.md's own
+   "Limitations" section; the full outreach claim-gating discipline
+   lives at `kadireren7/membrane-research`'s
+   `outreach/hardware-claim-gates.md`.
 
 Merges that only touch reproducibility, documentation accuracy, or CI are
 held to the same bar minus what doesn't apply (e.g. a pure `docs/*` change
