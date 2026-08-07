@@ -1,10 +1,27 @@
 # Contributing to MEMBRANE
 
-MEMBRANE is a research prototype spanning a C11 core library, C++17
-simulators, synthesizable SystemVerilog RTL, and Python release tooling.
-See [docs/architecture.md](docs/architecture.md) for the current system
+MEMBRANE spans a C11 core library, C++17 simulators, synthesizable
+SystemVerilog RTL, and Python release tooling. See
+[docs/architecture.md](docs/architecture.md) for the current system
 diagram and [docs/results-summary.md](docs/results-summary.md) for what's
 been measured and what hasn't, before proposing new functionality.
+
+## Product vs. research contributions
+
+This repository (`kadireren7/membrane`) is the **maintained
+implementation** — contribute here for anything that builds, tests, or
+ships as part of the current library: bug fixes, new codecs, CLI/tool
+improvements, CI/build changes, documentation for what's currently
+maintained.
+
+New experiments — new predictors, RTL variants, simulator studies,
+anything whose outcome isn't known yet — are contributed to
+**[kadireren7/membrane-research](https://github.com/kadireren7/membrane-research)**
+instead, following that repository's own `CONTRIBUTING.md`. If a
+research result there reaches a point where it should become part of
+the maintained product, it comes back to *this* repository as an
+ordinary, reviewed PR (see `docs/repository-boundary.md` for the full
+two-repository model and why it changed).
 
 ## Building
 
@@ -20,8 +37,8 @@ For the bit-exact ggml quantization parity test, you additionally need
 the `third_party/llama.cpp` submodule checked out
 (`git submodule update --init --recursive`) and
 `-DMEMBRANE_ENABLE_LLAMA=ON`. For RTL work, see
-[docs/reproduction.md](docs/reproduction.md) Level 1.4 for the Verilator
-cosimulation flow. Full setup for all of the above:
+[docs/reproduction.md](docs/reproduction.md)'s "FPGA production-datapath
+Verilator cosimulation" section. Full setup for all of the above:
 [docs/reproduction.md](docs/reproduction.md).
 
 ## Building with sanitizers
@@ -67,18 +84,23 @@ known TSan/ASLR kernel interaction — see
 ## Branch naming
 
 MEMBRANE develops fully in the open — there is no private companion
-repository (see [docs/repository-boundary.md](docs/repository-boundary.md),
-[docs/open-development-policy.md](docs/open-development-policy.md)).
+repository (see [docs/repository-boundary.md](docs/repository-boundary.md)).
 Name branches by what they are:
 
-- `experiment/<name>` — research experiments (new predictors, codecs,
-  simulator variants, hardware-adjacent modeling) whose outcome isn't
-  known yet. Use [EXPERIMENT_TEMPLATE.md](EXPERIMENT_TEMPLATE.md) to
-  record one.
-- `feature/<name>` — new functionality headed toward `main` that isn't
-  itself a research experiment.
+- `feature/<name>` — new functionality headed toward `main`.
 - `fix/<name>` — bug fixes.
 - `docs/<name>` — documentation-only changes.
+- `chore/<name>` — repository maintenance (dependency bumps, CI
+  changes, structural cleanup).
+
+New research experiments are no longer started as `experiment/<name>`
+branches in this repository — they go directly to
+[kadireren7/membrane-research](https://github.com/kadireren7/membrane-research)
+instead (see `docs/repository-boundary.md` Rule 6). Existing
+`experiment/*` branches here (`experiment/q8-divider-pipeline`,
+`experiment/fp-divider-pipeline`) are preserved as historical git
+history, unchanged, and are mirrored (SHA256-verified) into that
+repository's own `experiments/` tree.
 
 `main` holds only verified, reviewed changes. Release tags
 (`v0.1.0-research` and later) are immutable snapshots of `main` at a
@@ -97,10 +119,12 @@ Keep pull requests scoped to one logical change. Every pull request into
 - Any negative/null findings encountered, reported with the same
   visibility as positive ones (see `docs/results-summary.md` §4).
 - Consistency with the project's AI-assistance disclosure
-  (`outreach/ai-assistance-disclosure.md`) — don't introduce text that
+  (README.md's own "AI-assisted development" section, and the full
+  version at `kadireren7/membrane-research`'s
+  `outreach/ai-assistance-disclosure.md`) — don't introduce text that
   implies sole human authorship of AI-drafted material, or vice versa.
-- No fabricated or implied hardware claims — anything hardware-adjacent
-  stays inside the gates in `outreach/hardware-claim-gates.md`.
+- No fabricated or implied hardware claims — see README.md's own
+  "Limitations" section for what is and isn't real.
 
 If you change a number in `docs/` or `README.md`, run
 `scripts/verify-results.py` and include its output.

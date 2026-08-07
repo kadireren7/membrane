@@ -5,14 +5,16 @@
 // the SAME source files (not two independently maintained C++
 // re-implementations of FP32 division) so this test is a genuine
 // RTL-vs-RTL bit-exactness check, not RTL-vs-idealized-math. Originates
-// from EXP-FPGA-DIV-001 Phase B1 (experiments/EXP-FPGA-DIV-001/phase-b1.md);
-// promoted into the production test suite unchanged (same source, only
-// the DUT module name changed on rebuild), per
-// experiments/EXP-FPGA-DIV-001/promotion-audit.md.
+// from EXP-FPGA-DIV-001 Phase B1 (full research record:
+// https://github.com/kadireren7/membrane-research/tree/main/experiments/EXP-FPGA-DIV-001,
+// phase-b1.md); promoted into the production test suite unchanged (same
+// source, only the DUT module name changed on rebuild), per that same
+// research record's promotion-audit.md.
 //
 // Verilates two SEPARATE top-level designs (Vmembrane_fp_divider,
 // Vmembrane_fp_scale_neg_pow2 -- built via two separate `verilator --Mdir`
-// invocations, see scripts/run-exp-fp-divider-001.sh) and drives both
+// invocations, see that research record's own scripts/run-exp-fp-divider-001.sh)
+// and drives both
 // from the same a_in sequence every cycle, comparing their registered
 // outputs one DELAY-cycle later. Both modules use the same DELAY=1
 // convention (see membrane_fp_divider.sv/membrane_fp_scale_neg_pow2.sv

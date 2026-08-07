@@ -184,14 +184,15 @@ change ("Ordering guarantee" in `membrane_quant_stream_top.sv`'s own header
 comment) that divider's variable latency requires. `q8_scale.sv` (still
 `membrane_fp_divider`, both instances) and the external
 `membrane_quant_stream_top` port list are unchanged. Source:
-EXP-FPGA-DIV-001 (`experiments/EXP-FPGA-DIV-001/`), Phase B1/B4 —
+EXP-FPGA-DIV-001, Phase B1/B4 —
 SIMULATED/SYNTHESIZED only (Verilator cosimulation + yosys generic/ECP5
 cell counts), no real FPGA hardware or place-and-route data, same
 disclosure as the rest of this section. Merged via pull request
 [#2](https://github.com/kadireren7/membrane/pull/2) (squash commit
-`f96c695`); see `experiments/EXP-FPGA-DIV-001/README.md` for the full
-research-record index and `promotion-plan.md`/`promotion-comparison.md`
-for the detailed integration plan and reproduced comparison.
+`f96c695`); the full research-record index, integration plan, and
+reproduced comparison now live at
+[kadireren7/membrane-research](https://github.com/kadireren7/membrane-research/tree/main/experiments/EXP-FPGA-DIV-001)
+(not duplicated in this repository — see `docs/repository-boundary.md`).
 
 ## D. Exact sparse retrieval path
 
