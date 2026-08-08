@@ -116,7 +116,9 @@ add_subdirectory(tools/membrane-store-bench)
 add_subdirectory(tools/membrane-kv-analyze)
 add_subdirectory(tools/membrane-quant-bench)
 add_subdirectory(tools/membrane-hw-sim)
+add_subdirectory(tools/membrane-workload-core)
 add_subdirectory(tools/membrane-demo)
+add_subdirectory(tools/membrane-quant-policy-bench)
 
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
@@ -290,6 +292,52 @@ if(MEMBRANE_BUILD_TESTS)
     COMMAND membrane-demo --not-a-real-option)
   set_tests_properties(demo_cli_rejects_unknown_option
     PROPERTIES WILL_FAIL TRUE)
+
+  # Product Phase 2: the shared generator/policy core, tested directly
+  # (see tools/membrane-workload-core).
+  add_executable(test_workload_core
+    tools/membrane-workload-core/test_workload_core.c)
+  target_link_libraries(test_workload_core PRIVATE membrane_workload_core)
+  target_include_directories(test_workload_core PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_workload_core COMMAND test_workload_core)
+
+  # membrane-quant-policy-bench's own core (config, matrix runner,
+  # timing, printers), tested directly against membrane_bench_core.
+  add_executable(test_membrane_bench
+    tools/membrane-quant-policy-bench/test_membrane_bench.c)
+  target_link_libraries(test_membrane_bench PRIVATE membrane_bench_core)
+  target_include_directories(test_membrane_bench PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_membrane_bench COMMAND test_membrane_bench)
+
+  # CLI-level coverage of membrane-quant-policy-bench's exit codes,
+  # complementing the direct core-logic tests above.
+  add_test(NAME bench_cli_default_exits_0
+    COMMAND membrane-quant-policy-bench --blocks 256 --iterations 2)
+  add_test(NAME bench_cli_matrix_exits_0
+    COMMAND membrane-quant-policy-bench --matrix --blocks 128 --iterations 2
+      --json)
+  add_test(NAME bench_cli_rejects_zero_blocks
+    COMMAND membrane-quant-policy-bench --blocks 0)
+  set_tests_properties(bench_cli_rejects_zero_blocks PROPERTIES
+    WILL_FAIL TRUE)
+  add_test(NAME bench_cli_rejects_zero_iterations
+    COMMAND membrane-quant-policy-bench --iterations 0)
+  set_tests_properties(bench_cli_rejects_zero_iterations PROPERTIES
+    WILL_FAIL TRUE)
+  add_test(NAME bench_cli_rejects_bad_policy
+    COMMAND membrane-quant-policy-bench --policy bogus)
+  set_tests_properties(bench_cli_rejects_bad_policy PROPERTIES
+    WILL_FAIL TRUE)
+  add_test(NAME bench_cli_rejects_bad_workload
+    COMMAND membrane-quant-policy-bench --workload bogus)
+  set_tests_properties(bench_cli_rejects_bad_workload PROPERTIES
+    WILL_FAIL TRUE)
+  add_test(NAME bench_cli_rejects_oversized_blocks
+    COMMAND membrane-quant-policy-bench --blocks 999999999999)
+  set_tests_properties(bench_cli_rejects_oversized_blocks PROPERTIES
+    WILL_FAIL TRUE)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test

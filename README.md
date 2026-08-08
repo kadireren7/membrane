@@ -132,6 +132,43 @@ Validation (lossy reconstruction -- lower is better, not bit-exact)
 Machine-readable output: `./build/tools/membrane-demo/membrane-demo --blocks 16384 --seed 42 --json`.
 See `tools/membrane-demo/demo_core.h` for exactly what each field measures.
 
+## Benchmark
+
+`membrane-quant-policy-bench` measures storage/accuracy/runtime trade-offs
+across 4 workloads (all **synthetic** — calibrated to exercise a real range of
+Q4_0/Q8_0 quantization outcomes, not captured or modeled LLM traces) and 3
+precision policies (`q4-only`, `q8-only`, `adaptive`), using the same
+maintained quantization engine as the demo:
+
+```bash
+./build/tools/membrane-quant-policy-bench/membrane-quant-policy-bench --matrix
+```
+
+This prints one row per workload x policy combination (12 rows: 4 workloads x
+`q4-only`/`q8-only`/`adaptive`), shaped like:
+
+```text
+Workload                 Policy       Storage%    MeanErr     MedianMs     Blocks/s
+synthetic-<kind>         <policy>     <baseline-vs-encoded reduction, %>
+                                       <block-count-weighted mean rel-L2 error>
+                                                    <median of --iterations, ms>
+                                                                 <blocks/s>
+```
+
+No fixed numbers are reproduced here: `Storage%`/`MeanErr` are deterministic
+for a given `--blocks`/`--seed`/`--policy` (see
+`tools/membrane-workload-core/test_workload_core.c` and
+`tools/membrane-quant-policy-bench/test_membrane_bench.c` for that guarantee)
+but will naturally shift if the generator or thresholds ever change;
+`MedianMs`/`Blocks/s` are local-machine timing and vary by host.
+
+Machine-readable: `--json` or `--csv` (add `--matrix` for all 12 cells, or
+omit it and pass `--workload`/`--policy` for one). Timing is **local CPU wall
+time only** (median of `--iterations`, after `--warmup` discarded passes) —
+not LLM end-to-end inference performance, and no FPGA/CXL hardware is
+measured or claimed anywhere here. See `--help` for the exact timed-region
+definition.
+
 ## Test
 
 ```bash
