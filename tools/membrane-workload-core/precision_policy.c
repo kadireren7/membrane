@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -149,6 +150,13 @@ membrane_status_t	membrane_bench_process_block(
 			adaptive_max_q4_rel_l2_error, &is_q4);
 	if (st != MEMBRANE_OK)
 		return (st);
+	/* No overflow guard needed here (unlike membrane_quant_select_precision
+	 * in src/quant/quant_select.c, whose `n` is a size_t taken directly
+	 * from an external caller): `elems` is uint32_t, so elems/32*34 and
+	 * elems*sizeof(uint16_t) are both bounded well under 2^33 -- many
+	 * orders of magnitude short of overflowing a 64-bit size_t on every
+	 * platform this project builds for. Confirmed: adding a SIZE_MAX
+	 * check here is flagged -Wtype-limits "always false". */
 	if (is_q4)
 		packed_bytes = (elems / MEMBRANE_QSIMD_BLOCK_ELEMS)
 			* MEMBRANE_QSIMD_Q4_0_BLOCK_BYTES;

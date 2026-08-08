@@ -64,8 +64,8 @@ typedef struct s_membrane_workload_accum
 
 /*
  * Processes exactly one block under `policy`, updating *acc, and is the
- * single timed region tools/membrane-bench measures (selection +
- * encode + decode + validate; NOT block generation or output
+ * single timed region tools/membrane-quant-policy-bench measures
+ * (selection + encode + decode + validate; NOT block generation or output
  * formatting). Q4_ONLY/Q8_ONLY force the precision directly (no trial
  * call); ADAPTIVE calls membrane_quant_select_precision with
  * `adaptive_max_q4_rel_l2_error` unchanged from membrane/quant_select.h's

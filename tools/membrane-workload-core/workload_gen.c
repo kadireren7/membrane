@@ -16,7 +16,8 @@
  *                   sequence, not a continuous sweep): ~65.4% clear it
  *
  * These are the actual measured splits this generator produces, not
- * chosen ratios -- rerunning tools/membrane-bench reproduces them.
+ * chosen ratios -- rerunning tools/membrane-quant-policy-bench
+ * reproduces them.
  */
 static const float	NOISE_AMP_DEFAULT = 1.0f;
 static const float	NOISE_AMP_LOW_VARIANCE = 0.1f;

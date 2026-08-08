@@ -10,8 +10,9 @@ extern "C" {
 
 /*
  * Shared deterministic synthetic KV-like F16 block generator, used by
- * both membrane-demo (tools/membrane-demo) and membrane-bench
- * (tools/membrane-bench). Every kind here is SYNTHETIC: a deterministic
+ * both membrane-demo (tools/membrane-demo) and
+ * membrane-quant-policy-bench (tools/membrane-quant-policy-bench).
+ * Every kind here is SYNTHETIC: a deterministic
  * generator calibrated against the real Q4_0 quantize/dequantize engine
  * to exercise a range of real quantization outcomes (from easily
  * Q4-compressible to Q8-requiring), not a captured or modeled real

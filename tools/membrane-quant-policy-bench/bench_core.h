@@ -134,6 +134,17 @@ membrane_status_t	membrane_bench_run_matrix(
 # define MEMBRANE_BENCH_MATRIX_CELLS \
 	(MEMBRANE_WORKLOAD_COUNT * MEMBRANE_BENCH_POLICY_COUNT)
 
+/*
+ * Block-count-weighted mean rel-L2 error across whichever mix of Q4/Q8
+ * blocks this result actually used. r->q4_mean_rel_l2_error and
+ * r->q8_mean_rel_l2_error are means of two different populations, so
+ * simply adding them is not a mean of anything and can exceed 1.0 --
+ * this is the correct combined figure the compact matrix table prints.
+ * Returns 0.0 if the result has no blocks of either precision.
+ */
+double	membrane_bench_weighted_mean_rel_l2_error(
+			const membrane_bench_result_t *r);
+
 void	membrane_bench_print_human(const membrane_bench_result_t *r, FILE *f);
 void	membrane_bench_print_json(const membrane_bench_result_t *r, FILE *f);
 void	membrane_bench_print_csv_header(FILE *f);

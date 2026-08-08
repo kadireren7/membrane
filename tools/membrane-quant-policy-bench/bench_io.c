@@ -235,7 +235,7 @@ void	membrane_bench_print_matrix_human(const membrane_bench_result_t *rs,
 			membrane_workload_kind_name(rs[i].config.workload),
 			membrane_bench_policy_name(rs[i].config.policy),
 			rs[i].reduction_ratio * 100.0,
-			rs[i].q4_mean_rel_l2_error + rs[i].q8_mean_rel_l2_error,
+			membrane_bench_weighted_mean_rel_l2_error(&rs[i]),
 			rs[i].median_seconds * 1000.0, rs[i].blocks_per_second);
 		i++;
 	}

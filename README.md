@@ -145,11 +145,11 @@ maintained quantization engine as the demo:
 ```
 ```text
 Workload                 Policy       Storage%    MeanErr     MedianMs     Blocks/s
-synthetic-default        q4-only        85.94%     0.0463       11.540       177467
-synthetic-default        q8-only        73.44%     0.0029       14.092       145329
-synthetic-default        adaptive       83.26%     0.0460       20.336       100710
-synthetic-low-variance   adaptive       85.66%     0.0288       18.535       110493
-synthetic-high-variance  adaptive       75.50%     0.0520       22.589        90664
+synthetic-default        q4-only        85.94%     0.0463       13.415       610655
+synthetic-default        q8-only        73.44%     0.0029       15.807       518248
+synthetic-default        adaptive       83.29%     0.0340       23.871       343183
+synthetic-low-variance   adaptive       85.66%     0.0245       20.675       396221
+synthetic-high-variance  adaptive       75.52%     0.0113       26.777       305929
 ... (5 of 12 rows shown; --matrix prints all 4 workloads x 3 policies)
 ```
 

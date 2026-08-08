@@ -38,6 +38,13 @@ static double	median_of(double *samples, size_t n)
 	return ((samples[n / 2 - 1] + samples[n / 2]) / 2.0);
 }
 
+/* membrane_workload_kind_t/membrane_bench_policy_t have only
+ * non-negative enumerators, so this compiler (verified: adding an
+ * explicit lower-bound check here is flagged -Wtype-limits "always
+ * true", i.e. the compiler itself confirms it) represents them as
+ * unsigned int -- a bit pattern written via an out-of-range cast such
+ * as (membrane_workload_kind_t)-1 reads back as a large positive value
+ * here, which this single upper-bound check already rejects. */
 static int	cfg_valid(const membrane_bench_config_t *cfg)
 {
 	return (cfg->blocks != 0 && cfg->blocks <= MEMBRANE_BENCH_MAX_BLOCKS
@@ -168,6 +175,19 @@ membrane_status_t	membrane_bench_run_one(const membrane_bench_config_t *cfg,
 	free(blocks);
 	free(samples);
 	return (MEMBRANE_OK);
+}
+
+double	membrane_bench_weighted_mean_rel_l2_error(
+			const membrane_bench_result_t *r)
+{
+	uint64_t	total;
+
+	total = r->q4_blocks + r->q8_blocks;
+	if (total == 0)
+		return (0.0);
+	return ((r->q4_mean_rel_l2_error * (double)r->q4_blocks
+			+ r->q8_mean_rel_l2_error * (double)r->q8_blocks)
+		/ (double)total);
 }
 
 membrane_status_t	membrane_bench_run_matrix(

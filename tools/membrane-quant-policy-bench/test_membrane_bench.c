@@ -199,6 +199,43 @@ static void	test_oversized_blocks_rejected(void)
 		"over-the-limit block count rejected, not attempted");
 }
 
+static void	test_invalid_enum_values_rejected(void)
+{
+	membrane_bench_config_t	cfg;
+	membrane_bench_result_t	r;
+
+	cfg = default_cfg();
+	cfg.workload = (membrane_workload_kind_t)-1;
+	TEST_ASSERT(membrane_bench_run_one(&cfg, &r) == MEMBRANE_ERR_INVALID_ARG,
+		"an out-of-range workload enum is rejected, not silently defaulted");
+	cfg = default_cfg();
+	cfg.policy = (membrane_bench_policy_t)-1;
+	TEST_ASSERT(membrane_bench_run_one(&cfg, &r) == MEMBRANE_ERR_INVALID_ARG,
+		"an out-of-range policy enum is rejected, not silently defaulted");
+}
+
+static void	test_weighted_mean_is_between_component_means(void)
+{
+	membrane_bench_config_t	cfg;
+	membrane_bench_result_t	r;
+	double						w;
+
+	cfg = default_cfg();
+	cfg.workload = MEMBRANE_WORKLOAD_SYNTHETIC_MIXED;
+	TEST_ASSERT(membrane_bench_run_one(&cfg, &r) == MEMBRANE_OK, "run");
+	TEST_ASSERT(r.q4_blocks > 0 && r.q8_blocks > 0,
+		"this workload/policy actually mixes both precisions "
+		"(otherwise the weighting has nothing to test)");
+	w = membrane_bench_weighted_mean_rel_l2_error(&r);
+	TEST_ASSERT(w <= 1.0, "a weighted mean of two <=1.0 means cannot "
+		"exceed 1.0 (the un-weighted sum used before this fix could)");
+	TEST_ASSERT(w >= (r.q4_mean_rel_l2_error < r.q8_mean_rel_l2_error
+			? r.q4_mean_rel_l2_error : r.q8_mean_rel_l2_error)
+		&& w <= (r.q4_mean_rel_l2_error > r.q8_mean_rel_l2_error
+			? r.q4_mean_rel_l2_error : r.q8_mean_rel_l2_error),
+		"a weighted mean of two values lies between them");
+}
+
 static void	test_arg_parsing(void)
 {
 	membrane_bench_args_t	args;
@@ -354,6 +391,8 @@ int	main(void)
 	test_zero_blocks_rejected();
 	test_zero_iterations_rejected();
 	test_oversized_blocks_rejected();
+	test_invalid_enum_values_rejected();
+	test_weighted_mean_is_between_component_means();
 	test_arg_parsing();
 	test_json_has_required_fields();
 	test_matrix_json_is_an_array();

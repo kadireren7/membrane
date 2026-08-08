@@ -107,8 +107,9 @@ static void	test_kinds_produce_distinct_q4_rates(void)
 		while (b < 300)
 		{
 			membrane_workload_generate_block(kinds[ki], 1234, b, x, ELEMS);
-			membrane_quant_select_precision(MEMBRANE_SIMD_SCALAR, x, ELEMS,
-				&sel_cfg, &sel);
+			TEST_ASSERT(membrane_quant_select_precision(MEMBRANE_SIMD_SCALAR,
+					x, ELEMS, &sel_cfg, &sel) == MEMBRANE_OK,
+				"select succeeds");
 			if (sel.precision == MEMBRANE_PRECISION_Q4)
 				q4++;
 			b++;
@@ -166,8 +167,8 @@ static void	test_process_block_adaptive_matches_quant_select(void)
 	membrane_workload_generate_block(MEMBRANE_WORKLOAD_SYNTHETIC_MIXED,
 		9, 3, x, ELEMS);
 	sel_cfg.max_q4_rel_l2_error = MEMBRANE_QUANT_SELECT_DEFAULT_MAX_Q4_REL_L2_ERROR;
-	membrane_quant_select_precision(MEMBRANE_SIMD_SCALAR, x, ELEMS, &sel_cfg,
-		&sel);
+	TEST_ASSERT(membrane_quant_select_precision(MEMBRANE_SIMD_SCALAR, x, ELEMS,
+			&sel_cfg, &sel) == MEMBRANE_OK, "select succeeds");
 	TEST_ASSERT(membrane_bench_process_block(MEMBRANE_SIMD_SCALAR,
 			MEMBRANE_BENCH_POLICY_ADAPTIVE, x, ELEMS,
 			MEMBRANE_QUANT_SELECT_DEFAULT_MAX_Q4_REL_L2_ERROR, &acc)
