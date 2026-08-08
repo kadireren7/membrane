@@ -132,6 +132,34 @@ Validation (lossy reconstruction -- lower is better, not bit-exact)
 Machine-readable output: `./build/tools/membrane-demo/membrane-demo --blocks 16384 --seed 42 --json`.
 See `tools/membrane-demo/demo_core.h` for exactly what each field measures.
 
+## Benchmark
+
+`membrane-quant-policy-bench` measures storage/accuracy/runtime trade-offs
+across 4 workloads (all **synthetic** — calibrated to exercise a real range of
+Q4_0/Q8_0 quantization outcomes, not captured or modeled LLM traces) and 3
+precision policies (`q4-only`, `q8-only`, `adaptive`), using the same
+maintained quantization engine as the demo:
+
+```bash
+./build/tools/membrane-quant-policy-bench/membrane-quant-policy-bench --matrix
+```
+```text
+Workload                 Policy       Storage%    MeanErr     MedianMs     Blocks/s
+synthetic-default        q4-only        85.94%     0.0463       11.540       177467
+synthetic-default        q8-only        73.44%     0.0029       14.092       145329
+synthetic-default        adaptive       83.26%     0.0460       20.336       100710
+synthetic-low-variance   adaptive       85.66%     0.0288       18.535       110493
+synthetic-high-variance  adaptive       75.50%     0.0520       22.589        90664
+... (5 of 12 rows shown; --matrix prints all 4 workloads x 3 policies)
+```
+
+Machine-readable: `--json` or `--csv` (add `--matrix` for all 12 cells, or
+omit it and pass `--workload`/`--policy` for one). Timing is **local CPU wall
+time only** (median of `--iterations`, after `--warmup` discarded passes) —
+not LLM end-to-end inference performance, and no FPGA/CXL hardware is
+measured or claimed anywhere here. See `--help` for the exact timed-region
+definition.
+
 ## Test
 
 ```bash
