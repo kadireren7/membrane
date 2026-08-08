@@ -123,14 +123,81 @@ typedef struct s_demo_accum
  * quant_simd block format writes for `elems` elements at this
  * precision (MEMBRANE_QSIMD_Q{4,8}_0_BLOCK_BYTES per 32-element group).
  */
-static void	process_precision(membrane_simd_backend_t backend,
+/* Quantizes `x_f16` twice under the chosen precision (into packed_a/b,
+ * for the encode-determinism check below) and accounts the result.
+ * Returns MEMBRANE_ERR_ALLOC_FAILED or whatever the maintained quantize
+ * engine itself reported on failure -- an infrastructure failure, hard
+ * to recover from mid-workload, unlike a per-block decode failure
+ * (see decode_block below, which is intentionally soft: reported via
+ * acc->decode_failures, not a return-code failure).
+ */
+static membrane_status_t	encode_block(membrane_simd_backend_t backend,
+					const uint16_t *x_f16, uint32_t elems, int is_q4,
+					uint8_t *packed_a, uint8_t *packed_b,
+					size_t packed_bytes, demo_accum_t *acc)
+{
+	membrane_status_t	st;
+
+	if (is_q4)
+		st = membrane_simd_q4_0_quantize(backend, x_f16, elems, packed_a);
+	else
+		st = membrane_simd_q8_0_quantize(backend, x_f16, elems, packed_a);
+	if (st != MEMBRANE_OK)
+		return (st);
+	if (is_q4)
+		st = membrane_simd_q4_0_quantize(backend, x_f16, elems, packed_b);
+	else
+		st = membrane_simd_q8_0_quantize(backend, x_f16, elems, packed_b);
+	if (st != MEMBRANE_OK)
+		return (st);
+	if (memcmp(packed_a, packed_b, packed_bytes) != 0)
+		acc->encode_nondeterminism++;
+	acc->membrane_bytes += packed_bytes;
+	if (is_q4)
+		acc->q4_blocks++;
+	else
+		acc->q8_blocks++;
+	return (MEMBRANE_OK);
+}
+
+/* Decode is intentionally soft-fail: per membrane_demo_run's contract,
+ * a block that fails to decode is reported via acc->decode_failures
+ * (and, in turn, out->validation_pass), not propagated as a hard
+ * error -- the workload still completes and the result says why it
+ * didn't validate. */
+static void	decode_block(membrane_simd_backend_t backend,
+					const uint16_t *x_f16, uint32_t elems, int is_q4,
+					const uint8_t *packed_a, uint16_t *dec,
+					demo_accum_t *acc)
+{
+	membrane_status_t	st;
+	double				err;
+
+	if (is_q4)
+		st = membrane_simd_q4_0_dequantize(backend, packed_a, elems, dec);
+	else
+		st = membrane_simd_q8_0_dequantize(backend, packed_a, elems, dec);
+	if (st != MEMBRANE_OK)
+	{
+		acc->decode_failures++;
+		return ;
+	}
+	acc->blocks_decoded++;
+	err = membrane_quant_rel_l2_error(x_f16, dec, elems);
+	if (is_q4)
+		err_stats_add(&acc->q4_err, err);
+	else
+		err_stats_add(&acc->q8_err, err);
+}
+
+static membrane_status_t	process_precision(membrane_simd_backend_t backend,
 					const uint16_t *x_f16, uint32_t elems, int is_q4,
 					size_t packed_bytes, demo_accum_t *acc)
 {
-	uint8_t		*packed_a;
-	uint8_t		*packed_b;
-	uint16_t	*dec;
-	double		err;
+	uint8_t				*packed_a;
+	uint8_t				*packed_b;
+	uint16_t			*dec;
+	membrane_status_t	st;
 
 	packed_a = malloc(packed_bytes);
 	packed_b = malloc(packed_bytes);
@@ -140,45 +207,19 @@ static void	process_precision(membrane_simd_backend_t backend,
 		free(packed_a);
 		free(packed_b);
 		free(dec);
-		return ;
+		return (MEMBRANE_ERR_ALLOC_FAILED);
 	}
-	if (is_q4)
-	{
-		membrane_simd_q4_0_quantize(backend, x_f16, elems, packed_a);
-		membrane_simd_q4_0_quantize(backend, x_f16, elems, packed_b);
-	}
-	else
-	{
-		membrane_simd_q8_0_quantize(backend, x_f16, elems, packed_a);
-		membrane_simd_q8_0_quantize(backend, x_f16, elems, packed_b);
-	}
-	if (memcmp(packed_a, packed_b, packed_bytes) != 0)
-		acc->encode_nondeterminism++;
-	acc->membrane_bytes += packed_bytes;
-	if (is_q4)
-		acc->q4_blocks++;
-	else
-		acc->q8_blocks++;
-	if ((is_q4 && membrane_simd_q4_0_dequantize(backend, packed_a, elems, dec)
-				== MEMBRANE_OK)
-		|| (!is_q4 && membrane_simd_q8_0_dequantize(backend, packed_a, elems,
-				dec) == MEMBRANE_OK))
-	{
-		acc->blocks_decoded++;
-		err = membrane_quant_rel_l2_error(x_f16, dec, elems);
-		if (is_q4)
-			err_stats_add(&acc->q4_err, err);
-		else
-			err_stats_add(&acc->q8_err, err);
-	}
-	else
-		acc->decode_failures++;
+	st = encode_block(backend, x_f16, elems, is_q4, packed_a, packed_b,
+			packed_bytes, acc);
+	if (st == MEMBRANE_OK)
+		decode_block(backend, x_f16, elems, is_q4, packed_a, dec, acc);
 	free(packed_a);
 	free(packed_b);
 	free(dec);
+	return (st);
 }
 
-static void	run_workload(const membrane_demo_config_t *cfg,
+static membrane_status_t	run_workload(const membrane_demo_config_t *cfg,
 					membrane_simd_backend_t backend, demo_accum_t *acc)
 {
 	membrane_quant_select_cfg_t		sel_cfg;
@@ -186,6 +227,7 @@ static void	run_workload(const membrane_demo_config_t *cfg,
 	uint16_t							x_f16[MEMBRANE_DEMO_ELEMS_PER_BLOCK];
 	size_t								q4_bytes;
 	size_t								q8_bytes;
+	membrane_status_t					st;
 	uint32_t							i;
 
 	sel_cfg.max_q4_rel_l2_error = MEMBRANE_QUANT_SELECT_DEFAULT_MAX_Q4_REL_L2_ERROR;
@@ -197,16 +239,21 @@ static void	run_workload(const membrane_demo_config_t *cfg,
 	while (i < cfg->blocks)
 	{
 		generate_block(cfg->seed, i, x_f16, MEMBRANE_DEMO_ELEMS_PER_BLOCK);
-		membrane_quant_select_precision(backend, x_f16,
+		st = membrane_quant_select_precision(backend, x_f16,
 			MEMBRANE_DEMO_ELEMS_PER_BLOCK, &sel_cfg, &sel);
+		if (st != MEMBRANE_OK)
+			return (st);
 		if (sel.precision == MEMBRANE_PRECISION_Q4)
-			process_precision(backend, x_f16, MEMBRANE_DEMO_ELEMS_PER_BLOCK,
+			st = process_precision(backend, x_f16, MEMBRANE_DEMO_ELEMS_PER_BLOCK,
 				1, q4_bytes, acc);
 		else
-			process_precision(backend, x_f16, MEMBRANE_DEMO_ELEMS_PER_BLOCK,
+			st = process_precision(backend, x_f16, MEMBRANE_DEMO_ELEMS_PER_BLOCK,
 				0, q8_bytes, acc);
+		if (st != MEMBRANE_OK)
+			return (st);
 		i++;
 	}
+	return (MEMBRANE_OK);
 }
 
 membrane_status_t	membrane_demo_run(const membrane_demo_config_t *cfg,
@@ -217,6 +264,7 @@ membrane_status_t	membrane_demo_run(const membrane_demo_config_t *cfg,
 	uint64_t					total_elems;
 	struct timespec				t0;
 	struct timespec				t1;
+	membrane_status_t			st;
 
 	if (cfg == NULL || out == NULL || cfg->blocks == 0
 			|| cfg->blocks > MEMBRANE_DEMO_MAX_BLOCKS)
@@ -227,8 +275,10 @@ membrane_status_t	membrane_demo_run(const membrane_demo_config_t *cfg,
 	memset(&acc, 0, sizeof(acc));
 	backend = membrane_simd_best_backend();
 	clock_gettime(CLOCK_MONOTONIC, &t0);
-	run_workload(cfg, backend, &acc);
+	st = run_workload(cfg, backend, &acc);
 	clock_gettime(CLOCK_MONOTONIC, &t1);
+	if (st != MEMBRANE_OK)
+		return (st);
 	memset(out, 0, sizeof(*out));
 	out->config = *cfg;
 	out->elems_per_block = MEMBRANE_DEMO_ELEMS_PER_BLOCK;

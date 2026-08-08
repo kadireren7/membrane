@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 
 #include "membrane/f16convert.h"
@@ -45,6 +46,8 @@ membrane_status_t	membrane_quant_select_precision(
 
 	if (x_f16 == NULL || cfg == NULL || out == NULL || n == 0
 			|| n % MEMBRANE_QSIMD_BLOCK_ELEMS != 0)
+		return (MEMBRANE_ERR_INVALID_ARG);
+	if (n > SIZE_MAX / sizeof(*dec))
 		return (MEMBRANE_ERR_INVALID_ARG);
 	packed_bytes = (n / MEMBRANE_QSIMD_BLOCK_ELEMS)
 		* MEMBRANE_QSIMD_Q4_0_BLOCK_BYTES;

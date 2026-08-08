@@ -1,5 +1,7 @@
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "membrane/f16convert.h"
 #include "membrane/quant_select.h"
@@ -125,6 +127,27 @@ static void	test_invalid_args(void)
 			&cfg, NULL) == MEMBRANE_ERR_INVALID_ARG, "NULL out rejected");
 }
 
+static void	test_oversized_n_rejected_without_allocating(void)
+{
+	uint16_t						stand_in[N];
+	membrane_quant_select_cfg_t	cfg;
+	membrane_quant_select_result_t	r;
+	size_t							huge;
+
+	/* Block-aligned, exceeds SIZE_MAX / sizeof(uint16_t): must be
+	 * rejected before any malloc, and before `n` elements of x_f16 are
+	 * ever read -- `stand_in` is only N elements long, so a real read
+	 * at size `huge` would itself be a buffer overrun the sanitizer
+	 * build would catch. */
+	memset(stand_in, 0, sizeof(stand_in));
+	huge = (SIZE_MAX / sizeof(uint16_t) / MEMBRANE_QSIMD_BLOCK_ELEMS + 1)
+		* MEMBRANE_QSIMD_BLOCK_ELEMS;
+	cfg.max_q4_rel_l2_error = MEMBRANE_QUANT_SELECT_DEFAULT_MAX_Q4_REL_L2_ERROR;
+	TEST_ASSERT(membrane_quant_select_precision(MEMBRANE_SIMD_SCALAR,
+			stand_in, huge, &cfg, &r) == MEMBRANE_ERR_INVALID_ARG,
+		"oversized n rejected before x_f16 would ever be over-read");
+}
+
 static void	test_rel_l2_error_helper(void)
 {
 	uint16_t	a[32];
@@ -155,6 +178,7 @@ int	main(void)
 	test_threshold_is_honoured();
 	test_deterministic();
 	test_invalid_args();
+	test_oversized_n_rejected_without_allocating();
 	test_rel_l2_error_helper();
 	return (0);
 }

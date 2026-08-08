@@ -119,7 +119,7 @@ baseline, real decode and error-bound validation:
 ```bash
 ./build/tools/membrane-demo/membrane-demo
 ```
-```
+```text
 Precision policy (Q4 accepted if rel-L2 error <= 0.05)
   Q4 blocks               6456
   Q8 blocks               1736
