@@ -1,7 +1,8 @@
 foreach(t test_block test_codec_raw test_codec_rle test_codec_f16_byteplane
     test_codec_f16_xor_byteplane test_huffman test_codec_f16_highplane_huffman
     test_f16convert test_q8block test_kvquant test_store test_kvdump
-    test_policy test_kvtrace test_attntrace test_attntrace2 test_attntrace3)
+    test_policy test_kvtrace test_attntrace test_attntrace2 test_attntrace3
+    test_quant_select)
   add_executable(${t} ${t}.c)
   target_link_libraries(${t} PRIVATE membrane_core)
   add_test(NAME ${t} COMMAND ${t})
