@@ -108,6 +108,30 @@ ctest --test-dir build --output-on-failure
 parity test and the full FPGA Verilator cosimulation from small,
 already-committed fixtures — no model download, finishes in minutes.
 
+## Try the demo
+
+`membrane-demo` is a self-contained CLI (no model download, no network)
+that runs a deterministic synthetic KV-block workload through the
+maintained Q4_0/Q8_0 quantization path — real per-block precision
+selection, real packed-byte storage accounting against an FP32
+baseline, real decode and error-bound validation:
+
+```bash
+./build/tools/membrane-demo/membrane-demo
+```
+```text
+Precision policy (Q4 accepted if rel-L2 error <= 0.05)
+  Q4 blocks               6456
+  Q8 blocks               1736
+Storage (baseline: FP32 bytes, same logical element count)
+  Reduction               83.29%
+Validation (lossy reconstruction -- lower is better, not bit-exact)
+  Result                  PASS
+```
+
+Machine-readable output: `./build/tools/membrane-demo/membrane-demo --blocks 16384 --seed 42 --json`.
+See `tools/membrane-demo/demo_core.h` for exactly what each field measures.
+
 ## Test
 
 ```bash

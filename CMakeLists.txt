@@ -100,6 +100,7 @@ add_library(membrane_core
   src/hash/sha256.c
   src/policy/policy.c
   src/quant/quant_simd.c
+  src/quant/quant_select.c
   src/fpga/fpga_dma.c
   src/fpga/quant_backend.c
   src/kvtrace/kvtrace.c
@@ -115,6 +116,7 @@ add_subdirectory(tools/membrane-store-bench)
 add_subdirectory(tools/membrane-kv-analyze)
 add_subdirectory(tools/membrane-quant-bench)
 add_subdirectory(tools/membrane-hw-sim)
+add_subdirectory(tools/membrane-demo)
 
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
@@ -257,6 +259,37 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_checkpoint PRIVATE
     tools/membrane-kv-runtime-optimizer)
   add_test(NAME test_checkpoint COMMAND test_checkpoint)
+
+  # Product Phase 1: membrane-demo's core pipeline logic, tested
+  # directly against membrane_demo_core rather than only shelling out
+  # to the CLI (see tools/membrane-demo/demo_core.h).
+  add_executable(test_membrane_demo
+    tools/membrane-demo/test_membrane_demo.c)
+  target_link_libraries(test_membrane_demo PRIVATE membrane_demo_core)
+  target_include_directories(test_membrane_demo PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_membrane_demo COMMAND test_membrane_demo)
+
+  # CLI-level coverage of membrane-demo's argument validation and exit
+  # codes, complementing the direct core-logic tests above.
+  add_test(NAME demo_cli_default_exits_0 COMMAND membrane-demo)
+  add_test(NAME demo_cli_json_exits_0
+    COMMAND membrane-demo --blocks 256 --seed 7 --json)
+  add_test(NAME demo_cli_rejects_zero_blocks
+    COMMAND membrane-demo --blocks 0)
+  set_tests_properties(demo_cli_rejects_zero_blocks PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME demo_cli_rejects_nonnumeric_blocks
+    COMMAND membrane-demo --blocks abc)
+  set_tests_properties(demo_cli_rejects_nonnumeric_blocks
+    PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME demo_cli_rejects_oversized_blocks
+    COMMAND membrane-demo --blocks 999999999999)
+  set_tests_properties(demo_cli_rejects_oversized_blocks
+    PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME demo_cli_rejects_unknown_option
+    COMMAND membrane-demo --not-a-real-option)
+  set_tests_properties(demo_cli_rejects_unknown_option
+    PROPERTIES WILL_FAIL TRUE)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test
