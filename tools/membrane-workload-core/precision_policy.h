@@ -96,6 +96,15 @@ membrane_status_t	membrane_bench_process_block(
 int	membrane_workload_validation_pass(const membrane_workload_accum_t *acc,
 		uint64_t blocks_expected);
 
+/*
+ * The exact packed-byte size membrane_bench_process_block allocates
+ * and writes for `elems` elements at the given precision -- exposed
+ * separately so its arithmetic (which must be done in size_t width;
+ * see the size_t cast in the implementation) can be tested directly
+ * for large `elems` without actually performing a huge allocation.
+ */
+size_t	membrane_bench_packed_bytes(uint32_t elems, int is_q4);
+
 # ifdef __cplusplus
 }
 # endif

@@ -38,21 +38,23 @@ static double	median_of(double *samples, size_t n)
 	return ((samples[n / 2 - 1] + samples[n / 2]) / 2.0);
 }
 
-/* membrane_workload_kind_t/membrane_bench_policy_t have only
- * non-negative enumerators, so this compiler (verified: adding an
- * explicit lower-bound check here is flagged -Wtype-limits "always
- * true", i.e. the compiler itself confirms it) represents them as
- * unsigned int -- a bit pattern written via an out-of-range cast such
- * as (membrane_workload_kind_t)-1 reads back as a large positive value
- * here, which this single upper-bound check already rejects. */
+/* Explicit unsigned comparisons rather than relying on the enum's
+ * natural comparison: C leaves the underlying integer type of an enum
+ * with only non-negative enumerators implementation-defined, so an
+ * out-of-range value written via a cast like
+ * (membrane_workload_kind_t)-1 is only guaranteed to be rejected by
+ * `< COUNT` if every supported compiler picks an unsigned
+ * representation. Casting both sides to `unsigned int` makes the
+ * comparison correct regardless of that choice, without relying on it. */
 static int	cfg_valid(const membrane_bench_config_t *cfg)
 {
 	return (cfg->blocks != 0 && cfg->blocks <= MEMBRANE_BENCH_MAX_BLOCKS
 		&& cfg->iterations != 0
 		&& cfg->iterations <= MEMBRANE_BENCH_MAX_ITERATIONS
 		&& cfg->warmup <= MEMBRANE_BENCH_MAX_WARMUP
-		&& cfg->workload < MEMBRANE_WORKLOAD_COUNT
-		&& cfg->policy < MEMBRANE_BENCH_POLICY_COUNT);
+		&& (unsigned int)cfg->workload < (unsigned int)MEMBRANE_WORKLOAD_COUNT
+		&& (unsigned int)cfg->policy
+			< (unsigned int)MEMBRANE_BENCH_POLICY_COUNT);
 }
 
 /* One full pass over every pre-generated block, timed. Fills *acc (any

@@ -143,15 +143,24 @@ maintained quantization engine as the demo:
 ```bash
 ./build/tools/membrane-quant-policy-bench/membrane-quant-policy-bench --matrix
 ```
+
+This prints one row per workload x policy combination (12 rows: 4 workloads x
+`q4-only`/`q8-only`/`adaptive`), shaped like:
+
 ```text
 Workload                 Policy       Storage%    MeanErr     MedianMs     Blocks/s
-synthetic-default        q4-only        85.94%     0.0463       13.415       610655
-synthetic-default        q8-only        73.44%     0.0029       15.807       518248
-synthetic-default        adaptive       83.29%     0.0340       23.871       343183
-synthetic-low-variance   adaptive       85.66%     0.0245       20.675       396221
-synthetic-high-variance  adaptive       75.52%     0.0113       26.777       305929
-... (5 of 12 rows shown; --matrix prints all 4 workloads x 3 policies)
+synthetic-<kind>         <policy>     <baseline-vs-encoded reduction, %>
+                                       <block-count-weighted mean rel-L2 error>
+                                                    <median of --iterations, ms>
+                                                                 <blocks/s>
 ```
+
+No fixed numbers are reproduced here: `Storage%`/`MeanErr` are deterministic
+for a given `--blocks`/`--seed`/`--policy` (see
+`tools/membrane-workload-core/test_workload_core.c` and
+`tools/membrane-quant-policy-bench/test_membrane_bench.c` for that guarantee)
+but will naturally shift if the generator or thresholds ever change;
+`MedianMs`/`Blocks/s` are local-machine timing and vary by host.
 
 Machine-readable: `--json` or `--csv` (add `--matrix` for all 12 cells, or
 omit it and pass `--workload`/`--policy` for one). Timing is **local CPU wall

@@ -50,6 +50,28 @@ int	membrane_workload_validation_pass(const membrane_workload_accum_t *acc,
 		&& acc->blocks_decoded == blocks_expected);
 }
 
+size_t	membrane_bench_packed_bytes(uint32_t elems, int is_q4)
+{
+	size_t	block_bytes;
+
+	block_bytes = is_q4 ? MEMBRANE_QSIMD_Q4_0_BLOCK_BYTES
+		: MEMBRANE_QSIMD_Q8_0_BLOCK_BYTES;
+	/* `(size_t)elems` first is load-bearing: without it, the division
+	 * and multiplication both evaluate in uint32_t/unsigned-int
+	 * arithmetic (C's usual arithmetic conversions -- neither
+	 * MEMBRANE_QSIMD_BLOCK_ELEMS nor block_bytes's *source* macros are
+	 * wider than that), and (elems/32)*34 genuinely wraps in that
+	 * 32-bit space for elems near UINT32_MAX (verified:
+	 * (4294967264/32)*34 == 4563402718, which wraps to 268435422 in
+	 * unsigned 32-bit arithmetic) well before the result would ever
+	 * reach this size_t-typed return value. Casting `elems` up front
+	 * forces the whole computation into size_t (64-bit) arithmetic,
+	 * where elems/32*34's true maximum (~4.56e9) is many orders of
+	 * magnitude short of overflowing -- no separate SIZE_MAX guard is
+	 * needed once the arithmetic itself is done at the right width. */
+	return (((size_t)elems / MEMBRANE_QSIMD_BLOCK_ELEMS) * block_bytes);
+}
+
 /* Quantizes `x_f16` twice under the chosen precision (into packed_a/b,
  * for the encode-determinism check) and accounts the result. Returns
  * MEMBRANE_ERR_ALLOC_FAILED or whatever the maintained quantize engine
@@ -150,19 +172,7 @@ membrane_status_t	membrane_bench_process_block(
 			adaptive_max_q4_rel_l2_error, &is_q4);
 	if (st != MEMBRANE_OK)
 		return (st);
-	/* No overflow guard needed here (unlike membrane_quant_select_precision
-	 * in src/quant/quant_select.c, whose `n` is a size_t taken directly
-	 * from an external caller): `elems` is uint32_t, so elems/32*34 and
-	 * elems*sizeof(uint16_t) are both bounded well under 2^33 -- many
-	 * orders of magnitude short of overflowing a 64-bit size_t on every
-	 * platform this project builds for. Confirmed: adding a SIZE_MAX
-	 * check here is flagged -Wtype-limits "always false". */
-	if (is_q4)
-		packed_bytes = (elems / MEMBRANE_QSIMD_BLOCK_ELEMS)
-			* MEMBRANE_QSIMD_Q4_0_BLOCK_BYTES;
-	else
-		packed_bytes = (elems / MEMBRANE_QSIMD_BLOCK_ELEMS)
-			* MEMBRANE_QSIMD_Q8_0_BLOCK_BYTES;
+	packed_bytes = membrane_bench_packed_bytes(elems, is_q4);
 	packed_a = malloc(packed_bytes);
 	packed_b = malloc(packed_bytes);
 	dec = malloc((size_t)elems * sizeof(uint16_t));

@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <string.h>
 
 #include "membrane/quant_select.h"
@@ -211,6 +212,35 @@ static void	test_checked_mul_overflow(void)
 		&& out == 0, "zero multiplicand never overflows");
 }
 
+/* Regression for a real bug: membrane_bench_packed_bytes's Q8_0 path
+ * used to compute (elems / 32) * 34 with `elems` left as uint32_t, so
+ * the multiplication happened in 32-bit unsigned arithmetic and wrapped
+ * for elems near UINT32_MAX -- before the result ever reached its
+ * size_t return type. Checked here against hand-computed 64-bit values
+ * (no allocation of that size is ever attempted; this tests only the
+ * arithmetic). The Q4_0 path (multiplier 18, not 34) can never
+ * overflow uint32_t arithmetic for any valid uint32_t elems -- checked
+ * too, so a regression in either direction would be caught. */
+static void	test_packed_bytes_does_not_wrap_for_large_elems(void)
+{
+	uint32_t	huge_elems;
+
+	/* Largest multiple of 32 <= UINT32_MAX. */
+	huge_elems = (UINT32_MAX / MEMBRANE_QSIMD_BLOCK_ELEMS)
+		* MEMBRANE_QSIMD_BLOCK_ELEMS;
+	TEST_ASSERT(huge_elems == 4294967264u, "sanity: known constant");
+	TEST_ASSERT(membrane_bench_packed_bytes(huge_elems, 0) == 4563402718ull,
+		"Q8_0 packed_bytes is the true 64-bit product, not wrapped to "
+		"268435422 as 32-bit arithmetic would give");
+	TEST_ASSERT(membrane_bench_packed_bytes(huge_elems, 1) == 2415919086ull,
+		"Q4_0 packed_bytes is correct (this path never overflows "
+		"uint32_t arithmetic for any valid elems, unlike Q8_0)");
+	TEST_ASSERT(membrane_bench_packed_bytes(128, 0) == 136,
+		"ordinary small elems still computes correctly (4 blocks * 34)");
+	TEST_ASSERT(membrane_bench_packed_bytes(128, 1) == 72,
+		"ordinary small elems still computes correctly (4 blocks * 18)");
+}
+
 int	main(void)
 {
 	test_kind_name_roundtrip();
@@ -223,5 +253,6 @@ int	main(void)
 	test_process_block_adaptive_matches_quant_select();
 	test_validation_pass_semantics();
 	test_checked_mul_overflow();
+	test_packed_bytes_does_not_wrap_for_large_elems();
 	return (0);
 }
