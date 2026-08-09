@@ -8,33 +8,46 @@ static void	usage(FILE *out)
 		"Usage: membrane-quant-policy-bench [options]\n"
 		"\n"
 		"Offline benchmark of MEMBRANE's maintained Q4_0/Q8_0 quantization\n"
-		"path across synthetic workloads and precision policies: no model\n"
-		"download, no network access.\n"
+		"path across synthetic workloads, or one real captured KV trace\n"
+		"(--trace), against 3 precision policies: no model download, no\n"
+		"network access, no llama.cpp dependency, in either mode.\n"
 		"\n"
 		"Timed region: exactly one block's precision selection + encode +\n"
-		"decode + validation (membrane_bench_process_block). Workload\n"
-		"generation and result formatting are NOT timed. --warmup passes\n"
-		"run the identical timed region and are discarded; the reported\n"
-		"primary statistic is the MEDIAN wall time (CLOCK_MONOTONIC) across\n"
-		"--iterations timed passes; min/max are also reported. This is\n"
-		"local CPU benchmark runtime only -- not an LLM inference speedup\n"
-		"claim and not a hardware performance claim.\n"
+		"decode + validation (membrane_bench_process_block). Workload/\n"
+		"trace generation-or-loading and result formatting are NOT timed\n"
+		"-- a trace's blocks are fully read into memory once, untimed,\n"
+		"before timing starts. --warmup passes run the identical timed\n"
+		"region and are discarded; the reported primary statistic is the\n"
+		"MEDIAN wall time (CLOCK_MONOTONIC) across --iterations timed\n"
+		"passes; min/max are also reported. This is local CPU benchmark\n"
+		"runtime only -- not an LLM inference speedup claim and not a\n"
+		"hardware performance claim, in either mode.\n"
 		"\n"
 		"  --workload NAME   synthetic-default | synthetic-low-variance |\n"
 		"                    synthetic-high-variance | synthetic-mixed\n"
 		"                    (default: synthetic-default; ignored under\n"
-		"                    --matrix, which runs all four)\n"
+		"                    --matrix, which runs all four; rejected\n"
+		"                    together with --trace)\n"
 		"  --policy NAME     q4-only | q8-only | adaptive\n"
 		"                    (default: adaptive; ignored under --matrix,\n"
 		"                    which runs all three)\n"
-		"  --blocks N        number of synthetic blocks (default %u)\n"
-		"  --seed N          PRNG seed for the synthetic workload "
-		"(default %u)\n"
+		"  --blocks N        synthetic mode: number of generated blocks\n"
+		"                    (default %u). Trace mode: caps how many of\n"
+		"                    the trace's blocks are used (default: all\n"
+		"                    of them)\n"
+		"  --seed N          PRNG seed for the synthetic workload\n"
+		"                    (default %u; rejected together with --trace)\n"
+		"  --trace PATH      benchmark a real captured KV trace instead\n"
+		"                    of a synthetic workload (see\n"
+		"                    tools/membrane-kv-trace-export and\n"
+		"                    docs/kv-trace-format.md). --matrix then runs\n"
+		"                    exactly the 3 policies against this one\n"
+		"                    trace, not the 4-workload synthetic sweep\n"
 		"  --iterations N    timed iterations, median reported "
 		"(default %u)\n"
 		"  --warmup N        discarded warmup iterations (default %u)\n"
-		"  --matrix          run the full workload x policy matrix "
-		"(%d cells)\n"
+		"  --matrix          run the full policy matrix (synthetic: %d\n"
+		"                    cells; --trace: 3 cells)\n"
 		"  --json            print machine-readable JSON\n"
 		"  --csv             print CSV (one header + one row per result)\n"
 		"  --help            print this message and exit\n",
@@ -43,14 +56,31 @@ static void	usage(FILE *out)
 		(int)MEMBRANE_BENCH_MATRIX_CELLS);
 }
 
+static const char	*run_failure_reason(membrane_status_t st)
+{
+	if (st == MEMBRANE_ERR_ALLOC_FAILED)
+		return ("allocation failure");
+	if (st == MEMBRANE_ERR_IO)
+		return ("cannot read the trace file (--trace path wrong or "
+			"unreadable?)");
+	if (st == MEMBRANE_ERR_CORRUPT_DATA)
+		return ("the trace file is corrupt or truncated");
+	if (st == MEMBRANE_ERR_UNIMPLEMENTED)
+		return ("the trace's dtype or elements_per_block is not "
+			"supported (elements_per_block must be a multiple of 32)");
+	return ("invalid configuration");
+}
+
 static int	run_single(const membrane_bench_args_t *args)
 {
 	membrane_bench_result_t	r;
+	membrane_status_t			st;
 
-	if (membrane_bench_run_one(&args->cfg, &r) != MEMBRANE_OK)
+	st = membrane_bench_run_one(&args->cfg, &r);
+	if (st != MEMBRANE_OK)
 	{
 		fprintf(stderr, "membrane-quant-policy-bench: benchmark run "
-			"failed (allocation failure?)\n");
+			"failed: %s\n", run_failure_reason(st));
 		return (1);
 	}
 	if (args->want_csv)
@@ -71,12 +101,14 @@ static int	run_matrix(const membrane_bench_args_t *args)
 	size_t						n;
 	size_t						i;
 	int							all_pass;
+	membrane_status_t			st;
 
-	if (membrane_bench_run_matrix(&args->cfg, rs, MEMBRANE_BENCH_MATRIX_CELLS,
-			&n) != MEMBRANE_OK)
+	st = membrane_bench_run_matrix(&args->cfg, rs, MEMBRANE_BENCH_MATRIX_CELLS,
+			&n);
+	if (st != MEMBRANE_OK)
 	{
-		fprintf(stderr, "membrane-quant-policy-bench: matrix run failed "
-			"(allocation failure?)\n");
+		fprintf(stderr, "membrane-quant-policy-bench: matrix run failed: "
+			"%s\n", run_failure_reason(st));
 		return (1);
 	}
 	if (args->want_csv)

@@ -119,6 +119,7 @@ add_subdirectory(tools/membrane-hw-sim)
 add_subdirectory(tools/membrane-workload-core)
 add_subdirectory(tools/membrane-demo)
 add_subdirectory(tools/membrane-quant-policy-bench)
+add_subdirectory(tools/membrane-kv-trace-export)
 
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
@@ -302,6 +303,16 @@ if(MEMBRANE_BUILD_TESTS)
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_workload_core COMMAND test_workload_core)
 
+  # Product Phase 3: the .memkv trace format reader/writer, including
+  # adversarial/malformed-file handling (see
+  # tools/membrane-workload-core/trace_format.h).
+  add_executable(test_trace_format
+    tools/membrane-workload-core/test_trace_format.c)
+  target_link_libraries(test_trace_format PRIVATE membrane_workload_core)
+  target_include_directories(test_trace_format PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_trace_format COMMAND test_trace_format)
+
   # membrane-quant-policy-bench's own core (config, matrix runner,
   # timing, printers), tested directly against membrane_bench_core.
   add_executable(test_membrane_bench
@@ -337,6 +348,22 @@ if(MEMBRANE_BUILD_TESTS)
   add_test(NAME bench_cli_rejects_oversized_blocks
     COMMAND membrane-quant-policy-bench --blocks 999999999999)
   set_tests_properties(bench_cli_rejects_oversized_blocks PROPERTIES
+    WILL_FAIL TRUE)
+
+  # Product Phase 3: --trace CLI-level coverage, complementing the
+  # direct membrane_bench_run_one/parse_args trace tests above.
+  add_test(NAME bench_cli_rejects_missing_trace_file
+    COMMAND membrane-quant-policy-bench --trace /no/such/file.memkv)
+  set_tests_properties(bench_cli_rejects_missing_trace_file PROPERTIES
+    WILL_FAIL TRUE)
+  add_test(NAME bench_cli_rejects_trace_with_workload
+    COMMAND membrane-quant-policy-bench --trace /no/such/file.memkv
+      --workload synthetic-mixed)
+  set_tests_properties(bench_cli_rejects_trace_with_workload PROPERTIES
+    WILL_FAIL TRUE)
+  add_test(NAME trace_export_cli_rejects_missing_args
+    COMMAND membrane-kv-trace-export)
+  set_tests_properties(trace_export_cli_rejects_missing_args PROPERTIES
     WILL_FAIL TRUE)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness

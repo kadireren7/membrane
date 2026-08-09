@@ -169,6 +169,24 @@ not LLM end-to-end inference performance, and no FPGA/CXL hardware is
 measured or claimed anywhere here. See `--help` for the exact timed-region
 definition.
 
+### Benchmark a captured KV trace
+
+```bash
+./build/tools/membrane-quant-policy-bench/membrane-quant-policy-bench \
+  --trace your_trace.memkv --policy adaptive
+```
+
+The trace is captured separately (`tools/membrane-kv-capture`, needs
+`-DMEMBRANE_ENABLE_LLAMA=ON` and a `.gguf` model) and converted with
+`tools/membrane-kv-trace-export`; the benchmark itself still runs fully
+offline, with no llama.cpp dependency, reading only the real numerical KV
+block data you supply — no prompt/token text is required or read. `--trace
+file --matrix` runs exactly the 3 policies against that one trace (not the
+4-workload synthetic sweep). Numbers depend entirely on the model/layer/
+input the trace came from — see `docs/kv-trace-format.md` for the format
+and full pipeline. As with the synthetic benchmark: no end-to-end LLM
+performance claim, and no physical FPGA/CXL measurement, either mode.
+
 ## Test
 
 ```bash
