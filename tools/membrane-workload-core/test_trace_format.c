@@ -383,6 +383,7 @@ static void	test_trace_format_matches_membrane_block_checksum(void)
 
 	blocks = make_fixture(n_blocks, epb);
 	le_payload = malloc((size_t)n_blocks * epb * sizeof(uint16_t));
+	TEST_ASSERT(le_payload != NULL, "allocate little-endian payload");
 	i = 0;
 	while (i < (uint64_t)n_blocks * epb)
 	{
