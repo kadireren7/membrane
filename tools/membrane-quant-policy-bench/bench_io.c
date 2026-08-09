@@ -83,6 +83,7 @@ int	membrane_bench_parse_args(int argc, char **argv,
 	args->cfg.iterations = MEMBRANE_BENCH_DEFAULT_ITERATIONS;
 	args->cfg.warmup = MEMBRANE_BENCH_DEFAULT_WARMUP;
 	args->cfg.trace_path = NULL;
+	args->trace_dir = NULL;
 	args->want_json = 0;
 	args->want_csv = 0;
 	args->want_matrix = 0;
@@ -107,6 +108,14 @@ int	membrane_bench_parse_args(int argc, char **argv,
 			if (rc != 0)
 				return (rc);
 			args->cfg.trace_path = val;
+		}
+		else if (strcmp(argv[i], "--trace-dir") == 0)
+		{
+			rc = take_next(argc, argv, &i, &val, err_buf, err_cap,
+					"--trace-dir");
+			if (rc != 0)
+				return (rc);
+			args->trace_dir = val;
 		}
 		else if (strcmp(argv[i], "--workload") == 0)
 		{
@@ -186,15 +195,23 @@ int	membrane_bench_parse_args(int argc, char **argv,
 		}
 		i++;
 	}
-	if (args->cfg.trace_path != NULL)
+	if (args->cfg.trace_path != NULL && args->trace_dir != NULL)
+		return (usage_error(err_buf, err_cap,
+				"--trace cannot be combined with --trace-dir"));
+	if (args->trace_dir != NULL && !args->want_matrix)
+		return (usage_error(err_buf, err_cap,
+				"--trace-dir requires --matrix (every trace in a set "
+				"always gets all 3 policies)"));
+	if (args->cfg.trace_path != NULL || args->trace_dir != NULL)
 	{
 		if (workload_given)
 			return (usage_error(err_buf, err_cap,
-					"--workload cannot be combined with --trace "
-					"(trace mode never uses the synthetic generator)"));
+					"--workload cannot be combined with --trace/"
+					"--trace-dir (trace mode never uses the synthetic "
+					"generator)"));
 		if (seed_given)
 			return (usage_error(err_buf, err_cap,
-					"--seed cannot be combined with --trace "
+					"--seed cannot be combined with --trace/--trace-dir "
 					"(trace mode never uses the synthetic generator)"));
 		if (!blocks_given)
 			args->cfg.blocks = 0;
@@ -296,7 +313,7 @@ void	membrane_bench_print_matrix_human(const membrane_bench_result_t *rs,
 /* values that reuse the same fields happen to already be safe.         */
 /* ------------------------------------------------------------------ */
 
-static void	json_escape(FILE *f, const char *s)
+void	membrane_bench_json_escape(FILE *f, const char *s)
 {
 	unsigned char	c;
 
@@ -319,7 +336,7 @@ static void	json_escape(FILE *f, const char *s)
 	}
 }
 
-static void	csv_escape(FILE *f, const char *s)
+void	membrane_bench_csv_escape(FILE *f, const char *s)
 {
 	fputc('"', f);
 	while (*s != '\0')
@@ -337,7 +354,7 @@ static void	print_json_body(const membrane_bench_result_t *r, FILE *f)
 	fprintf(f, "{\"schema_version\":%d,"
 		"\"benchmark\":{\"workload\":\"",
 		MEMBRANE_BENCH_SCHEMA_VERSION);
-	json_escape(f, r->workload_name);
+	membrane_bench_json_escape(f, r->workload_name);
 	fprintf(f, "\",\"workload_kind\":\"%s\","
 		"\"policy\":\"%s\",\"blocks\":%u,\"elements_per_block\":%u,"
 		"\"seed\":",
@@ -358,7 +375,7 @@ static void	print_json_body(const membrane_bench_result_t *r, FILE *f)
 			"\"elements_per_block\":%u,\"dtype\":\"f16\","
 			"\"source_label\":\"",
 			r->trace_format_version, r->config.blocks, r->elems_per_block);
-		json_escape(f, r->trace_source_label);
+		membrane_bench_json_escape(f, r->trace_source_label);
 		fprintf(f, "\"},");
 	}
 	fprintf(f, "\"storage\":{\"baseline_bytes\":%llu,\"encoded_bytes\":%llu,"
@@ -431,7 +448,7 @@ void	membrane_bench_print_csv_header(FILE *f)
 
 void	membrane_bench_print_csv_row(const membrane_bench_result_t *r, FILE *f)
 {
-	csv_escape(f, r->workload_name);
+	membrane_bench_csv_escape(f, r->workload_name);
 	fprintf(f, ",%s,%s,%u,%u,", r->workload_kind_label,
 		membrane_bench_policy_name(r->config.policy), r->config.blocks,
 		r->elems_per_block);
@@ -457,7 +474,7 @@ void	membrane_bench_print_csv_row(const membrane_bench_result_t *r, FILE *f)
 	if (r->is_trace)
 	{
 		fprintf(f, "%u,", r->trace_format_version);
-		csv_escape(f, r->trace_source_label);
+		membrane_bench_csv_escape(f, r->trace_source_label);
 		fprintf(f, "\n");
 	}
 	else

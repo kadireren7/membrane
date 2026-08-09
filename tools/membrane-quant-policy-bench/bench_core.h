@@ -126,6 +126,12 @@ typedef struct s_membrane_bench_result
 typedef struct s_membrane_bench_args
 {
 	membrane_bench_config_t	cfg;
+	/* Product Phase 4: non-NULL selects trace-SET mode (a whole
+	 * directory of .memkv files -- see trace_set.h) instead of single-
+	 * trace/synthetic mode. Mutually exclusive with cfg.trace_path;
+	 * requires want_matrix (each trace always gets exactly the 3
+	 * policies, mirroring --trace --matrix). */
+	const char					*trace_dir;
 	int							want_json;
 	int							want_csv;
 	int							want_matrix;
@@ -135,18 +141,21 @@ typedef struct s_membrane_bench_args
 /*
  * Parses argv[1..argc). Recognizes --workload NAME, --policy
  * q4-only|q8-only|adaptive, --blocks N, --seed N, --iterations N,
- * --warmup N, --trace PATH, --json, --csv, --matrix, --help. Rejects
- * unknown options, non-numeric/negative/zero --blocks (unless --trace
- * is also given, where 0 is the valid default meaning "uncapped"),
- * zero --iterations, --blocks/--iterations/--warmup above their MAX,
- * an unrecognized --workload/--policy name, and --workload or --seed
- * combined with --trace (trace mode never uses the synthetic
- * generator, so those flags would silently do nothing -- rejected
- * instead of ignored). On success returns 0 and fills *args (defaults
- * applied for any flag not given; --workload/--policy are ignored
- * under --matrix, still parsed/validated if present). On failure
- * returns MEMBRANE_BENCH_EXIT_USAGE_ERROR and writes a one-line,
- * NUL-terminated reason to err_buf (err_cap bytes).
+ * --warmup N, --trace PATH, --trace-dir DIR, --json, --csv, --matrix,
+ * --help. Rejects unknown options, non-numeric/negative/zero --blocks
+ * (unless --trace/--trace-dir is also given, where 0 is the valid
+ * default meaning "uncapped"), zero --iterations,
+ * --blocks/--iterations/--warmup above their MAX, an unrecognized
+ * --workload/--policy name, --workload or --seed combined with
+ * --trace/--trace-dir (trace mode never uses the synthetic generator,
+ * so those flags would silently do nothing -- rejected instead of
+ * ignored), --trace combined with --trace-dir, and --trace-dir without
+ * --matrix (every trace in a set always gets all 3 policies). On
+ * success returns 0 and fills *args (defaults applied for any flag not
+ * given; --workload/--policy are ignored under --matrix, still parsed/
+ * validated if present). On failure returns
+ * MEMBRANE_BENCH_EXIT_USAGE_ERROR and writes a one-line, NUL-terminated
+ * reason to err_buf (err_cap bytes).
  */
 int	membrane_bench_parse_args(int argc, char **argv,
 		membrane_bench_args_t *args, char *err_buf, size_t err_cap);
@@ -197,6 +206,11 @@ membrane_status_t	membrane_bench_run_matrix(
  */
 double	membrane_bench_weighted_mean_rel_l2_error(
 			const membrane_bench_result_t *r);
+
+/* Untrusted-string escaping shared with trace_set.c (both consume
+ * trace-derived/user-supplied strings: metadata labels, filenames). */
+void	membrane_bench_json_escape(FILE *f, const char *s);
+void	membrane_bench_csv_escape(FILE *f, const char *s);
 
 void	membrane_bench_print_human(const membrane_bench_result_t *r, FILE *f);
 void	membrane_bench_print_json(const membrane_bench_result_t *r, FILE *f);

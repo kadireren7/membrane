@@ -1,6 +1,8 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "bench_core.h"
+#include "trace_set.h"
 
 static void	usage(FILE *out)
 {
@@ -43,6 +45,12 @@ static void	usage(FILE *out)
 		"                    docs/kv-trace-format.md). --matrix then runs\n"
 		"                    exactly the 3 policies against this one\n"
 		"                    trace, not the 4-workload synthetic sweep\n"
+		"  --trace-dir DIR   benchmark every .memkv trace directly\n"
+		"                    inside DIR (e.g. a membrane-kv-trace-export\n"
+		"                    --output-dir batch): all 3 policies per\n"
+		"                    trace plus a cross-trace adaptive summary.\n"
+		"                    Requires --matrix; rejected together with\n"
+		"                    --trace/--workload/--seed\n"
 		"  --iterations N    timed iterations, median reported "
 		"(default %u)\n"
 		"  --warmup N        discarded warmup iterations (default %u)\n"
@@ -128,6 +136,53 @@ static int	run_matrix(const membrane_bench_args_t *args)
 	return (all_pass ? 0 : 1);
 }
 
+static int	run_trace_set(const membrane_bench_args_t *args)
+{
+	membrane_trace_set_file_t		*files;
+	membrane_trace_set_item_t		*items;
+	membrane_trace_set_aggregate_t	agg;
+	size_t							n_files;
+	size_t							n_items;
+	uint64_t						total_blocks;
+	char							err_buf[256];
+	membrane_status_t				st;
+	int								all_pass;
+	size_t							i;
+
+	st = membrane_trace_set_discover(args->trace_dir, &files, &n_files,
+			&total_blocks, err_buf, sizeof(err_buf));
+	if (st != MEMBRANE_OK)
+	{
+		fprintf(stderr, "membrane-quant-policy-bench: %s\n", err_buf);
+		return (1);
+	}
+	st = membrane_trace_set_run(&args->cfg, files, n_files, &items, &n_items,
+			&agg);
+	free(files);
+	if (st != MEMBRANE_OK)
+	{
+		fprintf(stderr, "membrane-quant-policy-bench: trace-set run "
+			"failed: %s\n", run_failure_reason(st));
+		return (1);
+	}
+	if (args->want_csv)
+		membrane_trace_set_print_csv(items, n_items, stdout);
+	else if (args->want_json)
+		membrane_trace_set_print_json(items, n_items, &agg, stdout);
+	else
+		membrane_trace_set_print_human(items, n_items, &agg, stdout);
+	all_pass = 1;
+	i = 0;
+	while (i < n_items)
+	{
+		if (!items[i].result.validation_pass)
+			all_pass = 0;
+		i++;
+	}
+	free(items);
+	return (all_pass ? 0 : 1);
+}
+
 int	main(int argc, char **argv)
 {
 	membrane_bench_args_t	args;
@@ -144,6 +199,8 @@ int	main(int argc, char **argv)
 		usage(stderr);
 		return (rc);
 	}
+	if (args.trace_dir != NULL)
+		return (run_trace_set(&args));
 	if (args.want_matrix)
 		return (run_matrix(&args));
 	return (run_single(&args));
