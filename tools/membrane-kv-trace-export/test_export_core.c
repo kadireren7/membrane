@@ -352,6 +352,42 @@ static void	test_batch_export_missing_output_dir_fails(void)
 		== MEMBRANE_ERR_IO, "missing output directory rejected");
 }
 
+/* Defense in depth: membrane_export_batch_run is a public entry point
+ * a caller could reach directly (bypassing main.c's own CLI-level
+ * UINT32_MAX/reversed-range/tensor-filter checks) with an unvalidated
+ * range -- it must reject these itself, not silently truncate/misbehave. */
+static void	test_batch_export_rejects_invalid_range(void)
+{
+	membrane_export_batch_opts_t	o;
+	membrane_export_batch_result_t	r;
+	char							err[256];
+
+	clean_outdir();
+	write_standard_fixture();
+	o = default_opts();
+	o.range.layer_start = (long)UINT32_MAX + 1;
+	TEST_ASSERT(membrane_export_batch_run(&o, &r, err, sizeof(err))
+		== MEMBRANE_ERR_INVALID_ARG,
+		"layer_start beyond UINT32_MAX rejected, not silently truncated");
+	clean_outdir();
+	o = default_opts();
+	o.range.layer_end = (long)UINT32_MAX + 1;
+	TEST_ASSERT(membrane_export_batch_run(&o, &r, err, sizeof(err))
+		== MEMBRANE_ERR_INVALID_ARG,
+		"layer_end beyond UINT32_MAX rejected, not silently truncated");
+	clean_outdir();
+	o = default_opts();
+	o.range.layer_start = 3;
+	o.range.layer_end = 1;
+	TEST_ASSERT(membrane_export_batch_run(&o, &r, err, sizeof(err))
+		== MEMBRANE_ERR_INVALID_ARG, "reversed range rejected");
+	clean_outdir();
+	o = default_opts();
+	o.range.tensor_filter = 99;
+	TEST_ASSERT(membrane_export_batch_run(&o, &r, err, sizeof(err))
+		== MEMBRANE_ERR_INVALID_ARG, "invalid tensor filter value rejected");
+}
+
 static void	test_batch_export_corrupt_input_fails(void)
 {
 	FILE							*f;
@@ -387,6 +423,7 @@ int	main(void)
 	test_batch_export_skips_non_f16();
 	test_batch_export_too_small_skipped_not_fatal();
 	test_batch_export_duplicate_rejected();
+	test_batch_export_rejects_invalid_range();
 	test_batch_export_missing_output_dir_fails();
 	test_batch_export_corrupt_input_fails();
 	unlink(g_kvdump_path);

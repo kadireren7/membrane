@@ -150,6 +150,29 @@ static int	dir_exists(const char *path)
 	return (S_ISDIR(st.st_mode) ? 1 : 0);
 }
 
+/* Defense in depth at the library boundary: main.c's CLI parsing
+ * already rejects these, but membrane_export_batch_run is a public
+ * entry point any caller could reach directly (tests, a future
+ * caller) with an unvalidated range -- without this, a `long` bound
+ * beyond UINT32_MAX would silently truncate in
+ * membrane_export_record_selected's uint32_t comparison instead of
+ * being rejected. */
+static int	range_valid(const membrane_export_range_t *range)
+{
+	if (range->layer_start < -1 || range->layer_start > (long)UINT32_MAX)
+		return (0);
+	if (range->layer_end < -1 || range->layer_end > (long)UINT32_MAX)
+		return (0);
+	if (range->layer_start >= 0 && range->layer_end >= 0
+		&& range->layer_start > range->layer_end)
+		return (0);
+	if (range->tensor_filter != MEMBRANE_EXPORT_TENSOR_BOTH
+		&& range->tensor_filter != MEMBRANE_KV_TENSOR_K
+		&& range->tensor_filter != MEMBRANE_KV_TENSOR_V)
+		return (0);
+	return (1);
+}
+
 membrane_status_t	membrane_export_batch_run(
 						const membrane_export_batch_opts_t *o,
 						membrane_export_batch_result_t *out,
@@ -175,7 +198,8 @@ membrane_status_t	membrane_export_batch_run(
 	}
 	err_buf[0] = '\0';
 	if (o == NULL || o->input_path == NULL || o->output_dir == NULL
-		|| o->elements_per_block == 0 || o->elements_per_block % 32 != 0)
+		|| o->elements_per_block == 0 || o->elements_per_block % 32 != 0
+		|| !range_valid(&o->range))
 		return (snprintf(err_buf, err_cap, "invalid batch export arguments"),
 			MEMBRANE_ERR_INVALID_ARG);
 	if (!dir_exists(o->output_dir))
