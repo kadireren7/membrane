@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "membrane/block.h"
 #include "test_helpers.h"
 #include "trace_format.h"
 
@@ -57,6 +58,12 @@ static void	put_le64(uint8_t *p, uint64_t v)
 {
 	put_le32(p, (uint32_t)v);
 	put_le32(p + 4, (uint32_t)(v >> 32));
+}
+
+static uint32_t	get_le32(const uint8_t *p)
+{
+	return ((uint32_t)p[0] | ((uint32_t)p[1] << 8)
+		| ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24));
 }
 
 /* Builds a syntactically well-formed, checksum-VALID 64-byte header
@@ -352,6 +359,58 @@ static void	test_excessive_declared_size_rejected_without_allocating(void)
 		"declared size far over the payload cap rejected, not allocated");
 }
 
+/*
+ * Proves trace_format.c's incremental crc32_init/_update/_final is
+ * bit-identical to the independent production checksum
+ * (membrane_block_checksum, src/block/block.c) on the exact bytes
+ * membrane_trace_write puts on disk -- not just that the writer and
+ * reader in this same file agree with each other. Serializes the
+ * fixture to little-endian bytes itself (matching membrane_trace_write's
+ * own put_le16 loop) rather than reusing any trace_format.c helper, so
+ * this check does not depend on the code it is verifying.
+ */
+static void	test_trace_format_matches_membrane_block_checksum(void)
+{
+	uint16_t	*blocks;
+	uint8_t		*le_payload;
+	uint8_t		header[MEMBRANE_TRACE_HEADER_SIZE];
+	FILE		*f;
+	uint32_t	expected;
+	uint32_t	stored;
+	uint64_t	i;
+	const uint32_t	n_blocks = 5;
+	const uint32_t	epb = 64;
+
+	blocks = make_fixture(n_blocks, epb);
+	le_payload = malloc((size_t)n_blocks * epb * sizeof(uint16_t));
+	i = 0;
+	while (i < (uint64_t)n_blocks * epb)
+	{
+		le_payload[2 * i] = (uint8_t)blocks[i];
+		le_payload[2 * i + 1] = (uint8_t)(blocks[i] >> 8);
+		i++;
+	}
+	expected = membrane_block_checksum(le_payload,
+			(size_t)n_blocks * epb * sizeof(uint16_t));
+	f = fopen(g_path, "wb");
+	TEST_ASSERT(f != NULL, "open temp file for write");
+	TEST_ASSERT(membrane_trace_write(f, MEMBRANE_TRACE_DTYPE_F16, epb,
+			n_blocks, blocks, "checksum fixture", 0) == MEMBRANE_OK,
+		"write checksum fixture");
+	fclose(f);
+	f = fopen(g_path, "rb");
+	TEST_ASSERT(f != NULL, "reopen temp file for read");
+	TEST_ASSERT(fread(header, 1, sizeof(header), f) == sizeof(header),
+		"read header back");
+	fclose(f);
+	stored = get_le32(header + 48);
+	TEST_ASSERT(stored == expected,
+		"trace_format.c's incremental CRC32 matches "
+		"membrane_block_checksum on the same bytes");
+	free(le_payload);
+	free(blocks);
+}
+
 static void	test_writer_rejects_invalid_args(void)
 {
 	uint16_t	*blocks;
@@ -396,6 +455,7 @@ int	main(void)
 	test_zero_block_count_rejected();
 	test_excessive_metadata_length_rejected();
 	test_excessive_declared_size_rejected_without_allocating();
+	test_trace_format_matches_membrane_block_checksum();
 	test_writer_rejects_invalid_args();
 	unlink(g_path);
 	return (0);

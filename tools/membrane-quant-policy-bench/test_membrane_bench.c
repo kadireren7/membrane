@@ -42,6 +42,7 @@ static void	write_trace_fixture(uint64_t block_count, uint32_t epb)
 	uint64_t	i;
 
 	blocks = malloc((size_t)(block_count * epb) * sizeof(uint16_t));
+	TEST_ASSERT(blocks != NULL, "allocate trace fixture blocks");
 	i = 0;
 	while (i < block_count * epb)
 	{

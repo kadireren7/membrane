@@ -21,7 +21,7 @@ that is exactly that: a real capture, already flattened into
 
 ## Pipeline
 
-```
+```text
 real model run (MEMBRANE_ENABLE_LLAMA=ON, existing tools, unchanged)
         |
         v

@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,6 +76,27 @@ static void	usage(FILE *out)
 		DEFAULT_ELEMENTS_PER_BLOCK);
 }
 
+/* strtol/strtoul both return 0 on a non-numeric string with no error
+ * indication of their own; callers must check errno and that the
+ * whole argument was consumed. */
+static int	parse_long(const char *s, long *out)
+{
+	char	*end;
+
+	errno = 0;
+	*out = strtol(s, &end, 10);
+	return (errno == 0 && end != s && *end == '\0');
+}
+
+static int	parse_ulong(const char *s, unsigned long *out)
+{
+	char	*end;
+
+	errno = 0;
+	*out = strtoul(s, &end, 10);
+	return (errno == 0 && end != s && *end == '\0');
+}
+
 static int	parse_opts(int argc, char **argv, export_opts_t *o)
 {
 	int	i;
@@ -97,7 +119,12 @@ static int	parse_opts(int argc, char **argv, export_opts_t *o)
 		else if (strcmp(argv[i], "--label") == 0 && i + 1 < argc)
 			o->label_override = argv[++i];
 		else if (strcmp(argv[i], "--layer") == 0 && i + 1 < argc)
-			o->layer = strtol(argv[++i], NULL, 10);
+		{
+			++i;
+			if (!parse_long(argv[i], &o->layer) || o->layer < 0)
+				return (fprintf(stderr,
+						"--layer must be a non-negative integer\n"), -1);
+		}
 		else if (strcmp(argv[i], "--tensor") == 0 && i + 1 < argc)
 		{
 			++i;
@@ -109,7 +136,16 @@ static int	parse_opts(int argc, char **argv, export_opts_t *o)
 				return (fprintf(stderr, "--tensor must be k or v\n"), -1);
 		}
 		else if (strcmp(argv[i], "--elements-per-block") == 0 && i + 1 < argc)
-			o->elements_per_block = (uint32_t)strtoul(argv[++i], NULL, 10);
+		{
+			unsigned long	v;
+
+			++i;
+			if (!parse_ulong(argv[i], &v) || v == 0 || v > UINT32_MAX)
+				return (fprintf(stderr,
+						"--elements-per-block must be a positive integer\n"),
+					-1);
+			o->elements_per_block = (uint32_t)v;
+		}
 		else
 			return (fprintf(stderr, "unknown option: %s\n", argv[i]), -1);
 		i++;
@@ -159,6 +195,12 @@ static int	find_record(const export_opts_t *o, membrane_kv_header_t *h,
 		st = membrane_kvdump_read_header(f, h);
 	}
 	fclose(f);
+	if (st != MEMBRANE_OK && st != MEMBRANE_ERR_NOT_FOUND)
+	{
+		fprintf(stderr, "error reading %s: status=%d (truncated or "
+			"corrupt file?)\n", o->input_path, (int)st);
+		return (-1);
+	}
 	if (o->layer >= 0)
 		fprintf(stderr, "no F16 record matching layer=%ld tensor=%d "
 			"found in %s\n", o->layer, o->tensor, o->input_path);
@@ -239,11 +281,17 @@ int	main(int argc, char **argv)
 	st = membrane_trace_write(out_f, MEMBRANE_TRACE_DTYPE_F16,
 			o.elements_per_block, block_count, (const uint16_t *)payload,
 			label, (uint64_t)time(NULL));
-	fclose(out_f);
 	free(payload);
 	if (st != MEMBRANE_OK)
 	{
+		fclose(out_f);
 		fprintf(stderr, "write failed: status=%d\n", (int)st);
+		return (1);
+	}
+	if (fclose(out_f) != 0)
+	{
+		fprintf(stderr, "write failed: error flushing %s\n",
+			o.output_path);
 		return (1);
 	}
 	fprintf(stderr, "wrote %s\n", o.output_path);
