@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,24 +139,29 @@ static int	parse_opts(int argc, char **argv, export_opts_t *o)
 		else if (strcmp(argv[i], "--layer") == 0 && i + 1 < argc)
 		{
 			++i;
-			if (!parse_long(argv[i], &o->layer) || o->layer < 0)
+			if (!parse_long(argv[i], &o->layer) || o->layer < 0
+				|| o->layer > (long)UINT32_MAX)
 				return (fprintf(stderr,
-						"--layer must be a non-negative integer\n"), -1);
+						"--layer must be an integer in [0, %ju]\n",
+						(uintmax_t)UINT32_MAX), -1);
 		}
 		else if (strcmp(argv[i], "--layer-start") == 0 && i + 1 < argc)
 		{
 			++i;
-			if (!parse_long(argv[i], &o->layer_start) || o->layer_start < 0)
+			if (!parse_long(argv[i], &o->layer_start) || o->layer_start < 0
+				|| o->layer_start > (long)UINT32_MAX)
 				return (fprintf(stderr,
-						"--layer-start must be a non-negative integer\n"),
-					-1);
+						"--layer-start must be an integer in [0, %ju]\n",
+						(uintmax_t)UINT32_MAX), -1);
 		}
 		else if (strcmp(argv[i], "--layer-end") == 0 && i + 1 < argc)
 		{
 			++i;
-			if (!parse_long(argv[i], &o->layer_end) || o->layer_end < 0)
+			if (!parse_long(argv[i], &o->layer_end) || o->layer_end < 0
+				|| o->layer_end > (long)UINT32_MAX)
 				return (fprintf(stderr,
-						"--layer-end must be a non-negative integer\n"), -1);
+						"--layer-end must be an integer in [0, %ju]\n",
+						(uintmax_t)UINT32_MAX), -1);
 		}
 		else if (strcmp(argv[i], "--tensor") == 0 && i + 1 < argc)
 		{

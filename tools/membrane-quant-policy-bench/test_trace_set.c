@@ -438,6 +438,7 @@ static void	test_json_row_count_and_shape(void)
 	FILE							*f;
 
 	clean_dir();
+	memset(buf, 0, sizeof(buf));
 	write_fixture("layer-000-k.memkv", 4, 32, 1);
 	write_fixture("layer-000-v.memkv", 4, 32, 2);
 	TEST_ASSERT(membrane_trace_set_discover(g_dir, &files, &n_files, &total,
@@ -480,6 +481,7 @@ static void	test_csv_row_count_is_3n_plus_header(void)
 	size_t							i;
 
 	clean_dir();
+	memset(buf, 0, sizeof(buf));
 	write_fixture("layer-000-k.memkv", 4, 32, 1);
 	write_fixture("layer-000-v.memkv", 4, 32, 2);
 	write_fixture("layer-001-k.memkv", 4, 32, 3);

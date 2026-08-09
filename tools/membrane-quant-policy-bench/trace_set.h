@@ -69,13 +69,18 @@ typedef struct s_membrane_trace_set_file
  * order; *out_total_blocks is the sum of every candidate's
  * trace_format.h block_count (each trace opened+closed once here,
  * purely to validate and read that count -- no block payload is read
- * yet). Returns MEMBRANE_ERR_IO if `dir` cannot be opened,
- * MEMBRANE_ERR_INVALID_ARG for a symlink entry, more than
+ * yet). Returns MEMBRANE_ERR_IO if `dir` cannot be opened or a
+ * candidate entry cannot be lstat'd, MEMBRANE_ERR_INVALID_ARG for a
+ * symlink entry, a path too long to represent, more than
  * MEMBRANE_TRACE_SET_MAX_FILES candidates, a duplicate/conflicting
  * (layer, tensor) pair, or a total block count exceeding
- * MEMBRANE_TRACE_SET_MAX_TOTAL_BLOCKS, MEMBRANE_ERR_CORRUPT_DATA if any
- * candidate fails membrane_trace_open. A one-line reason is written to
- * err_buf (err_cap bytes) on any non-OK return.
+ * MEMBRANE_TRACE_SET_MAX_TOTAL_BLOCKS; MEMBRANE_ERR_NOT_FOUND if `dir`
+ * contains no `.memkv` candidates at all; MEMBRANE_ERR_ALLOC_FAILED on
+ * an allocation failure; otherwise whatever status a failing candidate
+ * propagates from membrane_trace_open (MEMBRANE_ERR_IO,
+ * MEMBRANE_ERR_CORRUPT_DATA, or MEMBRANE_ERR_UNIMPLEMENTED). A
+ * one-line reason is written to err_buf (err_cap bytes) on any non-OK
+ * return; err_buf/err_cap may be NULL/0.
  */
 membrane_status_t	membrane_trace_set_discover(const char *dir,
 						membrane_trace_set_file_t **out, size_t *out_count,

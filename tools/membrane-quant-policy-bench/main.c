@@ -64,13 +64,19 @@ static void	usage(FILE *out)
 		(int)MEMBRANE_BENCH_MATRIX_CELLS);
 }
 
-static const char	*run_failure_reason(membrane_status_t st)
+static const char	*run_failure_reason(membrane_status_t st, int is_trace_set)
 {
 	if (st == MEMBRANE_ERR_ALLOC_FAILED)
 		return ("allocation failure");
 	if (st == MEMBRANE_ERR_IO)
+	{
+		if (is_trace_set)
+			return ("cannot read one of the discovered trace files "
+				"(--trace-dir contents changed, or a file became "
+				"unreadable, between discovery and benchmarking?)");
 		return ("cannot read the trace file (--trace path wrong or "
 			"unreadable?)");
+	}
 	if (st == MEMBRANE_ERR_CORRUPT_DATA)
 		return ("the trace file is corrupt or truncated");
 	if (st == MEMBRANE_ERR_UNIMPLEMENTED)
@@ -88,7 +94,7 @@ static int	run_single(const membrane_bench_args_t *args)
 	if (st != MEMBRANE_OK)
 	{
 		fprintf(stderr, "membrane-quant-policy-bench: benchmark run "
-			"failed: %s\n", run_failure_reason(st));
+			"failed: %s\n", run_failure_reason(st, 0));
 		return (1);
 	}
 	if (args->want_csv)
@@ -116,7 +122,7 @@ static int	run_matrix(const membrane_bench_args_t *args)
 	if (st != MEMBRANE_OK)
 	{
 		fprintf(stderr, "membrane-quant-policy-bench: matrix run failed: "
-			"%s\n", run_failure_reason(st));
+			"%s\n", run_failure_reason(st, 0));
 		return (1);
 	}
 	if (args->want_csv)
@@ -162,7 +168,7 @@ static int	run_trace_set(const membrane_bench_args_t *args)
 	if (st != MEMBRANE_OK)
 	{
 		fprintf(stderr, "membrane-quant-policy-bench: trace-set run "
-			"failed: %s\n", run_failure_reason(st));
+			"failed: %s\n", run_failure_reason(st, 1));
 		return (1);
 	}
 	if (args->want_csv)

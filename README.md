@@ -190,14 +190,16 @@ performance claim, and no physical FPGA/CXL measurement, either mode.
 ### Benchmark many layers/tensors from one capture
 
 ```bash
+mkdir -p traces/
 ./build/tools/membrane-kv-trace-export/membrane-kv-trace-export \
   --input capture.kvdump --output-dir traces/
 ./build/tools/membrane-quant-policy-bench/membrane-quant-policy-bench \
   --trace-dir traces/ --matrix
 ```
 
-`--output-dir` batch-exports every compatible F16 K/V record from one
-`.kvdump` capture as `layer-NNN-k.memkv` / `layer-NNN-v.memkv` (optional
+`--output-dir` must already exist (the tool never creates it) and
+batch-exports every compatible F16 K/V record from one `.kvdump`
+capture as `layer-NNN-k.memkv` / `layer-NNN-v.memkv` (optional
 `--layer-start`/`--layer-end`/`--tensor k|v|both` filters). `--trace-dir`
 then benchmarks every `.memkv` file directly inside that directory — all
 3 policies per trace, plus a block-weighted (never naively averaged)

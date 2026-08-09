@@ -1,9 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "export_core.h"
 #include "trace_format.h"
@@ -51,11 +53,18 @@ static int	already_seen(const seen_entry_t *seen, uint32_t n,
 	return (0);
 }
 
+/* Deliberately omits h->model: single-record --output's build_label()
+ * (main.c) includes it because that path exports exactly one
+ * caller-chosen record, but a batch run may write dozens of files from
+ * one capture, and this label is the only place per-file metadata
+ * lands -- keeping it to layer/tensor/token-count fields the caller
+ * already controls via --layer-start/--layer-end/--tensor avoids
+ * carrying a capture-supplied (not this tool's) string into every
+ * output file by default. */
 static void	build_batch_label(char *out, size_t out_cap,
 				const membrane_kv_header_t *h)
 {
-	snprintf(out, out_cap, "model=%s layer=%u tensor=%s tokens=%u",
-		h->model, h->layer,
+	snprintf(out, out_cap, "layer=%u tensor=%s tokens=%u", h->layer,
 		h->tensor_type == MEMBRANE_KV_TENSOR_K ? "K" : "V",
 		h->token_end - h->token_start);
 }
@@ -89,6 +98,7 @@ static membrane_status_t	export_one(const char *output_dir,
 	char				label[192];
 	FILE				*out_f;
 	membrane_status_t	st;
+	int					fd;
 
 	membrane_export_batch_filename(filename, sizeof(filename), h->layer,
 		h->tensor_type);
@@ -98,9 +108,23 @@ static membrane_status_t	export_one(const char *output_dir,
 		snprintf(err_buf, err_cap, "output path too long for %s", filename);
 		return (MEMBRANE_ERR_INVALID_ARG);
 	}
-	out_f = fopen(path, "wb");
+	/* O_EXCL: refuse to follow a pre-existing symlink at this
+	 * predictable, deterministic path (a shared/attacker-writable
+	 * output directory could plant one to redirect the write) and
+	 * refuse to silently overwrite a stale file left by an earlier,
+	 * narrower --layer-start/--layer-end run -- either case fails
+	 * clearly instead of truncating an unexpected target. */
+	fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+	if (fd < 0)
+	{
+		snprintf(err_buf, err_cap, "cannot create %s (already exists, or "
+			"a symlink -- refusing to overwrite/follow it)", path);
+		return (MEMBRANE_ERR_IO);
+	}
+	out_f = fdopen(fd, "wb");
 	if (out_f == NULL)
 	{
+		close(fd);
 		snprintf(err_buf, err_cap, "cannot create %s", path);
 		return (MEMBRANE_ERR_IO);
 	}
@@ -138,10 +162,18 @@ membrane_status_t	membrane_export_batch_run(
 	seen_entry_t			*seen;
 	uint32_t				seen_count;
 	membrane_status_t		st;
+	char					discard_buf[1];
 
 	memset(out, 0, sizeof(*out));
-	if (err_buf != NULL && err_cap > 0)
-		err_buf[0] = '\0';
+	/* Every error path below writes unconditionally -- redirect a
+	 * NULL/zero-capacity err_buf to a throwaway buffer here once,
+	 * rather than guarding every individual snprintf call site. */
+	if (err_buf == NULL || err_cap == 0)
+	{
+		err_buf = discard_buf;
+		err_cap = sizeof(discard_buf);
+	}
+	err_buf[0] = '\0';
 	if (o == NULL || o->input_path == NULL || o->output_dir == NULL
 		|| o->elements_per_block == 0 || o->elements_per_block % 32 != 0)
 		return (snprintf(err_buf, err_cap, "invalid batch export arguments"),
@@ -185,6 +217,17 @@ membrane_status_t	membrane_export_batch_run(
 		}
 		else
 		{
+			/* Recorded as seen -- for both the MAX_RECORDS cap and
+			 * duplicate detection -- as soon as a record is SELECTED,
+			 * not only once it's actually exported: otherwise an
+			 * unlimited run of too-small selected records would bypass
+			 * the cap entirely, and a too-small record followed later
+			 * by a real duplicate of the same (layer, tensor) would
+			 * never be caught (the first occurrence never having made
+			 * it into `seen`). */
+			seen[seen_count].layer = h.layer;
+			seen[seen_count].tensor_type = h.tensor_type;
+			seen_count++;
 			st = membrane_kvdump_read_payload(in_f, &h, &payload);
 			if (st == MEMBRANE_OK)
 			{
@@ -201,12 +244,7 @@ membrane_status_t	membrane_export_batch_run(
 							o->elements_per_block, block_count, err_buf,
 							err_cap);
 					if (st == MEMBRANE_OK)
-					{
-						seen[seen_count].layer = h.layer;
-						seen[seen_count].tensor_type = h.tensor_type;
-						seen_count++;
 						out->exported_count++;
-					}
 				}
 				free(payload);
 			}

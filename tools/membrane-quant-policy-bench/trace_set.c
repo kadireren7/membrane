@@ -39,7 +39,12 @@ static void	parse_batch_name(const char *name, membrane_trace_set_file_t *f)
 		return ;
 	errno = 0;
 	layer = strtol(p, &end, 10);
-	if (errno != 0 || layer < 0 || end == p)
+	/* strtol on a 64-bit long silently accepts values past UINT32_MAX;
+	 * without this bound, "layer-4294967296-k.memkv" would truncate to
+	 * layer=0 and could then collide with a real layer-000-k.memkv in
+	 * conflicts() -- treat it as unrecognized (unknown layer/tensor)
+	 * instead of wrapping. */
+	if (errno != 0 || layer < 0 || layer > (long)UINT32_MAX || end == p)
 		return ;
 	if (end[0] != '-' || (end[1] != 'k' && end[1] != 'v')
 		|| strcmp(end + 2, ".memkv") != 0)
@@ -79,12 +84,13 @@ static membrane_status_t	list_candidates(const char *dir, char ***out_names,
 								size_t *out_count, char *err_buf,
 								size_t err_cap)
 {
-	DIR				*d;
-	struct dirent	*ent;
-	char			**names;
-	size_t			count;
-	char			entpath[MEMBRANE_TRACE_SET_PATH_CAP];
-	struct stat		st;
+	DIR					*d;
+	struct dirent		*ent;
+	char				**names;
+	size_t				count;
+	char				entpath[MEMBRANE_TRACE_SET_PATH_CAP];
+	struct stat			st;
+	membrane_status_t	fail_status;
 
 	d = opendir(dir);
 	if (d == NULL)
@@ -109,17 +115,20 @@ static membrane_status_t	list_candidates(const char *dir, char ***out_names,
 		{
 			snprintf(err_buf, err_cap, "path too long: %s/%s", dir,
 				ent->d_name);
+			fail_status = MEMBRANE_ERR_INVALID_ARG;
 			goto fail;
 		}
 		if (lstat(entpath, &st) != 0)
 		{
 			snprintf(err_buf, err_cap, "cannot stat %s", entpath);
+			fail_status = MEMBRANE_ERR_IO;
 			goto fail;
 		}
 		if (S_ISLNK(st.st_mode))
 		{
 			snprintf(err_buf, err_cap, "refusing to follow symlink in "
 				"trace directory: %s", ent->d_name);
+			fail_status = MEMBRANE_ERR_INVALID_ARG;
 			goto fail;
 		}
 		if (!S_ISREG(st.st_mode))
@@ -128,12 +137,14 @@ static membrane_status_t	list_candidates(const char *dir, char ***out_names,
 		{
 			snprintf(err_buf, err_cap, "more than %u .memkv files in %s "
 				"(cap)", MEMBRANE_TRACE_SET_MAX_FILES, dir);
+			fail_status = MEMBRANE_ERR_INVALID_ARG;
 			goto fail;
 		}
 		names[count] = strdup(ent->d_name);
 		if (names[count] == NULL)
 		{
 			snprintf(err_buf, err_cap, "out of memory");
+			fail_status = MEMBRANE_ERR_ALLOC_FAILED;
 			goto fail;
 		}
 		count++;
@@ -151,7 +162,7 @@ fail:
 		free(names[count]);
 	}
 	free(names);
-	return (MEMBRANE_ERR_INVALID_ARG);
+	return (fail_status);
 }
 
 membrane_status_t	membrane_trace_set_discover(const char *dir,
@@ -167,9 +178,18 @@ membrane_status_t	membrane_trace_set_discover(const char *dir,
 	uint64_t					total;
 	size_t						i;
 	membrane_status_t			st;
+	char						discard_buf[1];
 
-	if (err_buf != NULL && err_cap > 0)
-		err_buf[0] = '\0';
+	/* Every helper below (list_candidates and this function's own
+	 * snprintf calls) writes error text unconditionally -- redirect a
+	 * NULL/zero-capacity err_buf to a throwaway buffer here once,
+	 * rather than guarding every individual call site. */
+	if (err_buf == NULL || err_cap == 0)
+	{
+		err_buf = discard_buf;
+		err_cap = sizeof(discard_buf);
+	}
+	err_buf[0] = '\0';
 	if (dir == NULL || out == NULL || out_count == NULL
 		|| out_total_blocks == NULL)
 		return (MEMBRANE_ERR_INVALID_ARG);
@@ -271,6 +291,7 @@ static void	compute_aggregate(const membrane_trace_set_item_t *items,
 				size_t n, membrane_trace_set_aggregate_t *agg)
 {
 	double		*ratios;
+	double		ratio;
 	size_t		n_adaptive;
 	double		q4_num;
 	double		q8_num;
@@ -278,6 +299,8 @@ static void	compute_aggregate(const membrane_trace_set_item_t *items,
 	const membrane_bench_result_t	*r;
 
 	memset(agg, 0, sizeof(*agg));
+	/* NULL is handled below (median is skipped, everything else is
+	 * still computed correctly) -- not dereferenced unconditionally. */
 	ratios = malloc((n > 0 ? n : 1) * sizeof(*ratios));
 	n_adaptive = 0;
 	q4_num = 0.0;
@@ -308,20 +331,21 @@ static void	compute_aggregate(const membrane_trace_set_item_t *items,
 				agg->traces_any_q4++;
 			else
 				agg->traces_all_q8++;
-			ratios[n_adaptive] = safe_ratio(r->q4_blocks,
-					r->q4_blocks + r->q8_blocks);
-			if (ratios[n_adaptive] < agg->min_q4_ratio)
+			ratio = safe_ratio(r->q4_blocks, r->q4_blocks + r->q8_blocks);
+			if (ratio < agg->min_q4_ratio)
 			{
-				agg->min_q4_ratio = ratios[n_adaptive];
+				agg->min_q4_ratio = ratio;
 				snprintf(agg->min_q4_ratio_trace,
 					sizeof(agg->min_q4_ratio_trace), "%s", r->workload_name);
 			}
-			if (ratios[n_adaptive] > agg->max_q4_ratio)
+			if (ratio > agg->max_q4_ratio)
 			{
-				agg->max_q4_ratio = ratios[n_adaptive];
+				agg->max_q4_ratio = ratio;
 				snprintf(agg->max_q4_ratio_trace,
 					sizeof(agg->max_q4_ratio_trace), "%s", r->workload_name);
 			}
+			if (ratios != NULL)
+				ratios[n_adaptive] = ratio;
 			n_adaptive++;
 		}
 		i++;
@@ -343,7 +367,7 @@ static void	compute_aggregate(const membrane_trace_set_item_t *items,
 		agg->min_q4_ratio = 0.0;
 		agg->max_q4_ratio = 0.0;
 	}
-	else
+	else if (ratios != NULL)
 	{
 		qsort(ratios, n_adaptive, sizeof(*ratios), cmp_double);
 		if (n_adaptive % 2 == 1)
