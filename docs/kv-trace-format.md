@@ -86,8 +86,9 @@ Because a trace file is untrusted input from the benchmark's
 perspective (it may be handed a corrupt or adversarially-crafted
 file), `metadata` and any trace-derived display name are treated as
 data, not compile-time-safe strings, everywhere they reach JSON/CSV
-output (`tools/membrane-quant-policy-bench/bench_io.c`'s
-`json_escape`/`csv_escape`).
+output (`tools/membrane-quant-policy-bench/bench_core.h`'s
+`membrane_bench_json_escape`/`membrane_bench_csv_escape`, shared by
+single-trace and trace-set output alike).
 
 ## Producing a trace
 
@@ -119,3 +120,37 @@ See the main [README](../README.md#benchmark-a-captured-kv-trace) and
 `membrane-quant-policy-bench --help` for the full `--trace` contract
 (what `--blocks` means as a cap, why `--workload`/`--seed` are
 rejected together with it, and the JSON/CSV trace fields).
+
+## Batch: many layers/tensors from one capture (Product Phase 4)
+
+One `.kvdump` capture already holds one record per layer/K-or-V (see
+`membrane-kv-capture`'s own write order). `membrane-kv-trace-export
+--output-dir DIR` walks every F16 record in the file (optionally
+narrowed with `--layer-start`/`--layer-end`/`--tensor k|v|both`) and
+writes one `.memkv` per record into `DIR` — already-existing directory,
+never created by this tool — named deterministically
+`layer-NNN-k.memkv` / `layer-NNN-v.memkv` (zero-padded to at least 3
+digits). These names carry only a layer index and a K/V tag: no model
+name, prompt, or other trace-derived string. A `.kvdump` containing two
+F16 records for the same (layer, tensor) — corrupt/unexpected input —
+fails the whole batch rather than silently overwriting one file with
+the other.
+
+`membrane-quant-policy-bench --trace-dir DIR --matrix` then discovers
+every `.memkv` file directly inside `DIR` (non-recursive; symlinks are
+rejected outright, not followed), runs all 3 policies against each
+(3N result rows for N traces), and reports a block-weighted cross-trace
+"adaptive" aggregate: storage bytes are summed once and divided (never
+an average of per-trace percentages), q4/q8 mean errors are the exact
+pooled mean over every underlying block across every trace, max errors
+are the max of per-trace maxes, and aggregate throughput is total
+processed blocks divided by total *measured* processing time — never a
+sum of per-trace throughputs. A file named `layer-NNN-{k,v}.memkv`
+surfaces its layer/tensor in the output; any other name still
+benchmarks, just with `layer`/`tensor` reported as unknown (JSON
+`null`). Two discovered files that resolve to the same (layer, tensor)
+are rejected as a conflicting set before anything is benchmarked.
+
+This answers "does Q4/Q8 suitability vary across layers/tensors on one
+real model execution" for whichever one capture you supply — it is not
+a claim about models or prompts in general.

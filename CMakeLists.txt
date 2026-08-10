@@ -366,6 +366,56 @@ if(MEMBRANE_BUILD_TESTS)
   set_tests_properties(trace_export_cli_rejects_missing_args PROPERTIES
     WILL_FAIL TRUE)
 
+  # Product Phase 4: membrane-kv-trace-export's batch (.kvdump -> many
+  # .memkv) core, tested directly against membrane_export_core.
+  add_executable(test_export_core
+    tools/membrane-kv-trace-export/test_export_core.c)
+  target_link_libraries(test_export_core PRIVATE membrane_export_core)
+  target_include_directories(test_export_core PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_export_core COMMAND test_export_core)
+
+  add_test(NAME trace_export_cli_rejects_output_and_output_dir_together
+    COMMAND membrane-kv-trace-export --input /no/such/file.kvdump
+      --output /tmp/x.memkv --output-dir /tmp)
+  set_tests_properties(
+    trace_export_cli_rejects_output_and_output_dir_together PROPERTIES
+    WILL_FAIL TRUE)
+  add_test(NAME trace_export_cli_rejects_layer_with_output_dir
+    COMMAND membrane-kv-trace-export --input /no/such/file.kvdump
+      --output-dir /tmp --layer 0)
+  set_tests_properties(trace_export_cli_rejects_layer_with_output_dir
+    PROPERTIES WILL_FAIL TRUE)
+  add_test(NAME trace_export_cli_rejects_missing_output_dir
+    COMMAND membrane-kv-trace-export --input /no/such/file.kvdump
+      --output-dir /no/such/directory/at/all)
+  set_tests_properties(trace_export_cli_rejects_missing_output_dir
+    PROPERTIES WILL_FAIL TRUE)
+
+  # Product Phase 4: membrane-quant-policy-bench's trace-SET core
+  # (discovery, aggregation, printers), tested directly against
+  # membrane_bench_core.
+  add_executable(test_trace_set
+    tools/membrane-quant-policy-bench/test_trace_set.c)
+  target_link_libraries(test_trace_set PRIVATE membrane_bench_core)
+  target_include_directories(test_trace_set PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_trace_set COMMAND test_trace_set)
+
+  add_test(NAME bench_cli_rejects_trace_dir_without_matrix
+    COMMAND membrane-quant-policy-bench --trace-dir /tmp)
+  set_tests_properties(bench_cli_rejects_trace_dir_without_matrix PROPERTIES
+    WILL_FAIL TRUE)
+  add_test(NAME bench_cli_rejects_trace_with_trace_dir
+    COMMAND membrane-quant-policy-bench --trace /no/such/file.memkv
+      --trace-dir /tmp --matrix)
+  set_tests_properties(bench_cli_rejects_trace_with_trace_dir PROPERTIES
+    WILL_FAIL TRUE)
+  add_test(NAME bench_cli_rejects_missing_trace_dir
+    COMMAND membrane-quant-policy-bench --trace-dir /no/such/dir --matrix)
+  set_tests_properties(bench_cli_rejects_missing_trace_dir PROPERTIES
+    WILL_FAIL TRUE)
+
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test
   # membrane_wssim_core's C++ logic directly, not real inference), so

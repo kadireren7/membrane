@@ -1,11 +1,13 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
+#include "export_core.h"
 #include "membrane/kvdump.h"
 #include "trace_format.h"
 
@@ -30,24 +32,19 @@
  * basename), never from payload content.
  */
 
-/* ggml's GGML_TYPE_F16 enumerator value, per the pinned llama.cpp
- * commit's ggml/include/ggml.h (GGML_TYPE_F32 = 0, GGML_TYPE_F16 = 1).
- * Not included from ggml.h directly -- that header only exists when
- * the llama.cpp submodule is checked out, and this tool must build
- * without it; membrane_kv_header_t.dtype is documented (kvdump.h) as
- * an opaque "producer's element type id", and membrane-kv-capture's
- * producer is always ggml. */
-# define KVDUMP_DTYPE_F16_GGML		1u
-
 # define DEFAULT_ELEMENTS_PER_BLOCK	128u
 
 typedef struct s_export_opts
 {
 	const char	*input_path;
 	const char	*output_path;
+	const char	*output_dir;
 	const char	*label_override;
 	long		layer;
-	int			tensor;			/* -1 = unspecified, else membrane_kv_tensor_t */
+	long		layer_start;
+	long		layer_end;
+	int			tensor;			/* -1 = unspecified/both, else
+								 * membrane_kv_tensor_t */
 	uint32_t	elements_per_block;
 }	export_opts_t;
 
@@ -56,22 +53,38 @@ static void	usage(FILE *out)
 	fprintf(out,
 		"Usage: membrane-kv-trace-export --input FILE.kvdump "
 		"--output FILE.memkv [options]\n"
+		"   or: membrane-kv-trace-export --input FILE.kvdump "
+		"--output-dir DIR [options]\n"
 		"\n"
-		"Converts one record of an existing membrane-kv-capture .kvdump\n"
+		"Converts records of an existing membrane-kv-capture .kvdump\n"
 		"file into the portable .memkv trace format\n"
-		"membrane-quant-policy-bench consumes via --trace. Builds and\n"
-		"runs without llama.cpp -- it only reads an already-captured\n"
-		"file.\n"
+		"membrane-quant-policy-bench consumes via --trace/--trace-dir.\n"
+		"Builds and runs without llama.cpp -- it only reads an\n"
+		"already-captured file.\n"
 		"\n"
 		"  --input FILE       source .kvdump file (required)\n"
-		"  --output FILE      destination .memkv file (required)\n"
+		"\n"
+		"Single-record mode (--output):\n"
+		"  --output FILE      destination .memkv file\n"
 		"  --layer N          select this layer's record (default: the\n"
 		"                     first F16 K/V record found)\n"
-		"  --tensor k|v       select K or V (requires --layer)\n"
+		"  --tensor k|v       select K or V\n"
+		"  --label TEXT       override the trace's metadata label\n"
+		"\n"
+		"Batch mode (--output-dir): exports every compatible F16 K/V\n"
+		"record into DIR (which must already exist) as\n"
+		"layer-NNN-k.memkv / layer-NNN-v.memkv -- deterministic names\n"
+		"carrying no model name, prompt, or other unsafe string. Feed\n"
+		"DIR to membrane-quant-policy-bench --trace-dir.\n"
+		"  --output-dir DIR   destination directory (must exist)\n"
+		"  --layer-start N    lowest layer to export (default: all)\n"
+		"  --layer-end N      highest layer to export, inclusive\n"
+		"                     (default: all)\n"
+		"  --tensor k|v|both  restrict to K, V, or both (default both)\n"
+		"\n"
 		"  --elements-per-block N\n"
 		"                     block size, must be a positive multiple\n"
 		"                     of 32 (default %u)\n"
-		"  --label TEXT       override the trace's metadata label\n"
 		"  --help             print this message and exit\n",
 		DEFAULT_ELEMENTS_PER_BLOCK);
 }
@@ -103,9 +116,12 @@ static int	parse_opts(int argc, char **argv, export_opts_t *o)
 
 	o->input_path = NULL;
 	o->output_path = NULL;
+	o->output_dir = NULL;
 	o->label_override = NULL;
 	o->layer = -1;
-	o->tensor = -1;
+	o->layer_start = -1;
+	o->layer_end = -1;
+	o->tensor = MEMBRANE_EXPORT_TENSOR_BOTH;
 	o->elements_per_block = DEFAULT_ELEMENTS_PER_BLOCK;
 	i = 1;
 	while (i < argc)
@@ -116,14 +132,36 @@ static int	parse_opts(int argc, char **argv, export_opts_t *o)
 			o->input_path = argv[++i];
 		else if (strcmp(argv[i], "--output") == 0 && i + 1 < argc)
 			o->output_path = argv[++i];
+		else if (strcmp(argv[i], "--output-dir") == 0 && i + 1 < argc)
+			o->output_dir = argv[++i];
 		else if (strcmp(argv[i], "--label") == 0 && i + 1 < argc)
 			o->label_override = argv[++i];
 		else if (strcmp(argv[i], "--layer") == 0 && i + 1 < argc)
 		{
 			++i;
-			if (!parse_long(argv[i], &o->layer) || o->layer < 0)
+			if (!parse_long(argv[i], &o->layer) || o->layer < 0
+				|| o->layer > (long)UINT32_MAX)
 				return (fprintf(stderr,
-						"--layer must be a non-negative integer\n"), -1);
+						"--layer must be an integer in [0, %ju]\n",
+						(uintmax_t)UINT32_MAX), -1);
+		}
+		else if (strcmp(argv[i], "--layer-start") == 0 && i + 1 < argc)
+		{
+			++i;
+			if (!parse_long(argv[i], &o->layer_start) || o->layer_start < 0
+				|| o->layer_start > (long)UINT32_MAX)
+				return (fprintf(stderr,
+						"--layer-start must be an integer in [0, %ju]\n",
+						(uintmax_t)UINT32_MAX), -1);
+		}
+		else if (strcmp(argv[i], "--layer-end") == 0 && i + 1 < argc)
+		{
+			++i;
+			if (!parse_long(argv[i], &o->layer_end) || o->layer_end < 0
+				|| o->layer_end > (long)UINT32_MAX)
+				return (fprintf(stderr,
+						"--layer-end must be an integer in [0, %ju]\n",
+						(uintmax_t)UINT32_MAX), -1);
 		}
 		else if (strcmp(argv[i], "--tensor") == 0 && i + 1 < argc)
 		{
@@ -132,8 +170,11 @@ static int	parse_opts(int argc, char **argv, export_opts_t *o)
 				o->tensor = MEMBRANE_KV_TENSOR_K;
 			else if (strcmp(argv[i], "v") == 0 || strcmp(argv[i], "V") == 0)
 				o->tensor = MEMBRANE_KV_TENSOR_V;
+			else if (strcmp(argv[i], "both") == 0)
+				o->tensor = MEMBRANE_EXPORT_TENSOR_BOTH;
 			else
-				return (fprintf(stderr, "--tensor must be k or v\n"), -1);
+				return (fprintf(stderr,
+						"--tensor must be k, v, or both\n"), -1);
 		}
 		else if (strcmp(argv[i], "--elements-per-block") == 0 && i + 1 < argc)
 		{
@@ -150,8 +191,26 @@ static int	parse_opts(int argc, char **argv, export_opts_t *o)
 			return (fprintf(stderr, "unknown option: %s\n", argv[i]), -1);
 		i++;
 	}
-	if (o->input_path == NULL || o->output_path == NULL)
-		return (fprintf(stderr, "--input and --output are required\n"), -1);
+	if (o->input_path == NULL)
+		return (fprintf(stderr, "--input is required\n"), -1);
+	if ((o->output_path == NULL) == (o->output_dir == NULL))
+		return (fprintf(stderr,
+				"exactly one of --output or --output-dir is required\n"),
+			-1);
+	if (o->output_path != NULL && (o->layer_start >= 0 || o->layer_end >= 0))
+		return (fprintf(stderr,
+				"--layer-start/--layer-end require --output-dir\n"), -1);
+	if (o->output_dir != NULL && o->layer >= 0)
+		return (fprintf(stderr,
+				"--layer requires --output (use --layer-start/--layer-end "
+				"with --output-dir)\n"), -1);
+	if (o->output_dir != NULL && o->label_override != NULL)
+		return (fprintf(stderr,
+				"--label cannot be combined with --output-dir (each "
+				"exported record keeps its own derived label)\n"), -1);
+	if (o->layer_start >= 0 && o->layer_end >= 0 && o->layer_start > o->layer_end)
+		return (fprintf(stderr,
+				"--layer-start must not exceed --layer-end\n"), -1);
 	if (o->elements_per_block == 0 || o->elements_per_block % 32 != 0)
 		return (fprintf(stderr,
 				"--elements-per-block must be a positive multiple of 32\n"),
@@ -162,13 +221,12 @@ static int	parse_opts(int argc, char **argv, export_opts_t *o)
 static int	record_matches(const export_opts_t *o,
 				const membrane_kv_header_t *h)
 {
-	if (h->dtype != KVDUMP_DTYPE_F16_GGML)
-		return (0);
-	if (o->layer >= 0 && (uint32_t)o->layer != h->layer)
-		return (0);
-	if (o->tensor >= 0 && (uint32_t)o->tensor != h->tensor_type)
-		return (0);
-	return (1);
+	membrane_export_range_t	range;
+
+	range.layer_start = o->layer;
+	range.layer_end = o->layer;
+	range.tensor_filter = o->tensor;
+	return (membrane_export_record_selected(h, &range));
 }
 
 static int	find_record(const export_opts_t *o, membrane_kv_header_t *h,
@@ -222,9 +280,8 @@ static void	build_label(char *out, size_t out_cap, const export_opts_t *o,
 		h->token_end - h->token_start);
 }
 
-int	main(int argc, char **argv)
+static int	run_single(const export_opts_t *o)
 {
-	export_opts_t			o;
 	membrane_kv_header_t	h;
 	uint8_t					*payload;
 	FILE					*out_f;
@@ -232,14 +289,8 @@ int	main(int argc, char **argv)
 	uint64_t				block_count;
 	char					label[192];
 	membrane_status_t		st;
-	int						rc;
 
-	rc = parse_opts(argc, argv, &o);
-	if (rc > 0)
-		return (0);
-	if (rc < 0)
-		return (usage(stderr), 2);
-	if (find_record(&o, &h, &payload) != 0)
+	if (find_record(o, &h, &payload) != 0)
 		return (1);
 	if (h.payload_size % sizeof(uint16_t) != 0)
 	{
@@ -249,28 +300,28 @@ int	main(int argc, char **argv)
 		return (free(payload), 1);
 	}
 	total_elems = h.payload_size / sizeof(uint16_t);
-	block_count = total_elems / o.elements_per_block;
+	block_count = total_elems / o->elements_per_block;
 	if (block_count == 0)
 	{
 		fprintf(stderr, "record has only %llu F16 elements, fewer than "
 			"one %u-element block\n", (unsigned long long)total_elems,
-			o.elements_per_block);
+			o->elements_per_block);
 		return (free(payload), 1);
 	}
-	if (total_elems % o.elements_per_block != 0)
+	if (total_elems % o->elements_per_block != 0)
 		fprintf(stderr, "note: %llu trailing element(s) dropped (not a "
 			"whole multiple of --elements-per-block %u)\n",
-			(unsigned long long)(total_elems % o.elements_per_block),
-			o.elements_per_block);
-	build_label(label, sizeof(label), &o, &h);
+			(unsigned long long)(total_elems % o->elements_per_block),
+			o->elements_per_block);
+	build_label(label, sizeof(label), o, &h);
 	fprintf(stderr, "selected layer=%u tensor=%s: %llu blocks of %u "
 		"elements (%s)\n", h.layer,
 		h.tensor_type == MEMBRANE_KV_TENSOR_K ? "K" : "V",
-		(unsigned long long)block_count, o.elements_per_block, label);
-	out_f = fopen(o.output_path, "wb");
+		(unsigned long long)block_count, o->elements_per_block, label);
+	out_f = fopen(o->output_path, "wb");
 	if (out_f == NULL)
 	{
-		fprintf(stderr, "cannot create %s\n", o.output_path);
+		fprintf(stderr, "cannot create %s\n", o->output_path);
 		return (free(payload), 1);
 	}
 	/* payload is the exact bytes captured from a live x86_64 process
@@ -279,7 +330,7 @@ int	main(int argc, char **argv)
 	 * (little-endian); membrane_trace_write re-encodes explicitly to
 	 * the wire's little-endian format regardless. */
 	st = membrane_trace_write(out_f, MEMBRANE_TRACE_DTYPE_F16,
-			o.elements_per_block, block_count, (const uint16_t *)payload,
+			o->elements_per_block, block_count, (const uint16_t *)payload,
 			label, (uint64_t)time(NULL));
 	free(payload);
 	if (st != MEMBRANE_OK)
@@ -291,9 +342,59 @@ int	main(int argc, char **argv)
 	if (fclose(out_f) != 0)
 	{
 		fprintf(stderr, "write failed: error flushing %s\n",
-			o.output_path);
+			o->output_path);
 		return (1);
 	}
-	fprintf(stderr, "wrote %s\n", o.output_path);
+	fprintf(stderr, "wrote %s\n", o->output_path);
 	return (0);
+}
+
+static int	run_batch(const export_opts_t *o)
+{
+	membrane_export_batch_opts_t	bo;
+	membrane_export_batch_result_t	br;
+	char							err[256];
+	membrane_status_t				st;
+
+	bo.input_path = o->input_path;
+	bo.output_dir = o->output_dir;
+	bo.range.layer_start = o->layer_start;
+	bo.range.layer_end = o->layer_end;
+	bo.range.tensor_filter = o->tensor;
+	bo.elements_per_block = o->elements_per_block;
+	st = membrane_export_batch_run(&bo, &br, err, sizeof(err));
+	if (st != MEMBRANE_OK)
+	{
+		fprintf(stderr, "membrane-kv-trace-export: %s\n", err);
+		return (1);
+	}
+	fprintf(stderr, "exported %u trace(s) to %s", br.exported_count,
+		o->output_dir);
+	if (br.skipped_too_small_count > 0)
+		fprintf(stderr, " (%u record(s) skipped: fewer than one "
+			"%u-element block)", br.skipped_too_small_count,
+			o->elements_per_block);
+	fprintf(stderr, "\n");
+	if (br.exported_count == 0)
+	{
+		fprintf(stderr, "membrane-kv-trace-export: no matching F16 K/V "
+			"record found in %s\n", o->input_path);
+		return (1);
+	}
+	return (0);
+}
+
+int	main(int argc, char **argv)
+{
+	export_opts_t	o;
+	int				rc;
+
+	rc = parse_opts(argc, argv, &o);
+	if (rc > 0)
+		return (0);
+	if (rc < 0)
+		return (usage(stderr), 2);
+	if (o.output_dir != NULL)
+		return (run_batch(&o));
+	return (run_single(&o));
 }
