@@ -192,3 +192,40 @@ membrane_status_t	membrane_bench_process_block(
 	free(dec);
 	return (st);
 }
+
+membrane_status_t	membrane_bench_process_block_reconstruct(
+						membrane_simd_backend_t backend,
+						membrane_bench_policy_t policy,
+						const uint16_t *x_f16, uint32_t elems,
+						double adaptive_max_q4_rel_l2_error,
+						membrane_workload_accum_t *acc, uint16_t *dec_out)
+{
+	uint8_t				*packed_a;
+	uint8_t				*packed_b;
+	size_t				packed_bytes;
+	int					is_q4;
+	membrane_status_t	st;
+
+	if (dec_out == NULL)
+		return (MEMBRANE_ERR_INVALID_ARG);
+	st = select_is_q4(backend, policy, x_f16, elems,
+			adaptive_max_q4_rel_l2_error, &is_q4);
+	if (st != MEMBRANE_OK)
+		return (st);
+	packed_bytes = membrane_bench_packed_bytes(elems, is_q4);
+	packed_a = malloc(packed_bytes);
+	packed_b = malloc(packed_bytes);
+	if (packed_a == NULL || packed_b == NULL)
+	{
+		free(packed_a);
+		free(packed_b);
+		return (MEMBRANE_ERR_ALLOC_FAILED);
+	}
+	st = encode_block(backend, x_f16, elems, is_q4, packed_a, packed_b,
+			packed_bytes, acc);
+	if (st == MEMBRANE_OK)
+		decode_block(backend, x_f16, elems, is_q4, packed_a, dec_out, acc);
+	free(packed_a);
+	free(packed_b);
+	return (st);
+}

@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -180,6 +181,51 @@ static void	test_process_block_adaptive_matches_quant_select(void)
 		TEST_ASSERT(acc.q8_blocks == 1, "adaptive agrees with quant_select");
 }
 
+/* Product Phase 6: membrane_bench_process_block_reconstruct must
+ * behave identically to membrane_bench_process_block for every
+ * *acc-visible effect (same policy, same counters), while ALSO
+ * exposing the decoded reconstruction the plain function computes
+ * internally and discards. */
+static void	test_process_block_reconstruct_exposes_decoded_output(void)
+{
+	membrane_workload_accum_t	acc;
+	uint16_t					x[ELEMS];
+	uint16_t					dec[ELEMS];
+	double						measured_err;
+	double						recomputed_err;
+
+	memset(&acc, 0, sizeof(acc));
+	membrane_workload_generate_block(MEMBRANE_WORKLOAD_SYNTHETIC_LOW_VARIANCE,
+		1, 0, x, ELEMS);
+	TEST_ASSERT(membrane_bench_process_block_reconstruct(MEMBRANE_SIMD_SCALAR,
+			MEMBRANE_BENCH_POLICY_Q8_ONLY, x, ELEMS,
+			MEMBRANE_QUANT_SELECT_DEFAULT_MAX_Q4_REL_L2_ERROR, &acc, dec)
+			== MEMBRANE_OK, "process succeeds");
+	TEST_ASSERT(acc.q4_blocks == 0 && acc.q8_blocks == 1,
+		"same policy accounting as the plain function");
+	TEST_ASSERT(acc.blocks_decoded == 1, "block decoded");
+	measured_err = membrane_err_stats_mean(&acc.q8_err);
+	recomputed_err = membrane_quant_rel_l2_error(x, dec, ELEMS);
+	TEST_ASSERT(fabs(measured_err - recomputed_err) < 1e-12,
+		"dec_out is genuinely the reconstruction the accuracy stat was "
+		"computed from, not an unrelated/stale buffer");
+}
+
+static void	test_process_block_reconstruct_null_dec_out_rejected(void)
+{
+	membrane_workload_accum_t	acc;
+	uint16_t					x[ELEMS];
+
+	memset(&acc, 0, sizeof(acc));
+	membrane_workload_generate_block(MEMBRANE_WORKLOAD_SYNTHETIC_LOW_VARIANCE,
+		1, 0, x, ELEMS);
+	TEST_ASSERT(membrane_bench_process_block_reconstruct(MEMBRANE_SIMD_SCALAR,
+			MEMBRANE_BENCH_POLICY_Q8_ONLY, x, ELEMS,
+			MEMBRANE_QUANT_SELECT_DEFAULT_MAX_Q4_REL_L2_ERROR, &acc, NULL)
+			== MEMBRANE_ERR_INVALID_ARG,
+		"NULL dec_out rejected, not silently ignored");
+}
+
 static void	test_validation_pass_semantics(void)
 {
 	membrane_workload_accum_t	acc;
@@ -251,6 +297,8 @@ int	main(void)
 	test_process_block_q4_only_forces_q4();
 	test_process_block_q8_only_forces_q8();
 	test_process_block_adaptive_matches_quant_select();
+	test_process_block_reconstruct_exposes_decoded_output();
+	test_process_block_reconstruct_null_dec_out_rejected();
 	test_validation_pass_semantics();
 	test_checked_mul_overflow();
 	test_packed_bytes_does_not_wrap_for_large_elems();

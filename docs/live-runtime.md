@@ -1,11 +1,14 @@
-# Live llama.cpp shadow runtime (Product Phase 5)
+# Live llama.cpp shadow/injection runtime (Product Phase 5/6)
 
-The first live runtime integration: MEMBRANE observes and quantizes/
-dequantizes real K/V projection values *while* `llama.cpp` is actually
-generating tokens, in memory, with no `.kvdump`/`.memkv` round-trip.
-This is **Level B**: a controlled shadow-validation path. Native
-llama.cpp KV remains the sole authoritative store for attention in
-every mode here.
+The live runtime integration: MEMBRANE observes (Phase 5, **Level B**)
+and, for `inject-*` modes (Phase 6, **Level C2**), authoritatively
+writes back reconstructed K/V projection values *while* `llama.cpp` is
+actually generating tokens, in memory, with no `.kvdump`/`.memkv`
+round-trip. In every SHADOW mode, native llama.cpp KV remains the sole
+authoritative store for attention. In every INJECT mode, native KV
+cache *allocation* is still unchanged (never a process-memory claim),
+but the tensor that actually feeds the cache write is replaced with
+MEMBRANE's reconstruction, within the scope requested.
 
 ## Architecture
 
@@ -78,6 +81,71 @@ holds.
   threshold unchanged from Phase 1-4
   (`MEMBRANE_QUANT_SELECT_DEFAULT_MAX_Q4_REL_L2_ERROR = 0.05`). Not
   tuned in this phase.
+- `inject-q8` / `inject-adaptive` (Phase 6) — same encode/decode policy
+  as their shadow counterparts, but the reconstructed values are written
+  back via `ggml_backend_tensor_set()` into the tensor that actually
+  feeds the KV-cache write, before the scheduler proceeds to compute the
+  node(s) that consume it. See "Injection" below.
+
+## Injection (Product Phase 6, Level C2)
+
+**Mechanism.** No `third_party/llama.cpp` modification: the same public
+`cb_eval` callback Phase 5 uses for observation is, for `inject-*`
+modes, also used to *write*. `ggml-backend.h`'s scheduler computes a
+node, calls back with `ask=false` (tensor materialized), and only then
+proceeds to compute whatever consumes it — so mutating `t->data` inside
+that call, via `ggml_backend_tensor_set()`, is visible to the
+downstream node (`cpy_k`/`cpy_v`, the actual cache write) before it
+runs. This is Level C2: the *source feeding* the cache write is
+replaced, not the cache tensor itself after the fact.
+
+**K's post-RoPE occurrence.** Because `"Kcur-%d"` is tagged twice per
+layer per step (pre- and post-RoPE, two distinct tensor objects; see
+above), injection targets *only* the second occurrence — writing into
+the first would feed our already-post-RoPE reconstruction through RoPE
+a second time. The hook tracks an occurrence counter per layer, reset
+at the start of every decode step
+(`membrane_llama_hook_set_step_context()`, called before every
+`llama_decode()`, prompt chunks included). `"Vcur-%d"`'s single real
+node is always authoritative.
+
+**Scope.** `--inject-layer N` (repeatable; default every layer),
+`--inject-tensor k|v|both` (default both), `--inject-token-start/-end N`
+(inclusive absolute position range; default every token) — all
+llama-free, unit-tested logic in `runtime_core.h`
+(`membrane_runtime_scope_*`). Reconstruction only ever touches *full*
+128-element blocks within an in-scope token's slice of the tensor; a
+block never straddles a token boundary, and any trailing remainder
+(`elements_per_token % 128`) is left as native, untouched, and counted
+in `native_tail_values` — never silently dropped.
+
+**Failure semantics.** A reconstruction failure (hard infrastructure
+error or a soft decode failure — both treated as fatal for injection,
+unlike the measurement-only contract in `precision_policy.h`) stops at
+the first failing block; every value from that point on in the buffer
+is guaranteed untouched, and the tensor is **not** written back — native
+values are retained for it. The callback always returns `true` (never
+aborts the graph), but the failure is recorded on the collector
+(`membrane_runtime_injection_has_failed()`) and the whole run exits
+nonzero, reporting `injection_succeeded: false` — never silent fallback
+while still claiming inject mode.
+
+**Behavior comparison.** Every `inject-*` run performs three decode
+passes over the same prompt (see `main.cpp`'s module comment for detail:
+pass A, pure baseline/free-running, is the reference; pass B, injection/
+free-running, is what's reported as canonical telemetry, and its
+free-running token sequence is compared against A's via
+`membrane_runtime_detect_divergence()`; pass C, injection/teacher-forced
+on A's own reference tokens, isolates KV-perturbation effects from
+autoregressive cascade and feeds the aligned `logit_abs_diff`/
+`top1_preservation_rate`/`topk_overlap`/NLL summary). Never more than
+one `llama_context` is alive at a time.
+
+**Debug-only correctness proof.** `--debug-perturb-injection`
+deliberately corrupts every successfully-reconstructed value before
+write-back, so a local run can directly observe that downstream logits
+change in response (proof write-back is consumed, not a silent no-op).
+Never set for a reported run.
 
 ## Block geometry
 
@@ -117,13 +185,24 @@ here as an already-verified fixed result.
 
 ## Limitations
 
-- Shadow only: native llama KV remains authoritative. "Encoded payload
-  reduction for observed KV blocks" is never an actual process-memory
-  or RAM claim.
-- No end-to-end LLM speedup claim; MEMBRANE shadow processing adds
-  real wall-clock overhead by design, reported as measured.
+- SHADOW modes never replace native llama KV; INJECT modes replace only
+  the tensor feeding the cache write — native FP16/F32 cache
+  *allocation* is unchanged in every mode. "Encoded payload reduction
+  for observed/injected KV blocks" is never an actual process-memory or
+  RAM claim, and INJECT modes never claim actual RAM savings either.
+- No end-to-end LLM speedup claim; MEMBRANE processing (shadow or
+  inject) adds real wall-clock overhead by design, reported as measured.
 - No physical FPGA/CXL claim anywhere in this tool.
 - Verified against `LLM_ARCH_LLAMA` (the architecture `build_qkv`'s
   Kcur/Vcur tagging was read from) — other architectures' graph
   builders were not audited and may tag tensors differently.
 - CPU-only, single host; no GPU/accelerator backend exercised.
+- INJECT modes' behavior/quality results are local, single-model,
+  single-prompt measurements (see the introducing PR body for the
+  actual numbers, per this project's documentation policy) — not a
+  general claim about other models, prompts, or context lengths.
+- The aligned/teacher-forced evaluation (pass C) isolates KV-
+  perturbation effects from autoregressive cascade for *logit/NLL*
+  comparison, but the free-running divergence (pass B vs. pass A) can
+  still cascade once token identity itself diverges — both are
+  reported, neither is presented as the other.
