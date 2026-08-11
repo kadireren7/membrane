@@ -121,6 +121,21 @@ add_subdirectory(tools/membrane-demo)
 add_subdirectory(tools/membrane-quant-policy-bench)
 add_subdirectory(tools/membrane-kv-trace-export)
 
+# Product Phase 5: the llama-free core of the live shadow runtime
+# (block packing/tail accounting, telemetry aggregation, token-sequence
+# comparison -- see tools/membrane-llama-runtime/runtime_core.h). Built
+# unconditionally, like membrane_bench_core/membrane_export_core above,
+# so it and its tests run under the default llama-free build; only the
+# llama-facing executable (tools/membrane-llama-runtime/CMakeLists.txt,
+# main.cpp + llama_hook.cpp) needs MEMBRANE_ENABLE_LLAMA=ON, added
+# further down alongside the other llama-gated tool subdirectories.
+add_library(membrane_runtime_core STATIC
+  tools/membrane-llama-runtime/runtime_core.c)
+target_include_directories(membrane_runtime_core PUBLIC
+  tools/membrane-llama-runtime)
+target_link_libraries(membrane_runtime_core PUBLIC membrane_core
+  membrane_workload_core)
+
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
 # unlike tools/membrane-kv-capture etc, which need MEMBRANE_ENABLE_LLAMA.
@@ -241,6 +256,15 @@ if(MEMBRANE_ENABLE_LLAMA)
   add_subdirectory(tools/membrane-kv-runtime)
   add_subdirectory(tools/membrane-kv-runtime-optimizer)
   add_subdirectory(tools/membrane-kv-variance)
+
+  # Product Phase 5: the live llama.cpp shadow runtime (membrane-llama-
+  # run). Deliberately does NOT use the kv_type_override patch above --
+  # it observes live K/V projection tensors via the clean, unmodified,
+  # publicly documented ggml_backend_sched_eval_callback
+  # (llama_context_params.cb_eval), never replacing what llama.cpp
+  # itself allocates/reads/writes for its KV cache. See
+  # docs/live-runtime.md.
+  add_subdirectory(tools/membrane-llama-runtime)
 endif()
 
 if(MEMBRANE_BUILD_TESTS)
@@ -415,6 +439,17 @@ if(MEMBRANE_BUILD_TESTS)
     COMMAND membrane-quant-policy-bench --trace-dir /no/such/dir --matrix)
   set_tests_properties(bench_cli_rejects_missing_trace_dir PROPERTIES
     WILL_FAIL TRUE)
+
+  # Product Phase 5: the live shadow runtime's llama-free core (block
+  # packing, telemetry, token-sequence comparison), tested directly --
+  # no MEMBRANE_ENABLE_LLAMA, no model, no llama.cpp type anywhere in
+  # this test or in membrane_runtime_core itself.
+  add_executable(test_runtime_core
+    tools/membrane-llama-runtime/test_runtime_core.c)
+  target_link_libraries(test_runtime_core PRIVATE membrane_runtime_core)
+  target_include_directories(test_runtime_core PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_runtime_core COMMAND test_runtime_core)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test
