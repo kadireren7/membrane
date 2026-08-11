@@ -55,20 +55,30 @@ layer's K/V projection output `"Kcur-%d"` / `"Vcur-%d"`
 `cpy_k`/`cpy_v`, the actual KV-cache write. Every other graph node
 returns `false` on `ask` and is never touched.
 
-**Important wrinkle, found by reading the source, not assumed:** on
-this pinned commit, `"Kcur-%d"` is tagged *twice* per layer — once
-before RoPE (inside `build_qkv`), once after (by the caller) — two
-distinct tensor objects, since RoPE produces a new node. Only the
-post-RoPE value is what actually reaches the cache. `"Vcur-%d"` is
-also tagged twice, but both tags reference the *same* object (V is
-never RoPE'd on this architecture). The hook therefore does not
-process a tensor immediately: it buffers the extracted value per
-`(layer, is_v)`, overwriting on every observation, and only runs
+**Important wrinkle, found by reading the source, not assumed (and
+re-verified, more precisely, in Phase 6 — see below):** on this pinned
+commit, for `LLM_ARCH_LLAMA` with no K bias (true for every model this
+project validates against), `"Kcur-%d"` is tagged **three** times per
+layer per step — twice inside `build_qkv()` (`src/llama-graph.cpp`:
+once right after the raw linear projection, once after the final
+reshape, both still pre-RoPE), and a third time by the caller
+(`src/models/llama.cpp`), after `ggml_rope_ext` — three distinct tensor
+objects, since each transformation produces a new node. Only that
+third, post-RoPE value is what actually reaches the cache. (A layer
+with a K bias would add one more internal tag.) `"Vcur-%d"` is tagged
+twice, but both tags reference the *same* object (V is never RoPE'd on
+this architecture) — one real graph node either way. The hook therefore
+does not process a tensor immediately: it buffers the extracted value
+per `(layer, is_v)`, overwriting on every observation, and only runs
 MEMBRANE's select/encode/decode/validate pipeline once per key, in
 `membrane_llama_hook_flush_step()`, after `llama_decode()` returns —
 dependency-ordered graph execution guarantees the buffered value at
 that point is the last one computed, i.e. the one the cache actually
-holds.
+holds. (This "last write wins" buffering is what makes SHADOW mode's
+observation correct independent of the exact occurrence count; INJECT
+mode's write-back, added in Phase 6, cannot defer this way — see
+"Injection" below for how it identifies the correct occurrence
+instead.)
 
 ## Modes
 
@@ -99,15 +109,24 @@ downstream node (`cpy_k`/`cpy_v`, the actual cache write) before it
 runs. This is Level C2: the *source feeding* the cache write is
 replaced, not the cache tensor itself after the fact.
 
-**K's post-RoPE occurrence.** Because `"Kcur-%d"` is tagged twice per
-layer per step (pre- and post-RoPE, two distinct tensor objects; see
-above), injection targets *only* the second occurrence — writing into
-the first would feed our already-post-RoPE reconstruction through RoPE
-a second time. The hook tracks an occurrence counter per layer, reset
-at the start of every decode step
-(`membrane_llama_hook_set_step_context()`, called before every
-`llama_decode()`, prompt chunks included). `"Vcur-%d"`'s single real
-node is always authoritative.
+**K's post-RoPE occurrence.** Because `"Kcur-%d"` is tagged three times
+per layer per step for a K-bias-free `LLM_ARCH_LLAMA` layer (twice
+pre-RoPE inside `build_qkv`, once post-RoPE by the caller; see above),
+injection targets *only* that third occurrence — writing into an
+earlier one would feed our reconstruction through a bias-add, reshape,
+or RoPE a second time, corrupting it rather than replacing it cleanly.
+The hook tracks an occurrence counter per layer, reset at the start of
+every decode step (`membrane_llama_hook_set_step_context()`, called
+before every `llama_decode()`, prompt chunks included), and additionally
+verifies every previous step's final count for every in-model layer was
+either 0 (never touched) or exactly the expected authoritative
+occurrence number — any other value (a K-biased layer, a different
+architecture, a llama.cpp revision that tags differently) is recorded
+as a hard injection failure rather than silently targeting the wrong
+tensor or never injecting K at all. This is a real, previously-latent
+bug this project caught on itself, via this exact check, during Phase
+6's own review cycle — see the introducing PR's history for detail.
+`"Vcur-%d"`'s single real node is always authoritative.
 
 **Scope.** `--inject-layer N` (repeatable; default every layer),
 `--inject-tensor k|v|both` (default both), `--inject-token-start/-end N`
@@ -198,9 +217,12 @@ here as an already-verified fixed result.
   builders were not audited and may tag tensors differently.
 - CPU-only, single host; no GPU/accelerator backend exercised.
 - INJECT modes' behavior/quality results are local, single-model,
-  single-prompt measurements (see the introducing PR body for the
-  actual numbers, per this project's documentation policy) — not a
-  general claim about other models, prompts, or context lengths.
+  single-prompt measurements. No committed CSV/JSONL/log artifact
+  exists yet for these numbers, so none are reproduced here — this
+  document states only the mechanism and semantics, never a specific
+  figure this repository cannot check via
+  `scripts/verify-results.py`. This is not a general claim about other
+  models, prompts, or context lengths.
 - The aligned/teacher-forced evaluation (pass C) isolates KV-
   perturbation effects from autoregressive cascade for *logit/NLL*
   comparison, but the free-running divergence (pass B vs. pass A) can

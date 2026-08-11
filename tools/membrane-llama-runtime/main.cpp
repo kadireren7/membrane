@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -113,6 +114,11 @@ static void	usage(FILE *out)
 		"  --debug-runtime    per-step KV block counts to stderr --\n"
 		"                     proof MEMBRANE processing happens\n"
 		"                     interleaved with generation, not after\n"
+		"  --debug-perturb-injection\n"
+		"                     DEBUG ONLY, inject-* modes: deliberately\n"
+		"                     corrupts every reconstructed value before\n"
+		"                     write-back, to locally prove it is\n"
+		"                     consumed -- never use for a reported run\n"
 		"  --help             print this message and exit\n");
 }
 
@@ -162,13 +168,16 @@ static int	parse_opts(int argc, char **argv, run_opts_t *o)
 		else if (strcmp(argv[i], "--inject-layer") == 0 && i + 1 < argc)
 		{
 			long	val;
+			char	*end;
 
 			++i;
-			val = atol(argv[i]);
-			if (val < 0)
-				return (fprintf(stderr,
-						"--inject-layer must be a non-negative integer\n"),
-					-1);
+			errno = 0;
+			val = strtol(argv[i], &end, 10);
+			if (errno != 0 || end == argv[i] || *end != '\0' || val < 0
+				|| (unsigned long)val >= MEMBRANE_RUNTIME_MAX_LAYERS)
+				return (fprintf(stderr, "--inject-layer must be an "
+						"integer in [0, %u)\n",
+						(unsigned)MEMBRANE_RUNTIME_MAX_LAYERS), -1);
 			o->inject_layers.push_back((uint32_t)val);
 		}
 		else if (strcmp(argv[i], "--inject-tensor") == 0 && i + 1 < argc)
@@ -187,14 +196,26 @@ static int	parse_opts(int argc, char **argv, run_opts_t *o)
 		else if (strcmp(argv[i], "--inject-token-start") == 0
 			&& i + 1 < argc)
 		{
+			char	*end;
+
 			++i;
-			o->inject_token_start = strtoull(argv[i], NULL, 10);
+			errno = 0;
+			o->inject_token_start = strtoull(argv[i], &end, 10);
+			if (errno != 0 || end == argv[i] || *end != '\0')
+				return (fprintf(stderr, "--inject-token-start must be a "
+						"non-negative integer\n"), -1);
 			o->have_token_start = 1;
 		}
 		else if (strcmp(argv[i], "--inject-token-end") == 0 && i + 1 < argc)
 		{
+			char	*end;
+
 			++i;
-			o->inject_token_end = strtoull(argv[i], NULL, 10);
+			errno = 0;
+			o->inject_token_end = strtoull(argv[i], &end, 10);
+			if (errno != 0 || end == argv[i] || *end != '\0')
+				return (fprintf(stderr, "--inject-token-end must be a "
+						"non-negative integer\n"), -1);
 			o->have_token_end = 1;
 		}
 		else if (strcmp(argv[i], "--debug-perturb-injection") == 0)

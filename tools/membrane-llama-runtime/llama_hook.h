@@ -76,11 +76,18 @@ void	membrane_llama_hook_set_step_context(membrane_llama_hook_ctx_t *ctx,
  * cpy_v, the actual KV-cache write) -- every other graph node returns
  * false on `ask` and is never materialized or copied.
  *
- * IMPORTANT: "Kcur-%d" is tagged TWICE per layer on the pinned commit
- * (once before RoPE, inside build_qkv, and again after RoPE by the
- * caller -- two distinct tensor objects, since RoPE produces a new
- * node) -- only the post-RoPE value is what cpy_k actually writes to
- * cache. This callback does NOT process a tensor's data immediately:
+ * IMPORTANT: "Kcur-%d" is tagged THREE times per layer on the pinned
+ * commit, for LLM_ARCH_LLAMA with no K bias (verified against this
+ * project's validated model) -- twice before RoPE, inside build_qkv
+ * (once after the raw linear projection, once after the final reshape),
+ * and again after RoPE by the caller -- three distinct tensor objects,
+ * since each transformation produces a new node. Only the post-RoPE
+ * value is what cpy_k actually writes to cache; see llama_hook.cpp's
+ * MEMBRANE_LLAMA_K_AUTHORITATIVE_OCCURRENCE for the exact source trace
+ * and the sanity check that turns any deviation from this (e.g. a
+ * K-biased layer) into a reported injection failure rather than a
+ * silent wrong-tensor write. This callback does NOT process a tensor's
+ * data immediately:
  * it extracts and buffers it, keyed by (layer, is_v), overwriting any
  * earlier value for the same key observed this step. Actual MEMBRANE
  * processing (select/encode/decode/validate) happens in
@@ -104,10 +111,11 @@ void	membrane_llama_hook_set_step_context(membrane_llama_hook_ctx_t *ctx,
  * unaffected by whether this callback is installed.
  *
  * INJECT modes (Phase 6): for the tensor occurrence that is
- * authoritative for the actual KV-cache write -- V's only occurrence,
- * or K's SECOND occurrence this step (the post-RoPE one; see the "IMPORTANT"
- * paragraph above) -- values in scope (per membrane_llama_hook_set_step_
- * context + the scope passed to membrane_llama_hook_create) are
+ * authoritative for the actual KV-cache write -- V's only occurrence, or
+ * K's MEMBRANE_LLAMA_K_AUTHORITATIVE_OCCURRENCE-th occurrence this step
+ * (the post-RoPE one; see the "IMPORTANT" paragraph above) -- values in
+ * scope (per membrane_llama_hook_set_step_context + the scope passed to
+ * membrane_llama_hook_create) are
  * reconstructed via membrane_runtime_inject_reconstruct() and, iff every
  * attempted block succeeded, written back into t->data via
  * ggml_backend_tensor_set() BEFORE this call returns -- i.e. before the
