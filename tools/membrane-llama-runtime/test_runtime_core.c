@@ -287,6 +287,30 @@ static void	test_tokens_equal(void)
 		"non-empty vs empty rejected");
 }
 
+/* Covers the actual path-sanitization boundary directly (an absolute
+ * path in, only the basename out) -- not just "the printer doesn't
+ * corrupt an already-safe basename", which is trivially true and
+ * exercises nothing about path stripping at all. */
+static void	test_safe_basename_strips_absolute_paths(void)
+{
+	TEST_ASSERT(strcmp(membrane_runtime_safe_basename(
+			"/home/user/models/model.gguf"), "model.gguf") == 0,
+		"absolute model path reduced to basename only");
+	TEST_ASSERT(strcmp(membrane_runtime_safe_basename(
+			"/tmp/fixtures/short.txt"), "short.txt") == 0,
+		"absolute prompt path reduced to basename only");
+	TEST_ASSERT(strcmp(membrane_runtime_safe_basename("model.gguf"),
+			"model.gguf") == 0,
+		"a bare filename with no '/' is returned unchanged");
+	TEST_ASSERT(strcmp(membrane_runtime_safe_basename("a/b/c/d.gguf"),
+			"d.gguf") == 0,
+		"only the LAST path component is kept, not any earlier one");
+	TEST_ASSERT(strcmp(membrane_runtime_safe_basename("/"), "") == 0,
+		"a bare trailing slash yields an empty basename, not a crash");
+	TEST_ASSERT(membrane_runtime_safe_basename(NULL) == NULL,
+		"NULL in, NULL out -- never dereferenced");
+}
+
 static void	test_step_counters(void)
 {
 	membrane_runtime_collector_t	*c;
@@ -416,6 +440,7 @@ int	main(void)
 	test_storage_accounting_ratios();
 	test_zero_observations_zero_ratios();
 	test_tokens_equal();
+	test_safe_basename_strips_absolute_paths();
 	test_step_counters();
 	test_timing_accumulators();
 	test_finalize_null_collector_is_safe_zeroed();

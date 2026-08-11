@@ -117,13 +117,21 @@ membrane_status_t	membrane_runtime_observe_tensor(
 				&impl->accum);
 		if (st != MEMBRANE_OK)
 			return (st);
+		/* Incremented per block, immediately after it succeeds --
+		 * matches accum (updated inside process_block above) exactly,
+		 * including on an early return from a later block's failure:
+		 * this tensor's already-successful blocks stay counted, rather
+		 * than only being counted after the whole loop finishes (which
+		 * would silently undercount k_blocks/v_blocks/step_block_count
+		 * relative to accum.q4_blocks+accum.q8_blocks on a partial
+		 * failure). */
+		if (is_v)
+			impl->v_blocks++;
+		else
+			impl->k_blocks++;
+		impl->step_block_count++;
 		i++;
 	}
-	if (is_v)
-		impl->v_blocks += full_blocks;
-	else
-		impl->k_blocks += full_blocks;
-	impl->step_block_count += full_blocks;
 	return (MEMBRANE_OK);
 }
 
@@ -268,6 +276,18 @@ int	membrane_runtime_tokens_equal(const int32_t *a, size_t na,
 		i++;
 	}
 	return (1);
+}
+
+const char	*membrane_runtime_safe_basename(const char *path)
+{
+	const char	*slash;
+
+	if (path == NULL)
+		return (NULL);
+	slash = strrchr(path, '/');
+	if (slash != NULL)
+		return (slash + 1);
+	return (path);
 }
 
 /* ------------------------------------------------------------------ */

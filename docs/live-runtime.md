@@ -14,14 +14,15 @@ Three files, deliberately separated:
 - `tools/membrane-llama-runtime/runtime_core.h/.c` — llama-free.
   Block packing/tail accounting, telemetry aggregation, weighted-error
   math, and the baseline/shadow token-sequence comparison. Zero
-  ggml/llama includes; built and tested unconditionally (`test_runtime_
-  core`, part of the default, llama-free CI suite).
+  ggml/llama includes; built and tested unconditionally
+  (`test_runtime_core`, part of the default, llama-free CI suite).
 - `tools/membrane-llama-runtime/llama_hook.cpp` — the only file that
-  touches a `ggml_tensor`. Installs a `ggml_backend_sched_eval_
-  callback` (`llama_context_params.cb_eval`) — a genuinely public,
-  documented API (`ggml/include/ggml-backend.h`), unmodified on the
-  pinned commit. Extracts data via `ggml_backend_tensor_get()` (never
-  retains a pointer into ggml/llama-managed memory) and hands it to
+  touches a `ggml_tensor`. Installs a
+  `ggml_backend_sched_eval_callback` (`llama_context_params.cb_eval`)
+  — a genuinely public, documented API
+  (`ggml/include/ggml-backend.h`), unmodified on the pinned commit.
+  Extracts data via `ggml_backend_tensor_get()` (never retains a
+  pointer into ggml/llama-managed memory) and hands it to
   `runtime_core`.
 - `tools/membrane-llama-runtime/main.cpp` — CLI, model load, greedy
   decode loop, mode dispatch, telemetry printing. Only builds with
@@ -73,8 +74,9 @@ holds.
 - `shadow-q8` — every observed full 128-element block runs through the
   maintained Q8_0 encode/decode.
 - `shadow-adaptive` — the maintained content-driven Q4/Q8 selector,
-  threshold unchanged from Phase 1-4 (`MEMBRANE_QUANT_SELECT_DEFAULT_
-  MAX_Q4_REL_L2_ERROR = 0.05`). Not tuned in this phase.
+  threshold unchanged from Phase 1-4
+  (`MEMBRANE_QUANT_SELECT_DEFAULT_MAX_Q4_REL_L2_ERROR = 0.05`). Not
+  tuned in this phase.
 
 ## Block geometry
 

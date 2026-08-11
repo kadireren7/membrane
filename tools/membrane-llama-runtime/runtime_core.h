@@ -112,9 +112,13 @@ void	membrane_runtime_collector_destroy(membrane_runtime_collector_t *c);
  * llama KV projection tensor data by the caller) into
  * MEMBRANE_RUNTIME_ELEMS_PER_BLOCK-sized blocks and, for every FULL
  * block, runs membrane_bench_process_block() under the policy implied
- * by c's mode (BASELINE: this function is a no-op accounting update
- * only -- no block is actually processed, matching "no MEMBRANE
- * quantization" for the native path; SHADOW_Q8: MEMBRANE_BENCH_POLICY_
+ * by c's mode (BASELINE: this function returns MEMBRANE_OK immediately
+ * without touching ANY counter -- not even total_values_observed/
+ * tail_values_excluded -- and no block is processed, matching "no
+ * MEMBRANE quantization" for the native path exactly; in practice this
+ * branch is never reached in BASELINE mode at all, since the caller
+ * never installs the eval callback that would call this function;
+ * SHADOW_Q8: MEMBRANE_BENCH_POLICY_
  * Q8_ONLY; SHADOW_ADAPTIVE: MEMBRANE_BENCH_POLICY_ADAPTIVE with the
  * unmodified default threshold, MEMBRANE_QUANT_SELECT_DEFAULT_MAX_
  * Q4_REL_L2_ERROR). A trailing remainder (n_elems %
@@ -198,6 +202,18 @@ double	membrane_runtime_theoretical_payload_reduction(
  * runtime's own validation step and directly unit-tested. */
 int	membrane_runtime_tokens_equal(const int32_t *a, size_t na,
 		const int32_t *b, size_t nb);
+
+/* Returns a pointer into `path` itself (never allocates, never
+ * copies): the substring after the last '/', or `path` unchanged if it
+ * has none. This is the ONLY path-sanitization boundary in this tool
+ * -- main.cpp calls it before passing model_label/prompt_fixture to
+ * membrane_runtime_print_json()/print_human(), which then emit
+ * whatever string they are given verbatim (by design: see those
+ * functions' own doc comments). Exposed here, not as a main.cpp-local
+ * static, specifically so it has direct unit coverage with absolute-
+ * path inputs (test_runtime_core.c), not just the vacuous "the printer
+ * doesn't corrupt an already-safe basename" check. */
+const char	*membrane_runtime_safe_basename(const char *path);
 
 void	membrane_runtime_print_human(const membrane_runtime_telemetry_t *t,
 			FILE *f);

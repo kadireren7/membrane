@@ -61,9 +61,11 @@ static void	usage(FILE *out)
 		"                         unchanged from Phase 1-4)\n"
 		"  --gen-tokens N     greedy tokens to generate (default 32)\n"
 		"  --json             machine-readable telemetry on stdout\n"
-		"  --print-text       also print the decoded generated text\n"
-		"                     (off by default: no prompt/token text is\n"
-		"                     ever emitted unless explicitly requested)\n"
+		"  --print-text       also print the decoded generated text to\n"
+		"                     stderr, never stdout (so --json's stdout\n"
+		"                     output stays parseable either way) -- off\n"
+		"                     by default: no prompt/token text is ever\n"
+		"                     emitted unless explicitly requested\n"
 		"  --debug-runtime    per-step KV block counts to stderr --\n"
 		"                     proof MEMBRANE processing happens\n"
 		"                     interleaved with generation, not after\n"
@@ -121,16 +123,6 @@ static int	parse_opts(int argc, char **argv, run_opts_t *o)
 		return (fprintf(stderr,
 				"--model and --prompt-file are required\n"), -1);
 	return (0);
-}
-
-static const char	*safe_basename(const char *path)
-{
-	const char	*slash;
-
-	slash = strrchr(path, '/');
-	if (slash != NULL)
-		return (slash + 1);
-	return (path);
 }
 
 static std::string	read_file(const char *path)
@@ -269,9 +261,22 @@ int	main(int argc, char **argv)
 	 * KV/precision/storage/accuracy counter ever moves off zero. */
 	collector = membrane_runtime_collector_create(o.mode,
 			MEMBRANE_RUNTIME_MAX_LAYERS);
+	if (collector == NULL)
+	{
+		fprintf(stderr, "membrane-llama-run: telemetry collector "
+			"allocation failed\n");
+		return (llama_model_free(model), 1);
+	}
 	hook_ctx = membrane_llama_hook_create(collector,
 			membrane_simd_best_backend(), o.debug_runtime,
 			MEMBRANE_RUNTIME_MAX_LAYERS);
+	if (hook_ctx == NULL)
+	{
+		fprintf(stderr, "membrane-llama-run: hook context allocation "
+			"failed\n");
+		membrane_runtime_collector_destroy(collector);
+		return (llama_model_free(model), 1);
+	}
 	cp = llama_context_default_params();
 	cp.n_ctx = (uint32_t)prompt_tokens.size() + (uint32_t)o.gen_tokens + 8;
 	cp.n_batch = 256;
@@ -351,13 +356,20 @@ int	main(int argc, char **argv)
 		(uint64_t)generated.size());
 	membrane_runtime_finalize(collector, &t);
 	if (o.want_json)
-		membrane_runtime_print_json(&t, safe_basename(o.model_path),
-			safe_basename(o.prompt_path), generated.data(),
-			generated.size(), stdout);
+		membrane_runtime_print_json(&t,
+			membrane_runtime_safe_basename(o.model_path),
+			membrane_runtime_safe_basename(o.prompt_path),
+			generated.data(), generated.size(), stdout);
 	else
 		membrane_runtime_print_human(&t, stdout);
 	if (o.print_text)
-		fprintf(stdout, "\n[generated text]\n%s\n", generated_text.c_str());
+	{
+		/* Always stderr, never stdout: --json's primary output must stay
+		 * pipeable into a JSON parser even when --print-text is also
+		 * given (the two flags are documented as independent, so this
+		 * combination is reachable, not just theoretical). */
+		fprintf(stderr, "\n[generated text]\n%s\n", generated_text.c_str());
+	}
 	membrane_llama_hook_destroy(hook_ctx);
 	membrane_runtime_collector_destroy(collector);
 	llama_free(ctx);
