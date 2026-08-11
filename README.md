@@ -211,7 +211,7 @@ suitability vary across layers/tensors on one real model execution" —
 never a claim about models or prompts in general, and never an
 end-to-end LLM or physical FPGA/CXL performance claim.
 
-### Live llama.cpp shadow runtime
+### Live llama.cpp shadow/injection runtime
 
 ```bash
 cmake -S . -B build-llama -DCMAKE_BUILD_TYPE=Release -DMEMBRANE_ENABLE_LLAMA=ON
@@ -220,18 +220,21 @@ cmake --build build-llama -j --target membrane-llama-run
   --model your_model.gguf --prompt-file your_prompt.txt --mode shadow-adaptive
 ```
 
-`membrane-llama-run` observes and quantizes/dequantizes live K/V values
-*during* real generation (via `ggml_backend_sched_eval_callback`, no
-`.kvdump`/`.memkv` round-trip, no llama.cpp source modification) — but
-**shadow mode never replaces native llama KV memory**: because
-`baseline`, `shadow-q8`, and `shadow-adaptive` never alter what llama
-itself stores or reads, deterministic runs of each are expected to
-produce byte-identical generated tokens; the CLI's `--json` output
-includes `token_ids` so a local real-model run can check this
-directly. "Encoded payload reduction" describes only the observed
-blocks' hypothetical MEMBRANE-encoded size, never an actual process-
-memory reduction. See `docs/live-runtime.md` for the full
-architecture, semantics, and limitations.
+`membrane-llama-run` observes (`shadow-q8`/`shadow-adaptive`) and, for
+`inject-q8`/`inject-adaptive`, authoritatively writes back
+reconstructed live K/V values *during* real generation (via
+`ggml_backend_sched_eval_callback`/`ggml_backend_tensor_set`, no
+`.kvdump`/`.memkv` round-trip, no llama.cpp source modification).
+**SHADOW modes never replace native llama KV**: `baseline`,
+`shadow-q8`, and `shadow-adaptive` never alter what llama itself
+stores or reads. **INJECT modes replace only the tensor feeding the
+KV-cache write** (scoped via `--inject-layer`/`--inject-tensor`/
+`--inject-token-start`/`-end`) — native cache *allocation* is
+unchanged either way, so neither mode is ever a process-memory
+reduction claim. `--json`'s `token_ids`/`injection`/`divergence`/
+`behavior` fields let a local run check token identity, block
+coverage, and logit/NLL drift directly. See `docs/live-runtime.md` for
+the full architecture, semantics, and limitations.
 
 ## Test
 

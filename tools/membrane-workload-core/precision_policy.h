@@ -105,6 +105,29 @@ int	membrane_workload_validation_pass(const membrane_workload_accum_t *acc,
  */
 size_t	membrane_bench_packed_bytes(uint32_t elems, int is_q4);
 
+/*
+ * Product Phase 6: identical selection/encode/decode/accounting
+ * contract to membrane_bench_process_block (same policy semantics,
+ * same *acc updates, same infrastructure-failure-vs-soft-decode-
+ * failure distinction), but ALSO writes the decoded (dequantized)
+ * reconstruction into `dec_out` (`elems` caller-owned uint16_t
+ * values) on a successful decode -- needed by callers that must
+ * actually USE the reconstructed values (e.g. writing them back into
+ * authoritative KV state), not just measure their accuracy.
+ * `dec_out` must be non-NULL (MEMBRANE_ERR_INVALID_ARG otherwise). On
+ * a decode failure (soft-reported via acc->decode_failures, matching
+ * membrane_bench_process_block's contract), `dec_out` is left
+ * unwritten -- the caller must check acc->decode_failures (or that
+ * this call didn't increment it) before trusting dec_out's contents.
+ * membrane_bench_process_block itself is unchanged by this addition.
+ */
+membrane_status_t	membrane_bench_process_block_reconstruct(
+						membrane_simd_backend_t backend,
+						membrane_bench_policy_t policy,
+						const uint16_t *x_f16, uint32_t elems,
+						double adaptive_max_q4_rel_l2_error,
+						membrane_workload_accum_t *acc, uint16_t *dec_out);
+
 # ifdef __cplusplus
 }
 # endif

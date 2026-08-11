@@ -136,6 +136,19 @@ target_include_directories(membrane_runtime_core PUBLIC
 target_link_libraries(membrane_runtime_core PUBLIC membrane_core
   membrane_workload_core)
 
+# membrane-llama-run's CLI argument parser (tools/membrane-llama-runtime/
+# cli_parse.h/.cpp), split out of main.cpp so it -- like
+# membrane_runtime_core above -- builds and is testable (test_cli_parse)
+# under the default llama-free configuration, with no model load and no
+# llama.cpp dependency anywhere in this library.
+enable_language(CXX)
+add_library(membrane_cli_parse STATIC
+  tools/membrane-llama-runtime/cli_parse.cpp)
+set_target_properties(membrane_cli_parse PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_cli_parse PUBLIC membrane_runtime_core)
+
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
 # unlike tools/membrane-kv-capture etc, which need MEMBRANE_ENABLE_LLAMA.
@@ -450,6 +463,21 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_runtime_core PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_runtime_core COMMAND test_runtime_core)
+
+  # membrane-llama-run's CLI parser (cli_parse.h/.cpp), exercised through
+  # the real parse_opts()/argv boundary -- no model load, no llama.cpp
+  # dependency. Covers the strict numeric parsing fix (rejecting a
+  # leading '-' that strtoull() alone would silently wrap) and the
+  # existing scope/mode validation.
+  add_executable(test_cli_parse
+    tools/membrane-llama-runtime/test_cli_parse.cpp)
+  set_target_properties(test_cli_parse PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_cli_parse PRIVATE membrane_cli_parse)
+  target_include_directories(test_cli_parse PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_cli_parse COMMAND test_cli_parse)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test
