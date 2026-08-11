@@ -211,6 +211,25 @@ suitability vary across layers/tensors on one real model execution" —
 never a claim about models or prompts in general, and never an
 end-to-end LLM or physical FPGA/CXL performance claim.
 
+### Live llama.cpp shadow runtime
+
+```bash
+cmake -S . -B build-llama -DCMAKE_BUILD_TYPE=Release -DMEMBRANE_ENABLE_LLAMA=ON
+cmake --build build-llama -j --target membrane-llama-run
+./build-llama/tools/membrane-llama-runtime/membrane-llama-run \
+  --model your_model.gguf --prompt-file your_prompt.txt --mode shadow-adaptive
+```
+
+`membrane-llama-run` observes and quantizes/dequantizes live K/V values
+*during* real generation (via `ggml_backend_sched_eval_callback`, no
+`.kvdump`/`.memkv` round-trip, no llama.cpp source modification) — but
+**shadow mode never replaces native llama KV memory**: `baseline`,
+`shadow-q8`, and `shadow-adaptive` produce byte-identical generated
+tokens, verified directly. "Encoded payload reduction" describes only
+the observed blocks' hypothetical MEMBRANE-encoded size, never an
+actual process-memory reduction. See `docs/live-runtime.md` for the
+full architecture, semantics, and limitations.
+
 ## Test
 
 ```bash
