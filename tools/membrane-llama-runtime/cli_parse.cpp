@@ -1,6 +1,7 @@
 #include "cli_parse.h"
 
 #include <cerrno>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 
@@ -13,14 +14,16 @@
  */
 bool	parse_u64_strict(const char *s, uint64_t *out)
 {
-	char	*end;
+	char		*end;
+	uint64_t	value;
 
 	if (s == NULL || s[0] == '\0' || s[0] == '-' || s[0] == '+')
 		return (false);
 	errno = 0;
-	*out = strtoull(s, &end, 10);
+	value = strtoull(s, &end, 10);
 	if (errno == ERANGE || end == s || *end != '\0')
 		return (false);
+	*out = value;
 	return (true);
 }
 
@@ -43,7 +46,7 @@ void	usage(FILE *out)
 		"  --mode MODE        baseline | shadow-q8 | shadow-adaptive |\n"
 		"                     inject-q8 | inject-adaptive (required)\n"
 		"                       baseline: native llama path, no\n"
-		"                         MEMBRANE processing, zero overhead\n"
+		"                         MEMBRANE K/V processing\n"
 		"                       shadow-q8/shadow-adaptive: observe-only,\n"
 		"                         native KV remains authoritative\n"
 		"                       inject-q8/inject-adaptive: reconstructed\n"
@@ -112,11 +115,15 @@ int	parse_opts(int argc, char **argv, run_opts_t *o)
 		}
 		else if (strcmp(argv[i], "--gen-tokens") == 0 && i + 1 < argc)
 		{
+			uint64_t	val;
+
 			++i;
-			o->gen_tokens = atoi(argv[i]);
-			if (o->gen_tokens <= 0)
+			if (!parse_u64_strict(argv[i], &val) || val < 1
+				|| val > (uint64_t)INT_MAX)
 				return (fprintf(stderr,
-						"--gen-tokens must be a positive integer\n"), -1);
+						"--gen-tokens must be an integer in [1, %d]\n",
+						INT_MAX), -1);
+			o->gen_tokens = (int)val;
 		}
 		else if (strcmp(argv[i], "--inject-layer") == 0 && i + 1 < argc)
 		{

@@ -78,6 +78,35 @@ static void	expect_accepted(const char *key, const char *val,
 	TEST_ASSERT(rc == 0, what);
 }
 
+/* Sentinel test: a rejected parse_u64_strict() call must not have
+ * written *out at all -- it should be left exactly as the caller set
+ * it, never a partial/garbage strtoull() result. */
+static void	test_parse_u64_strict_leaves_out_unchanged_on_rejection(void)
+{
+	uint64_t	out;
+
+	out = 0xdeadbeefULL;
+	TEST_ASSERT(!parse_u64_strict("-1", &out), "leading '-' rejected");
+	TEST_ASSERT(out == 0xdeadbeefULL,
+		"*out untouched after a rejected parse (leading '-')");
+
+	out = 0xdeadbeefULL;
+	TEST_ASSERT(!parse_u64_strict("abc", &out), "non-numeric rejected");
+	TEST_ASSERT(out == 0xdeadbeefULL,
+		"*out untouched after a rejected parse (non-numeric)");
+
+	out = 0xdeadbeefULL;
+	TEST_ASSERT(!parse_u64_strict(
+			"999999999999999999999999999999999999999999", &out),
+		"overflow rejected");
+	TEST_ASSERT(out == 0xdeadbeefULL,
+		"*out untouched after a rejected parse (overflow)");
+
+	out = 0;
+	TEST_ASSERT(parse_u64_strict("42", &out), "valid input accepted");
+	TEST_ASSERT(out == 42, "*out set to the parsed value on success");
+}
+
 static void	test_inject_layer_malformed_rejected(void)
 {
 	expect_rejected("--inject-layer", "abc", "non-numeric layer rejected");
@@ -165,6 +194,33 @@ static void	test_inject_token_range_relationship_enforced(void)
 		"token-start without token-end rejected");
 }
 
+static void	test_gen_tokens_malformed_rejected(void)
+{
+	expect_rejected("--gen-tokens", "12junk",
+		"trailing garbage on --gen-tokens rejected");
+	expect_rejected("--gen-tokens", "+12",
+		"leading '+' on --gen-tokens rejected");
+	expect_rejected("--gen-tokens", "-1",
+		"negative --gen-tokens rejected");
+	expect_rejected("--gen-tokens", "0",
+		"zero --gen-tokens rejected (must be >= 1)");
+	expect_rejected("--gen-tokens", "999999999999999999999999",
+		"overflowing --gen-tokens rejected");
+	expect_rejected("--gen-tokens", "abc",
+		"non-numeric --gen-tokens rejected");
+}
+
+static void	test_gen_tokens_valid_accepted(void)
+{
+	run_opts_t	o;
+
+	expect_accepted("--gen-tokens", "1", "--gen-tokens 1 accepted");
+	expect_accepted("--gen-tokens", "32", "--gen-tokens 32 (default) "
+		"accepted");
+	TEST_ASSERT(run_parse(base_args("--gen-tokens", "17"), &o) == 0
+		&& o.gen_tokens == 17, "parsed --gen-tokens value is stored");
+}
+
 static void	test_debug_perturb_flag_documented(void)
 {
 	FILE	*tmp;
@@ -205,12 +261,15 @@ static void	test_valid_baseline_parses_without_model_load(void)
 
 int	main(void)
 {
+	test_parse_u64_strict_leaves_out_unchanged_on_rejection();
 	test_inject_layer_malformed_rejected();
 	test_inject_layer_valid_accepted();
 	test_inject_token_start_malformed_rejected();
 	test_inject_token_end_malformed_rejected();
 	test_inject_token_range_valid_accepted();
 	test_inject_token_range_relationship_enforced();
+	test_gen_tokens_malformed_rejected();
+	test_gen_tokens_valid_accepted();
 	test_debug_perturb_flag_documented();
 	test_valid_baseline_parses_without_model_load();
 	printf("test_cli_parse: all tests passed\n");
