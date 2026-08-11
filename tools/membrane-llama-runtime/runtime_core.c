@@ -681,8 +681,16 @@ void	membrane_runtime_finalize(const membrane_runtime_collector_t *c,
 	out->membrane_seconds = c->membrane_seconds;
 	out->inference_seconds = c->inference_seconds;
 	out->injection_requested = membrane_runtime_mode_is_inject(c->mode);
+	/*
+	 * A requested-but-never-actually-injected run (e.g. a scope that
+	 * matched nothing, or a target that was never reached) must not
+	 * report success -- injected_blocks > 0 is required in addition to
+	 * "no observed failure", not just implied by it. See
+	 * test_zero_injected_blocks_is_not_success in test_runtime_core.c.
+	 */
 	out->injection_succeeded = out->injection_requested
-		&& !c->injection_failed;
+		&& !c->injection_failed
+		&& c->injected_blocks > 0;
 	out->injection_eligible_blocks = c->injection_eligible_blocks;
 	out->injected_blocks = c->injected_blocks;
 	out->failed_blocks = c->failed_blocks;

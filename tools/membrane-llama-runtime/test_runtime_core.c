@@ -899,7 +899,17 @@ static void	test_record_injection_failure_marks_run_failed(void)
 	membrane_runtime_collector_destroy(c);
 }
 
-static void	test_record_injection_no_scope_match_is_harmless(void)
+/*
+ * A single out-of-scope observation is non-crashing (ok=1, nothing
+ * recorded as failed), but if it is the ONLY thing ever recorded for an
+ * inject-requested run, zero blocks were ever actually injected -- that
+ * must NOT be reported as a successful injection run. This replaces a
+ * prior version of this test that asserted the opposite (injection_
+ * succeeded == 1 here), which encoded exactly the "zero-injection
+ * masquerading as success" contract this project's own review process
+ * flagged as wrong.
+ */
+static void	test_record_injection_no_scope_match_is_not_success(void)
 {
 	membrane_runtime_collector_t		*c;
 	membrane_runtime_inject_result_t	r;
@@ -912,7 +922,96 @@ static void	test_record_injection_no_scope_match_is_harmless(void)
 	membrane_runtime_finalize(c, &t);
 	TEST_ASSERT(t.layers_targeted == 0,
 		"an out-of-scope observation doesn't count as targeted");
-	TEST_ASSERT(t.injection_succeeded == 1, "no failure occurred");
+	TEST_ASSERT(!membrane_runtime_injection_has_failed(c),
+		"a lone out-of-scope observation is non-crashing, not a hard "
+		"failure by itself");
+	TEST_ASSERT(t.injected_blocks == 0, "nothing was ever injected");
+	TEST_ASSERT(t.injection_succeeded == 0,
+		"a requested injection run that never actually injected "
+		"anything must report failure, never silent success");
+	membrane_runtime_collector_destroy(c);
+}
+
+/* (A) injection requested, zero eligible/injected blocks anywhere in the
+ * whole run -> injection_succeeded must be false. */
+static void	test_zero_eligible_blocks_is_not_success(void)
+{
+	membrane_runtime_collector_t		*c;
+	membrane_runtime_inject_result_t	r;
+	membrane_runtime_telemetry_t		t;
+
+	c = membrane_runtime_collector_create(
+			MEMBRANE_RUNTIME_MODE_INJECT_ADAPTIVE, 8);
+	memset(&r, 0, sizeof(r));
+	r.ok = 1;
+	r.tokens_in_scope = 1;
+	r.eligible_blocks = 0;
+	r.injected_blocks = 0;
+	membrane_runtime_record_injection(c, 5, 0, &r);
+	membrane_runtime_finalize(c, &t);
+	TEST_ASSERT(t.injection_requested == 1, "mode is inject-adaptive");
+	TEST_ASSERT(t.injection_eligible_blocks == 0, "nothing was eligible");
+	TEST_ASSERT(t.injection_succeeded == 0,
+		"requested injection with zero eligible/injected blocks fails");
+	membrane_runtime_collector_destroy(c);
+}
+
+/* (B) the entire in-scope range was a native tail (< 1 full block) --
+ * ok, no failure, but nothing to inject -> must not masquerade as
+ * success either. */
+static void	test_native_tail_only_is_not_success(void)
+{
+	membrane_runtime_collector_t		*c;
+	membrane_runtime_inject_result_t	r;
+	membrane_runtime_telemetry_t		t;
+
+	c = membrane_runtime_collector_create(MEMBRANE_RUNTIME_MODE_INJECT_Q8, 8);
+	memset(&r, 0, sizeof(r));
+	r.ok = 1;
+	r.tokens_in_scope = 1;
+	r.eligible_blocks = 0;
+	r.injected_blocks = 0;
+	r.native_tail_values = 44;
+	membrane_runtime_record_injection(c, 0, 0, &r);
+	membrane_runtime_finalize(c, &t);
+	TEST_ASSERT(t.injection_native_tail_values == 44,
+		"native tail values are still surfaced in telemetry");
+	TEST_ASSERT(t.injected_blocks == 0, "no full block was injectable");
+	TEST_ASSERT(t.injection_succeeded == 0,
+		"native-tail-only coverage is not a successful injection");
+	membrane_runtime_collector_destroy(c);
+}
+
+/* (D) injection_failed must win even if earlier blocks in the same run
+ * genuinely succeeded -- one bad block fails the whole run's success
+ * flag, regardless of injected_blocks > 0 elsewhere. */
+static void	test_later_failure_overrides_earlier_success(void)
+{
+	membrane_runtime_collector_t		*c;
+	membrane_runtime_inject_result_t	r_ok;
+	membrane_runtime_inject_result_t	r_bad;
+	membrane_runtime_telemetry_t		t;
+
+	c = membrane_runtime_collector_create(MEMBRANE_RUNTIME_MODE_INJECT_Q8, 8);
+	memset(&r_ok, 0, sizeof(r_ok));
+	r_ok.ok = 1;
+	r_ok.tokens_in_scope = 1;
+	r_ok.eligible_blocks = 2;
+	r_ok.injected_blocks = 2;
+	membrane_runtime_record_injection(c, 0, 0, &r_ok);
+	memset(&r_bad, 0, sizeof(r_bad));
+	r_bad.ok = 0;
+	r_bad.tokens_in_scope = 1;
+	r_bad.eligible_blocks = 1;
+	r_bad.failed_blocks = 1;
+	membrane_runtime_record_injection(c, 1, 0, &r_bad);
+	membrane_runtime_finalize(c, &t);
+	TEST_ASSERT(t.injected_blocks == 2,
+		"the earlier successful blocks are still counted");
+	TEST_ASSERT(t.failed_blocks == 1, "the later failure is also counted");
+	TEST_ASSERT(t.injection_succeeded == 0,
+		"one failed block fails the whole run even with prior "
+		"injected_blocks > 0");
 	membrane_runtime_collector_destroy(c);
 }
 
@@ -982,7 +1081,10 @@ int	main(void)
 	test_behavior_finalize_empty_is_safe();
 	test_record_injection_folds_into_collector();
 	test_record_injection_failure_marks_run_failed();
-	test_record_injection_no_scope_match_is_harmless();
+	test_record_injection_no_scope_match_is_not_success();
+	test_zero_eligible_blocks_is_not_success();
+	test_native_tail_only_is_not_success();
+	test_later_failure_overrides_earlier_success();
 	test_injection_coverage_ratio();
 	test_injection_coverage_ratio_zero_when_nothing_injected();
 	return (0);
