@@ -482,6 +482,12 @@ static bool	run_one_pass(llama_model *model,
 	}
 	run_generation(ctx, vocab, n_vocab, gen_tokens, collector, hook_ctx,
 		debug, capture_logits, teacher_force, &abs_pos, text_out, out);
+	/* The per-step sanity check inside membrane_llama_hook_set_step_
+	 * context() only ever validates the PREVIOUS decode step -- there is
+	 * no next call to trigger it for this pass's true last step, so it
+	 * must be validated explicitly here, before this pass's telemetry is
+	 * ever read. */
+	membrane_llama_hook_finish(hook_ctx);
 	llama_free(ctx);
 	return (out->ok);
 }

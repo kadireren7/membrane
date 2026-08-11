@@ -144,6 +144,14 @@ void	membrane_llama_hook_set_step_context(membrane_llama_hook_ctx_t *ctx,
 		ctx->k_occurrence_this_step.end(), 0u);
 }
 
+void	membrane_llama_hook_finish(membrane_llama_hook_ctx_t *ctx)
+{
+	if (ctx == NULL)
+		return ;
+	if (ctx->is_inject)
+		check_k_occurrence_sanity(ctx);
+}
+
 /*
  * Parses "Kcur-%d" / "Vcur-%d" exactly (ggml_format_name's own "%s-%d"
  * pattern -- see llama_context::graph_get_cb(), src/llama-context.cpp,
@@ -278,7 +286,18 @@ static void	inject_into_tensor(membrane_llama_hook_ctx_t *ctx,
 			}
 			ggml_backend_tensor_set(t, f32_out.data(), 0, ggml_nbytes(t));
 		}
-		if (ctx->debug && result.injected_blocks > 0)
+		else
+		{
+			/* Unreachable in practice -- the callback always passes
+			 * orig_f32_buf for an F32 tensor -- but defensive: never
+			 * report injected_blocks for a reconstruction that had no
+			 * supported write-back path and therefore never reached
+			 * the tensor. */
+			result.ok = 0;
+			result.injected_blocks = 0;
+			result.failed_blocks = 1;
+		}
+		if (ctx->debug && result.ok && result.injected_blocks > 0)
 			fprintf(stderr, "  [debug-runtime] injected %s (layer=%d): "
 				"%llu block(s), native_tail=%llu\n", t->name, layer,
 				(unsigned long long)result.injected_blocks,

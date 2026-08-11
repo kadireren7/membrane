@@ -67,6 +67,20 @@ void	membrane_llama_hook_set_step_context(membrane_llama_hook_ctx_t *ctx,
 			uint64_t token_start_abs, uint64_t n_tokens);
 
 /*
+ * INJECT modes only: validates the FINAL decode step's K-occurrence
+ * counts (see membrane_llama_eval_callback's doc comment on
+ * MEMBRANE_LLAMA_K_AUTHORITATIVE_OCCURRENCE) -- the per-step check
+ * built into membrane_llama_hook_set_step_context() only ever validates
+ * the PREVIOUS step (there being no next call to trigger it for the
+ * true last step of a run). Call this once, after the very last
+ * llama_decode() this hook will ever observe for its current pass,
+ * before reading final telemetry -- otherwise an occurrence-count
+ * anomaly confined to only the last step of a run could go unreported.
+ * A no-op for BASELINE/SHADOW_* modes and safe on a NULL ctx.
+ */
+void	membrane_llama_hook_finish(membrane_llama_hook_ctx_t *ctx);
+
+/*
  * Matches ggml_backend_sched_eval_callback exactly (ggml/include/
  * ggml-backend.h) -- install as params.cb_eval = membrane_llama_eval_
  * callback, params.cb_eval_user_data = ctx. Observes only tensors
