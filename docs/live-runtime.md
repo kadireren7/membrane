@@ -38,9 +38,10 @@ layer's KV cache tensor at a different precision. This phase
 deliberately does **not** use it: that mechanism requires patching
 `third_party/llama.cpp`'s working tree, and its own real-runtime
 validation already found that offline-predicted quality margins did
-not reliably hold (12/26 policy runs cleared their own bar). Phase 5
-needs no submodule modification at all: the eval callback is a stable,
-public API on the unmodified pinned commit
+not reliably transfer to real execution (see `docs/phase4-runtime-
+policy.md` for the full result). Phase 5 needs no submodule
+modification at all: the eval callback is a stable, public API on the
+unmodified pinned commit
 (`c0bc8591e8815c63cb01dd3f051a8b0df02501c9`).
 
 ## What gets observed
@@ -97,18 +98,22 @@ extra time layered on top of an unrelated baseline figure.
 
 ## Validation
 
-`--mode baseline` and `--mode shadow-q8`/`shadow-adaptive`, same
-model/prompt/greedy decoding, must produce identical `token_ids`
-arrays (`--json`) — verified directly for real local runs, not
-asserted. `membrane_runtime_tokens_equal()` (`runtime_core.h`) is the
-reusable, unit-tested comparison helper.
+Because shadow mode does not replace native llama KV state,
+deterministic `baseline` and `shadow-q8`/`shadow-adaptive` runs (same
+model, prompt, and greedy decoding) are expected to produce identical
+`token_ids` arrays. The CLI's `--json` output includes `token_ids`
+specifically so a local real-model run can check this directly.
+`membrane_runtime_tokens_equal()` (`runtime_core.h`) is the reusable,
+unit-tested comparison helper for that check.
 
-## Live-interleaving proof
+## Live-interleaving check
 
 `--debug-runtime` prints, after each `llama_decode()` call returns,
 the number of KV blocks MEMBRANE processed strictly within that step
-(`gen step N: llama decode; membrane processed K KV blocks`) — proof
-the work happens interleaved with generation, not as a post-run pass.
+(`gen step N: llama decode; membrane processed K KV blocks`) — this is
+how a local run can check that MEMBRANE processing happens interleaved
+with generation, not as a post-run pass, rather than a claim recorded
+here as an already-verified fixed result.
 
 ## Limitations
 
