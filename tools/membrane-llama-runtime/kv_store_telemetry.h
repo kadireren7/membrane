@@ -9,6 +9,13 @@
 extern "C" {
 # endif
 
+/* KV storage mode constants -- shared by cli_parse.h (--kv-store) and
+ * decode_loop.h (run_kv_store_pass), so this file (already the
+ * llama-free home of everything else KV-storage-related) is the one
+ * place that owns them, not either CLI-specific header. */
+# define MEMBRANE_KV_STORE_NATIVE	0
+# define MEMBRANE_KV_STORE_Q8		1
+
 /*
  * Product Phase 7: llama-free core for compressed-KV-storage
  * measurement. Like runtime_core.h, this file and its .c never include

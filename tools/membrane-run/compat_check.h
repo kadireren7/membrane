@@ -1,0 +1,60 @@
+#ifndef MEMBRANE_RUN_COMPAT_CHECK_H
+# define MEMBRANE_RUN_COMPAT_CHECK_H
+
+# include <stddef.h>
+# include <stdint.h>
+
+# ifdef __cplusplus
+extern "C" {
+# endif
+
+/*
+ * Llama-free (no ggml/llama header) pre-flight check for --kv q8,
+ * Section 9: fail clearly BEFORE creating a context, rather than
+ * however llama.cpp's own validation happens to fail deep inside
+ * llama_init_from_model. Pure function over plain integers/strings so
+ * it's testable (test_compat_check.c) without a real model.
+ *
+ * Scope, matching this project's own documented limits
+ * (docs/live-runtime.md): verified only for LLM_ARCH_LLAMA, CPU
+ * backend. Flash-attention *availability* itself is a runtime-
+ * resolved property of the backend (see llama-context.cpp's
+ * resolve_fused_ops) that cannot be soundly determined without
+ * actually constructing a context -- this check does not claim to
+ * predict it; it only rejects the inputs that are knowable in advance
+ * to make context construction fail (architecture, head-dimension/
+ * block-size divisibility, degenerate shapes).
+ */
+
+# define MEMBRANE_Q8_0_BLOCK_SIZE	32u
+
+typedef struct s_membrane_compat_result
+{
+	int		ok;
+	char	reason[256];	/* human-readable, only meaningful if !ok */
+}	membrane_compat_result_t;
+
+/*
+ * arch_name: model's "general.architecture" GGUF metadata value (e.g.
+ * "llama"), or NULL/empty if unknown -- treated as unsupported (fail
+ * closed, not fail open).
+ * n_embd/n_head/n_head_kv: real model hparams (llama_model_n_*).
+ * ctx_size: the resolved (nonzero) context size the caller intends to
+ * use.
+ * kv_mode: MEMBRANE_KV_STORE_NATIVE (always ok, no checks) or
+ * MEMBRANE_KV_STORE_Q8 (see kv_store_telemetry.h for the constants;
+ * not included here to keep this header dependency-free -- pass the
+ * raw 0/1 value).
+ *
+ * Returns 1 (out->ok = 1) if supported, 0 otherwise with out->reason
+ * filled in. Never crashes on NULL/zero/negative inputs.
+ */
+int	membrane_check_kv_compat(const char *arch_name, int32_t n_embd,
+		int32_t n_head, int32_t n_head_kv, uint32_t ctx_size, int kv_mode,
+		membrane_compat_result_t *out);
+
+# ifdef __cplusplus
+}
+# endif
+
+#endif

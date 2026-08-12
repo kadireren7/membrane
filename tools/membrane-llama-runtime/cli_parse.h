@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "runtime_core.h"
+#include "kv_store_telemetry.h"	/* MEMBRANE_KV_STORE_NATIVE/Q8 */
 
 /*
  * membrane-llama-run's CLI parsing, split out from main.cpp so it can be
@@ -60,9 +61,6 @@ typedef struct s_run_opts
 													 * matching existing
 													 * behavior */
 }	run_opts_t;
-
-# define MEMBRANE_KV_STORE_NATIVE	0
-# define MEMBRANE_KV_STORE_Q8		1
 
 bool	parse_u64_strict(const char *s, uint64_t *out);
 void	usage(FILE *out);

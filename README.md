@@ -4,9 +4,51 @@
 [![CodeQL](https://github.com/kadireren7/membrane/actions/workflows/codeql.yml/badge.svg)](https://github.com/kadireren7/membrane/actions/workflows/codeql.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-MEMBRANE is an open-source research prototype for adaptive and
-mixed-precision LLM KV-cache storage, combining CPU quantization,
-synthesizable RTL, and near-memory/CXL simulation research.
+MEMBRANE is an experimental KV-cache memory runtime for local LLM
+inference, built on an open-source research project spanning CPU
+quantization, synthesizable RTL, and near-memory/CXL simulation.
+
+It can run llama.cpp-compatible models with a Q8_0 KV cache instead of
+the native full-precision cache, reducing KV-cache memory while
+preserving a usable inference path — measured, not assumed (see
+"Measured Example" below). `v0.2.0-rc1`, single model/host verified so
+far; see "Limitations."
+
+## Quick Start
+
+```bash
+git clone --recursive https://github.com/kadireren7/membrane
+cd membrane
+cmake -S . -B build-llama -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-llama -j --target membrane-run
+
+./build-llama/tools/membrane-run/membrane-run \
+  --model model.gguf --prompt "Hello" --ctx 4096 --kv q8
+```
+
+`--kv q8` is opt-in — the default is `native` (unmodified llama.cpp
+behavior), so nothing about model output changes unless you ask for it.
+`membrane-run --help` documents every flag, the native/q8 trade-off,
+and exit codes. See `docs/live-runtime.md` for the mechanism and
+`tools/membrane-llama-runtime/` (`membrane-llama-run`) for the
+diagnostic shadow/injection tooling this is built on top of.
+
+## Measured Example
+
+`results/v0.2/smollm2-q8-memory.json` (committed, machine-checkable via
+`scripts/verify-results.py`) — SmolLM2-135M, one prompt, CPU, single
+host:
+
+| context | native KV | q8 KV | native RSS after ctx | q8 RSS after ctx | reduction |
+|---|---|---|---|---|---|
+| 2048 | 45.00 MiB | 23.91 MiB | 335,964 kB | 314,644 kB | 6.35% |
+| 8192 | 180.00 MiB | 95.62 MiB | 474,480 kB | 388,268 kB | 18.17% |
+
+Reduction grows with context size (full 5-point sweep in the artifact);
+token identity and top1 preservation stayed perfect at these sizes on
+this prompt, logit drift stayed small. **Single model, single prompt,
+single CPU host — not a general claim.** Reproduce with
+`scripts/benchmark-v0.2.sh MODEL.gguf`.
 
 ## Why MEMBRANE
 
@@ -94,23 +136,21 @@ had to stay.
 No result above implies physical FPGA hardware, physical CXL hardware,
 measured Fmax, timing closure, or measured power — see "Limitations."
 
-## Live llama.cpp runtime (Phase 5-7)
+## Live llama.cpp runtime (Phase 5-8)
 
-`tools/membrane-llama-runtime/` drives real llama.cpp inference with
+`membrane-run` (Product Phase 8, see "Quick Start" above) is the
+user-facing entry point: one normal decode pass by default (no hidden
+comparison work), or `--compare-kv` for the full native-vs-q8
+memory/quality/performance comparison. It's built on
+`tools/membrane-llama-runtime/` (`membrane-llama-run`, kept as the
+diagnostic/legacy tool), which drives real llama.cpp inference with
 MEMBRANE observing (`shadow-*`), authoritatively injecting
 reconstructed values (`inject-*`), or — `--kv-store q8` — replacing the
 KV cache's own allocated tensor type with genuinely compressed Q8_0
 storage (no `third_party/llama.cpp` patch required; see
-`docs/live-runtime.md`). `--kv-store q8` is the first mode here with an
-actual process-RAM-reduction claim, backed by real `/proc/self/status`
-RSS measurement, not a theoretical formula (a local, uncommitted
-cross-check against llama.cpp's own allocator log also supports it,
-but only the RSS measurement is repository-checkable here). Local
-numbers (single model, single host) are in the PR that introduced it,
-not reproduced here — see `docs/live-runtime.md` for the
-mechanism and how to reproduce.
+`docs/live-runtime.md`).
 
-## Quick start
+## Build from source (llama-free library only)
 
 ```bash
 git clone --recurse-submodules https://github.com/kadireren7/membrane
@@ -120,9 +160,13 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-`scripts/demo.sh --quick` additionally runs the bit-exact quantization
-parity test and the full FPGA Verilator cosimulation from small,
-already-committed fixtures — no model download, finishes in minutes.
+This builds the portable quantization/storage/FPGA-cosim library and
+tools with no `third_party/llama.cpp` submodule and no model file
+needed — see "Quick Start" above for the llama.cpp-backed
+`membrane-run` build. `scripts/demo.sh --quick` additionally runs the
+bit-exact quantization parity test and the full FPGA Verilator
+cosimulation from small, already-committed fixtures — no model
+download, finishes in minutes.
 
 ## Try the demo
 
@@ -298,6 +342,14 @@ academic paper, and outreach material — all at
 - **Some conclusions are simulation- or synthesis-based**, explicitly
   labeled as such — see `docs/reproduction.md` and each result's own
   "Evidence type" above.
+- **`membrane-run --kv q8` (Product Phase 8)**: verified on one model
+  (SmolLM2-135M), one prompt, CPU-only, single host — the "Measured
+  Example" numbers above are not a general RAM-reduction claim across
+  models/prompts/hosts. Only `LLM_ARCH_LLAMA` models are supported;
+  `membrane-run` checks compatibility before creating a q8 context and
+  fails clearly (never silently falls back to native) if unsupported.
+  No speedup claim — performance is reported as measured in both
+  directions across local runs.
 
 ## Research record
 

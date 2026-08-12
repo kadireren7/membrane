@@ -10,9 +10,11 @@ check's PASS/FAIL and, on failure, exactly which number/source disagreed.
 
 Exit code: 0 if every check passes, 1 otherwise.
 """
+import argparse
 import csv
 import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -20,6 +22,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FAILURES = []
 CHECK_COUNT = 0
+V02_ARTIFACT_PATH = REPO_ROOT / "results" / "v0.2" / "smollm2-q8-memory.json"
 
 
 def check(name):
@@ -246,10 +249,216 @@ def _c13():
 	return len(missing) == 0, f"missing: {missing}" if missing else f"{len(cited)} paths checked"
 
 
+# ---------------------------------------------------------------------
+# 5. Product Phase 8: v0.2 compressed-KV-storage memory/quality artifact
+# (results/v0.2/smollm2-q8-memory.json). ARTIFACT_PATH is set to the
+# committed path by default; --artifact PATH overrides it so
+# scripts/benchmark-v0.2.sh can ad-hoc-verify freshly generated data
+# before anyone decides to commit it as the new canonical artifact.
+# ---------------------------------------------------------------------
+ARTIFACT_PATH = V02_ARTIFACT_PATH
+_ARTIFACT_CACHE = {}
+
+
+def _load_artifact():
+	key = str(ARTIFACT_PATH)
+	if key not in _ARTIFACT_CACHE:
+		_ARTIFACT_CACHE[key] = json.loads(ARTIFACT_PATH.read_text())
+	return _ARTIFACT_CACHE[key]
+
+
+def _no_nan_inf(obj, path=""):
+	"""Returns a list of JSON-path strings where a float is NaN/Infinity
+	-- meaningless in this context since the artifact is loaded from
+	already-parsed JSON (Python's json module accepts bare nan/Infinity
+	tokens by default despite them being invalid strict JSON), so this
+	still needs to check explicitly rather than assume json.loads()
+	already rejected them."""
+	bad = []
+	if isinstance(obj, dict):
+		for k, v in obj.items():
+			bad.extend(_no_nan_inf(v, f"{path}.{k}"))
+	elif isinstance(obj, list):
+		for i, v in enumerate(obj):
+			bad.extend(_no_nan_inf(v, f"{path}[{i}]"))
+	elif isinstance(obj, float) and not math.isfinite(obj):
+		bad.append(path or "<root>")
+	return bad
+
+
+@check("v0.2 artifact exists, is valid JSON, and has schema_version 1")
+def _c14():
+	if not ARTIFACT_PATH.exists():
+		return False, f"{ARTIFACT_PATH} does not exist"
+	a = _load_artifact()
+	ok = a.get("schema_version") == 1
+	return ok, f"schema_version={a.get('schema_version')!r}"
+
+
+@check("v0.2 artifact: git_sha looks like a real commit SHA (40 hex chars)")
+def _c15():
+	a = _load_artifact()
+	sha = a.get("git_sha", "")
+	ok = bool(re.fullmatch(r"[0-9a-f]{40}", sha))
+	return ok, f"git_sha={sha!r}"
+
+
+@check("v0.2 artifact: context sequence is present and strictly increasing")
+def _c16():
+	a = _load_artifact()
+	ctxs = [row["ctx"] for row in a.get("contexts", [])]
+	ok = len(ctxs) >= 2 and ctxs == sorted(set(ctxs)) and len(ctxs) == len(set(ctxs))
+	return ok, f"contexts={ctxs}"
+
+
+@check("v0.2 artifact: q8 KV bytes < native KV bytes at every context, "
+	"ratio arithmetic self-consistent")
+def _c17():
+	a = _load_artifact()
+	bad = []
+	for row in a.get("contexts", []):
+		native = row["native_kv_allocated_bytes"]
+		q8 = row["q8_kv_allocated_bytes"]
+		ratio = row["kv_bytes_ratio"]
+		if not (q8 < native):
+			bad.append(f"ctx={row['ctx']}: q8({q8}) not < native({native})")
+			continue
+		expected_ratio = native / q8
+		if abs(expected_ratio - ratio) > 1e-3:
+			bad.append(f"ctx={row['ctx']}: ratio={ratio} but native/q8={expected_ratio:.6f}")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(a.get('contexts', []))} contexts checked"
+
+
+@check("v0.2 artifact: positive RSS reduction at every recorded context")
+def _c18():
+	a = _load_artifact()
+	bad = []
+	for row in a.get("contexts", []):
+		native_rss = row["native_rss_after_context_kb"]
+		q8_rss = row["q8_rss_after_context_kb"]
+		pct = row["rss_reduction_pct"]
+		if not (q8_rss < native_rss):
+			bad.append(f"ctx={row['ctx']}: q8_rss({q8_rss}) not < native_rss({native_rss})")
+			continue
+		expected_pct = 100.0 * (native_rss - q8_rss) / native_rss
+		if abs(expected_pct - pct) > 0.01:
+			bad.append(f"ctx={row['ctx']}: rss_reduction_pct={pct} but computed={expected_pct:.4f}")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(a.get('contexts', []))} contexts checked"
+
+
+@check("v0.2 artifact: RSS reduction % is monotonically non-decreasing "
+	"with context size")
+def _c19():
+	a = _load_artifact()
+	rows = sorted(a.get("contexts", []), key=lambda r: r["ctx"])
+	pcts = [r["rss_reduction_pct"] for r in rows]
+	non_decreasing = all(pcts[i] <= pcts[i + 1] + 1e-9 for i in range(len(pcts) - 1))
+	return non_decreasing, f"pcts by increasing ctx: {pcts}"
+
+
+@check("v0.2 artifact: no absolute filesystem paths anywhere in the file")
+def _c20():
+	text = ARTIFACT_PATH.read_text()
+	# Any POSIX absolute path (leading '/', not preceded by a word/dot/
+	# dash character so "and/or" doesn't match, at least two path
+	# segments so a bare "/" doesn't match) or a Windows drive-letter
+	# path -- deliberately NOT limited to specific prefixes like
+	# /home/ or /Users/: a leaked /tmp/..., /mnt/..., or /var/... path
+	# is just as much a privacy problem and must be caught too.
+	posix = re.findall(
+		r'(?<![\w.\-])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		text,
+	)
+	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
+	hits = posix + windows
+	return len(hits) == 0, f"suspicious path-like strings: {hits[:5]}" if hits else "none found"
+
+
+@check("v0.2 artifact: no prompt text (only the prompt fixture's basename)")
+def _c21():
+	a = _load_artifact()
+	fixture = a.get("prompt_fixture", "")
+	ok = bool(fixture) and "/" not in fixture and "\n" not in fixture
+	# The prompt fixture file itself, if present under benchmarks/kv/
+	# prompts/, must never appear verbatim inside the artifact text.
+	prompt_path = REPO_ROOT / "benchmarks" / "kv" / "prompts" / fixture
+	if ok and prompt_path.exists():
+		prompt_text = prompt_path.read_text().strip()
+		artifact_text = ARTIFACT_PATH.read_text()
+		if prompt_text and prompt_text in artifact_text:
+			return False, f"prompt fixture text found verbatim in the artifact"
+	return ok, f"prompt_fixture={fixture!r} (basename only, no full prompt text embedded)"
+
+
+@check("v0.2 artifact: no NaN/Infinity anywhere in the file")
+def _c22():
+	a = _load_artifact()
+	bad = _no_nan_inf(a)
+	return len(bad) == 0, f"non-finite at: {bad[:5]}" if bad else "all values finite"
+
+
+@check("v0.2 artifact: quality fields are in valid ranges at every context")
+def _c23():
+	a = _load_artifact()
+	bad = []
+	for row in a.get("contexts", []):
+		q = row.get("quality", {})
+		top1 = q.get("top1_preservation")
+		rel_l2 = q.get("logit_rel_l2")
+		fd = q.get("first_divergence")
+		if top1 is None or not (0.0 <= top1 <= 1.0):
+			bad.append(f"ctx={row['ctx']}: top1_preservation={top1} out of [0,1]")
+		if rel_l2 is None or rel_l2 < 0.0:
+			bad.append(f"ctx={row['ctx']}: logit_rel_l2={rel_l2} negative")
+		if fd is None or fd < -1:
+			bad.append(f"ctx={row['ctx']}: first_divergence={fd} invalid (must be -1 or >= 0)")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(a.get('contexts', []))} contexts checked"
+
+
+@check("v0.2 artifact: headline (largest-context) RSS-reduction "
+	"arithmetic is internally consistent (README's number, if any, "
+	"must trace here)")
+def _c24():
+	# The committed default artifact always includes ctx=8192, but
+	# scripts/benchmark-v0.2.sh explicitly supports a custom
+	# MEMBRANE_CONTEXTS sweep for --artifact ad-hoc verification (e.g.
+	# to check a fresh run before deciding whether to commit it) --
+	# hardcoding 8192 here would fail every such custom sweep that
+	# doesn't happen to include that exact value. "Headline" is
+	# whichever context is largest in THIS artifact, not a fixed
+	# number.
+	a = _load_artifact()
+	rows = a.get("contexts", [])
+	if not rows:
+		return False, "no contexts in the artifact"
+	row = max(rows, key=lambda r: r["ctx"])
+	native_rss = row["native_rss_after_context_kb"]
+	q8_rss = row["q8_rss_after_context_kb"]
+	expected_pct = 100.0 * (native_rss - q8_rss) / native_rss
+	ok = abs(expected_pct - row["rss_reduction_pct"]) < 0.01
+	return ok, (f"ctx={row['ctx']} (largest) rss_reduction_pct="
+		f"{row['rss_reduction_pct']:.2f}% (recomputed={expected_pct:.2f}%)")
+
+
 def main() -> int:
-	for fn in (
-		_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12, _c13,
-	):
+	global ARTIFACT_PATH
+	ap = argparse.ArgumentParser()
+	ap.add_argument("--artifact", type=Path, default=None,
+		help="verify only the v0.2 artifact checks against this path "
+			"instead of the committed results/v0.2/smollm2-q8-memory.json "
+			"(used by scripts/benchmark-v0.2.sh --verify on freshly "
+			"generated, not-yet-committed data)")
+	args = ap.parse_args()
+
+	if args.artifact is not None:
+		ARTIFACT_PATH = args.artifact
+		checks = (_c14, _c15, _c16, _c17, _c18, _c19, _c20, _c21, _c22, _c23, _c24)
+	else:
+		checks = (
+			_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12, _c13,
+			_c14, _c15, _c16, _c17, _c18, _c19, _c20, _c21, _c22, _c23, _c24,
+		)
+	for fn in checks:
 		fn()
 	print()
 	print(f"{CHECK_COUNT - len(FAILURES)}/{CHECK_COUNT} checks passed")

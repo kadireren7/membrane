@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "membrane_version": "0.2.0-rc1",
+  "git_sha": "e572bad1870218ecd47502ec2cdc9ca0f626f0c5",
+  "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+  "prompt_fixture": "short.txt",
+  "gen_tokens": 32,
+  "host_label": "dev-linux-x86_64-single-host",
+  "methodology": "native and q8 KV storage measured via two separate, single-context membrane-run invocations each (no cross-process RSS contamination -- see docs/live-runtime.md's Phase 7 methodology-fix note); quality via membrane-run --compare-kv (native free-running reference vs. q8 teacher-forced on the same reference tokens, aligned per-step logit/NLL comparison). CPU-only, single host, LLM_ARCH_LLAMA only, greedy decoding.",
+  "contexts": [
+    {
+      "ctx": 512,
+      "native_kv_allocated_bytes": 11796480,
+      "q8_kv_allocated_bytes": 6266880,
+      "kv_bytes_ratio": 1.882353,
+      "native_rss_after_context_kb": 301252,
+      "q8_rss_after_context_kb": 296252,
+      "rss_reduction_pct": 1.6597,
+      "quality": {
+        "token_identity": true,
+        "first_divergence": -1,
+        "logit_rel_l2": 0.008721,
+        "top1_preservation": 1.0,
+        "delta_nll": 0.001825
+      },
+      "performance": {
+        "native_generation_tok_per_s": 66.814127,
+        "q8_generation_tok_per_s": 68.892121
+      }
+    },
+    {
+      "ctx": 1024,
+      "native_kv_allocated_bytes": 23592960,
+      "q8_kv_allocated_bytes": 12533760,
+      "kv_bytes_ratio": 1.882353,
+      "native_rss_after_context_kb": 312908,
+      "q8_rss_after_context_kb": 302472,
+      "rss_reduction_pct": 3.3352,
+      "quality": {
+        "token_identity": true,
+        "first_divergence": -1,
+        "logit_rel_l2": 0.008721,
+        "top1_preservation": 1.0,
+        "delta_nll": 0.001825
+      },
+      "performance": {
+        "native_generation_tok_per_s": 65.299949,
+        "q8_generation_tok_per_s": 68.857213
+      }
+    },
+    {
+      "ctx": 2048,
+      "native_kv_allocated_bytes": 47185920,
+      "q8_kv_allocated_bytes": 25067520,
+      "kv_bytes_ratio": 1.882353,
+      "native_rss_after_context_kb": 335964,
+      "q8_rss_after_context_kb": 314644,
+      "rss_reduction_pct": 6.3459,
+      "quality": {
+        "token_identity": true,
+        "first_divergence": -1,
+        "logit_rel_l2": 0.008721,
+        "top1_preservation": 1.0,
+        "delta_nll": 0.001825
+      },
+      "performance": {
+        "native_generation_tok_per_s": 64.438847,
+        "q8_generation_tok_per_s": 69.489334
+      }
+    },
+    {
+      "ctx": 4096,
+      "native_kv_allocated_bytes": 94371840,
+      "q8_kv_allocated_bytes": 50135040,
+      "kv_bytes_ratio": 1.882353,
+      "native_rss_after_context_kb": 382028,
+      "q8_rss_after_context_kb": 339172,
+      "rss_reduction_pct": 11.218,
+      "quality": {
+        "token_identity": true,
+        "first_divergence": -1,
+        "logit_rel_l2": 0.008721,
+        "top1_preservation": 1.0,
+        "delta_nll": 0.001825
+      },
+      "performance": {
+        "native_generation_tok_per_s": 65.695951,
+        "q8_generation_tok_per_s": 69.97052
+      }
+    },
+    {
+      "ctx": 8192,
+      "native_kv_allocated_bytes": 188743680,
+      "q8_kv_allocated_bytes": 100270080,
+      "kv_bytes_ratio": 1.882353,
+      "native_rss_after_context_kb": 474480,
+      "q8_rss_after_context_kb": 388268,
+      "rss_reduction_pct": 18.1698,
+      "quality": {
+        "token_identity": true,
+        "first_divergence": -1,
+        "logit_rel_l2": 0.008721,
+        "top1_preservation": 1.0,
+        "delta_nll": 0.001825
+      },
+      "performance": {
+        "native_generation_tok_per_s": 63.122919,
+        "q8_generation_tok_per_s": 67.468461
+      }
+    }
+  ]
+}
