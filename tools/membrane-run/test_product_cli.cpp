@@ -227,6 +227,25 @@ static void	test_quiet_and_verbose_mutually_exclusive(void)
 		"--quiet and --verbose together is a CLI error");
 }
 
+static void	test_include_text_requires_json(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--include-text");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--include-text without --json is a CLI error -- it has no "
+		"defined effect on human-readable output");
+
+	args = base_args();
+	args.push_back("--json");
+	args.push_back("--include-text");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--include-text with --json is accepted");
+	TEST_ASSERT(o.include_text == 1, "include_text flag is stored");
+}
+
 static void	test_help_and_version_short_circuit(void)
 {
 	std::vector<std::string>	args;
@@ -306,6 +325,7 @@ int	main(void)
 	test_ctx_and_gen_tokens_malformed_rejected();
 	test_ctx_and_gen_tokens_valid_stored();
 	test_quiet_and_verbose_mutually_exclusive();
+	test_include_text_requires_json();
 	test_help_and_version_short_circuit();
 	test_version_output_format();
 	test_help_mentions_key_concepts();

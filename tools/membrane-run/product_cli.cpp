@@ -211,5 +211,11 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 		return (fprintf(stderr,
 				"membrane-run: --quiet and --verbose are mutually "
 				"exclusive\n"), MEMBRANE_EXIT_CLI_ERROR);
+	if (o->include_text && !o->want_json)
+		return (fprintf(stderr,
+				"membrane-run: --include-text requires --json -- it has "
+				"no defined effect on human-readable output (which "
+				"already prints generated text by default)\n"),
+			MEMBRANE_EXIT_CLI_ERROR);
 	return (MEMBRANE_EXIT_SUCCESS);
 }

@@ -83,11 +83,15 @@ Quality at every context: token identity preserved, top1 preservation
 
 ## Model/backend scope
 
-CPU backend only. Verified against `LLM_ARCH_LLAMA` (SmolLM2-135M,
-SmolLM2-360M-family checkpoints; a second, differently-shaped local
-model — `stories15M.gguf`, head dimension 48 — was used specifically to
+CPU backend only. `membrane-run` itself was verified in this phase
+against two local `LLM_ARCH_LLAMA` models: SmolLM2-135M (the full
+normal-mode/compare-mode/memory sweep this document's numbers come
+from) and `stories15M.gguf` (head dimension 48, used specifically to
 exercise the compatibility-rejection path end-to-end, confirming it
-fails closed rather than crashing or silently falling back).
+fails closed rather than crashing or silently falling back — not a
+memory/quality claim for that model). SmolLM2-360M was exercised by
+earlier phases' diagnostic tooling (Phase 4-6), not by `membrane-run`
+in this phase -- not claimed as verified here.
 
 This is a release-candidate tag preparation document only — no tag has
 been created yet.

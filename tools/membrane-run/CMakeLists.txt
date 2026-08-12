@@ -33,8 +33,16 @@ set_target_properties(membrane-run PROPERTIES
   SKIP_BUILD_RPATH FALSE)
 install(TARGETS membrane-run RUNTIME DESTINATION bin)
 if(BUILD_SHARED_LIBS)
+  # ggml-blas is optional (only built when GGML_BLAS=ON, not this
+  # project's default) -- the TARGET guard below skips it cleanly when
+  # absent. Included here so that IF a caller does enable GGML_BLAS,
+  # its shared library still gets the same RPATH/install treatment as
+  # the rest -- ggml links against it, and RUNPATH is not transitively
+  # inherited (see the comment below), so an omitted ggml-blas would
+  # fail to load post-install exactly like the bug this whole block
+  # exists to fix.
   foreach(_membrane_run_dep IN ITEMS llama ggml ggml-base ggml-cpu
-      membrane_core)
+      ggml-blas membrane_core)
     if(TARGET ${_membrane_run_dep})
       # libllama.so/libggml*.so ship with no RPATH of their own (not
       # this project's target -- llama.cpp's own CMake sets none), so

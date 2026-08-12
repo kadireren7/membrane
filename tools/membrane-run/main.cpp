@@ -127,8 +127,13 @@ static void	print_startup_summary(const membrane_run_opts_t &o,
 	fprintf(stderr, "context    %u\n", ctx_size);
 	fprintf(stderr, "kv         %s\n",
 		o.kv_mode == MEMBRANE_KV_STORE_Q8 ? "Q8_0" : "native (F16)");
-	fprintf(stderr, "flash attn %s\n",
-		o.kv_mode == MEMBRANE_KV_STORE_Q8 ? "enabled" : "auto");
+	/* run_kv_store_pass() (decode_loop.cpp) forces flash attention
+	 * ENABLED unconditionally for both native and q8 -- not just q8 --
+	 * so a --compare-kv run never mixes "KV cache dtype" with "which
+	 * attention kernel ran" as a second, uncontrolled variable. The
+	 * summary must report what actually runs, not a mode-dependent
+	 * guess. */
+	fprintf(stderr, "flash attn enabled\n");
 	fprintf(stderr, "kv bytes   %.2f MiB (%s, from real model "
 		"hparams -- not measured until context creation)\n",
 		(double)kv_bytes / (1024.0 * 1024.0),
@@ -147,6 +152,34 @@ static void	stream_token(const char *piece, size_t piece_len, int step,
 	(void)ud;
 	fwrite(piece, 1, piece_len, stdout);
 	fflush(stdout);
+}
+
+/* RFC 8259 requires every control character (< 0x20) inside a JSON
+ * string to be escaped -- a raw tab or newline in generated text
+ * previously either passed through unescaped (invalid JSON) or was
+ * silently dropped with no replacement (corrupting --include-text's
+ * output relative to what the model actually generated). Both are
+ * real, reachable bugs: models produce tabs and newlines routinely. */
+static void	print_json_escaped(const std::string &text)
+{
+	for (unsigned char c : text)
+	{
+		if (c == '"' || c == '\\')
+		{
+			putchar('\\');
+			putchar(c);
+		}
+		else if (c == '\n')
+			fputs("\\n", stdout);
+		else if (c == '\r')
+			fputs("\\r", stdout);
+		else if (c == '\t')
+			fputs("\\t", stdout);
+		else if (c < 0x20)
+			printf("\\u%04x", c);
+		else
+			putchar(c);
+	}
 }
 
 static void	print_run_json(const membrane_run_opts_t &o,
@@ -176,13 +209,7 @@ static void	print_run_json(const membrane_run_opts_t &o,
 	if (o.include_text)
 	{
 		printf(",\"text\":\"");
-		for (char c : text)
-		{
-			if (c == '"' || c == '\\')
-				putchar('\\');
-			if ((unsigned char)c >= 0x20 || c == '\t')
-				putchar(c);
-		}
+		print_json_escaped(text);
 		printf("\"");
 	}
 	printf("}\n");
@@ -442,7 +469,7 @@ int	main(int argc, char **argv)
 	{
 		fprintf(stderr, "membrane-run: failed to load model '%s'\n",
 			o.model_path);
-		return (MEMBRANE_EXIT_MODEL_ERROR);
+		return (llama_backend_free(), MEMBRANE_EXIT_MODEL_ERROR);
 	}
 	model_label = membrane_runtime_safe_basename(o.model_path);
 	vocab = llama_model_get_vocab(model);
@@ -453,11 +480,26 @@ int	main(int argc, char **argv)
 	if (rc < 0)
 	{
 		fprintf(stderr, "membrane-run: tokenization failed\n");
-		return (llama_model_free(model), MEMBRANE_EXIT_RUNTIME_ERROR);
+		llama_model_free(model);
+		return (llama_backend_free(), MEMBRANE_EXIT_RUNTIME_ERROR);
 	}
 	prompt_tokens.resize(rc);
 	ctx_size = o.ctx > 0 ? o.ctx
 		: (uint32_t)prompt_tokens.size() + (uint32_t)o.gen_tokens + 8;
+	/* An explicit --ctx too small to even hold the prompt previously
+	 * surfaced as an opaque "kv-store context creation failed" or
+	 * "kv-store prompt decode failed" from deep inside decode_loop.cpp
+	 * -- this is the user-facing product CLI, so name the real cause
+	 * (the requested --ctx value) instead of an unrelated-sounding
+	 * internal failure. */
+	if (o.ctx > 0 && (uint64_t)o.ctx <= prompt_tokens.size())
+	{
+		fprintf(stderr, "membrane-run: --ctx %u is too small for this "
+			"prompt (%zu tokens) -- need at least %zu\n", o.ctx,
+			prompt_tokens.size(), prompt_tokens.size() + 1);
+		llama_model_free(model);
+		return (llama_backend_free(), MEMBRANE_EXIT_CLI_ERROR);
+	}
 	read_model_shape(model, &shape);
 	if (o.kv_mode == MEMBRANE_KV_STORE_Q8 || o.compare_kv)
 	{
@@ -467,7 +509,8 @@ int	main(int argc, char **argv)
 		{
 			fprintf(stderr, "MEMBRANE: Q8 KV storage unsupported for "
 				"this model: %s.\n", compat.reason);
-			return (llama_model_free(model), MEMBRANE_EXIT_UNSUPPORTED_KV);
+			llama_model_free(model);
+			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
 		}
 	}
 	if (o.compare_kv)

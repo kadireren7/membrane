@@ -359,11 +359,18 @@ def _c19():
 @check("v0.2 artifact: no absolute filesystem paths anywhere in the file")
 def _c20():
 	text = ARTIFACT_PATH.read_text()
-	# Matches a POSIX absolute path (leading '/', at least one more
-	# path segment) OR a Windows drive-letter path -- deliberately
-	# broad since this only needs to catch accidental leakage, not
-	# parse every possible path grammar.
-	hits = re.findall(r'"[^"]*(?:/home/|/Users/|/root/|[A-Za-z]:\\\\)[^"]*"', text)
+	# Any POSIX absolute path (leading '/', not preceded by a word/dot/
+	# dash character so "and/or" doesn't match, at least two path
+	# segments so a bare "/" doesn't match) or a Windows drive-letter
+	# path -- deliberately NOT limited to specific prefixes like
+	# /home/ or /Users/: a leaked /tmp/..., /mnt/..., or /var/... path
+	# is just as much a privacy problem and must be caught too.
+	posix = re.findall(
+		r'(?<![\w.\-])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		text,
+	)
+	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
+	hits = posix + windows
 	return len(hits) == 0, f"suspicious path-like strings: {hits[:5]}" if hits else "none found"
 
 
@@ -408,19 +415,29 @@ def _c23():
 	return len(bad) == 0, "; ".join(bad) if bad else f"{len(a.get('contexts', []))} contexts checked"
 
 
-@check("v0.2 artifact: headline ctx=8192 RSS-reduction arithmetic is "
-	"internally consistent (README's number, if any, must trace here)")
+@check("v0.2 artifact: headline (largest-context) RSS-reduction "
+	"arithmetic is internally consistent (README's number, if any, "
+	"must trace here)")
 def _c24():
+	# The committed default artifact always includes ctx=8192, but
+	# scripts/benchmark-v0.2.sh explicitly supports a custom
+	# MEMBRANE_CONTEXTS sweep for --artifact ad-hoc verification (e.g.
+	# to check a fresh run before deciding whether to commit it) --
+	# hardcoding 8192 here would fail every such custom sweep that
+	# doesn't happen to include that exact value. "Headline" is
+	# whichever context is largest in THIS artifact, not a fixed
+	# number.
 	a = _load_artifact()
-	rows = {r["ctx"]: r for r in a.get("contexts", [])}
-	if 8192 not in rows:
-		return False, "no ctx=8192 row in the artifact"
-	row = rows[8192]
+	rows = a.get("contexts", [])
+	if not rows:
+		return False, "no contexts in the artifact"
+	row = max(rows, key=lambda r: r["ctx"])
 	native_rss = row["native_rss_after_context_kb"]
 	q8_rss = row["q8_rss_after_context_kb"]
 	expected_pct = 100.0 * (native_rss - q8_rss) / native_rss
 	ok = abs(expected_pct - row["rss_reduction_pct"]) < 0.01
-	return ok, f"ctx=8192 rss_reduction_pct={row['rss_reduction_pct']:.2f}% (recomputed={expected_pct:.2f}%)"
+	return ok, (f"ctx={row['ctx']} (largest) rss_reduction_pct="
+		f"{row['rss_reduction_pct']:.2f}% (recomputed={expected_pct:.2f}%)")
 
 
 def main() -> int:
