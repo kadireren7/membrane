@@ -1,14 +1,18 @@
-# Live llama.cpp shadow/injection runtime (Product Phase 5/6)
+# Live llama.cpp shadow/injection/compressed-storage runtime (Product Phase 5/6/7)
 
-The live runtime integration: MEMBRANE observes (Phase 5, **Level B**)
-and, for `inject-*` modes (Phase 6, **Level C2**), authoritatively
-writes back reconstructed K/V projection values *while* `llama.cpp` is
+The live runtime integration: MEMBRANE observes (Phase 5, **Level B**),
+for `inject-*` modes (Phase 6, **Level C2**), authoritatively writes
+back reconstructed K/V projection values *while* `llama.cpp` is
 actually generating tokens, in memory, with no `.kvdump`/`.memkv`
-round-trip. In every SHADOW mode, native llama.cpp KV remains the sole
+round-trip, and, for `--kv-store q8` (Phase 7), replaces the KV cache's
+own **allocated tensor type** so the authoritative store is genuinely
+compressed. In every SHADOW mode, native llama.cpp KV remains the sole
 authoritative store for attention. In every INJECT mode, native KV
 cache *allocation* is still unchanged (never a process-memory claim),
 but the tensor that actually feeds the cache write is replaced with
-MEMBRANE's reconstruction, within the scope requested.
+MEMBRANE's reconstruction, within the scope requested. `--kv-store q8`
+is the first mode in this tool where an actual RAM reduction claim is
+made — see "Compressed KV storage" below.
 
 ## Architecture
 
@@ -166,6 +170,63 @@ write-back, so a local run can directly observe that downstream logits
 change in response (proof write-back is consumed, not a silent no-op).
 Never set for a reported run.
 
+## Compressed KV storage (Product Phase 7)
+
+**Mechanism.** `--kv-store q8` is orthogonal to `--mode` (requires
+`--mode baseline`; rejected in combination with any shadow/inject
+mode) and needs **no `third_party/llama.cpp` modification at all** —
+not even the unpatched eval-callback hook Phase 5/6 use. It sets
+`llama_context_params.type_k`/`.type_v` to `GGML_TYPE_Q8_0` and
+`flash_attn_type` to `LLAMA_FLASH_ATTN_TYPE_ENABLED`, both genuinely
+public, already-unpatched fields — the same mechanism upstream
+llama.cpp's own `-ctk q8_0 -ctv q8_0 -fa` flags use. The KV cache
+tensor (`cache_k_l%d`/`cache_v_l%d`) is allocated at that type
+directly by `llama-kv-cache.cpp`; `ggml_cpy()` quantizes on write and
+`ggml_flash_attn_ext()` dequantizes on read, both inside llama.cpp/
+ggml's own kernels. There is no MEMBRANE-authored quantize/dequantize
+codec step in this path (unlike Phase 5/6's codec, and unlike this
+mode's own quality-comparison passes below, which do allocate a
+per-step logit buffer -- see "Scratch accounting").
+
+**Scratch accounting.** The one MEMBRANE-owned allocation on this path
+is `gen_run_result_t::logits` — a per-generation-step `n_vocab`-float
+vector, held only by the comparison-only native-reference and
+teacher-forced passes (never by the canonical, memory-reported q8
+pass itself, which doesn't need its own logits and is built with
+capture disabled). `scratch_peak_bytes` in the telemetry is this
+buffer's real size (`steps * n_vocab * sizeof(float)`), not a
+placeholder.
+
+**Why flash attention is forced on.** Upstream llama.cpp hard-errors
+(`llama_init_from_model` returns `NULL`) if a quantized V cache is
+requested with flash attention disabled
+(`llama-context.cpp`: `"V cache quantization requires flash_attn"`).
+`--kv-store q8` sets `ENABLED` explicitly rather than relying on
+`AUTO`'s runtime resolution, since the cache's `v_trans` memory layout
+is decided once, at construction time, from the *requested* flash-attn
+setting.
+
+**No hidden native mirror.** The mechanism guarantees this by
+construction: `type_k`/`type_v` select the allocation dtype for the
+*only* K/V tensor `llama-kv-cache.cpp` ever creates per layer — there
+is no second, MEMBRANE-side allocation anywhere in this path for a
+native mirror to be. This was locally cross-checked against
+llama.cpp's own allocator log (`llama_kv_cache: CPU KV buffer size =
+... MiB`), which showed exactly one KV buffer per context at every
+context size tested, never a doubled or F16-sized buffer under `--kv-
+store q8` — a **local, uncommitted observation** (see "Limitations"
+and the PR that introduced this mode for the actual figures; no
+committed log/CSV artifact exists yet for this, so `scripts/verify-
+results.py` cannot check it).
+
+**Real memory measurement.** Checkpoints (`/proc/self/status`
+VmRSS/VmHWM + `getrusage().ru_maxrss` cross-check) are taken after
+model load, after context/KV-cache allocation, after prompt ingestion,
+and at run end. Local, uncommitted measurement on this project's dev
+host found the RSS delta between native and q8 storage scales with
+context size, not flat — see the PR body for the actual numbers (not
+reproduced here, see "Limitations").
+
 ## Block geometry
 
 Same 128-element blocks as Phase 1-4. A per-observation remainder
@@ -228,3 +289,19 @@ here as an already-verified fixed result.
   comparison, but the free-running divergence (pass B vs. pass A) can
   still cascade once token identity itself diverges — both are
   reported, neither is presented as the other.
+- `--kv-store q8` (Phase 7) is the only mode here with an actual RAM
+  reduction claim; it is scoped exactly like INJECT modes above (one
+  model, one prompt, `LLM_ARCH_LLAMA`, CPU-only, single host — no
+  committed artifact, numbers in the PR body only). At small context
+  sizes, fixed overhead (flash attention's own scratch buffer, process
+  baseline) can dominate the KV cache's own savings; the reduction
+  measured on this host grew with context size, but was not
+  necessarily positive at every context size tested — reported as
+  measured, not asserted as a universal floor.
+- Phase 7 has no debug-perturbation instrumentation analogous to
+  `--debug-perturb-injection`: there is no MEMBRANE-owned write/read
+  step in this path to perturb (see "Mechanism" above). Correctness
+  evidence is instead the independent llama.cpp allocator log (no
+  hidden mirror) plus measurably nonzero-but-small quality drift
+  (native and q8 storage are not bit-identical, so the compressed
+  values are demonstrably read, not bypassed).
