@@ -51,7 +51,16 @@ def main() -> int:
 
 		model_label = model_label or native["model_label"]
 		prompt_fixture = prompt_fixture or Path(args.prompt).name
-		membrane_version = membrane_version or native["membrane_version"]
+		for label, run in (("native", native), ("q8", q8), ("compare", compare)):
+			v = run["membrane_version"]
+			if membrane_version is None:
+				membrane_version = v
+			elif v != membrane_version:
+				raise SystemExit(
+					f"membrane_version mismatch at ctx={ctx} ({label}): "
+					f"expected {membrane_version!r}, got {v!r} -- inputs "
+					"were not all produced by the same membrane-run build"
+				)
 
 		native_bytes = compare["storage"]["native_kv_allocated_bytes"]
 		q8_bytes = compare["storage"]["q8_kv_allocated_bytes"]
