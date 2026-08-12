@@ -94,6 +94,20 @@ had to stay.
 No result above implies physical FPGA hardware, physical CXL hardware,
 measured Fmax, timing closure, or measured power — see "Limitations."
 
+## Live llama.cpp runtime (Phase 5-7)
+
+`tools/membrane-llama-runtime/` drives real llama.cpp inference with
+MEMBRANE observing (`shadow-*`), authoritatively injecting
+reconstructed values (`inject-*`), or — `--kv-store q8` — replacing the
+KV cache's own allocated tensor type with genuinely compressed Q8_0
+storage (no `third_party/llama.cpp` patch required; see
+`docs/live-runtime.md`). `--kv-store q8` is the first mode here with an
+actual process-RAM-reduction claim, backed by real `/proc/self/status`
+RSS measurement and llama.cpp's own allocator log, not a theoretical
+formula. Local numbers (single model, single host) are in the PR that
+introduced it, not reproduced here — see `docs/live-runtime.md` for the
+mechanism and how to reproduce.
+
 ## Quick start
 
 ```bash

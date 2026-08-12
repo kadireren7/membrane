@@ -8,6 +8,6 @@ set_target_properties(membrane-llama-run PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane-llama-run PRIVATE membrane_runtime_core
-  membrane_cli_parse llama)
+  membrane_cli_parse membrane_kv_store_telemetry llama)
 target_include_directories(membrane-llama-run PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)

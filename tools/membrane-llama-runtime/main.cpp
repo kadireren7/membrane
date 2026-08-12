@@ -7,10 +7,12 @@
 #include <string>
 #include <vector>
 
+#include "ggml.h"
 #include "llama.h"
 #include "llama_hook.h"
 #include "runtime_core.h"
 #include "cli_parse.h"
+#include "kv_store_telemetry.h"
 
 /*
  * membrane-llama-run: MEMBRANE Product Phase 5/6, live llama.cpp
@@ -298,6 +300,102 @@ static bool	run_one_pass(llama_model *model,
 	return (out->ok);
 }
 
+/*
+ * Product Phase 7: creates ONE llama_context whose KV cache TENSORS are
+ * allocated at `kv_store_mode`'s ggml type (never a shadow/injected
+ * copy -- there is no cb_eval here at all, no MEMBRANE-authored write
+ * step; llama.cpp's own cpy_k/cpy_v graph ops quantize on write and
+ * ggml_mul_mat/ggml_flash_attn_ext dequantize on read, exactly as they
+ * would for `-ctk q8_0 -ctv q8_0 -fa` on stock llama.cpp -- see
+ * docs/live-runtime.md for why this needs no llama.cpp patch), decodes
+ * the prompt and generates, and destroys the context before returning
+ * -- one context alive at a time, same discipline as run_one_pass.
+ * `ctx_size` must already be resolved (never 0). Captures RSS
+ * checkpoints into *tel at the three points Section 7 asks for that are
+ * reachable from a single pass (after model load is the caller's job,
+ * since it happens before any context exists at all).
+ */
+static bool	run_kv_store_pass(llama_model *model,
+				const std::vector<llama_token> &prompt_tokens,
+				int gen_tokens, int kv_store_mode, uint32_t ctx_size,
+				int debug, const std::vector<int32_t> *teacher_force,
+				std::string *text_out, membrane_kv_store_telemetry_t *tel,
+				gen_run_result_t *out)
+{
+	llama_context				*ctx;
+	llama_context_params		cp;
+	const llama_vocab			*vocab;
+	int32_t						n_vocab;
+	uint64_t					abs_pos;
+	membrane_runtime_collector_t	*collector;
+	struct timespec				t0;
+	double						prompt_seconds;
+	double						gen_seconds;
+
+	vocab = llama_model_get_vocab(model);
+	n_vocab = llama_vocab_n_tokens(vocab);
+	cp = llama_context_default_params();
+	cp.n_ctx = ctx_size;
+	cp.n_batch = 256;
+	cp.n_threads = 4;
+	cp.n_threads_batch = 4;
+	cp.no_perf = true;
+	if (kv_store_mode == MEMBRANE_KV_STORE_Q8)
+	{
+		/* Both required by upstream llama.cpp: quantized V cache is a
+		 * hard error (llama_init_from_model returns NULL) unless flash
+		 * attention is enabled -- see llama-context.cpp's
+		 * "V cache quantization requires flash_attn" check. Forced
+		 * ENABLED (not AUTO) so the KV cache's v_trans layout decision,
+		 * made once at construction time from cp.flash_attn, always
+		 * matches what actually runs -- never left to AUTO's runtime
+		 * resolution. */
+		cp.type_k = GGML_TYPE_Q8_0;
+		cp.type_v = GGML_TYPE_Q8_0;
+		cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+	}
+	collector = membrane_runtime_collector_create(
+			MEMBRANE_RUNTIME_MODE_BASELINE, MEMBRANE_RUNTIME_MAX_LAYERS);
+	if (collector == NULL)
+		return (out->ok = false, false);
+	ctx = llama_init_from_model(model, cp);
+	if (ctx == NULL)
+	{
+		fprintf(stderr, "membrane-llama-run: kv-store context creation "
+			"failed (see llama's own stderr diagnostics above -- for "
+			"q8, this fails closed rather than silently falling back to "
+			"native storage)\n");
+		membrane_runtime_collector_destroy(collector);
+		return (out->ok = false, false);
+	}
+	membrane_kv_store_read_rss(&tel->rss_after_context);
+	abs_pos = 0;
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+	if (!decode_prompt(ctx, prompt_tokens, cp.n_batch, collector, NULL,
+			debug, &abs_pos))
+	{
+		fprintf(stderr, "membrane-llama-run: kv-store prompt decode "
+			"failed\n");
+		membrane_runtime_collector_destroy(collector);
+		return (llama_free(ctx), out->ok = false, false);
+	}
+	prompt_seconds = seconds_since(&t0);
+	membrane_kv_store_read_rss(&tel->rss_after_prompt);
+	out->ok = true;
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+	run_generation(ctx, vocab, n_vocab, gen_tokens, collector, NULL, debug,
+		true, teacher_force, &abs_pos, text_out, out);
+	gen_seconds = seconds_since(&t0);
+	membrane_kv_store_read_rss(&tel->rss_final);
+	tel->prompt_tok_per_s = prompt_seconds > 0.0
+		? (double)prompt_tokens.size() / prompt_seconds : 0.0;
+	tel->generation_tok_per_s = (gen_seconds > 0.0 && !out->tokens.empty())
+		? (double)out->tokens.size() / gen_seconds : 0.0;
+	membrane_runtime_collector_destroy(collector);
+	llama_free(ctx);
+	return (out->ok);
+}
+
 /* Compares run A's (baseline) and run C's (teacher-forced injection)
  * per-step logits/NLL and folds the result into `collector` as this
  * run's aligned behavior summary. A and C must have decoded the exact
@@ -335,6 +433,46 @@ static void	record_aligned_behavior(const gen_run_result_t &a,
 	membrane_runtime_behavior_finalize(acc, &summary);
 	membrane_runtime_behavior_destroy(acc);
 	membrane_runtime_set_behavior(collector, &summary);
+}
+
+/* Phase 7 analogue of record_aligned_behavior() above, for the
+ * kv-store telemetry struct instead of the injection collector -- same
+ * comparison machinery (membrane_runtime_compare_logits/nll/behavior_*,
+ * llama-free, in runtime_core.h), different destination struct. `a` is
+ * the native-storage reference pass, `c` is the q8-storage pass
+ * teacher-forced on `a`'s own tokens. */
+static void	record_kv_store_behavior(const gen_run_result_t &a,
+				const gen_run_result_t &c, int32_t n_vocab,
+				membrane_kv_store_telemetry_t *tel)
+{
+	membrane_runtime_behavior_accum_t		*acc;
+	membrane_runtime_behavior_summary_t	summary;
+	membrane_runtime_step_logit_diff_t		diff;
+	size_t									n;
+	size_t									i;
+	double									nll_a;
+	double									nll_c;
+
+	n = std::min(a.logits.size(), c.logits.size());
+	n = std::min(n, a.tokens.size());
+	acc = membrane_runtime_behavior_create();
+	i = 0;
+	while (i < n)
+	{
+		membrane_runtime_compare_logits(a.logits[i].data(),
+			c.logits[i].data(), n_vocab, 5, &diff);
+		nll_a = membrane_runtime_nll(a.logits[i].data(), n_vocab,
+				a.tokens[i]);
+		nll_c = membrane_runtime_nll(c.logits[i].data(), n_vocab,
+				a.tokens[i]);
+		membrane_runtime_behavior_add_step(acc, &diff, nll_a, nll_c);
+		i++;
+	}
+	membrane_runtime_behavior_finalize(acc, &summary);
+	membrane_runtime_behavior_destroy(acc);
+	tel->logit_rel_l2 = summary.logit_rel_l2_mean;
+	tel->top1_preservation = summary.top1_preservation_rate;
+	tel->delta_nll = summary.delta_nll;
 }
 
 int	main(int argc, char **argv)
@@ -382,6 +520,129 @@ int	main(int argc, char **argv)
 	}
 	prompt_tokens.resize(rc);
 	exit_code = 0;
+	if (o.have_kv_store)
+	{
+		membrane_kv_store_telemetry_t	tel;
+		membrane_kv_store_telemetry_t	tel_scratch;
+		membrane_kv_store_rss_t		rss_after_model_load;
+		uint32_t						ctx_size;
+		int32_t							n_layer;
+		int32_t							n_embd;
+		int32_t							n_head;
+		int32_t							n_head_kv;
+		int64_t							n_embd_gqa;
+		membrane_kv_store_bytes_t		native_b;
+		membrane_kv_store_bytes_t		q8_b;
+		membrane_runtime_divergence_t	divergence;
+		gen_run_result_t				result_a;
+		gen_run_result_t				result_b;
+		gen_run_result_t				result_c;
+		int32_t							n_vocab;
+
+		membrane_kv_store_read_rss(&rss_after_model_load);
+		memset(&tel, 0, sizeof(tel));
+		tel.kv_store_requested = 1;
+		tel.kv_store_mode_name = o.kv_store_mode == MEMBRANE_KV_STORE_Q8
+			? "q8" : "native";
+		ctx_size = o.kv_store_ctx > 0 ? o.kv_store_ctx
+			: (uint32_t)prompt_tokens.size() + (uint32_t)o.gen_tokens + 8;
+		tel.ctx_size = ctx_size;
+		tel.rss_after_model_load = rss_after_model_load;
+		tel.no_fallback_occurred = 1;
+		tel.first_divergence = -1;
+		/* Real per-model constants (public llama_model_n_* getters) fed
+		 * through ggml's OWN row-size rule (ggml_row_size, the exact
+		 * arithmetic llama.cpp's tensor allocator uses) -- not a
+		 * MEMBRANE-invented formula. n_embd_head = n_embd/n_head is an
+		 * LLM_ARCH_LLAMA-scoped assumption (matches this project's
+		 * existing scope limitation, see docs/live-runtime.md); cross-
+		 * checked against real RSS deltas below, which need no such
+		 * assumption at all. */
+		n_layer = llama_model_n_layer(model);
+		n_embd = llama_model_n_embd(model);
+		n_head = llama_model_n_head(model);
+		n_head_kv = llama_model_n_head_kv(model);
+		n_embd_gqa = n_head > 0
+			? (int64_t)(n_embd / n_head) * n_head_kv : 0;
+		native_b.n_layer = (uint64_t)n_layer;
+		native_b.kv_size = ctx_size;
+		native_b.bytes_per_token_k = ggml_row_size(GGML_TYPE_F16,
+				n_embd_gqa);
+		native_b.bytes_per_token_v = ggml_row_size(GGML_TYPE_F16,
+				n_embd_gqa);
+		q8_b = native_b;
+		q8_b.bytes_per_token_k = ggml_row_size(GGML_TYPE_Q8_0, n_embd_gqa);
+		q8_b.bytes_per_token_v = ggml_row_size(GGML_TYPE_Q8_0, n_embd_gqa);
+		tel.native_kv_allocated_bytes = membrane_kv_store_total_bytes(
+				&native_b);
+		tel.compressed_kv_allocated_bytes =
+			o.kv_store_mode == MEMBRANE_KV_STORE_Q8
+			? membrane_kv_store_total_bytes(&q8_b)
+			: tel.native_kv_allocated_bytes;
+		if (o.kv_store_mode == MEMBRANE_KV_STORE_Q8)
+		{
+			memset(&tel_scratch, 0, sizeof(tel_scratch));
+			if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
+					MEMBRANE_KV_STORE_NATIVE, ctx_size, o.debug_runtime,
+					NULL, NULL, &tel_scratch, &result_a))
+				return (llama_model_free(model), 1);
+			if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
+					MEMBRANE_KV_STORE_Q8, ctx_size, o.debug_runtime, NULL,
+					o.print_text ? &generated_text : NULL, &tel, &result_b))
+				return (llama_model_free(model), 1);
+			tel.generated_tokens = result_b.tokens.size();
+			tel.quality_available = 1;
+			membrane_runtime_detect_divergence(result_a.tokens.data(),
+				result_a.tokens.size(), result_b.tokens.data(),
+				result_b.tokens.size(), &divergence);
+			tel.token_identity = divergence.identical;
+			tel.first_divergence = (int32_t)divergence.first_divergence_step;
+			if (!result_a.tokens.empty())
+			{
+				memset(&tel_scratch, 0, sizeof(tel_scratch));
+				if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
+						MEMBRANE_KV_STORE_Q8, ctx_size, o.debug_runtime,
+						&result_a.tokens, NULL, &tel_scratch, &result_c))
+					fprintf(stderr, "membrane-llama-run: aligned "
+						"teacher-forced kv-store pass failed -- logit/"
+						"NLL comparison unavailable, storage result "
+						"otherwise still reported\n");
+				else
+				{
+					n_vocab = llama_vocab_n_tokens(vocab);
+					record_kv_store_behavior(result_a, result_c, n_vocab,
+						&tel);
+				}
+			}
+			if (!result_b.ok)
+				exit_code = 1;
+		}
+		else
+		{
+			if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
+					MEMBRANE_KV_STORE_NATIVE, ctx_size, o.debug_runtime,
+					NULL, o.print_text ? &generated_text : NULL, &tel,
+					&result_b))
+				return (llama_model_free(model), 1);
+			tel.generated_tokens = result_b.tokens.size();
+		}
+		if (o.print_text)
+			fprintf(stderr, "\n[generated text]\n%s\n",
+				generated_text.c_str());
+		membrane_kv_store_rss_max(&tel.rss_after_model_load,
+			&tel.rss_after_context, &tel.rss_peak);
+		membrane_kv_store_rss_max(&tel.rss_peak, &tel.rss_after_prompt,
+			&tel.rss_peak);
+		membrane_kv_store_rss_max(&tel.rss_peak, &tel.rss_final,
+			&tel.rss_peak);
+		if (o.want_json)
+			membrane_kv_store_print_json(&tel, stdout);
+		else
+			membrane_kv_store_print_human(&tel, stdout);
+		llama_model_free(model);
+		llama_backend_free();
+		return (exit_code);
+	}
 	if (!membrane_runtime_mode_is_inject(o.mode))
 	{
 		membrane_runtime_collector_t	*collector;

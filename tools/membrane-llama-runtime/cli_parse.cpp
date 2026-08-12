@@ -75,6 +75,21 @@ void	usage(FILE *out)
 		"                     corrupts every reconstructed value before\n"
 		"                     write-back, to locally prove it is\n"
 		"                     consumed -- never use for a reported run\n"
+		"  --kv-store MODE    native | q8 (default native; requires\n"
+		"                     --mode baseline). Product Phase 7: the KV\n"
+		"                     CACHE TENSOR ITSELF is allocated at the\n"
+		"                     given ggml type (q8: genuinely Q8_0,\n"
+		"                     roughly half the bytes of native F16 --\n"
+		"                     not a shadow/injected copy). q8 forces\n"
+		"                     flash attention on (required by llama.cpp\n"
+		"                     for quantized V cache). See\n"
+		"                     docs/live-runtime.md.\n"
+		"  --ctx N            explicit KV cache context size (default:\n"
+		"                     auto-sized to prompt length + --gen-tokens\n"
+		"                     + 8, matching prior behavior). Use an\n"
+		"                     explicit value to compare memory at a\n"
+		"                     fixed context size independent of prompt/\n"
+		"                     generation length.\n"
 		"  --help             print this message and exit\n");
 }
 
@@ -96,6 +111,9 @@ int	parse_opts(int argc, char **argv, run_opts_t *o)
 	o->inject_token_start = 0;
 	o->inject_token_end = 0;
 	o->debug_perturb_injection = 0;
+	o->have_kv_store = 0;
+	o->kv_store_mode = MEMBRANE_KV_STORE_NATIVE;
+	o->kv_store_ctx = 0;
 	i = 1;
 	while (i < argc)
 	{
@@ -169,6 +187,30 @@ int	parse_opts(int argc, char **argv, run_opts_t *o)
 		}
 		else if (strcmp(argv[i], "--debug-perturb-injection") == 0)
 			o->debug_perturb_injection = 1;
+		else if (strcmp(argv[i], "--kv-store") == 0 && i + 1 < argc)
+		{
+			++i;
+			o->have_kv_store = 1;
+			if (strcmp(argv[i], "native") == 0)
+				o->kv_store_mode = MEMBRANE_KV_STORE_NATIVE;
+			else if (strcmp(argv[i], "q8") == 0)
+				o->kv_store_mode = MEMBRANE_KV_STORE_Q8;
+			else
+				return (fprintf(stderr,
+						"--kv-store must be native or q8\n"), -1);
+		}
+		else if (strcmp(argv[i], "--ctx") == 0 && i + 1 < argc)
+		{
+			uint64_t	val;
+
+			++i;
+			if (!parse_u64_strict(argv[i], &val) || val < 1
+				|| val > UINT32_MAX)
+				return (fprintf(stderr,
+						"--ctx must be an integer in [1, %u]\n",
+						UINT32_MAX), -1);
+			o->kv_store_ctx = (uint32_t)val;
+		}
 		else if (strcmp(argv[i], "--json") == 0)
 			o->want_json = 1;
 		else if (strcmp(argv[i], "--print-text") == 0)
@@ -194,5 +236,10 @@ int	parse_opts(int argc, char **argv, run_opts_t *o)
 			|| o->have_token_start || o->debug_perturb_injection))
 		return (fprintf(stderr, "--inject-* flags require --mode "
 				"inject-q8 or inject-adaptive\n"), -1);
+	if (o->kv_store_mode != MEMBRANE_KV_STORE_NATIVE
+		&& o->mode != MEMBRANE_RUNTIME_MODE_BASELINE)
+		return (fprintf(stderr, "--kv-store q8 requires --mode baseline "
+				"-- Phase 7 compressed storage is a distinct mechanism "
+				"from Phase 6 injection, never combined\n"), -1);
 	return (0);
 }

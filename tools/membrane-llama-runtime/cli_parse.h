@@ -32,7 +32,37 @@ typedef struct s_run_opts
 	uint64_t					inject_token_start;
 	uint64_t					inject_token_end;
 	int							debug_perturb_injection;
+
+	/* Phase 7: compressed KV storage. Orthogonal to `mode` above --
+	 * requires --mode baseline (rejected in combination with any
+	 * shadow/inject mode, see parse_opts()). 0 = native (default,
+	 * F16 KV, existing behavior unchanged), 1 = q8 (genuinely
+	 * Q8_0-typed KV cache tensors, requires flash attention -- see
+	 * docs/live-runtime.md). */
+	int							have_kv_store;		/* 1 iff --kv-store was
+													 * explicitly given --
+													 * routes through the
+													 * Phase 7 measurement
+													 * path even for
+													 * "native", so native
+													 * and q8 report the
+													 * exact same telemetry
+													 * shape for a fair
+													 * comparison. Omitting
+													 * --kv-store entirely
+													 * leaves every
+													 * existing mode's
+													 * behavior byte-for-
+													 * byte unchanged. */
+	int							kv_store_mode;
+	uint32_t					kv_store_ctx;		/* 0 = auto-size
+													 * (prompt+gen+8),
+													 * matching existing
+													 * behavior */
 }	run_opts_t;
+
+# define MEMBRANE_KV_STORE_NATIVE	0
+# define MEMBRANE_KV_STORE_Q8		1
 
 bool	parse_u64_strict(const char *s, uint64_t *out);
 void	usage(FILE *out);

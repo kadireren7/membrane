@@ -149,6 +149,16 @@ set_target_properties(membrane_cli_parse PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_cli_parse PUBLIC membrane_runtime_core)
 
+# Product Phase 7: llama-free core for compressed-KV-storage measurement
+# (RSS checkpoints, byte accounting, telemetry) -- see the file header
+# in kv_store_telemetry.h for why this stays free of ggml/llama types,
+# same rationale as membrane_runtime_core above. Built unconditionally
+# so test_kv_store_telemetry runs under the default llama-free build.
+add_library(membrane_kv_store_telemetry STATIC
+  tools/membrane-llama-runtime/kv_store_telemetry.c)
+target_include_directories(membrane_kv_store_telemetry PUBLIC
+  tools/membrane-llama-runtime)
+
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
 # unlike tools/membrane-kv-capture etc, which need MEMBRANE_ENABLE_LLAMA.
@@ -478,6 +488,17 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_cli_parse PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_cli_parse COMMAND test_cli_parse)
+
+  # Product Phase 7: RSS-checkpoint and KV byte-accounting math, tested
+  # directly -- no MEMBRANE_ENABLE_LLAMA, no model, no llama.cpp type
+  # anywhere in this test or in membrane_kv_store_telemetry itself.
+  add_executable(test_kv_store_telemetry
+    tools/membrane-llama-runtime/test_kv_store_telemetry.c)
+  target_link_libraries(test_kv_store_telemetry PRIVATE
+    membrane_kv_store_telemetry)
+  target_include_directories(test_kv_store_telemetry PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_kv_store_telemetry COMMAND test_kv_store_telemetry)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test

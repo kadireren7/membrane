@@ -259,6 +259,130 @@ static void	test_valid_baseline_parses_without_model_load(void)
 		"filesystem");
 }
 
+static std::vector<std::string>	baseline_args(void)
+{
+	std::vector<std::string>	v;
+
+	v.push_back("membrane-llama-run");
+	v.push_back("--model");
+	v.push_back("/no/such/model.gguf");
+	v.push_back("--prompt-file");
+	v.push_back("/no/such/prompt.txt");
+	v.push_back("--mode");
+	v.push_back("baseline");
+	return (v);
+}
+
+static void	test_kv_store_valid_values_accepted(void)
+{
+	run_opts_t					o;
+	std::vector<std::string>	args;
+
+	args = baseline_args();
+	args.push_back("--kv-store");
+	args.push_back("native");
+	TEST_ASSERT(run_parse(args, &o) == 0, "--kv-store native accepted");
+	TEST_ASSERT(o.have_kv_store == 1,
+		"have_kv_store set once --kv-store is explicitly given");
+	TEST_ASSERT(o.kv_store_mode == MEMBRANE_KV_STORE_NATIVE,
+		"kv_store_mode resolves to native");
+
+	args = baseline_args();
+	args.push_back("--kv-store");
+	args.push_back("q8");
+	TEST_ASSERT(run_parse(args, &o) == 0, "--kv-store q8 accepted");
+	TEST_ASSERT(o.kv_store_mode == MEMBRANE_KV_STORE_Q8,
+		"kv_store_mode resolves to q8");
+}
+
+static void	test_kv_store_invalid_value_rejected(void)
+{
+	run_opts_t					o;
+	std::vector<std::string>	args;
+
+	args = baseline_args();
+	args.push_back("--kv-store");
+	args.push_back("adaptive");
+	TEST_ASSERT(run_parse(args, &o) != 0,
+		"--kv-store adaptive rejected -- Phase 7 minimum bar is native/"
+		"q8 only, not yet a real capability");
+}
+
+static void	test_have_kv_store_defaults_off(void)
+{
+	run_opts_t	o;
+
+	TEST_ASSERT(run_parse(baseline_args(), &o) == 0,
+		"a plain baseline invocation with no --kv-store parses cleanly");
+	TEST_ASSERT(o.have_kv_store == 0,
+		"have_kv_store stays 0 when --kv-store was never given -- every "
+		"existing mode's behavior must be untouched by default");
+}
+
+static void	test_kv_store_q8_requires_baseline_mode(void)
+{
+	run_opts_t					o;
+	std::vector<std::string>	args;
+
+	args = base_args("--kv-store", "q8");
+	TEST_ASSERT(run_parse(args, &o) != 0,
+		"--kv-store q8 combined with --mode inject-q8 rejected -- Phase "
+		"7 storage and Phase 6 injection are never combined");
+
+	args.clear();
+	args.push_back("membrane-llama-run");
+	args.push_back("--model");
+	args.push_back("/no/such/model.gguf");
+	args.push_back("--prompt-file");
+	args.push_back("/no/such/prompt.txt");
+	args.push_back("--mode");
+	args.push_back("shadow-q8");
+	args.push_back("--kv-store");
+	args.push_back("q8");
+	TEST_ASSERT(run_parse(args, &o) != 0,
+		"--kv-store q8 combined with --mode shadow-q8 also rejected");
+}
+
+static void	test_ctx_malformed_rejected(void)
+{
+	std::vector<std::string>	args;
+	run_opts_t					o;
+
+	args = baseline_args();
+	args.push_back("--ctx");
+	args.push_back("abc");
+	TEST_ASSERT(run_parse(args, &o) != 0, "non-numeric --ctx rejected");
+
+	args = baseline_args();
+	args.push_back("--ctx");
+	args.push_back("-1");
+	TEST_ASSERT(run_parse(args, &o) != 0, "negative --ctx rejected");
+
+	args = baseline_args();
+	args.push_back("--ctx");
+	args.push_back("0");
+	TEST_ASSERT(run_parse(args, &o) != 0,
+		"zero --ctx rejected (must be >= 1)");
+
+	args = baseline_args();
+	args.push_back("--ctx");
+	args.push_back("99999999999999999999");
+	TEST_ASSERT(run_parse(args, &o) != 0, "overflowing --ctx rejected");
+}
+
+static void	test_ctx_valid_accepted_and_stored(void)
+{
+	std::vector<std::string>	args;
+	run_opts_t					o;
+
+	args = baseline_args();
+	args.push_back("--ctx");
+	args.push_back("4096");
+	TEST_ASSERT(run_parse(args, &o) == 0, "--ctx 4096 accepted");
+	TEST_ASSERT(o.kv_store_ctx == 4096,
+		"parsed --ctx value is actually stored");
+}
+
 int	main(void)
 {
 	test_parse_u64_strict_leaves_out_unchanged_on_rejection();
@@ -272,6 +396,12 @@ int	main(void)
 	test_gen_tokens_valid_accepted();
 	test_debug_perturb_flag_documented();
 	test_valid_baseline_parses_without_model_load();
+	test_kv_store_valid_values_accepted();
+	test_kv_store_invalid_value_rejected();
+	test_have_kv_store_defaults_off();
+	test_kv_store_q8_requires_baseline_mode();
+	test_ctx_malformed_rejected();
+	test_ctx_valid_accepted_and_stored();
 	printf("test_cli_parse: all tests passed\n");
 	return (0);
 }
