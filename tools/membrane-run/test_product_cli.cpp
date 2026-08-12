@@ -281,7 +281,7 @@ static void	test_version_output_format(void)
 	fclose(tmp);
 	TEST_ASSERT(strncmp(buf, "MEMBRANE ", 9) == 0,
 		"version output starts with \"MEMBRANE \"");
-	TEST_ASSERT(strstr(buf, "0.2.0-rc1") != NULL,
+	TEST_ASSERT(strstr(buf, MEMBRANE_VERSION) != NULL,
 		"version output contains the current version string");
 }
 

@@ -9,8 +9,6 @@
 								 * parser */
 #include "kv_store_telemetry.h"	/* MEMBRANE_KV_STORE_NATIVE/Q8 */
 
-#define MEMBRANE_VERSION "0.2.0-rc1"
-
 void	membrane_run_print_version(FILE *out)
 {
 	fprintf(out, "MEMBRANE %s\n", MEMBRANE_VERSION);

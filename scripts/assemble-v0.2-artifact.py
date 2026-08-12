@@ -42,6 +42,7 @@ def main() -> int:
 
 	model_label = None
 	prompt_fixture = None
+	membrane_version = None
 	rows = []
 	for ctx in contexts:
 		native = load(workdir / f"native_{ctx}.json")
@@ -50,6 +51,7 @@ def main() -> int:
 
 		model_label = model_label or native["model_label"]
 		prompt_fixture = prompt_fixture or Path(args.prompt).name
+		membrane_version = membrane_version or native["membrane_version"]
 
 		native_bytes = compare["storage"]["native_kv_allocated_bytes"]
 		q8_bytes = compare["storage"]["q8_kv_allocated_bytes"]
@@ -80,7 +82,7 @@ def main() -> int:
 
 	artifact = {
 		"schema_version": 1,
-		"membrane_version": "0.2.0-rc1",
+		"membrane_version": membrane_version,
 		"git_sha": git_sha(),
 		"model_label": model_label,
 		"prompt_fixture": prompt_fixture,
