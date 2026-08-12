@@ -376,11 +376,31 @@ static void	test_ctx_valid_accepted_and_stored(void)
 	run_opts_t					o;
 
 	args = baseline_args();
+	args.push_back("--kv-store");
+	args.push_back("native");
 	args.push_back("--ctx");
 	args.push_back("4096");
-	TEST_ASSERT(run_parse(args, &o) == 0, "--ctx 4096 accepted");
+	TEST_ASSERT(run_parse(args, &o) == 0,
+		"--ctx 4096 accepted alongside --kv-store");
 	TEST_ASSERT(o.kv_store_ctx == 4096,
 		"parsed --ctx value is actually stored");
+}
+
+/* --ctx only has an effect inside the --kv-store measurement path
+ * (main.cpp) -- every other mode silently auto-sizes the context and
+ * would otherwise ignore a requested --ctx entirely. Reject the
+ * combination at parse time rather than let it look like it worked. */
+static void	test_ctx_without_kv_store_rejected(void)
+{
+	std::vector<std::string>	args;
+	run_opts_t					o;
+
+	args = baseline_args();
+	args.push_back("--ctx");
+	args.push_back("4096");
+	TEST_ASSERT(run_parse(args, &o) != 0,
+		"--ctx without --kv-store rejected -- it would otherwise be "
+		"silently ignored");
 }
 
 int	main(void)
@@ -402,6 +422,7 @@ int	main(void)
 	test_kv_store_q8_requires_baseline_mode();
 	test_ctx_malformed_rejected();
 	test_ctx_valid_accepted_and_stored();
+	test_ctx_without_kv_store_rejected();
 	printf("test_cli_parse: all tests passed\n");
 	return (0);
 }

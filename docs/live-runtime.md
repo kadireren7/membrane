@@ -184,8 +184,18 @@ tensor (`cache_k_l%d`/`cache_v_l%d`) is allocated at that type
 directly by `llama-kv-cache.cpp`; `ggml_cpy()` quantizes on write and
 `ggml_flash_attn_ext()` dequantizes on read, both inside llama.cpp/
 ggml's own kernels. There is no MEMBRANE-authored quantize/dequantize
-step in this path (unlike Phase 5/6's codec) and therefore no separate
-scratch/decode buffer to account for.
+codec step in this path (unlike Phase 5/6's codec, and unlike this
+mode's own quality-comparison passes below, which do allocate a
+per-step logit buffer -- see "Scratch accounting").
+
+**Scratch accounting.** The one MEMBRANE-owned allocation on this path
+is `gen_run_result_t::logits` — a per-generation-step `n_vocab`-float
+vector, held only by the comparison-only native-reference and
+teacher-forced passes (never by the canonical, memory-reported q8
+pass itself, which doesn't need its own logits and is built with
+capture disabled). `scratch_peak_bytes` in the telemetry is this
+buffer's real size (`steps * n_vocab * sizeof(float)`), not a
+placeholder.
 
 **Why flash attention is forced on.** Upstream llama.cpp hard-errors
 (`llama_init_from_model` returns `NULL`) if a quantized V cache is
@@ -196,24 +206,26 @@ requested with flash attention disabled
 is decided once, at construction time, from the *requested* flash-attn
 setting.
 
-**No hidden native mirror.** Verified directly against llama.cpp's own
-allocator log (`llama_kv_cache: CPU KV buffer size = ... MiB`), not
-just MEMBRANE's own accounting: at every context size tested
-(512/1024/2048/4096/8192), exactly **one** KV buffer is allocated per
-context, at exactly the size its own dtype implies (Q8_0 buffers were
-consistently ~1.882x smaller than F16 at the same layer/context shape
-— matching Q8_0's 34-bytes-per-32-element-block vs. F16's 2-bytes-per-
-element ratio exactly). A run that combined a native mirror with a
-compressed store would show a doubled or F16-sized buffer instead;
-it never did.
+**No hidden native mirror.** The mechanism guarantees this by
+construction: `type_k`/`type_v` select the allocation dtype for the
+*only* K/V tensor `llama-kv-cache.cpp` ever creates per layer — there
+is no second, MEMBRANE-side allocation anywhere in this path for a
+native mirror to be. This was locally cross-checked against
+llama.cpp's own allocator log (`llama_kv_cache: CPU KV buffer size =
+... MiB`), which showed exactly one KV buffer per context at every
+context size tested, never a doubled or F16-sized buffer under `--kv-
+store q8` — a **local, uncommitted observation** (see "Limitations"
+and the PR that introduced this mode for the actual figures; no
+committed log/CSV artifact exists yet for this, so `scripts/verify-
+results.py` cannot check it).
 
 **Real memory measurement.** Checkpoints (`/proc/self/status`
 VmRSS/VmHWM + `getrusage().ru_maxrss` cross-check) are taken after
 model load, after context/KV-cache allocation, after prompt ingestion,
-and at run end. Local measurement on this project's dev host found the
-RSS delta between native and q8 storage scales with context size, not
-flat — see the PR body for the actual numbers (not reproduced here,
-see "Limitations").
+and at run end. Local, uncommitted measurement on this project's dev
+host found the RSS delta between native and q8 storage scales with
+context size, not flat — see the PR body for the actual numbers (not
+reproduced here, see "Limitations").
 
 ## Block geometry
 

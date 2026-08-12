@@ -241,5 +241,9 @@ int	parse_opts(int argc, char **argv, run_opts_t *o)
 		return (fprintf(stderr, "--kv-store q8 requires --mode baseline "
 				"-- Phase 7 compressed storage is a distinct mechanism "
 				"from Phase 6 injection, never combined\n"), -1);
+	if (o->kv_store_ctx > 0 && !o->have_kv_store)
+		return (fprintf(stderr, "--ctx requires --kv-store -- every "
+				"other mode ignores it and auto-sizes the context from "
+				"the prompt length and --gen-tokens instead\n"), -1);
 	return (0);
 }

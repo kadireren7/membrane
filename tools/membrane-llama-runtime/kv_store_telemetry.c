@@ -1,7 +1,22 @@
 #include "kv_store_telemetry.h"
 
+#include <math.h>
 #include <string.h>
 #include <sys/resource.h>
+
+/* membrane_runtime_nll()/membrane_runtime_compare_logits() (runtime_
+ * core.c) can in principle propagate a NaN/Infinity into logit_rel_l2/
+ * delta_nll from pathological logits -- `nan`/`inf` are not valid JSON
+ * tokens, so a plain "%.6f" would emit unparseable output. Emit JSON
+ * `null` for a non-finite value instead of silently producing invalid
+ * JSON. */
+static void	print_json_double(FILE *out, double v)
+{
+	if (isfinite(v))
+		fprintf(out, "%.6f", v);
+	else
+		fprintf(out, "null");
+}
 
 uint64_t	membrane_kv_store_total_bytes(const membrane_kv_store_bytes_t *b)
 {
@@ -165,11 +180,15 @@ void	membrane_kv_store_print_json(const membrane_kv_store_telemetry_t *t,
 		t->prompt_tok_per_s, t->generation_tok_per_s, t->encode_seconds,
 		t->decode_seconds);
 	fprintf(out, "\"quality\":{\"available\":%s,\"token_identity\":%s,"
-		"\"first_divergence\":%d,\"logit_rel_l2\":%.6f,"
-		"\"top1_preservation\":%.6f,\"delta_nll\":%.6f},",
+		"\"first_divergence\":%d,\"logit_rel_l2\":",
 		t->quality_available ? "true" : "false",
-		t->token_identity ? "true" : "false", t->first_divergence,
-		t->logit_rel_l2, t->top1_preservation, t->delta_nll);
+		t->token_identity ? "true" : "false", t->first_divergence);
+	print_json_double(out, t->logit_rel_l2);
+	fprintf(out, ",\"top1_preservation\":");
+	print_json_double(out, t->top1_preservation);
+	fprintf(out, ",\"delta_nll\":");
+	print_json_double(out, t->delta_nll);
+	fprintf(out, "},");
 	fprintf(out, "\"compression\":{\"q4_blocks\":%llu,\"q8_blocks\":%llu,"
 		"\"encoded_blocks\":%llu},",
 		(unsigned long long)t->q4_blocks, (unsigned long long)t->q8_blocks,

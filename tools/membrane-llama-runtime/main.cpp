@@ -319,6 +319,7 @@ static bool	run_kv_store_pass(llama_model *model,
 				const std::vector<llama_token> &prompt_tokens,
 				int gen_tokens, int kv_store_mode, uint32_t ctx_size,
 				int debug, const std::vector<int32_t> *teacher_force,
+				bool capture_logits, int32_t n_vocab_for_scratch,
 				std::string *text_out, membrane_kv_store_telemetry_t *tel,
 				gen_run_result_t *out)
 {
@@ -331,6 +332,7 @@ static bool	run_kv_store_pass(llama_model *model,
 	struct timespec				t0;
 	double						prompt_seconds;
 	double						gen_seconds;
+	uint64_t					scratch_bytes;
 
 	vocab = llama_model_get_vocab(model);
 	n_vocab = llama_vocab_n_tokens(vocab);
@@ -340,19 +342,19 @@ static bool	run_kv_store_pass(llama_model *model,
 	cp.n_threads = 4;
 	cp.n_threads_batch = 4;
 	cp.no_perf = true;
+	/* Required by upstream llama.cpp for q8: quantized V cache is a hard
+	 * error (llama_init_from_model returns NULL) unless flash attention
+	 * is enabled -- see llama-context.cpp's "V cache quantization
+	 * requires flash_attn" check. Forced ENABLED (not AUTO) for BOTH
+	 * modes, unconditionally -- not just q8 -- so the native-vs-q8
+	 * comparison never mixes "KV cache dtype" with "which attention
+	 * kernel ran" as a second, uncontrolled variable; AUTO's runtime
+	 * resolution is not relied on for either mode. */
+	cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
 	if (kv_store_mode == MEMBRANE_KV_STORE_Q8)
 	{
-		/* Both required by upstream llama.cpp: quantized V cache is a
-		 * hard error (llama_init_from_model returns NULL) unless flash
-		 * attention is enabled -- see llama-context.cpp's
-		 * "V cache quantization requires flash_attn" check. Forced
-		 * ENABLED (not AUTO) so the KV cache's v_trans layout decision,
-		 * made once at construction time from cp.flash_attn, always
-		 * matches what actually runs -- never left to AUTO's runtime
-		 * resolution. */
 		cp.type_k = GGML_TYPE_Q8_0;
 		cp.type_v = GGML_TYPE_Q8_0;
-		cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
 	}
 	collector = membrane_runtime_collector_create(
 			MEMBRANE_RUNTIME_MODE_BASELINE, MEMBRANE_RUNTIME_MAX_LAYERS);
@@ -384,13 +386,26 @@ static bool	run_kv_store_pass(llama_model *model,
 	out->ok = true;
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 	run_generation(ctx, vocab, n_vocab, gen_tokens, collector, NULL, debug,
-		true, teacher_force, &abs_pos, text_out, out);
+		capture_logits, teacher_force, &abs_pos, text_out, out);
 	gen_seconds = seconds_since(&t0);
 	membrane_kv_store_read_rss(&tel->rss_final);
 	tel->prompt_tok_per_s = prompt_seconds > 0.0
 		? (double)prompt_tokens.size() / prompt_seconds : 0.0;
 	tel->generation_tok_per_s = (gen_seconds > 0.0 && !out->tokens.empty())
 		? (double)out->tokens.size() / gen_seconds : 0.0;
+	/* Only MEMBRANE-owned allocation on this path: run_generation's
+	 * per-step logit capture (gen_run_result_t::logits), when the
+	 * caller actually asked for it -- never held for the canonical
+	 * pass B itself (that pass doesn't need its own logits, only pass A
+	 * and C do, for the aligned comparison), so a plain q8 run reports
+	 * this as genuinely 0, not a placeholder. */
+	if (capture_logits)
+	{
+		scratch_bytes = (uint64_t)out->logits.size()
+			* (uint64_t)n_vocab_for_scratch * sizeof(float);
+		if (scratch_bytes > tel->scratch_peak_bytes)
+			tel->scratch_peak_bytes = scratch_bytes;
+	}
 	membrane_runtime_collector_destroy(collector);
 	llama_free(ctx);
 	return (out->ok);
@@ -441,7 +456,7 @@ static void	record_aligned_behavior(const gen_run_result_t &a,
  * llama-free, in runtime_core.h), different destination struct. `a` is
  * the native-storage reference pass, `c` is the q8-storage pass
  * teacher-forced on `a`'s own tokens. */
-static void	record_kv_store_behavior(const gen_run_result_t &a,
+static bool	record_kv_store_behavior(const gen_run_result_t &a,
 				const gen_run_result_t &c, int32_t n_vocab,
 				membrane_kv_store_telemetry_t *tel)
 {
@@ -456,6 +471,8 @@ static void	record_kv_store_behavior(const gen_run_result_t &a,
 	n = std::min(a.logits.size(), c.logits.size());
 	n = std::min(n, a.tokens.size());
 	acc = membrane_runtime_behavior_create();
+	if (acc == NULL)
+		return (false);
 	i = 0;
 	while (i < n)
 	{
@@ -473,6 +490,7 @@ static void	record_kv_store_behavior(const gen_run_result_t &a,
 	tel->logit_rel_l2 = summary.logit_rel_l2_mean;
 	tel->top1_preservation = summary.top1_preservation_rate;
 	tel->delta_nll = summary.delta_nll;
+	return (true);
 }
 
 int	main(int argc, char **argv)
@@ -581,48 +599,84 @@ int	main(int argc, char **argv)
 			: tel.native_kv_allocated_bytes;
 		if (o.kv_store_mode == MEMBRANE_KV_STORE_Q8)
 		{
+			/* Pass B (q8, canonical/memory-reported) runs FIRST, as the
+			 * very first llama_context in this process after model
+			 * load -- vm_hwm_kb/ru_maxrss_kb are process-wide monotonic
+			 * counters, so if the native reference pass ran first, its
+			 * high-water mark would leak into pass B's own "peak"
+			 * reading even after its context is freed (a real
+			 * methodology bug caught in review). Passes A and C run
+			 * afterward, comparison-only, into tel_scratch so their
+			 * memory footprint is never folded into the reported
+			 * telemetry. Neither A nor C captures print_text output --
+			 * that's the canonical pass B's job. */
+			memset(&tel_scratch, 0, sizeof(tel_scratch));
+			if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
+					MEMBRANE_KV_STORE_Q8, ctx_size, o.debug_runtime, NULL,
+					false, 0, o.print_text ? &generated_text : NULL, &tel,
+					&result_b))
+				return (llama_model_free(model), 1);
+			tel.generated_tokens = result_b.tokens.size();
+			n_vocab = llama_vocab_n_tokens(vocab);
 			memset(&tel_scratch, 0, sizeof(tel_scratch));
 			if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
 					MEMBRANE_KV_STORE_NATIVE, ctx_size, o.debug_runtime,
-					NULL, NULL, &tel_scratch, &result_a))
+					NULL, true, n_vocab, NULL, &tel_scratch, &result_a))
 				return (llama_model_free(model), 1);
-			if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
-					MEMBRANE_KV_STORE_Q8, ctx_size, o.debug_runtime, NULL,
-					o.print_text ? &generated_text : NULL, &tel, &result_b))
-				return (llama_model_free(model), 1);
-			tel.generated_tokens = result_b.tokens.size();
-			tel.quality_available = 1;
+			if (tel_scratch.scratch_peak_bytes > tel.scratch_peak_bytes)
+				tel.scratch_peak_bytes = tel_scratch.scratch_peak_bytes;
+			if (!result_b.ok)
+				exit_code = 1;
 			membrane_runtime_detect_divergence(result_a.tokens.data(),
 				result_a.tokens.size(), result_b.tokens.data(),
 				result_b.tokens.size(), &divergence);
-			tel.token_identity = divergence.identical;
-			tel.first_divergence = (int32_t)divergence.first_divergence_step;
 			if (!result_a.tokens.empty())
 			{
 				memset(&tel_scratch, 0, sizeof(tel_scratch));
 				if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
 						MEMBRANE_KV_STORE_Q8, ctx_size, o.debug_runtime,
-						&result_a.tokens, NULL, &tel_scratch, &result_c))
+						&result_a.tokens, true, n_vocab, NULL, &tel_scratch,
+						&result_c))
 					fprintf(stderr, "membrane-llama-run: aligned "
 						"teacher-forced kv-store pass failed -- logit/"
 						"NLL comparison unavailable, storage result "
 						"otherwise still reported\n");
 				else
 				{
-					n_vocab = llama_vocab_n_tokens(vocab);
-					record_kv_store_behavior(result_a, result_c, n_vocab,
-						&tel);
+					if (tel_scratch.scratch_peak_bytes
+						> tel.scratch_peak_bytes)
+						tel.scratch_peak_bytes =
+							tel_scratch.scratch_peak_bytes;
+					/* Only claim the quality bundle is available once
+					 * every field in it (identity, divergence, AND the
+					 * logit-level stats below) genuinely has data --
+					 * setting this before record_kv_store_behavior()
+					 * succeeded left top1_preservation/delta_nll/
+					 * logit_rel_l2 at their memset zero while still
+					 * claiming "available": a silent-zero, not "not
+					 * measured". */
+					if (record_kv_store_behavior(result_a, result_c,
+							n_vocab, &tel))
+					{
+						tel.quality_available = 1;
+						tel.token_identity = divergence.identical;
+						tel.first_divergence =
+							(int32_t)divergence.first_divergence_step;
+					}
+					else
+						fprintf(stderr, "membrane-llama-run: behavior "
+							"accumulator allocation failed -- logit/NLL "
+							"comparison unavailable, storage result "
+							"otherwise still reported\n");
 				}
 			}
-			if (!result_b.ok)
-				exit_code = 1;
 		}
 		else
 		{
 			if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
 					MEMBRANE_KV_STORE_NATIVE, ctx_size, o.debug_runtime,
-					NULL, o.print_text ? &generated_text : NULL, &tel,
-					&result_b))
+					NULL, false, 0, o.print_text ? &generated_text : NULL,
+					&tel, &result_b))
 				return (llama_model_free(model), 1);
 			tel.generated_tokens = result_b.tokens.size();
 		}
