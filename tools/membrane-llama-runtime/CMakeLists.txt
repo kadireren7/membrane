@@ -3,11 +3,27 @@
 # (runtime_core.c, the llama-free MEMBRANE-side logic) is registered
 # unconditionally in the top-level CMakeLists.txt instead, so it and its
 # test build under the default llama-free configuration too.
-add_executable(membrane-llama-run main.cpp llama_hook.cpp)
+# Shared llama-enabled decode-loop primitives (model-agnostic prompt/
+# generation loop, Phase 7 kv-store pass) -- both membrane-llama-run
+# (legacy/diagnostic) and membrane-run (product entry point,
+# tools/membrane-run) link this instead of each defining their own
+# copy. Needs llama/ggml types, so unlike membrane_runtime_core it can
+# only be built here, inside the MEMBRANE_ENABLE_LLAMA block.
+add_library(membrane_decode_loop STATIC decode_loop.cpp llama_hook.cpp)
+set_target_properties(membrane_decode_loop PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_decode_loop PUBLIC membrane_runtime_core
+  membrane_kv_store_telemetry llama)
+target_include_directories(membrane_decode_loop PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
+add_executable(membrane-llama-run main.cpp)
 set_target_properties(membrane-llama-run PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane-llama-run PRIVATE membrane_runtime_core
-  membrane_cli_parse membrane_kv_store_telemetry llama)
+  membrane_cli_parse membrane_kv_store_telemetry membrane_decode_loop llama)
 target_include_directories(membrane-llama-run PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)

@@ -136,6 +136,16 @@ target_include_directories(membrane_runtime_core PUBLIC
 target_link_libraries(membrane_runtime_core PUBLIC membrane_core
   membrane_workload_core)
 
+# Product Phase 7: llama-free core for compressed-KV-storage measurement
+# (RSS checkpoints, byte accounting, telemetry) -- see the file header
+# in kv_store_telemetry.h for why this stays free of ggml/llama types,
+# same rationale as membrane_runtime_core above. Built unconditionally
+# so test_kv_store_telemetry runs under the default llama-free build.
+add_library(membrane_kv_store_telemetry STATIC
+  tools/membrane-llama-runtime/kv_store_telemetry.c)
+target_include_directories(membrane_kv_store_telemetry PUBLIC
+  tools/membrane-llama-runtime)
+
 # membrane-llama-run's CLI argument parser (tools/membrane-llama-runtime/
 # cli_parse.h/.cpp), split out of main.cpp so it -- like
 # membrane_runtime_core above -- builds and is testable (test_cli_parse)
@@ -147,17 +157,23 @@ add_library(membrane_cli_parse STATIC
 set_target_properties(membrane_cli_parse PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
-target_link_libraries(membrane_cli_parse PUBLIC membrane_runtime_core)
+target_link_libraries(membrane_cli_parse PUBLIC membrane_runtime_core
+  membrane_kv_store_telemetry)
 
-# Product Phase 7: llama-free core for compressed-KV-storage measurement
-# (RSS checkpoints, byte accounting, telemetry) -- see the file header
-# in kv_store_telemetry.h for why this stays free of ggml/llama types,
-# same rationale as membrane_runtime_core above. Built unconditionally
-# so test_kv_store_telemetry runs under the default llama-free build.
-add_library(membrane_kv_store_telemetry STATIC
-  tools/membrane-llama-runtime/kv_store_telemetry.c)
-target_include_directories(membrane_kv_store_telemetry PUBLIC
-  tools/membrane-llama-runtime)
+# Product Phase 8: membrane-run's product CLI parser and compatibility
+# pre-check -- both llama-free (no model load, no ggml/llama header),
+# built unconditionally like the libraries above.
+add_library(membrane_product_cli STATIC
+  tools/membrane-run/product_cli.cpp)
+set_target_properties(membrane_product_cli PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_product_cli PUBLIC membrane_cli_parse)
+target_include_directories(membrane_product_cli PUBLIC tools/membrane-run)
+
+add_library(membrane_compat_check STATIC
+  tools/membrane-run/compat_check.c)
+target_include_directories(membrane_compat_check PUBLIC tools/membrane-run)
 
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
@@ -288,6 +304,14 @@ if(MEMBRANE_ENABLE_LLAMA)
   # itself allocates/reads/writes for its KV cache. See
   # docs/live-runtime.md.
   add_subdirectory(tools/membrane-llama-runtime)
+
+  # Product Phase 8: membrane-run, the user-facing entry point --
+  # normal single-pass inference (default) and an explicit --compare-kv
+  # mode reusing the Phase 7 3-pass comparison machinery via
+  # membrane_decode_loop (tools/membrane-llama-runtime/decode_loop.h).
+  # membrane-llama-run remains the diagnostic/legacy tool (Phase 5/6
+  # shadow/inject modes).
+  add_subdirectory(tools/membrane-run)
 endif()
 
 if(MEMBRANE_BUILD_TESTS)
@@ -499,6 +523,26 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_kv_store_telemetry PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_kv_store_telemetry COMMAND test_kv_store_telemetry)
+
+  # Product Phase 8: membrane-run's product CLI parser and
+  # compatibility pre-check, tested directly -- no MEMBRANE_ENABLE_LLAMA,
+  # no model, no llama.cpp type anywhere in either library or its test.
+  add_executable(test_product_cli
+    tools/membrane-run/test_product_cli.cpp)
+  set_target_properties(test_product_cli PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_product_cli PRIVATE membrane_product_cli)
+  target_include_directories(test_product_cli PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_product_cli COMMAND test_product_cli)
+
+  add_executable(test_compat_check
+    tools/membrane-run/test_compat_check.c)
+  target_link_libraries(test_compat_check PRIVATE membrane_compat_check)
+  target_include_directories(test_compat_check PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_compat_check COMMAND test_compat_check)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test
