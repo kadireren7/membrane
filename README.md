@@ -103,9 +103,11 @@ KV cache's own allocated tensor type with genuinely compressed Q8_0
 storage (no `third_party/llama.cpp` patch required; see
 `docs/live-runtime.md`). `--kv-store q8` is the first mode here with an
 actual process-RAM-reduction claim, backed by real `/proc/self/status`
-RSS measurement and llama.cpp's own allocator log, not a theoretical
-formula. Local numbers (single model, single host) are in the PR that
-introduced it, not reproduced here — see `docs/live-runtime.md` for the
+RSS measurement, not a theoretical formula (a local, uncommitted
+cross-check against llama.cpp's own allocator log also supports it,
+but only the RSS measurement is repository-checkable here). Local
+numbers (single model, single host) are in the PR that introduced it,
+not reproduced here — see `docs/live-runtime.md` for the
 mechanism and how to reproduce.
 
 ## Quick start
