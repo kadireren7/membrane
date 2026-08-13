@@ -175,6 +175,13 @@ add_library(membrane_compat_check STATIC
   tools/membrane-run/compat_check.c)
 target_include_directories(membrane_compat_check PUBLIC tools/membrane-run)
 
+# Phase 9B.1: --gpu-layers auto's pure arithmetic, deliberately
+# llama-free (no ggml/llama header, no device access) so it's testable
+# without a GPU -- same pattern as membrane_compat_check above.
+add_library(membrane_gpu_policy STATIC
+  tools/membrane-run/gpu_policy.c)
+target_include_directories(membrane_gpu_policy PUBLIC tools/membrane-run)
+
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
 # unlike tools/membrane-kv-capture etc, which need MEMBRANE_ENABLE_LLAMA.
@@ -543,6 +550,13 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_compat_check PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_compat_check COMMAND test_compat_check)
+
+  add_executable(test_gpu_policy
+    tools/membrane-run/test_gpu_policy.c)
+  target_link_libraries(test_gpu_policy PRIVATE membrane_gpu_policy)
+  target_include_directories(test_gpu_policy PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_gpu_policy COMMAND test_gpu_policy)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test

@@ -65,14 +65,19 @@ typedef struct s_membrane_run_opts
 								 * mode, reuses the Phase 7 3-pass
 								 * machinery -- never the default */
 
-	int32_t		gpu_layers;		/* Phase 9B: --gpu-layers. 0 = CPU-only
-								 * (default, also settable explicitly
-								 * as the CPU-forcing option) -- a
-								 * build with a GPU backend compiled
-								 * in still defaults to CPU-only
-								 * unless requested. -1 = "all"
-								 * (--gpu-layers all). N>0 = exactly
-								 * N layers. Never implicit. */
+	int32_t		gpu_layers;		/* Phase 9B/9B.1: --gpu-layers. 0 =
+								 * CPU-only (default, also settable
+								 * explicitly as the CPU-forcing
+								 * option) -- a build with a GPU
+								 * backend compiled in still defaults
+								 * to CPU-only unless requested. -1 =
+								 * "all" (MEMBRANE_GPU_LAYERS_ALL).
+								 * -2 = "auto" (MEMBRANE_GPU_LAYERS_
+								 * AUTO, gpu_policy.h -- MEMBRANE
+								 * picks a safe count from real
+								 * device/model memory information).
+								 * N>0 = exactly N layers. Never
+								 * implicit. */
 	std::string	device;			/* --device NAME, empty if not given.
 								 * Only meaningful with gpu_layers != 0
 								 * (validated at parse time). */
@@ -80,6 +85,13 @@ typedef struct s_membrane_run_opts
 								 * given (device.empty() alone can't
 								 * distinguish "not given" from a
 								 * name that happens to be empty) */
+	int			gpu_bench;		/* Phase 9B.1: --gpu-bench -- explicit
+								 * native-vs-q8 comparison under a GPU
+								 * configuration, requires gpu_layers
+								 * != 0, mutually exclusive with
+								 * compare_kv (that one is CPU/generic;
+								 * this one is GPU-specific and adds
+								 * memory-policy telemetry). */
 
 	int			want_version;
 	int			want_help;

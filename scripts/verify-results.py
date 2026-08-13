@@ -579,6 +579,147 @@ def _c32():
 	return len(bad) == 0, "; ".join(bad) if bad else "2 models checked"
 
 
+@check("v0.3 GPU artifact: auto_policy section exists with a "
+	"documented reserve policy")
+def _c33():
+	a = _load_v03_artifact()
+	ap = a.get("auto_policy", {})
+	rp = ap.get("reserve_policy", {})
+	ok = (ap.get("policy_version") == 1
+		and rp.get("fixed_reserve_bytes", 0) > 0
+		and 0 < rp.get("percentage_reserve_pct", 0) < 100)
+	return ok, f"policy_version={ap.get('policy_version')!r} reserve_policy={rp!r}"
+
+
+@check("v0.3 GPU artifact: auto_policy context matrices -- q8 external "
+	"VRAM peak < native at every row, both models")
+def _c34():
+	a = _load_v03_artifact()
+	ap = a.get("auto_policy", {})
+	bad = []
+	rows = list(ap.get("context_matrix_135m", []))
+	if "context_matrix_360m_ctx2048" in ap:
+		rows.append(ap["context_matrix_360m_ctx2048"])
+	for row in rows:
+		native_v = row["native"]["external_vram_peak_mib"]
+		q8_v = row["q8"]["external_vram_peak_mib"]
+		if not (q8_v < native_v):
+			bad.append(f"ctx={row['ctx']}: q8 external VRAM({q8_v}) not "
+				f"< native({native_v})")
+			continue
+		expected_pct = 100.0 * (native_v - q8_v) / native_v
+		if abs(expected_pct - row["external_vram_reduction_pct"]) > 0.1:
+			bad.append(f"ctx={row['ctx']}: external_vram_reduction_pct="
+				f"{row['external_vram_reduction_pct']} but computed="
+				f"{expected_pct:.2f}")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(rows)} rows checked"
+
+
+@check("v0.3 GPU artifact: guard boundary test proves the memory guard "
+	"actually rejects, and that auto genuinely partial-offloads where "
+	"explicit \"all\" is rejected")
+def _c35():
+	a = _load_v03_artifact()
+	gb = a.get("auto_policy", {}).get("guard_boundary_test", {})
+	below = gb.get("ctx_140000_gpu_layers_all", {})
+	above_all = gb.get("ctx_145000_gpu_layers_all", {})
+	above_auto = gb.get("ctx_145000_gpu_layers_auto", {})
+	bad = []
+	if below.get("exit_code") != 0:
+		bad.append(f"ctx=140000 --gpu-layers all: expected exit 0, "
+			f"got {below.get('exit_code')}")
+	if above_all.get("exit_code") != 5:
+		bad.append(f"ctx=145000 --gpu-layers all: expected exit 5 "
+			f"(guard rejection), got {above_all.get('exit_code')}")
+	if above_auto.get("exit_code") != 0:
+		bad.append(f"ctx=145000 --gpu-layers auto: expected exit 0, "
+			f"got {above_auto.get('exit_code')}")
+	auto_selected = above_auto.get("gpu_layers_selected")
+	below_selected = below.get("gpu_layers_selected")
+	if not (isinstance(auto_selected, int) and isinstance(below_selected, int)
+			and 0 < auto_selected < below_selected):
+		bad.append(f"expected auto's selected layers at ctx=145000 "
+			f"({auto_selected!r}) to be a genuine partial count, strictly "
+			f"less than the full count all resolved to at ctx=140000 "
+			f"({below_selected!r})")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		f"140000/all -> exit 0 ({below_selected} layers); "
+		f"145000/all -> exit 5; 145000/auto -> exit 0 ({auto_selected} layers)")
+
+
+@check("v0.3 GPU artifact: gpu-bench record has valid quality ranges "
+	"and self-consistent comparison arithmetic")
+def _c36():
+	a = _load_v03_artifact()
+	bench = a.get("auto_policy", {}).get("gpu_bench_135m_ctx2048_256tok", {})
+	bad = []
+	q = bench.get("quality", {})
+	top1 = q.get("top1_preservation")
+	if top1 is None or not (0.0 <= top1 <= 1.0):
+		bad.append(f"top1_preservation={top1} out of [0,1]")
+	native_kv = bench.get("native", {}).get("kv_allocated_bytes")
+	q8_kv = bench.get("q8", {}).get("kv_allocated_bytes")
+	ratio = bench.get("comparison", {}).get("kv_reduction_ratio")
+	if native_kv and q8_kv and ratio is not None:
+		expected = native_kv / q8_kv
+		if abs(expected - ratio) > 1e-3:
+			bad.append(f"kv_reduction_ratio={ratio} but native/q8={expected:.6f}")
+	return len(bad) == 0, "; ".join(bad) if bad else "gpu-bench record checked"
+
+
+@check("README GPU/Vulkan section's numeric claims trace to the v0.3 "
+	"artifact's SmolLM2-135M context sweep (no drift between the two)")
+def _c37():
+	readme = (REPO_ROOT / "README.md").read_text()
+	m = re.search(
+		r"from\s+roughly\s+(\d+)%\s+at\s+small\s+contexts\s+up\s+to\s+"
+		r"roughly\s+(\d+)%\s+at\s+`ctx=16384`", readme)
+	t = re.search(
+		r"measured\s+roughly\s+(\d+)-(\d+)%\s+lower\s+than\s+native",
+		readme)
+	if not m or not t:
+		return False, "expected VRAM-reduction and throughput-delta " \
+			"phrasing not found in the README GPU/Vulkan section"
+	readme_vram_lo, readme_vram_hi = int(m.group(1)), int(m.group(2))
+	readme_tp_lo, readme_tp_hi = int(t.group(1)), int(t.group(2))
+
+	a = _load_v03_artifact()
+	rows = a["models"]["SmolLM2-135M-Instruct-f16"]["context_matrix"]
+	vram_pcts = [r["vram_reduction_pct"] for r in rows]
+	tp_deltas = [
+		100.0 * (r["q8"]["generation_tok_per_s"]
+			- r["native"]["generation_tok_per_s"])
+			/ r["native"]["generation_tok_per_s"]
+		for r in rows
+	]
+	vram_lo, vram_hi = min(vram_pcts), max(vram_pcts)
+	tp_lo, tp_hi = min(tp_deltas), max(tp_deltas)
+
+	bad = []
+	# "roughly" allows rounding to the nearest whole percent, not a
+	# materially different number -- 1 point of slack either way.
+	if not (vram_lo - 1 <= readme_vram_lo <= vram_lo + 1):
+		bad.append(f"README VRAM low bound {readme_vram_lo}% vs "
+			f"artifact min {vram_lo:.2f}%")
+	if not (vram_hi - 1 <= readme_vram_hi <= vram_hi + 1):
+		bad.append(f"README VRAM high bound {readme_vram_hi}% vs "
+			f"artifact max {vram_hi:.2f}%")
+	# tp_deltas are negative (q8 slower than native); tp_lo is the most
+	# negative (biggest cost, largest |%|), tp_hi the least negative
+	# (smallest cost, smallest |%|) -- README's "low-high%" reads as
+	# smallest-to-largest magnitude, the opposite ordering.
+	if not (abs(tp_hi) - 1 <= readme_tp_lo <= abs(tp_hi) + 1):
+		bad.append(f"README throughput low bound {readme_tp_lo}% vs "
+			f"artifact smallest-magnitude delta |{tp_hi:.2f}|%")
+	if not (abs(tp_lo) - 1 <= readme_tp_hi <= abs(tp_lo) + 1):
+		bad.append(f"README throughput high bound {readme_tp_hi}% vs "
+			f"artifact largest-magnitude delta |{tp_lo:.2f}|%")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		f"README vram=[{readme_vram_lo},{readme_vram_hi}]% vs artifact "
+		f"[{vram_lo:.2f},{vram_hi:.2f}]%; README tp=[{readme_tp_lo},"
+		f"{readme_tp_hi}]% vs artifact [{abs(tp_lo):.2f},{abs(tp_hi):.2f}]%")
+
+
 def main() -> int:
 	global ARTIFACT_PATH
 	ap = argparse.ArgumentParser()
@@ -597,6 +738,7 @@ def main() -> int:
 			_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12, _c13,
 			_c14, _c15, _c16, _c17, _c18, _c19, _c20, _c21, _c22, _c23, _c24,
 			_c25, _c26, _c27, _c28, _c29, _c30, _c31, _c32,
+			_c33, _c34, _c35, _c36, _c37,
 		)
 	for fn in checks:
 		fn()

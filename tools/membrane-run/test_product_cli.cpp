@@ -353,6 +353,87 @@ static void	test_device_requires_nonzero_gpu_layers(void)
 		"CLI error, not just --device with the flag omitted entirely");
 }
 
+static void	test_device_empty_value_rejected(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--gpu-layers");
+	args.push_back("all");
+	args.push_back("--device");
+	args.push_back("");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--device \"\" is rejected at parse time -- an empty needle "
+		"would otherwise match every device via std::string::find");
+}
+
+static void	test_gpu_layers_auto_parses(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--gpu-layers");
+	args.push_back("auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--gpu-layers auto with an explicit --ctx is accepted");
+	TEST_ASSERT(o.gpu_layers == -2,
+		"\"auto\" is stored as -2 (MEMBRANE_GPU_LAYERS_AUTO)");
+}
+
+static void	test_gpu_layers_auto_requires_explicit_ctx(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--gpu-layers");
+	args.push_back("auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--gpu-layers auto without --ctx is a CLI error -- the KV "
+		"budget can't be estimated before context size is known");
+}
+
+static void	test_gpu_bench_requires_gpu_layers(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--gpu-bench");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--gpu-bench without --gpu-layers is a CLI error");
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--gpu-layers");
+	args.push_back("auto");
+	args.push_back("--gpu-bench");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--gpu-bench with --gpu-layers auto is accepted");
+	TEST_ASSERT(o.gpu_bench == 1, "gpu_bench flag is stored");
+}
+
+static void	test_gpu_bench_compare_kv_mutually_exclusive(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--gpu-layers");
+	args.push_back("all");
+	args.push_back("--gpu-bench");
+	args.push_back("--compare-kv");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--gpu-bench and --compare-kv are mutually exclusive");
+}
+
 static void	test_help_and_version_short_circuit(void)
 {
 	std::vector<std::string>	args;
@@ -439,6 +520,11 @@ int	main(void)
 	test_gpu_layers_malformed_rejected();
 	test_device_flag_stored();
 	test_device_requires_nonzero_gpu_layers();
+	test_device_empty_value_rejected();
+	test_gpu_layers_auto_parses();
+	test_gpu_layers_auto_requires_explicit_ctx();
+	test_gpu_bench_requires_gpu_layers();
+	test_gpu_bench_compare_kv_mutually_exclusive();
 	test_help_and_version_short_circuit();
 	test_version_output_format();
 	test_help_mentions_key_concepts();
