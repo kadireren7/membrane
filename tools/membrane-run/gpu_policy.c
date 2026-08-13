@@ -43,6 +43,15 @@ int	membrane_gpu_policy_resolve(int32_t requested_layers,
 		out->estimated_model_bytes = 0;
 		return (1);
 	}
+	if (requested_layers < MEMBRANE_GPU_LAYERS_AUTO)
+	{
+		snprintf(out->reason, sizeof(out->reason),
+			"unsupported requested_layers value (%d) -- must be 0, "
+			"%d (all), %d (auto), or a positive layer count",
+			requested_layers, MEMBRANE_GPU_LAYERS_ALL,
+			MEMBRANE_GPU_LAYERS_AUTO);
+		return (out->ok = 0, 0);
+	}
 	if (requested_layers == MEMBRANE_GPU_LAYERS_AUTO)
 	{
 		if (bytes_per_layer_estimate == 0)

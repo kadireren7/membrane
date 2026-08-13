@@ -265,10 +265,12 @@ static void	test_gpu_layers_all_and_explicit_zero(void)
 	membrane_run_opts_t			o;
 
 	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
 	args.push_back("--gpu-layers");
 	args.push_back("all");
 	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
-		"--gpu-layers all is accepted");
+		"--gpu-layers all (with the now-required --ctx) is accepted");
 	TEST_ASSERT(o.gpu_layers == -1,
 		"\"all\" is stored as -1, matching llama.cpp's own "
 		"n_gpu_layers<0-means-all convention");
@@ -288,10 +290,12 @@ static void	test_gpu_layers_positive_count_stored(void)
 	membrane_run_opts_t			o;
 
 	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
 	args.push_back("--gpu-layers");
 	args.push_back("12");
 	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
-		"--gpu-layers 12 is accepted");
+		"--gpu-layers 12 (with the now-required --ctx) is accepted");
 	TEST_ASSERT(o.gpu_layers == 12, "--gpu-layers 12 value stored exactly");
 }
 
@@ -321,6 +325,8 @@ static void	test_device_flag_stored(void)
 	membrane_run_opts_t			o;
 
 	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
 	args.push_back("--gpu-layers");
 	args.push_back("all");
 	args.push_back("--device");
@@ -395,6 +401,38 @@ static void	test_gpu_layers_auto_requires_explicit_ctx(void)
 	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
 		"--gpu-layers auto without --ctx is a CLI error -- the KV "
 		"budget can't be estimated before context size is known");
+}
+
+static void	test_gpu_layers_all_and_n_require_explicit_ctx(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--gpu-layers");
+	args.push_back("all");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--gpu-layers all without --ctx is a CLI error -- the GPU "
+		"memory guard can't check the real KV budget before an "
+		"auto-sized context is known");
+
+	args = base_args();
+	args.push_back("--gpu-layers");
+	args.push_back("10");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--gpu-layers N without --ctx is a CLI error, same as all/auto");
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--gpu-layers");
+	args.push_back("all");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--gpu-layers all with an explicit --ctx is accepted");
+
+	args = base_args();
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--gpu-layers 0 (CPU-only default) without --ctx is unaffected");
 }
 
 static void	test_gpu_bench_requires_gpu_layers(void)
@@ -523,6 +561,7 @@ int	main(void)
 	test_device_empty_value_rejected();
 	test_gpu_layers_auto_parses();
 	test_gpu_layers_auto_requires_explicit_ctx();
+	test_gpu_layers_all_and_n_require_explicit_ctx();
 	test_gpu_bench_requires_gpu_layers();
 	test_gpu_bench_compare_kv_mutually_exclusive();
 	test_help_and_version_short_circuit();

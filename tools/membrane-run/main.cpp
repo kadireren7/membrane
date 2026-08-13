@@ -169,12 +169,12 @@ static std::string	gpu_layers_label(int32_t gpu_layers)
  * is never left NULL for llama.cpp's own upstream default to silently
  * pick a GPU (GPU use must be explicit, not accidental). *device_
  * storage must outlive mp's use in llama_model_load_from_file().
- * ctx_size is REQUIRED (>0) whenever a KV-aware estimate is possible;
- * product_cli.cpp's parse-time validation already guarantees this for
- * --gpu-layers auto (it requires an explicit --ctx) -- for explicit
- * all/N with an auto-sized --ctx (ctx_size==0 here), the guard simply
- * can't account for KV and checks weights-only, which is documented
- * in gpu_policy.h/README, not hidden.
+ * ctx_size is REQUIRED (>0) here: product_cli.cpp's parse-time
+ * validation rejects ANY nonzero --gpu-layers (all/auto/N) paired
+ * with an auto-sized --ctx, precisely so the guard below is always
+ * KV-aware and never has to fall back to a weights-only check that
+ * could pass here and still fail later once the real (auto-sized)
+ * context is known.
  *
  * Returns false (message already printed to stderr) if the request
  * cannot be satisfied -- callers must fail closed
@@ -389,7 +389,7 @@ static void	print_startup_summary(const membrane_run_opts_t &o,
 			"to use a GPU)\n");
 	else
 	{
-		fprintf(stderr, "backend    %s, device requested: %s "
+		fprintf(stderr, "backend    %s, device selected: %s "
 			"(gpu-layers=%s, selected=%d)\n", gs.backend_selected.c_str(),
 			gs.device_selected.c_str(),
 			gpu_layers_label(gs.gpu_layers_requested).c_str(),
@@ -709,10 +709,12 @@ static bool	run_native_q8_comparison(const membrane_run_opts_t &o,
 		return (fprintf(stderr,
 				"membrane-run: q8 canonical pass failed\n"), false);
 	tel_q8->generated_tokens = result_q8->tokens.size();
+	memset(tel_native, 0, sizeof(*tel_native));
 	tel_native->kv_store_mode_name = "native";
 	tel_native->no_fallback_occurred = 1;
 	tel_native->ctx_size = ctx_size;
 	tel_native->compressed_kv_allocated_bytes = *native_bytes;
+	membrane_kv_store_read_rss(&tel_native->rss_after_model_load);
 	if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
 			MEMBRANE_KV_STORE_NATIVE, ctx_size, o.verbose, NULL, true,
 			n_vocab, NULL, tel_native, result_native))
@@ -797,8 +799,9 @@ static void	print_gpu_bench_json(const char *model_label, uint32_t ctx_size,
 			/ tel_native.generation_tok_per_s : 0.0;
 
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
-		"\"mode\":\"gpu_bench\",\"model_label\":\"%s\",\"ctx_size\":%u,",
-		MEMBRANE_VERSION, model_label, ctx_size);
+		"\"mode\":\"gpu_bench\",\"model_label\":\"", MEMBRANE_VERSION);
+	print_json_escaped(model_label);
+	printf("\",\"ctx_size\":%u,", ctx_size);
 	print_gpu_json(gs);
 	printf("\"native\":{\"kv_allocated_bytes\":%llu,"
 		"\"rss_after_context_kb\":%llu,\"prompt_tok_per_s\":%.6f,"
@@ -856,11 +859,14 @@ static void	print_gpu_bench_human(const char *model_label, uint32_t ctx_size,
 	fprintf(stderr, "native kv bytes    %.2f MiB, %.1f tok/s (gen)\n",
 		(double)native_bytes / (1024.0 * 1024.0),
 		tel_native.generation_tok_per_s);
+	double	kv_ratio = tel_q8.compressed_kv_allocated_bytes > 0
+		? (double)native_bytes / (double)tel_q8.compressed_kv_allocated_bytes
+		: 0.0;
+
 	fprintf(stderr, "q8 kv bytes        %.2f MiB (%.3fx smaller), "
 		"%.1f tok/s (gen, %+.1f%% vs native)\n",
 		(double)tel_q8.compressed_kv_allocated_bytes / (1024.0 * 1024.0),
-		(double)native_bytes / (double)tel_q8.compressed_kv_allocated_bytes,
-		tel_q8.generation_tok_per_s, throughput_delta_pct);
+		kv_ratio, tel_q8.generation_tok_per_s, throughput_delta_pct);
 	if (tel_q8.quality_available)
 		fprintf(stderr, "quality            token_identity=%s "
 			"first_divergence=%d top1=%.4f logit_rel_l2=%.6f "
@@ -939,11 +945,10 @@ int	main(int argc, char **argv)
 	 * spending time on model load, if the request can't be satisfied.
 	 * o.ctx is the only context-size information available pre-load
 	 * (0 if auto-sizing from the prompt, which needs a loaded model's
-	 * tokenizer) -- product_cli.cpp's parse-time validation already
-	 * requires an explicit --ctx whenever --gpu-layers auto is used,
-	 * so this is never 0 in exactly the case that needs it to be KV-
-	 * aware; for explicit all/N with an auto-sized --ctx, the guard
-	 * below just checks weights only (documented, not hidden). */
+	 * tokenizer) -- product_cli.cpp's parse-time validation rejects
+	 * any nonzero --gpu-layers (all/auto/N) paired with an auto-sized
+	 * --ctx, so o.ctx is never 0 here in the one case that would need
+	 * it to be KV-aware. */
 	mp = llama_model_default_params();
 	if (!resolve_gpu_config(o, o.ctx, &device_storage, &mp, &gs))
 		return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);

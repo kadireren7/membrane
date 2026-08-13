@@ -213,14 +213,17 @@ asked to, even when built with `-DGGML_VULKAN=ON`:
   `all`.
 - `--gpu-layers auto` (Phase 9B.1) — MEMBRANE picks a layer count from
   real device-free-memory and model-size information, leaving an
-  explicit safety margin. Requires an explicit `--ctx` (the KV budget
-  can't be estimated before context size is known, and auto-sizing
-  `--ctx` from the prompt needs a model already loaded — a decision
-  auto itself has to make first).
+  explicit safety margin.
 - `--device NAME` — select a GPU device by a case-insensitive
   substring match against its name or description (e.g. `nvidia`,
   `radeon`, `1650`). Requires `--gpu-layers all|auto|N`. Fails clearly
   if no device matches, or if more than one does.
+
+Any nonzero `--gpu-layers` value — `all`, `auto`, or an explicit `N`
+— requires an explicit `--ctx`: the memory guard can't estimate a real
+KV budget before the context size is known, and auto-sizing `--ctx`
+from the prompt needs a model already loaded, which is a decision GPU
+resolution has to make first, before load.
 
 Requesting GPU layers on a build with no GPU backend compiled in, or
 with no GPU device found at runtime, fails clearly (exit 5) — it never

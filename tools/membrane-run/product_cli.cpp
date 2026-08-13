@@ -302,13 +302,14 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 				"\"all\" or a positive count -- naming a device with "
 				"zero GPU layers requested is ambiguous\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
-	if (o->gpu_layers == MEMBRANE_GPU_LAYERS_AUTO && o->ctx == 0)
+	if (o->gpu_layers != 0 && o->ctx == 0)
 		return (fprintf(stderr,
-				"membrane-run: --gpu-layers auto requires an explicit "
-				"--ctx N -- the KV memory budget can't be estimated "
-				"before the context size is known, and auto-sizing --ctx "
-				"from the prompt requires the model already loaded (a "
-				"decision auto itself needs to make first)\n"),
+				"membrane-run: --gpu-layers all|auto|N requires an "
+				"explicit --ctx N -- the GPU memory guard can't check "
+				"the real KV budget before the context size is known, "
+				"and auto-sizing --ctx from the prompt requires the "
+				"model already loaded (a decision GPU resolution needs "
+				"to make first, before load)\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
 	if (o->gpu_bench && o->compare_kv)
 		return (fprintf(stderr,

@@ -600,6 +600,8 @@ def _c34():
 	rows = list(ap.get("context_matrix_135m", []))
 	if "context_matrix_360m_ctx2048" in ap:
 		rows.append(ap["context_matrix_360m_ctx2048"])
+	if not rows:
+		return False, "no auto_policy context matrices found in the artifact"
 	for row in rows:
 		native_v = row["native"]["external_vram_peak_mib"]
 		q8_v = row["q8"]["external_vram_peak_mib"]

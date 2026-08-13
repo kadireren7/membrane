@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <string.h>
 
 #include "gpu_policy.h"
@@ -11,8 +12,9 @@ static void	test_auto_sufficient_memory_selects_all_layers(void)
 	membrane_gpu_policy_result_t	r;
 
 	/* 4 GiB device, 3.9 GiB free, ~9 MiB/layer, 30 layers, tiny KV --
-	 * matches this project's real SmolLM2-135M/GTX 1650 measurements
-	 * (Phase 9A/9B): everything comfortably fits. */
+	 * simulated inputs in the rough shape of this project's real
+	 * SmolLM2-135M/GTX 1650 sizing (Phase 9A/9B), not the measurements
+	 * themselves: everything comfortably fits. */
 	TEST_ASSERT(membrane_gpu_policy_resolve(MEMBRANE_GPU_LAYERS_AUTO,
 			30, (uint64_t)(3.9 * GIB), 4 * GIB, 9 * MIB, 6 * MIB,
 			&r) == 1, "auto resolves when the model comfortably fits");
@@ -181,6 +183,34 @@ static void	test_invalid_layer_count_rejected(void)
 			0, &r) == 0, "a non-positive model layer count fails closed");
 }
 
+static void	test_unsupported_negative_layers_rejected(void)
+{
+	membrane_gpu_policy_result_t	r;
+
+	/* -3 is neither MEMBRANE_GPU_LAYERS_ALL (-1) nor _AUTO (-2) --
+	 * with bytes_per_layer_estimate==0 this previously fell through
+	 * to the explicit-N branch's "needed=0, no estimate to check
+	 * against" path and returned ok=1 with a negative selected_layers,
+	 * a genuine bug caught during CodeRabbit review of this file. */
+	TEST_ASSERT(membrane_gpu_policy_resolve(-3, 30, 4 * GIB, 4 * GIB, 0, 0,
+			&r) == 0, "an unsupported negative layer count with no "
+		"estimate fails closed rather than returning a negative "
+		"selected_layers");
+	TEST_ASSERT(r.ok == 0, "out->ok reflects failure");
+	TEST_ASSERT(strlen(r.reason) > 0, "a reason is given");
+	/* With a nonzero estimate, the old code cast -3 to uint64_t before
+	 * multiplying -- an unsigned-wraparound path that could produce
+	 * an unpredictable "needed" byte count instead of a clean
+	 * rejection. */
+	TEST_ASSERT(membrane_gpu_policy_resolve(-3, 30, 4 * GIB, 4 * GIB,
+			9 * MIB, 0, &r) == 0,
+		"an unsupported negative layer count with a real estimate "
+		"still fails closed, not via integer-overflow arithmetic");
+	TEST_ASSERT(membrane_gpu_policy_resolve(INT32_MIN, 30, 4 * GIB,
+			4 * GIB, 9 * MIB, 0, &r) == 0,
+		"the most negative int32 value also fails closed");
+}
+
 static void	test_null_out_pointer_is_safe(void)
 {
 	TEST_ASSERT(membrane_gpu_policy_resolve(MEMBRANE_GPU_LAYERS_AUTO, 30,
@@ -203,6 +233,7 @@ int	main(void)
 	test_explicit_missing_estimate_does_not_block();
 	test_zero_layers_always_ok();
 	test_invalid_layer_count_rejected();
+	test_unsupported_negative_layers_rejected();
 	test_null_out_pointer_is_safe();
 	printf("test_gpu_policy: all tests passed\n");
 	return (0);

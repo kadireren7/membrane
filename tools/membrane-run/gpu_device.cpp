@@ -1,7 +1,9 @@
 #include "gpu_device.h"
 
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <string>
@@ -35,6 +37,29 @@ static void	copy_bounded(char *dst, size_t dst_size, const char *src)
 	if (src == NULL)
 		src = "";
 	snprintf(dst, dst_size, "%s", src);
+}
+
+/* Strictly parses the "blk.<N>." prefix llama.cpp's own tensor-naming
+ * convention uses (LLM_TENSOR_NAMES in llama-arch.cpp), e.g.
+ * "blk.0.attn_q.weight". atoi() alone would silently map a malformed
+ * name like "blk.foo.bias" to layer 0, corrupting the per-layer byte
+ * estimate before any model load -- reject anything that isn't
+ * exactly one or more decimal digits followed by '.'. */
+static bool	parse_blk_layer_index(const char *name, int *out_idx)
+{
+	const char	*p = name + 4;
+	const char	*digits_start = p;
+	long		val;
+
+	while (*p >= '0' && *p <= '9')
+		++p;
+	if (p == digits_start || *p != '.')
+		return (false);
+	val = strtol(digits_start, NULL, 10);
+	if (val < 0 || val > INT32_MAX)
+		return (false);
+	*out_idx = (int)val;
+	return (true);
 }
 
 int	membrane_gpu_backend_available(void)
@@ -80,6 +105,8 @@ size_t	membrane_gpu_match_device(const membrane_gpu_device_info_t *devices,
 	if (query == NULL || devices == NULL)
 		return (0);
 	needle = ci_lower(query);
+	if (needle.find_first_not_of(" \t") == std::string::npos)
+		return (0);
 	matches = 0;
 	for (i = 0; i < n_devices; ++i)
 	{
@@ -170,10 +197,13 @@ int	membrane_gpu_estimate_model(const char *model_path,
 		total_bytes += sz;
 		if (name != NULL && strncmp(name, "blk.", 4) == 0)
 		{
-			int	layer_idx = atoi(name + 4);
+			int	layer_idx;
 
-			layer_bytes += sz;
-			layer_indices_seen[layer_idx] = true;
+			if (parse_blk_layer_index(name, &layer_idx))
+			{
+				layer_bytes += sz;
+				layer_indices_seen[layer_idx] = true;
+			}
 		}
 	}
 	if (layer_indices_seen.empty())

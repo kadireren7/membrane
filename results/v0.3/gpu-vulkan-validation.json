@@ -645,6 +645,7 @@
     "gpu_bench_135m_ctx2048_256tok": {
       "schema_version": 1,
       "membrane_version": "0.2.0",
+      "membrane_version_note": "MEMBRANE_VERSION string of the pre-release build under test; --gpu-bench is not in v0.2.0 stable -- see membrane_commit for the exact build",
       "mode": "gpu_bench",
       "model_label": "SmolLM2-135M-Instruct-f16.gguf",
       "ctx_size": 2048,
