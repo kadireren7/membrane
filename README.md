@@ -150,6 +150,135 @@ KV cache's own allocated tensor type with genuinely compressed Q8_0
 storage (no `third_party/llama.cpp` patch required; see
 `docs/live-runtime.md`).
 
+## GPU / Vulkan (development branch, not yet in v0.2.0 stable)
+
+`v0.2.0` stable was CPU-first: every claim in this document up to this
+section is CPU-only. The `feature/gpu-vulkan-runtime` development
+branch adds explicit, opt-in GPU runtime controls to `membrane-run` on
+top of the existing, unmodified `ggml`/llama.cpp Vulkan backend — no
+custom GPU kernels, no `third_party/llama.cpp` changes.
+
+**What was found (Phase 9A/9B), on one tested host** (Pop!_OS 24.04,
+NVIDIA GeForce GTX 1650 Mobile, 4 GB VRAM, driver 580.159.03): with the
+Vulkan backend, the Q8_0 KV cache is genuinely allocated in GPU VRAM
+(not host RAM), and its VRAM footprint measured lower than native F16
+KV at every tested context on SmolLM2-135M — from roughly 2% at small
+contexts up to roughly 25% at `ctx=16384`. **This is one model family,
+one GPU, one driver, one host — not a general GPU/VRAM claim.**
+Measured reduction depends on model, context size, and hardware, and
+will differ elsewhere. The GPU path also has a measured throughput
+cost on this host: q8 generation speed measured roughly 7-18% lower
+than native across the same SmolLM2-135M context sweep — reported as
+the measured range, not a single asserted number.
+
+CUDA is not yet a supported MEMBRANE product path — this section is
+about the Vulkan backend only.
+
+### Build
+
+```bash
+cmake -S . -B build-vulkan \
+  -DMEMBRANE_ENABLE_LLAMA=ON \
+  -DGGML_VULKAN=ON \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-vulkan -j
+```
+
+Vulkan is an optional, non-default build path — a plain
+`-DMEMBRANE_ENABLE_LLAMA=ON` build (no `-DGGML_VULKAN=ON`) remains
+CPU-only, unchanged. Building the Vulkan backend needs Vulkan
+development headers, the `glslc` shader compiler, and SPIR-V headers
+already on the system — MEMBRANE never installs system packages
+automatically. Required package names vary by distribution; for
+Pop!_OS/Ubuntu (24.04, the only distribution this was verified on),
+the packages actually confirmed necessary in this project are:
+
+```bash
+sudo apt install libvulkan-dev glslc vulkan-tools spirv-headers
+```
+
+Do not assume these exact package names apply to other distributions.
+
+### CLI
+
+GPU use is **explicit only** — `membrane-run` never uses a GPU unless
+asked to, even when built with `-DGGML_VULKAN=ON`:
+
+- `--gpu-layers 0` — CPU-only. Default, and also the explicit
+  CPU-forcing form, equivalent to omitting the flag entirely.
+- `--gpu-layers all` — offload every layer. Rejected (exit 5) if the
+  estimated memory requirement exceeds a safe budget on the selected
+  device — see "Memory-aware offload" below.
+- `--gpu-layers N` — offload `N` layers, clamped to the model's real
+  layer count if `N` exceeds it (the common llama.cpp `-ngl 99`-style
+  idiom for "offload everything" without knowing the exact count).
+  Same budget check as `all`.
+- `--gpu-layers auto` (Phase 9B.1) — MEMBRANE picks a layer count from
+  real device-free-memory and model-size information, leaving an
+  explicit safety margin.
+- `--device NAME` — select a GPU device by a case-insensitive
+  substring match against its name or description (e.g. `nvidia`,
+  `radeon`, `1650`). Requires `--gpu-layers all|auto|N`. Fails clearly
+  if no device matches, or if more than one does.
+
+Any nonzero `--gpu-layers` value — `all`, `auto`, or an explicit `N`
+— requires an explicit `--ctx`: the memory guard can't estimate a real
+KV budget before the context size is known, and auto-sizing `--ctx`
+from the prompt needs a model already loaded, which is a decision GPU
+resolution has to make first, before load.
+
+Requesting GPU layers on a build with no GPU backend compiled in, or
+with no GPU device found at runtime, fails clearly (exit 5) — it never
+silently falls back to CPU, for `all`/`auto`/`N` alike.
+
+**"auto" is conservative, not an OOM guarantee.** It uses real
+information from public APIs — `ggml_backend_dev_memory()` for device
+free/total bytes, and `gguf_init_from_file()` (no full model load) for
+real per-tensor byte sizes and hparams — reserves a safety margin
+(the larger of a 512 MiB fixed floor or 15% of device total memory),
+subtracts an estimated KV requirement for the requested context/KV
+type, and picks the largest layer count that fits the remainder. It
+does **not** model `ggml`'s actual allocator overhead exactly
+(alignment/scratch/fragmentation), and it has no visibility into
+memory other processes might claim after it decides — a desktop
+compositor, browser, or game claiming VRAM after MEMBRANE starts can
+still exhaust a margin that looked safe at decision time. Treat it as
+a helpful default, not a promise.
+
+**Memory-aware offload / guard**: the same budget check applies to
+`all`/`N` too, not just `auto` — an explicit request that clearly
+exceeds the estimated safe budget is rejected before any inference
+begins (exit 5, no partial run, no crash), not silently reduced.
+Verified on the test host: `--gpu-layers all` at a context large
+enough to make the estimated requirement exceed the budget is
+rejected outright, while `--gpu-layers auto` at that *same* context
+succeeds by choosing a genuinely smaller layer count instead — see
+`results/v0.3/gpu-vulkan-validation.json`'s `auto_policy.
+guard_boundary_test` for the exact numbers.
+
+**`--gpu-bench`** runs an explicit native-vs-q8 comparison under a GPU
+configuration (requires `--gpu-layers all|auto|N`, mutually exclusive
+with `--compare-kv`): selected device/layers, KV bytes, throughput,
+and quality (token identity, first divergence, top1 preservation,
+logit rel-L2, delta NLL) side by side. Q8 measurably trades some
+throughput for the memory reduction on the tested host (see below) —
+this is reported as measured, not asserted as universal.
+
+`--json`/human output report a `gpu` block (whether GPU use was
+requested, whether the build supports it, the requested vs *selected*
+layer count, and the backend/device membrane-run explicitly selected
+via public `ggml_backend_dev_*()` enumeration — never left to
+llama.cpp's own implicit upstream default) and, whenever a memory
+estimate was used, a `gpu_policy` block (device free/total bytes,
+safety reserve, estimated weight/KV bytes). This reflects what was
+*requested and selected/estimated*, not an independently-confirmed
+post-load allocation — no public API exposes that without scraping
+runtime logs, so none is claimed.
+
+Vulkan was tested on exactly one host, one GPU (NVIDIA GeForce GTX
+1650 Mobile). There is no universal CUDA or AMD support claim yet —
+this is a Vulkan-only, single-host validation.
+
 ## Build from source (llama-free library only)
 
 ```bash

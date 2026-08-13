@@ -1,3 +1,18 @@
+# Phase 9B.1: the one place membrane-run touches ggml_backend_dev_*()/
+# gguf_*() directly (gpu_device.h's own header comment). Needs
+# llama.h/ggml-backend.h/gguf.h, so -- unlike membrane_gpu_policy's
+# pure arithmetic, registered unconditionally at the top level -- this
+# library only exists inside the MEMBRANE_ENABLE_LLAMA block.
+add_library(membrane_gpu_device STATIC gpu_device.cpp)
+set_target_properties(membrane_gpu_device PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_gpu_device PRIVATE llama)
+target_include_directories(membrane_gpu_device PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run)
+target_include_directories(membrane_gpu_device PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
 # Only evaluated when MEMBRANE_ENABLE_LLAMA=ON (see the top-level
 # CMakeLists.txt's if(MEMBRANE_ENABLE_LLAMA) block). Product Phase 8:
 # membrane-run, the user-facing entry point -- see main.cpp's header
@@ -7,7 +22,8 @@ set_target_properties(membrane-run PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane-run PRIVATE membrane_product_cli
-  membrane_compat_check membrane_decode_loop llama)
+  membrane_compat_check membrane_decode_loop membrane_gpu_policy
+  membrane_gpu_device llama)
 target_include_directories(membrane-run PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)

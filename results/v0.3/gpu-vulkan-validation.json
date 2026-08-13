@@ -1,0 +1,725 @@
+{
+  "schema_version": 1,
+  "phase": "9B-gpu-vulkan-runtime-productization",
+  "membrane_commit": "53ef6188f37ee793bf00e97fad5d91cd6699537d",
+  "membrane_base_commit": "64cffc0e45f2633caf533af851f441873da7db97",
+  "llama_cpp_commit": "c0bc8591e8815c63cb01dd3f051a8b0df02501c9",
+  "ggml_version": "0.17.0",
+  "host": {
+    "os": "Pop!_OS 24.04 LTS",
+    "cpu": "AMD Ryzen 5 5600H",
+    "ram_gib": 5.6,
+    "gpu_model": "NVIDIA GeForce GTX 1650 Mobile / Max-Q",
+    "gpu_vram_mib_total": 4096,
+    "nvidia_driver": "580.159.03",
+    "vulkan_api_version_device": "1.4.312",
+    "vulkan_api_version_instance": "1.3.280"
+  },
+  "backend": "Vulkan (ggml-vulkan, GGML_VULKAN=ON)",
+  "backend_device_selected": "Vulkan1 (NVIDIA GeForce GTX 1650)",
+  "cli_used": "membrane-run --gpu-layers all [--device NAME] --kv {native|q8} ...",
+  "build_command": "cmake -S . -B build-vulkan -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release",
+  "vram_measurement_method": "background process launch + nvidia-smi --query-gpu=memory.used polled every 0.05s until process exit; idle baseline measured immediately before launch; no other GPU processes running",
+  "models": {
+    "SmolLM2-135M-Instruct-f16": {
+      "architecture": "llama",
+      "layers": 30,
+      "embedding_length": 576,
+      "head_count": 9,
+      "head_count_kv": 3,
+      "head_dim": 64,
+      "size_label": "135M",
+      "context_matrix": [
+        {
+          "ctx": 512,
+          "native": {
+            "kv_allocated_bytes": 11796480,
+            "rss_after_context_kb": 263252,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 326,
+            "vram_delta_mib": 324,
+            "generation_tok_per_s": 292.902106,
+            "prompt_tok_per_s": 396.129281,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "q8": {
+            "kv_allocated_bytes": 6266880,
+            "rss_after_context_kb": 269092,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 320,
+            "vram_delta_mib": 318,
+            "generation_tok_per_s": 272.597568,
+            "prompt_tok_per_s": 513.882821,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "vram_reduction_mib": 6,
+          "vram_reduction_pct": 1.84
+        },
+        {
+          "ctx": 1024,
+          "native": {
+            "kv_allocated_bytes": 23592960,
+            "rss_after_context_kb": 268004,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 339,
+            "vram_delta_mib": 337,
+            "generation_tok_per_s": 315.803581,
+            "prompt_tok_per_s": 876.011667,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "q8": {
+            "kv_allocated_bytes": 12533760,
+            "rss_after_context_kb": 269128,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 329,
+            "vram_delta_mib": 327,
+            "generation_tok_per_s": 280.628593,
+            "prompt_tok_per_s": 803.443087,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "vram_reduction_mib": 10,
+          "vram_reduction_pct": 2.95
+        },
+        {
+          "ctx": 2048,
+          "native": {
+            "kv_allocated_bytes": 47185920,
+            "rss_after_context_kb": 268064,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 359,
+            "vram_delta_mib": 357,
+            "generation_tok_per_s": 321.93186,
+            "prompt_tok_per_s": 798.710611,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "q8": {
+            "kv_allocated_bytes": 25067520,
+            "rss_after_context_kb": 269172,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 338,
+            "vram_delta_mib": 336,
+            "generation_tok_per_s": 265.52898,
+            "prompt_tok_per_s": 755.781745,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "vram_reduction_mib": 21,
+          "vram_reduction_pct": 5.85
+        },
+        {
+          "ctx": 4096,
+          "native": {
+            "kv_allocated_bytes": 94371840,
+            "rss_after_context_kb": 268904,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 404,
+            "vram_delta_mib": 402,
+            "generation_tok_per_s": 315.185244,
+            "prompt_tok_per_s": 804.67977,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "q8": {
+            "kv_allocated_bytes": 50135040,
+            "rss_after_context_kb": 269140,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 362,
+            "vram_delta_mib": 360,
+            "generation_tok_per_s": 276.788572,
+            "prompt_tok_per_s": 624.92609,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "vram_reduction_mib": 42,
+          "vram_reduction_pct": 10.4
+        },
+        {
+          "ctx": 8192,
+          "native": {
+            "kv_allocated_bytes": 188743680,
+            "rss_after_context_kb": 268844,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 494,
+            "vram_delta_mib": 492,
+            "generation_tok_per_s": 321.97833,
+            "prompt_tok_per_s": 848.393459,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "q8": {
+            "kv_allocated_bytes": 100270080,
+            "rss_after_context_kb": 269080,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 410,
+            "vram_delta_mib": 408,
+            "generation_tok_per_s": 280.479837,
+            "prompt_tok_per_s": 801.420413,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "vram_reduction_mib": 84,
+          "vram_reduction_pct": 17.0
+        },
+        {
+          "ctx": 16384,
+          "native": {
+            "kv_allocated_bytes": 377487360,
+            "rss_after_context_kb": 269068,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 674,
+            "vram_delta_mib": 672,
+            "generation_tok_per_s": 306.920531,
+            "prompt_tok_per_s": 669.532748,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "q8": {
+            "kv_allocated_bytes": 200540160,
+            "rss_after_context_kb": 269320,
+            "vram_idle_mib": 2,
+            "vram_peak_mib": 506,
+            "vram_delta_mib": 504,
+            "generation_tok_per_s": 274.486497,
+            "prompt_tok_per_s": 686.254083,
+            "exit_code": 0,
+            "no_fallback_occurred": true,
+            "gpu_telemetry": {
+              "requested": true,
+              "backend_gpu_capable": true,
+              "gpu_layers_requested": -1,
+              "backend": "Vulkan",
+              "device_requested": "",
+              "device_selected": "Vulkan1"
+            }
+          },
+          "vram_reduction_mib": 168,
+          "vram_reduction_pct": 24.93
+        }
+      ],
+      "compare_kv_ctx2048_256tok": {
+        "schema_version": 1,
+        "membrane_version": "0.2.0",
+        "mode": "compare",
+        "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+        "ctx_size": 2048,
+        "storage": {
+          "native_kv_allocated_bytes": 47185920,
+          "q8_kv_allocated_bytes": 25067520
+        },
+        "gpu": {
+          "requested": true,
+          "backend_gpu_capable": true,
+          "gpu_layers_requested": -1,
+          "backend": "Vulkan",
+          "device_requested": "",
+          "device_selected": "Vulkan1"
+        },
+        "memory_q8": {
+          "rss_after_context_kb": 269332,
+          "rss_final_kb": 278208,
+          "peak_rss_kb": 476144
+        },
+        "performance": {
+          "prompt_tok_per_s": 706.362807,
+          "generation_tok_per_s": 273.857059
+        },
+        "quality": {
+          "available": true,
+          "token_identity": false,
+          "first_divergence": 64,
+          "logit_rel_l2": 0.007768,
+          "top1_preservation": 0.992188,
+          "delta_nll": -0.0002
+        },
+        "no_fallback_occurred": true,
+        "membrane_version_note": "MEMBRANE_VERSION string of the pre-release build under test; the GPU path is not in v0.2.0 stable -- see membrane_commit for the exact build"
+      }
+    },
+    "SmolLM2-360M-Instruct-f16": {
+      "architecture": "llama",
+      "layers": 32,
+      "embedding_length": 960,
+      "head_count": 15,
+      "head_count_kv": 5,
+      "head_dim": 64,
+      "size_label": "360M",
+      "ctx2048": {
+        "ctx": 2048,
+        "native": {
+          "kv_allocated_bytes": 83886080,
+          "rss_after_context_kb": 296352,
+          "vram_idle_mib": 2,
+          "vram_peak_mib": 828,
+          "vram_delta_mib": 826,
+          "generation_tok_per_s": 164.015632,
+          "prompt_tok_per_s": 236.987711,
+          "exit_code": 0,
+          "no_fallback_occurred": true,
+          "gpu_telemetry": {
+            "requested": true,
+            "backend_gpu_capable": true,
+            "gpu_layers_requested": -1,
+            "backend": "Vulkan",
+            "device_requested": "",
+            "device_selected": "Vulkan1"
+          }
+        },
+        "q8": {
+          "kv_allocated_bytes": 44564480,
+          "rss_after_context_kb": 342920,
+          "vram_idle_mib": 2,
+          "vram_peak_mib": 791,
+          "vram_delta_mib": 789,
+          "generation_tok_per_s": 154.473034,
+          "prompt_tok_per_s": 518.267515,
+          "exit_code": 0,
+          "no_fallback_occurred": true,
+          "gpu_telemetry": {
+            "requested": true,
+            "backend_gpu_capable": true,
+            "gpu_layers_requested": -1,
+            "backend": "Vulkan",
+            "device_requested": "",
+            "device_selected": "Vulkan1"
+          }
+        },
+        "vram_reduction_mib": 37,
+        "vram_reduction_pct": 4.47
+      },
+      "compare_kv_ctx2048_256tok": {
+        "schema_version": 1,
+        "membrane_version": "0.2.0",
+        "mode": "compare",
+        "model_label": "SmolLM2-360M-Instruct-f16.gguf",
+        "ctx_size": 2048,
+        "storage": {
+          "native_kv_allocated_bytes": 83886080,
+          "q8_kv_allocated_bytes": 44564480
+        },
+        "gpu": {
+          "requested": true,
+          "backend_gpu_capable": true,
+          "gpu_layers_requested": -1,
+          "backend": "Vulkan",
+          "device_requested": "",
+          "device_selected": "Vulkan1"
+        },
+        "memory_q8": {
+          "rss_after_context_kb": 320616,
+          "rss_final_kb": 312612,
+          "peak_rss_kb": 957604
+        },
+        "performance": {
+          "prompt_tok_per_s": 441.783023,
+          "generation_tok_per_s": 154.238891
+        },
+        "quality": {
+          "available": true,
+          "token_identity": false,
+          "first_divergence": 35,
+          "logit_rel_l2": 0.006164,
+          "top1_preservation": 0.996094,
+          "delta_nll": -0.001337
+        },
+        "no_fallback_occurred": true,
+        "membrane_version_note": "MEMBRANE_VERSION string of the pre-release build under test; the GPU path is not in v0.2.0 stable -- see membrane_commit for the exact build"
+      }
+    }
+  },
+  "limitations": [
+    "one host, one GPU vendor/model (NVIDIA via Vulkan) -- not a general GPU/VRAM claim",
+    "CUDA backend not tested -- not a supported MEMBRANE product path yet",
+    "two small models only (135M/360M) -- no large-model VRAM-pressure scenario reached",
+    "VRAM measured via nvidia-smi total memory.used polling (0.05s resolution), not a true instrumented per-allocation API",
+    "no second host",
+    "no production-hardware claim",
+    "quality/divergence numbers are per-model/per-prompt, not generalized"
+  ],
+  "auto_policy": {
+    "policy_version": 1,
+    "reserve_policy": {
+      "description": "max(fixed floor, percentage of device total) -- whichever is larger, documented in gpu_policy.h",
+      "fixed_reserve_bytes": 536870912,
+      "percentage_reserve_pct": 15
+    },
+    "context_matrix_135m": [
+      {
+        "ctx": 512,
+        "native": {
+          "kv_allocated_bytes": 11796480,
+          "gpu_layers_selected": 30,
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4148625408,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 212474880,
+            "estimated_kv_bytes": 11796480
+          },
+          "rss_after_context_kb": 268324,
+          "external_vram_idle_mib": 2,
+          "external_vram_peak_mib": 319,
+          "generation_tok_per_s": 256.569632,
+          "prompt_tok_per_s": 314.759527,
+          "exit_code": 0,
+          "no_fallback_occurred": true
+        },
+        "q8": {
+          "kv_allocated_bytes": 6266880,
+          "gpu_layers_selected": 30,
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4148625408,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 212474880,
+            "estimated_kv_bytes": 6266880
+          },
+          "rss_after_context_kb": 272988,
+          "external_vram_idle_mib": 2,
+          "external_vram_peak_mib": 314,
+          "generation_tok_per_s": 238.120296,
+          "prompt_tok_per_s": 504.11863,
+          "exit_code": 0,
+          "no_fallback_occurred": true
+        },
+        "external_vram_reduction_mib": 5,
+        "external_vram_reduction_pct": 1.57
+      },
+      {
+        "ctx": 2048,
+        "native": {
+          "kv_allocated_bytes": 47185920,
+          "gpu_layers_selected": 30,
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4148625408,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 212474880,
+            "estimated_kv_bytes": 47185920
+          },
+          "rss_after_context_kb": 274200,
+          "external_vram_idle_mib": 2,
+          "external_vram_peak_mib": 352,
+          "generation_tok_per_s": 279.052028,
+          "prompt_tok_per_s": 633.196115,
+          "exit_code": 0,
+          "no_fallback_occurred": true
+        },
+        "q8": {
+          "kv_allocated_bytes": 25067520,
+          "gpu_layers_selected": 30,
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4148625408,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 212474880,
+            "estimated_kv_bytes": 25067520
+          },
+          "rss_after_context_kb": 273416,
+          "external_vram_idle_mib": 2,
+          "external_vram_peak_mib": 331,
+          "generation_tok_per_s": 245.942548,
+          "prompt_tok_per_s": 679.203297,
+          "exit_code": 0,
+          "no_fallback_occurred": true
+        },
+        "external_vram_reduction_mib": 21,
+        "external_vram_reduction_pct": 5.97
+      },
+      {
+        "ctx": 8192,
+        "native": {
+          "kv_allocated_bytes": 188743680,
+          "gpu_layers_selected": 30,
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4148625408,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 212474880,
+            "estimated_kv_bytes": 188743680
+          },
+          "rss_after_context_kb": 279460,
+          "external_vram_idle_mib": 2,
+          "external_vram_peak_mib": 482,
+          "generation_tok_per_s": 274.707197,
+          "prompt_tok_per_s": 662.560761,
+          "exit_code": 0,
+          "no_fallback_occurred": true
+        },
+        "q8": {
+          "kv_allocated_bytes": 100270080,
+          "gpu_layers_selected": 30,
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4148625408,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 212474880,
+            "estimated_kv_bytes": 100270080
+          },
+          "rss_after_context_kb": 276696,
+          "external_vram_idle_mib": 2,
+          "external_vram_peak_mib": 400,
+          "generation_tok_per_s": 249.914661,
+          "prompt_tok_per_s": 557.266698,
+          "exit_code": 0,
+          "no_fallback_occurred": true
+        },
+        "external_vram_reduction_mib": 82,
+        "external_vram_reduction_pct": 17.01
+      },
+      {
+        "ctx": 16384,
+        "native": {
+          "kv_allocated_bytes": 377487360,
+          "gpu_layers_selected": 30,
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4148625408,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 212474880,
+            "estimated_kv_bytes": 377487360
+          },
+          "rss_after_context_kb": 285572,
+          "external_vram_idle_mib": 2,
+          "external_vram_peak_mib": 656,
+          "generation_tok_per_s": 270.090554,
+          "prompt_tok_per_s": 671.901086,
+          "exit_code": 0,
+          "no_fallback_occurred": true
+        },
+        "q8": {
+          "kv_allocated_bytes": 200540160,
+          "gpu_layers_selected": 30,
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4148625408,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 212474880,
+            "estimated_kv_bytes": 200540160
+          },
+          "rss_after_context_kb": 280100,
+          "external_vram_idle_mib": 2,
+          "external_vram_peak_mib": 493,
+          "generation_tok_per_s": 242.226627,
+          "prompt_tok_per_s": 691.37705,
+          "exit_code": 0,
+          "no_fallback_occurred": true
+        },
+        "external_vram_reduction_mib": 163,
+        "external_vram_reduction_pct": 24.85
+      }
+    ],
+    "context_matrix_360m_ctx2048": {
+      "ctx": 2048,
+      "native": {
+        "kv_allocated_bytes": 83886080,
+        "gpu_layers_selected": 32,
+        "gpu_policy": {
+          "device_total_bytes": 4552916992,
+          "device_free_bytes": 4148625408,
+          "safety_reserve_bytes": 682937535,
+          "estimated_model_bytes": 629391360,
+          "estimated_kv_bytes": 83886080
+        },
+        "rss_after_context_kb": 258244,
+        "external_vram_idle_mib": 2,
+        "external_vram_peak_mib": 808,
+        "generation_tok_per_s": 127.878338,
+        "prompt_tok_per_s": 123.394788,
+        "exit_code": 0,
+        "no_fallback_occurred": true
+      },
+      "q8": {
+        "kv_allocated_bytes": 44564480,
+        "gpu_layers_selected": 32,
+        "gpu_policy": {
+          "device_total_bytes": 4552916992,
+          "device_free_bytes": 4148625408,
+          "safety_reserve_bytes": 682937535,
+          "estimated_model_bytes": 629391360,
+          "estimated_kv_bytes": 44564480
+        },
+        "rss_after_context_kb": 359712,
+        "external_vram_idle_mib": 2,
+        "external_vram_peak_mib": 772,
+        "generation_tok_per_s": 124.346028,
+        "prompt_tok_per_s": 402.21427,
+        "exit_code": 0,
+        "no_fallback_occurred": true
+      },
+      "external_vram_reduction_mib": 36,
+      "external_vram_reduction_pct": 4.46
+    },
+    "gpu_bench_135m_ctx2048_256tok": {
+      "schema_version": 1,
+      "membrane_version": "0.2.0",
+      "membrane_version_note": "MEMBRANE_VERSION string of the pre-release build under test; --gpu-bench is not in v0.2.0 stable -- see membrane_commit for the exact build",
+      "mode": "gpu_bench",
+      "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+      "ctx_size": 2048,
+      "gpu": {
+        "requested": true,
+        "backend_gpu_capable": true,
+        "gpu_layers_requested": -2,
+        "gpu_layers_selected": 30,
+        "backend": "Vulkan",
+        "device_requested": "",
+        "device_selected": "Vulkan1"
+      },
+      "gpu_policy": {
+        "device_total_bytes": 4552916992,
+        "device_free_bytes": 4148625408,
+        "safety_reserve_bytes": 682937535,
+        "estimated_model_bytes": 212474880,
+        "estimated_kv_bytes": 47185920
+      },
+      "native": {
+        "kv_allocated_bytes": 47185920,
+        "rss_after_context_kb": 284612,
+        "prompt_tok_per_s": 1115.757047,
+        "generation_tok_per_s": 277.487959
+      },
+      "q8": {
+        "kv_allocated_bytes": 25067520,
+        "rss_after_context_kb": 273376,
+        "prompt_tok_per_s": 486.013122,
+        "generation_tok_per_s": 254.417378
+      },
+      "comparison": {
+        "kv_reduction_ratio": 1.882353,
+        "generation_throughput_delta_pct": -8.3141
+      },
+      "quality": {
+        "available": true,
+        "token_identity": false,
+        "first_divergence": 143,
+        "logit_rel_l2": 0.00767,
+        "top1_preservation": 0.996094,
+        "delta_nll": 0.000358
+      },
+      "no_fallback_occurred": true
+    },
+    "guard_boundary_test": {
+      "description": "Precisely bounds the guard threshold on this host: ctx=140000 with --gpu-layers all succeeds (real inference, real KV allocated); ctx=145000 with --gpu-layers all is REJECTED before decode (exit 5, clear message, no crash, no partial inference); the SAME ctx=145000 with --gpu-layers auto SUCCEEDS instead by choosing a genuine partial offload (17 of 30 layers) -- this is the concrete demonstration that auto is not merely full-offload-or-nothing.",
+      "ctx_140000_gpu_layers_all": {
+        "exit_code": 0,
+        "gpu_layers_selected": 30,
+        "kv_allocated_bytes": 3225600000
+      },
+      "ctx_145000_gpu_layers_all": {
+        "exit_code": 5,
+        "stderr": "membrane-run: insufficient estimated device memory: 30 layers need ~212474880 bytes, only 124887873 available after KV (3340800000) and reserve (682937535) out of 4148625408 free -- pass --gpu-layers auto or a smaller N, or a smaller --ctx"
+      },
+      "ctx_145000_gpu_layers_auto": {
+        "exit_code": 0,
+        "gpu_layers_selected": 17,
+        "gpu_policy": {
+          "device_total_bytes": 4552916992,
+          "device_free_bytes": 4148625408,
+          "safety_reserve_bytes": 682937535,
+          "estimated_model_bytes": 120402432,
+          "estimated_kv_bytes": 3340800000
+        }
+      }
+    },
+    "limitations": [
+      "auto always resolved to full offload for both tested models at every tested context EXCEPT the deliberately-constructed ctx=145000 guard-boundary case -- both SmolLM2-135M and SmolLM2-360M are small enough to fit this host's 4 GiB GPU comfortably at normal context sizes",
+      "the per-layer byte estimate is a real average from GGUF tensor metadata, not an exact prediction of ggml's actual allocator behavior (alignment/scratch/fragmentation overhead is not modeled)",
+      "external VRAM figures (external_vram_*) come from nvidia-smi polling during a separate validation run, NOT from product telemetry -- membrane-run itself never shells out to nvidia-smi or any subprocess",
+      "one host, one GPU vendor (NVIDIA via Vulkan) -- not a general auto-policy claim",
+      "reserve policy constants (512 MiB / 15%) are a documented design choice, not derived from a survey of real-world hosts"
+    ]
+  }
+}

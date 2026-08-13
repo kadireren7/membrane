@@ -1,3 +1,4 @@
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -10,6 +11,8 @@
 #include "decode_loop.h"
 #include "product_cli.h"
 #include "compat_check.h"
+#include "gpu_policy.h"
+#include "gpu_device.h"
 
 /*
  * membrane-run: Product Phase 8, the user-facing MEMBRANE entry point.
@@ -118,9 +121,248 @@ static uint64_t	q8_kv_bytes(const model_shape_t &s, uint32_t ctx_size)
 	return (membrane_kv_store_total_bytes(&b));
 }
 
+/* Phase 9B/9B.1: what was requested vs what was actually resolved,
+ * kept as separate fields throughout (never collapsed into one) so
+ * JSON/human telemetry can honestly distinguish "the user asked for
+ * this" from "this is what public ggml_backend_dev_*()/gguf_*() calls
+ * found and MEMBRANE explicitly chose" -- membrane-run never leaves
+ * this to llama.cpp's own implicit upstream default (see
+ * resolve_gpu_config). policy_* fields are only meaningful when
+ * policy_used is true (an estimate was actually available and used --
+ * see gpu_policy.h's own doc comment on what "estimate" does and does
+ * not claim). */
+typedef struct s_membrane_gpu_state
+{
+	bool		requested;				/* o.gpu_layers != 0 */
+	bool		backend_gpu_capable;	/* llama_supports_gpu_offload() */
+	int32_t		gpu_layers_requested;	/* o.gpu_layers, echoed
+									 * (-1=all, -2=auto) */
+	int32_t		gpu_layers_selected;	/* the concrete value actually
+									 * passed to llama_model_params.
+									 * n_gpu_layers -- equals
+									 * gpu_layers_requested except for
+									 * auto (always a resolved N) */
+	std::string	device_requested;		/* o.device, empty if not given */
+	std::string	device_selected;		/* empty when CPU-only */
+	std::string	backend_selected;		/* "CPU" or e.g. "Vulkan" */
+	bool		policy_used;
+	uint64_t	device_total_bytes;
+	uint64_t	device_free_bytes;
+	uint64_t	safety_reserve_bytes;
+	uint64_t	estimated_model_bytes;
+	uint64_t	estimated_kv_bytes;
+}	membrane_gpu_state_t;
+
+static std::string	gpu_layers_label(int32_t gpu_layers)
+{
+	if (gpu_layers == MEMBRANE_GPU_LAYERS_ALL)
+		return ("all");
+	if (gpu_layers == MEMBRANE_GPU_LAYERS_AUTO)
+		return ("auto");
+	return (std::to_string(gpu_layers));
+}
+
+/* Resolves --gpu-layers/--device into an explicit llama_model_params
+ * device list, using gpu_device.h for all ggml_backend_dev_*()/
+ * gguf_*() access (the one place membrane-run touches those APIs) and
+ * gpu_policy.h for the llama-free auto/guard arithmetic -- mp->devices
+ * is never left NULL for llama.cpp's own upstream default to silently
+ * pick a GPU (GPU use must be explicit, not accidental). *device_
+ * storage must outlive mp's use in llama_model_load_from_file().
+ * ctx_size is REQUIRED (>0) here: product_cli.cpp's parse-time
+ * validation rejects ANY nonzero --gpu-layers (all/auto/N) paired
+ * with an auto-sized --ctx, precisely so the guard below is always
+ * KV-aware and never has to fall back to a weights-only check that
+ * could pass here and still fail later once the real (auto-sized)
+ * context is known.
+ *
+ * Returns false (message already printed to stderr) if the request
+ * cannot be satisfied -- callers must fail closed
+ * (MEMBRANE_EXIT_UNSUPPORTED_KV), never silently fall back to CPU or
+ * silently proceed with fewer layers than an EXPLICIT (non-auto)
+ * request asked for. */
+static bool	resolve_gpu_config(const membrane_run_opts_t &o,
+				uint32_t ctx_size,
+				std::vector<ggml_backend_dev_t> *device_storage,
+				llama_model_params *mp, membrane_gpu_state_t *gs)
+{
+	std::string	label;
+	size_t		n_devices;
+	size_t		i;
+	size_t		gpu_count;
+
+	/* NOT memset(): membrane_gpu_state_t has std::string members, so a
+	 * raw byte-zero would bypass their constructors and corrupt their
+	 * internal representation (real -Wclass-memaccess warning caught
+	 * this) -- assign the plain-data fields individually and .clear()
+	 * the strings instead. */
+	gs->device_selected.clear();
+	gs->policy_used = false;
+	gs->device_total_bytes = 0;
+	gs->device_free_bytes = 0;
+	gs->safety_reserve_bytes = 0;
+	gs->estimated_model_bytes = 0;
+	gs->estimated_kv_bytes = 0;
+	gs->requested = (o.gpu_layers != 0);
+	gs->backend_gpu_capable = membrane_gpu_backend_available() != 0;
+	gs->gpu_layers_requested = o.gpu_layers;
+	gs->gpu_layers_selected = o.gpu_layers;
+	gs->device_requested = o.want_device ? o.device : "";
+	gs->backend_selected = "CPU";
+	if (!gs->requested)
+	{
+		/* explicit CPU-only: also clear main_gpu so a compiled-in GPU
+		 * backend cannot be silently selected by llama.cpp's own
+		 * default device list -- with mp->devices left NULL here,
+		 * llama_prepare_model_devices() takes its auto-detect branch
+		 * and would otherwise pick a GPU on main_gpu's own default
+		 * (0); n_gpu_layers=0 alone already prevents any layer from
+		 * being placed there, but main_gpu=-1 additionally empties
+		 * the device list outright, so there is no ambiguity about
+		 * why CPU is used. */
+		mp->n_gpu_layers = 0;
+		mp->main_gpu = -1;
+		return (true);
+	}
+	label = gpu_layers_label(o.gpu_layers);
+	if (!gs->backend_gpu_capable)
+		return (fprintf(stderr, "membrane-run: --gpu-layers %s requested "
+				"but this build has no GPU backend compiled in "
+				"(rebuild with e.g. -DGGML_VULKAN=ON)\n", label.c_str()),
+			false);
+
+	membrane_gpu_device_info_t	devices[MEMBRANE_GPU_MAX_DEVICES];
+
+	n_devices = membrane_gpu_list_devices(devices, MEMBRANE_GPU_MAX_DEVICES);
+	gpu_count = 0;
+	for (i = 0; i < n_devices; ++i)
+		if (devices[i].type == MEMBRANE_DEV_TYPE_GPU
+			|| devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
+			gpu_count++;
+	if (gpu_count == 0)
+		return (fprintf(stderr, "membrane-run: --gpu-layers %s requested "
+				"but no GPU device was found on this host at runtime "
+				"(driver/hardware not detected)\n", label.c_str()),
+			false);
+
+	size_t	chosen_idx;
+
+	if (o.want_device)
+	{
+		size_t	idx = 0;
+		size_t	matches = membrane_gpu_match_device(devices, n_devices,
+				o.device.c_str(), &idx);
+
+		if (matches != 1)
+		{
+			fprintf(stderr, "membrane-run: --device \"%s\" matched %zu "
+				"available GPU device%s%s\n", o.device.c_str(), matches,
+				matches == 0 ? "" : "s, expected exactly one",
+				matches == 0 ? "" : ":");
+			if (matches == 0)
+				fprintf(stderr, "Available:\n");
+			for (i = 0; i < n_devices; ++i)
+				if (devices[i].type == MEMBRANE_DEV_TYPE_GPU
+					|| devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
+					fprintf(stderr, "  %s (%s)\n", devices[i].name,
+						devices[i].description);
+			return (false);
+		}
+		chosen_idx = idx;
+	}
+	else
+	{
+		/* No --device given: prefer a discrete GPU over an integrated
+		 * one, matching llama.cpp's own default-selection preference
+		 * (llama_prepare_model_devices()) -- device enumeration order
+		 * is NOT discrete-first (confirmed by testing on this host:
+		 * index 0 was the integrated AMD GPU, a later index the
+		 * discrete NVIDIA one), so this must be sought explicitly. */
+		chosen_idx = n_devices;
+		for (i = 0; i < n_devices; ++i)
+			if (devices[i].type == MEMBRANE_DEV_TYPE_GPU)
+			{
+				chosen_idx = i;
+				break;
+			}
+		if (chosen_idx == n_devices)
+			for (i = 0; i < n_devices; ++i)
+				if (devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
+				{
+					chosen_idx = i;
+					break;
+				}
+	}
+
+	const membrane_gpu_device_info_t	&dev = devices[chosen_idx];
+
+	gs->device_selected = dev.name;
+	gs->backend_selected = dev.backend;
+	gs->device_total_bytes = dev.memory_total;
+	gs->device_free_bytes = dev.memory_free;
+
+	membrane_gpu_model_estimate_t	est;
+	int		have_est = membrane_gpu_estimate_model(o.model_path, &est);
+	uint64_t	kv_bytes_estimate = 0;
+
+	if (have_est && est.hparams_available && ctx_size > 0)
+	{
+		model_shape_t	fake_shape;
+
+		fake_shape.n_layer = est.n_layer;
+		fake_shape.n_embd = est.n_embd;
+		fake_shape.n_head = est.n_head;
+		fake_shape.n_head_kv = est.n_head_kv;
+		fake_shape.n_embd_gqa = (est.n_head > 0)
+			? (int64_t)(est.n_embd / est.n_head) * est.n_head_kv : 0;
+		kv_bytes_estimate = o.kv_mode == MEMBRANE_KV_STORE_Q8
+			? q8_kv_bytes(fake_shape, ctx_size)
+			: native_kv_bytes(fake_shape, ctx_size);
+	}
+	if (o.gpu_layers == MEMBRANE_GPU_LAYERS_AUTO && !(have_est
+			&& est.n_layer > 0))
+		return (fprintf(stderr, "membrane-run: --gpu-layers auto "
+				"requested but the model's layer structure could not "
+				"be read from '%s' -- cannot resolve safely\n",
+				o.model_path),
+			false);
+	if (have_est && est.n_layer > 0)
+	{
+		membrane_gpu_policy_result_t	pr;
+		int		ok = membrane_gpu_policy_resolve(o.gpu_layers, est.n_layer,
+				dev.memory_free, dev.memory_total, est.bytes_per_layer,
+				kv_bytes_estimate, &pr);
+
+		gs->policy_used = true;
+		gs->safety_reserve_bytes = pr.safety_reserve_bytes;
+		gs->estimated_model_bytes = pr.estimated_model_bytes;
+		gs->estimated_kv_bytes = pr.estimated_kv_bytes;
+		if (!ok)
+			return (fprintf(stderr, "membrane-run: %s\n", pr.reason), false);
+		gs->gpu_layers_selected = pr.selected_layers;
+	}
+	else
+	{
+		/* No usable estimate at all (GGUF metadata unreadable) --
+		 * only reachable for explicit all/N (auto already returned
+		 * above): proceed unguarded, same as pre-9B.1 behavior. There
+		 * is no evidence to reject on, so the user's explicit request
+		 * is honored rather than blocked on a missing measurement. */
+		gs->gpu_layers_selected = o.gpu_layers == MEMBRANE_GPU_LAYERS_ALL
+			? -1 : o.gpu_layers;
+	}
+	device_storage->clear();
+	device_storage->push_back((ggml_backend_dev_t)dev.native_handle);
+	device_storage->push_back(NULL);
+	mp->devices = device_storage->data();
+	mp->n_gpu_layers = gs->gpu_layers_selected;
+	mp->main_gpu = 0;
+	return (true);
+}
+
 static void	print_startup_summary(const membrane_run_opts_t &o,
 				const char *model_label, uint32_t ctx_size,
-				uint64_t kv_bytes)
+				uint64_t kv_bytes, const membrane_gpu_state_t &gs)
 {
 	fprintf(stderr, "MEMBRANE %s\n", MEMBRANE_VERSION);
 	fprintf(stderr, "model      %s\n", model_label);
@@ -138,6 +380,29 @@ static void	print_startup_summary(const membrane_run_opts_t &o,
 		"hparams -- not measured until context creation)\n",
 		(double)kv_bytes / (1024.0 * 1024.0),
 		o.kv_mode == MEMBRANE_KV_STORE_Q8 ? "Q8_0" : "F16");
+	/* Phase 9B/9B.1: backend/device is a REQUEST membrane-run made via
+	 * public ggml_backend_dev_*() enumeration, not a confirmed
+	 * post-load allocation (no public API exposes that without log-
+	 * scraping) -- worded accordingly, never "confirmed"/"placed". */
+	if (!gs.requested)
+		fprintf(stderr, "backend    CPU (default -- pass --gpu-layers "
+			"to use a GPU)\n");
+	else
+	{
+		fprintf(stderr, "backend    %s, device selected: %s "
+			"(gpu-layers=%s, selected=%d)\n", gs.backend_selected.c_str(),
+			gs.device_selected.c_str(),
+			gpu_layers_label(gs.gpu_layers_requested).c_str(),
+			gs.gpu_layers_selected);
+		if (gs.policy_used)
+			fprintf(stderr, "gpu policy device_free=%.1f MiB "
+				"reserve=%.1f MiB est_weights=%.1f MiB est_kv=%.1f MiB "
+				"(estimates, not measured)\n",
+				(double)gs.device_free_bytes / (1024.0 * 1024.0),
+				(double)gs.safety_reserve_bytes / (1024.0 * 1024.0),
+				(double)gs.estimated_model_bytes / (1024.0 * 1024.0),
+				(double)gs.estimated_kv_bytes / (1024.0 * 1024.0));
+	}
 }
 
 typedef struct s_token_print_ud
@@ -182,9 +447,42 @@ static void	print_json_escaped(const std::string &text)
 	}
 }
 
+static void	print_gpu_json(const membrane_gpu_state_t &gs)
+{
+	printf("\"gpu\":{\"requested\":%s,\"backend_gpu_capable\":%s,",
+		gs.requested ? "true" : "false",
+		gs.backend_gpu_capable ? "true" : "false");
+	printf("\"gpu_layers_requested\":%d,\"gpu_layers_selected\":%d,"
+		"\"backend\":\"", gs.gpu_layers_requested, gs.gpu_layers_selected);
+	/* Every string field here is escaped, even though backend/
+	 * device_selected come from the ggml backend registry rather than
+	 * directly from user input (membrane-run doesn't control their
+	 * exact contents either) -- device_requested in particular IS raw
+	 * --device user input and must not be interpolated unescaped into
+	 * JSON (same class of issue print_json_escaped's own "text" field
+	 * use already guards against). */
+	print_json_escaped(gs.backend_selected);
+	printf("\",\"device_requested\":\"");
+	print_json_escaped(gs.device_requested);
+	printf("\",\"device_selected\":\"");
+	print_json_escaped(gs.device_selected);
+	printf("\"},");
+	if (gs.policy_used)
+	{
+		printf("\"gpu_policy\":{\"device_total_bytes\":%llu,"
+			"\"device_free_bytes\":%llu,\"safety_reserve_bytes\":%llu,"
+			"\"estimated_model_bytes\":%llu,\"estimated_kv_bytes\":%llu},",
+			(unsigned long long)gs.device_total_bytes,
+			(unsigned long long)gs.device_free_bytes,
+			(unsigned long long)gs.safety_reserve_bytes,
+			(unsigned long long)gs.estimated_model_bytes,
+			(unsigned long long)gs.estimated_kv_bytes);
+	}
+}
+
 static void	print_run_json(const membrane_run_opts_t &o,
 				const char *model_label, const membrane_kv_store_telemetry_t &t,
-				const std::string &text)
+				const std::string &text, const membrane_gpu_state_t &gs)
 {
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"run\",\"model_label\":\"%s\",\"kv_store\":\"%s\","
@@ -194,6 +492,7 @@ static void	print_run_json(const membrane_run_opts_t &o,
 		t.ctx_size, (unsigned long long)t.generated_tokens);
 	printf("\"storage\":{\"kv_allocated_bytes\":%llu},",
 		(unsigned long long)t.compressed_kv_allocated_bytes);
+	print_gpu_json(gs);
 	printf("\"memory\":{\"rss_after_model_load_kb\":%llu,"
 		"\"rss_after_context_kb\":%llu,\"rss_after_prompt_kb\":%llu,"
 		"\"rss_final_kb\":%llu,\"peak_rss_kb\":%llu},",
@@ -238,7 +537,7 @@ static void	print_run_human_stats(const membrane_kv_store_telemetry_t &t)
 static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 				const std::vector<llama_token> &prompt_tokens,
 				const char *model_label, uint32_t ctx_size,
-				const model_shape_t &shape)
+				const model_shape_t &shape, const membrane_gpu_state_t &gs)
 {
 	membrane_kv_store_telemetry_t	tel;
 	gen_run_result_t				result;
@@ -259,7 +558,7 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 		? q8_kv_bytes(shape, ctx_size) : native_kv_bytes(shape, ctx_size);
 	membrane_kv_store_read_rss(&tel.rss_after_model_load);
 	if (!o.quiet)
-		print_startup_summary(o, model_label, ctx_size, kv_bytes);
+		print_startup_summary(o, model_label, ctx_size, kv_bytes, gs);
 	stream = !o.want_json && !o.quiet;
 	cb = stream ? stream_token : NULL;
 	if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens, o.kv_mode,
@@ -284,7 +583,7 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 		&tel.rss_peak);
 	membrane_kv_store_rss_max(&tel.rss_peak, &tel.rss_final, &tel.rss_peak);
 	if (o.want_json)
-		print_run_json(o, model_label, tel, text);
+		print_run_json(o, model_label, tel, text, gs);
 	else
 	{
 		if (!stream)
@@ -299,7 +598,8 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 
 static void	print_compare_json(const char *model_label, uint32_t ctx_size,
 				uint64_t native_bytes,
-				const membrane_kv_store_telemetry_t &tel_q8)
+				const membrane_kv_store_telemetry_t &tel_q8,
+				const membrane_gpu_state_t &gs)
 {
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"compare\",\"model_label\":\"%s\",\"ctx_size\":%u,",
@@ -308,6 +608,7 @@ static void	print_compare_json(const char *model_label, uint32_t ctx_size,
 		"\"q8_kv_allocated_bytes\":%llu},",
 		(unsigned long long)native_bytes,
 		(unsigned long long)tel_q8.compressed_kv_allocated_bytes);
+	print_gpu_json(gs);
 	printf("\"memory_q8\":{\"rss_after_context_kb\":%llu,"
 		"\"rss_final_kb\":%llu,\"peak_rss_kb\":%llu},",
 		(unsigned long long)tel_q8.rss_after_context.vm_rss_kb,
@@ -328,12 +629,20 @@ static void	print_compare_json(const char *model_label, uint32_t ctx_size,
 
 static void	print_compare_human(const char *model_label, uint32_t ctx_size,
 				uint64_t native_bytes,
-				const membrane_kv_store_telemetry_t &tel_q8)
+				const membrane_kv_store_telemetry_t &tel_q8,
+				const membrane_gpu_state_t &gs)
 {
 	fprintf(stderr, "MEMBRANE %s -- compare mode (native vs q8)\n",
 		MEMBRANE_VERSION);
 	fprintf(stderr, "model            %s\n", model_label);
 	fprintf(stderr, "context          %u\n", ctx_size);
+	if (!gs.requested)
+		fprintf(stderr, "backend          CPU (default)\n");
+	else
+		fprintf(stderr, "backend          %s, device: %s "
+			"(gpu-layers=%s)\n", gs.backend_selected.c_str(),
+			gs.device_selected.c_str(),
+			gpu_layers_label(gs.gpu_layers_requested).c_str());
 	fprintf(stderr, "native kv bytes  %.2f MiB\n",
 		(double)native_bytes / (1024.0 * 1024.0));
 	fprintf(stderr, "q8 kv bytes      %.2f MiB (%.3fx smaller)\n",
@@ -364,75 +673,239 @@ static void	print_compare_human(const char *model_label, uint32_t ctx_size,
  * peak-RSS reading is never contaminated by an earlier pass in the
  * same process). Never runs during normal mode.
  */
-static int	run_compare_mode(const membrane_run_opts_t &o, llama_model *model,
+/* Shared by --compare-kv and --gpu-bench: both are "native reference,
+ * q8 canonical, q8 teacher-forced" 3-pass runs via the same Phase 7
+ * run_kv_store_pass()/record_kv_store_behavior() machinery -- they
+ * only differ in output format and in what CLI/GPU state they also
+ * report alongside it. Returns false (message already printed) only
+ * on a hard pass failure; a failed teacher-forced pass alone still
+ * returns true with tel_q8.quality_available left 0 (memory/
+ * throughput results are still meaningful without it). */
+static bool	run_native_q8_comparison(const membrane_run_opts_t &o,
+				llama_model *model,
 				const std::vector<llama_token> &prompt_tokens,
-				const char *model_label, uint32_t ctx_size,
-				const model_shape_t &shape)
+				uint32_t ctx_size, const model_shape_t &shape,
+				membrane_kv_store_telemetry_t *tel_q8,
+				membrane_kv_store_telemetry_t *tel_native,
+				uint64_t *native_bytes, gen_run_result_t *result_native,
+				gen_run_result_t *result_q8)
 {
-	membrane_kv_store_telemetry_t	tel_q8;
 	membrane_kv_store_telemetry_t	tel_scratch;
-	gen_run_result_t				result_native;
-	gen_run_result_t				result_q8;
 	gen_run_result_t				result_q8_tf;
 	membrane_runtime_divergence_t	divergence;
-	uint64_t						native_bytes;
 	int32_t							n_vocab;
 
-	memset(&tel_q8, 0, sizeof(tel_q8));
-	tel_q8.kv_store_mode_name = "q8";
-	tel_q8.no_fallback_occurred = 1;
-	tel_q8.ctx_size = ctx_size;
-	tel_q8.compressed_kv_allocated_bytes = q8_kv_bytes(shape, ctx_size);
-	native_bytes = native_kv_bytes(shape, ctx_size);
+	memset(tel_q8, 0, sizeof(*tel_q8));
+	tel_q8->kv_store_mode_name = "q8";
+	tel_q8->no_fallback_occurred = 1;
+	tel_q8->ctx_size = ctx_size;
+	tel_q8->compressed_kv_allocated_bytes = q8_kv_bytes(shape, ctx_size);
+	*native_bytes = native_kv_bytes(shape, ctx_size);
 	n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
-	membrane_kv_store_read_rss(&tel_q8.rss_after_model_load);
+	membrane_kv_store_read_rss(&tel_q8->rss_after_model_load);
 	if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
 			MEMBRANE_KV_STORE_Q8, ctx_size, o.verbose, NULL, false, 0,
-			NULL, &tel_q8, &result_q8))
-	{
-		fprintf(stderr, "membrane-run: compare-mode q8 pass failed\n");
-		return (MEMBRANE_EXIT_RUNTIME_ERROR);
-	}
-	tel_q8.generated_tokens = result_q8.tokens.size();
-	memset(&tel_scratch, 0, sizeof(tel_scratch));
+			NULL, tel_q8, result_q8))
+		return (fprintf(stderr,
+				"membrane-run: q8 canonical pass failed\n"), false);
+	tel_q8->generated_tokens = result_q8->tokens.size();
+	memset(tel_native, 0, sizeof(*tel_native));
+	tel_native->kv_store_mode_name = "native";
+	tel_native->no_fallback_occurred = 1;
+	tel_native->ctx_size = ctx_size;
+	tel_native->compressed_kv_allocated_bytes = *native_bytes;
+	membrane_kv_store_read_rss(&tel_native->rss_after_model_load);
 	if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
 			MEMBRANE_KV_STORE_NATIVE, ctx_size, o.verbose, NULL, true,
-			n_vocab, NULL, &tel_scratch, &result_native))
-	{
-		fprintf(stderr, "membrane-run: compare-mode native reference "
-			"pass failed\n");
-		return (MEMBRANE_EXIT_RUNTIME_ERROR);
-	}
-	membrane_runtime_detect_divergence(result_native.tokens.data(),
-		result_native.tokens.size(), result_q8.tokens.data(),
-		result_q8.tokens.size(), &divergence);
-	tel_q8.token_identity = divergence.identical;
-	tel_q8.first_divergence = (int32_t)divergence.first_divergence_step;
-	if (!result_native.tokens.empty())
+			n_vocab, NULL, tel_native, result_native))
+		return (fprintf(stderr,
+				"membrane-run: native reference pass failed\n"), false);
+	tel_native->generated_tokens = result_native->tokens.size();
+	membrane_kv_store_rss_max(&tel_native->rss_after_model_load,
+		&tel_native->rss_after_context, &tel_native->rss_peak);
+	membrane_kv_store_rss_max(&tel_native->rss_peak,
+		&tel_native->rss_after_prompt, &tel_native->rss_peak);
+	membrane_kv_store_rss_max(&tel_native->rss_peak, &tel_native->rss_final,
+		&tel_native->rss_peak);
+	membrane_runtime_detect_divergence(result_native->tokens.data(),
+		result_native->tokens.size(), result_q8->tokens.data(),
+		result_q8->tokens.size(), &divergence);
+	tel_q8->token_identity = divergence.identical;
+	tel_q8->first_divergence = (int32_t)divergence.first_divergence_step;
+	if (!result_native->tokens.empty())
 	{
 		memset(&tel_scratch, 0, sizeof(tel_scratch));
 		if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
 				MEMBRANE_KV_STORE_Q8, ctx_size, o.verbose,
-				&result_native.tokens, true, n_vocab, NULL, &tel_scratch,
+				&result_native->tokens, true, n_vocab, NULL, &tel_scratch,
 				&result_q8_tf))
-			fprintf(stderr, "membrane-run: compare-mode aligned "
-				"teacher-forced pass failed -- logit/NLL comparison "
-				"unavailable, memory result otherwise still "
-				"reported\n");
-		else if (record_kv_store_behavior(result_native, result_q8_tf,
-				n_vocab, &tel_q8))
-			tel_q8.quality_available = 1;
+			fprintf(stderr, "membrane-run: aligned teacher-forced pass "
+				"failed -- logit/NLL comparison unavailable, memory/"
+				"throughput results otherwise still reported\n");
+		else if (record_kv_store_behavior(*result_native, result_q8_tf,
+				n_vocab, tel_q8))
+			tel_q8->quality_available = 1;
 	}
-	membrane_kv_store_rss_max(&tel_q8.rss_after_model_load,
-		&tel_q8.rss_after_context, &tel_q8.rss_peak);
-	membrane_kv_store_rss_max(&tel_q8.rss_peak, &tel_q8.rss_after_prompt,
-		&tel_q8.rss_peak);
-	membrane_kv_store_rss_max(&tel_q8.rss_peak, &tel_q8.rss_final,
-		&tel_q8.rss_peak);
+	membrane_kv_store_rss_max(&tel_q8->rss_after_model_load,
+		&tel_q8->rss_after_context, &tel_q8->rss_peak);
+	membrane_kv_store_rss_max(&tel_q8->rss_peak, &tel_q8->rss_after_prompt,
+		&tel_q8->rss_peak);
+	membrane_kv_store_rss_max(&tel_q8->rss_peak, &tel_q8->rss_final,
+		&tel_q8->rss_peak);
+	return (true);
+}
+
+static int	run_compare_mode(const membrane_run_opts_t &o, llama_model *model,
+				const std::vector<llama_token> &prompt_tokens,
+				const char *model_label, uint32_t ctx_size,
+				const model_shape_t &shape, const membrane_gpu_state_t &gs)
+{
+	membrane_kv_store_telemetry_t	tel_q8;
+	membrane_kv_store_telemetry_t	tel_native;
+	uint64_t						native_bytes;
+	gen_run_result_t				result_native;
+	gen_run_result_t				result_q8;
+
+	if (!run_native_q8_comparison(o, model, prompt_tokens, ctx_size, shape,
+			&tel_q8, &tel_native, &native_bytes, &result_native, &result_q8))
+		return (MEMBRANE_EXIT_RUNTIME_ERROR);
 	if (o.want_json)
-		print_compare_json(model_label, ctx_size, native_bytes, tel_q8);
+		print_compare_json(model_label, ctx_size, native_bytes, tel_q8, gs);
 	else
-		print_compare_human(model_label, ctx_size, native_bytes, tel_q8);
+		print_compare_human(model_label, ctx_size, native_bytes, tel_q8, gs);
+	return (result_q8.ok && result_native.ok
+		? MEMBRANE_EXIT_SUCCESS : MEMBRANE_EXIT_RUNTIME_ERROR);
+}
+
+/* Phase 9B.1 Section 8's schema. No VRAM figure is emitted here even
+ * though nvidia-smi-based numbers exist in this project's own
+ * scratch validation runs -- Section 7 is explicit that real process
+ * VRAM can't be measured portably from inside MEMBRANE without
+ * shelling out, and external nvidia-smi measurements stay validation
+ * artifacts (results/v0.3/gpu-vulkan-validation.json), never product
+ * telemetry a user relies on at runtime. */
+static void	print_gpu_bench_json(const char *model_label, uint32_t ctx_size,
+				uint64_t native_bytes,
+				const membrane_kv_store_telemetry_t &tel_native,
+				const membrane_kv_store_telemetry_t &tel_q8,
+				const membrane_gpu_state_t &gs)
+{
+	double	kv_reduction_ratio = tel_q8.compressed_kv_allocated_bytes > 0
+		? (double)native_bytes / (double)tel_q8.compressed_kv_allocated_bytes
+		: 0.0;
+	double	throughput_delta_pct = tel_native.generation_tok_per_s > 0.0
+		? 100.0 * (tel_q8.generation_tok_per_s
+			- tel_native.generation_tok_per_s)
+			/ tel_native.generation_tok_per_s : 0.0;
+
+	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
+		"\"mode\":\"gpu_bench\",\"model_label\":\"", MEMBRANE_VERSION);
+	print_json_escaped(model_label);
+	printf("\",\"ctx_size\":%u,", ctx_size);
+	print_gpu_json(gs);
+	printf("\"native\":{\"kv_allocated_bytes\":%llu,"
+		"\"rss_after_context_kb\":%llu,\"prompt_tok_per_s\":%.6f,"
+		"\"generation_tok_per_s\":%.6f},",
+		(unsigned long long)native_bytes,
+		(unsigned long long)tel_native.rss_after_context.vm_rss_kb,
+		tel_native.prompt_tok_per_s, tel_native.generation_tok_per_s);
+	printf("\"q8\":{\"kv_allocated_bytes\":%llu,"
+		"\"rss_after_context_kb\":%llu,\"prompt_tok_per_s\":%.6f,"
+		"\"generation_tok_per_s\":%.6f},",
+		(unsigned long long)tel_q8.compressed_kv_allocated_bytes,
+		(unsigned long long)tel_q8.rss_after_context.vm_rss_kb,
+		tel_q8.prompt_tok_per_s, tel_q8.generation_tok_per_s);
+	printf("\"comparison\":{\"kv_reduction_ratio\":%.6f,"
+		"\"generation_throughput_delta_pct\":%.4f},",
+		kv_reduction_ratio, throughput_delta_pct);
+	printf("\"quality\":{\"available\":%s,\"token_identity\":%s,"
+		"\"first_divergence\":%d,\"logit_rel_l2\":%.6f,"
+		"\"top1_preservation\":%.6f,\"delta_nll\":%.6f},",
+		tel_q8.quality_available ? "true" : "false",
+		tel_q8.token_identity ? "true" : "false", tel_q8.first_divergence,
+		tel_q8.logit_rel_l2, tel_q8.top1_preservation, tel_q8.delta_nll);
+	printf("\"no_fallback_occurred\":%s}\n",
+		(tel_native.no_fallback_occurred && tel_q8.no_fallback_occurred)
+			? "true" : "false");
+}
+
+static void	print_gpu_bench_human(const char *model_label, uint32_t ctx_size,
+				uint64_t native_bytes,
+				const membrane_kv_store_telemetry_t &tel_native,
+				const membrane_kv_store_telemetry_t &tel_q8,
+				const membrane_gpu_state_t &gs)
+{
+	double	throughput_delta_pct = tel_native.generation_tok_per_s > 0.0
+		? 100.0 * (tel_q8.generation_tok_per_s
+			- tel_native.generation_tok_per_s)
+			/ tel_native.generation_tok_per_s : 0.0;
+
+	fprintf(stderr, "MEMBRANE %s -- gpu-bench (native vs q8)\n",
+		MEMBRANE_VERSION);
+	fprintf(stderr, "model              %s\n", model_label);
+	fprintf(stderr, "context            %u\n", ctx_size);
+	fprintf(stderr, "backend            %s, device: %s "
+		"(gpu-layers=%s, selected=%d)\n", gs.backend_selected.c_str(),
+		gs.device_selected.c_str(),
+		gpu_layers_label(gs.gpu_layers_requested).c_str(),
+		gs.gpu_layers_selected);
+	if (gs.policy_used)
+		fprintf(stderr, "gpu policy         device_free=%.1f MiB "
+			"reserve=%.1f MiB est_weights=%.1f MiB est_kv=%.1f MiB\n",
+			(double)gs.device_free_bytes / (1024.0 * 1024.0),
+			(double)gs.safety_reserve_bytes / (1024.0 * 1024.0),
+			(double)gs.estimated_model_bytes / (1024.0 * 1024.0),
+			(double)gs.estimated_kv_bytes / (1024.0 * 1024.0));
+	fprintf(stderr, "native kv bytes    %.2f MiB, %.1f tok/s (gen)\n",
+		(double)native_bytes / (1024.0 * 1024.0),
+		tel_native.generation_tok_per_s);
+	double	kv_ratio = tel_q8.compressed_kv_allocated_bytes > 0
+		? (double)native_bytes / (double)tel_q8.compressed_kv_allocated_bytes
+		: 0.0;
+
+	fprintf(stderr, "q8 kv bytes        %.2f MiB (%.3fx smaller), "
+		"%.1f tok/s (gen, %+.1f%% vs native)\n",
+		(double)tel_q8.compressed_kv_allocated_bytes / (1024.0 * 1024.0),
+		kv_ratio, tel_q8.generation_tok_per_s, throughput_delta_pct);
+	if (tel_q8.quality_available)
+		fprintf(stderr, "quality            token_identity=%s "
+			"first_divergence=%d top1=%.4f logit_rel_l2=%.6f "
+			"delta_nll=%.6f\n",
+			tel_q8.token_identity ? "identical" : "diverged",
+			tel_q8.first_divergence, tel_q8.top1_preservation,
+			tel_q8.logit_rel_l2, tel_q8.delta_nll);
+	else
+		fprintf(stderr, "quality            unavailable (aligned "
+			"comparison pass did not complete)\n");
+}
+
+/* --gpu-bench: like --compare-kv but always under an explicit GPU
+ * configuration (product_cli.cpp's parse-time validation already
+ * requires --gpu-layers != 0 for this mode), with gpu_policy telemetry
+ * and a native/q8/comparison-shaped JSON schema instead of compare-
+ * kv's. Reuses the exact same 3-pass machinery via
+ * run_native_q8_comparison(). */
+static int	run_gpu_bench_mode(const membrane_run_opts_t &o,
+				llama_model *model,
+				const std::vector<llama_token> &prompt_tokens,
+				const char *model_label, uint32_t ctx_size,
+				const model_shape_t &shape, const membrane_gpu_state_t &gs)
+{
+	membrane_kv_store_telemetry_t	tel_q8;
+	membrane_kv_store_telemetry_t	tel_native;
+	uint64_t						native_bytes;
+	gen_run_result_t				result_native;
+	gen_run_result_t				result_q8;
+
+	if (!run_native_q8_comparison(o, model, prompt_tokens, ctx_size, shape,
+			&tel_q8, &tel_native, &native_bytes, &result_native, &result_q8))
+		return (MEMBRANE_EXIT_RUNTIME_ERROR);
+	if (o.want_json)
+		print_gpu_bench_json(model_label, ctx_size, native_bytes,
+			tel_native, tel_q8, gs);
+	else
+		print_gpu_bench_human(model_label, ctx_size, native_bytes,
+			tel_native, tel_q8, gs);
 	return (result_q8.ok && result_native.ok
 		? MEMBRANE_EXIT_SUCCESS : MEMBRANE_EXIT_RUNTIME_ERROR);
 }
@@ -449,6 +922,9 @@ int	main(int argc, char **argv)
 	uint32_t						ctx_size;
 	membrane_compat_result_t		compat;
 	const char						*model_label;
+	membrane_gpu_state_t			gs;
+	llama_model_params				mp;
+	std::vector<ggml_backend_dev_t>	device_storage;
 
 	rc = membrane_run_parse_opts(argc, argv, &o);
 	if (o.want_help)
@@ -465,8 +941,18 @@ int	main(int argc, char **argv)
 	if (!o.verbose)
 		llama_log_set(quiet_log_callback, NULL);
 	llama_backend_init();
-	model = llama_model_load_from_file(o.model_path,
-			llama_model_default_params());
+	/* GPU/device resolution needs no loaded model -- fail fast, before
+	 * spending time on model load, if the request can't be satisfied.
+	 * o.ctx is the only context-size information available pre-load
+	 * (0 if auto-sizing from the prompt, which needs a loaded model's
+	 * tokenizer) -- product_cli.cpp's parse-time validation rejects
+	 * any nonzero --gpu-layers (all/auto/N) paired with an auto-sized
+	 * --ctx, so o.ctx is never 0 here in the one case that would need
+	 * it to be KV-aware. */
+	mp = llama_model_default_params();
+	if (!resolve_gpu_config(o, o.ctx, &device_storage, &mp, &gs))
+		return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
+	model = llama_model_load_from_file(o.model_path, mp);
 	if (model == NULL)
 	{
 		fprintf(stderr, "membrane-run: failed to load model '%s'\n",
@@ -503,7 +989,7 @@ int	main(int argc, char **argv)
 		return (llama_backend_free(), MEMBRANE_EXIT_CLI_ERROR);
 	}
 	read_model_shape(model, &shape);
-	if (o.kv_mode == MEMBRANE_KV_STORE_Q8 || o.compare_kv)
+	if (o.kv_mode == MEMBRANE_KV_STORE_Q8 || o.compare_kv || o.gpu_bench)
 	{
 		if (!membrane_check_kv_compat(shape.arch_name.c_str(),
 				shape.n_embd, shape.n_head, shape.n_head_kv, ctx_size,
@@ -515,12 +1001,15 @@ int	main(int argc, char **argv)
 			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
 		}
 	}
-	if (o.compare_kv)
+	if (o.gpu_bench)
+		rc = run_gpu_bench_mode(o, model, prompt_tokens, model_label,
+				ctx_size, shape, gs);
+	else if (o.compare_kv)
 		rc = run_compare_mode(o, model, prompt_tokens, model_label,
-				ctx_size, shape);
+				ctx_size, shape, gs);
 	else
 		rc = run_normal_mode(o, model, prompt_tokens, model_label, ctx_size,
-				shape);
+				shape, gs);
 	llama_model_free(model);
 	llama_backend_free();
 	return (rc);
