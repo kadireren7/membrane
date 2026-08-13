@@ -15,6 +15,11 @@
  * (tools/membrane-llama-runtime/decode_loop.h).
  */
 
+/* Single authoritative version string -- referenced by product_cli.cpp
+ * (--version/--help) and main.cpp (startup summary, JSON output) so
+ * a release version bump only needs to change this one line. */
+# define MEMBRANE_VERSION "0.2.0"
+
 /* Stable exit codes (Section 8) -- never change the meaning of an
  * already-shipped code, only add new ones. */
 # define MEMBRANE_EXIT_SUCCESS			0

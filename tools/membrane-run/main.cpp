@@ -122,7 +122,7 @@ static void	print_startup_summary(const membrane_run_opts_t &o,
 				const char *model_label, uint32_t ctx_size,
 				uint64_t kv_bytes)
 {
-	fprintf(stderr, "MEMBRANE 0.2.0-rc1\n");
+	fprintf(stderr, "MEMBRANE %s\n", MEMBRANE_VERSION);
 	fprintf(stderr, "model      %s\n", model_label);
 	fprintf(stderr, "context    %u\n", ctx_size);
 	fprintf(stderr, "kv         %s\n",
@@ -186,10 +186,11 @@ static void	print_run_json(const membrane_run_opts_t &o,
 				const char *model_label, const membrane_kv_store_telemetry_t &t,
 				const std::string &text)
 {
-	printf("{\"schema_version\":1,\"membrane_version\":\"0.2.0-rc1\","
+	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"run\",\"model_label\":\"%s\",\"kv_store\":\"%s\","
 		"\"ctx_size\":%u,\"generated_tokens\":%llu,",
-		model_label, o.kv_mode == MEMBRANE_KV_STORE_Q8 ? "q8" : "native",
+		MEMBRANE_VERSION, model_label,
+		o.kv_mode == MEMBRANE_KV_STORE_Q8 ? "q8" : "native",
 		t.ctx_size, (unsigned long long)t.generated_tokens);
 	printf("\"storage\":{\"kv_allocated_bytes\":%llu},",
 		(unsigned long long)t.compressed_kv_allocated_bytes);
@@ -300,9 +301,9 @@ static void	print_compare_json(const char *model_label, uint32_t ctx_size,
 				uint64_t native_bytes,
 				const membrane_kv_store_telemetry_t &tel_q8)
 {
-	printf("{\"schema_version\":1,\"membrane_version\":\"0.2.0-rc1\","
+	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"compare\",\"model_label\":\"%s\",\"ctx_size\":%u,",
-		model_label, ctx_size);
+		MEMBRANE_VERSION, model_label, ctx_size);
 	printf("\"storage\":{\"native_kv_allocated_bytes\":%llu,"
 		"\"q8_kv_allocated_bytes\":%llu},",
 		(unsigned long long)native_bytes,
@@ -329,7 +330,8 @@ static void	print_compare_human(const char *model_label, uint32_t ctx_size,
 				uint64_t native_bytes,
 				const membrane_kv_store_telemetry_t &tel_q8)
 {
-	fprintf(stderr, "MEMBRANE 0.2.0-rc1 -- compare mode (native vs q8)\n");
+	fprintf(stderr, "MEMBRANE %s -- compare mode (native vs q8)\n",
+		MEMBRANE_VERSION);
 	fprintf(stderr, "model            %s\n", model_label);
 	fprintf(stderr, "context          %u\n", ctx_size);
 	fprintf(stderr, "native kv bytes  %.2f MiB\n",

@@ -279,10 +279,10 @@ static void	test_version_output_format(void)
 	n = fread(buf, 1, sizeof(buf) - 1, tmp);
 	buf[n] = '\0';
 	fclose(tmp);
-	TEST_ASSERT(strncmp(buf, "MEMBRANE ", 9) == 0,
-		"version output starts with \"MEMBRANE \"");
-	TEST_ASSERT(strstr(buf, "0.2.0-rc1") != NULL,
-		"version output contains the current version string");
+	TEST_ASSERT(strcmp(buf, "MEMBRANE " MEMBRANE_VERSION "\n") == 0,
+		"version output is exactly \"MEMBRANE \" + MEMBRANE_VERSION "
+		"+ \"\\n\" -- an exact match so a stray suffix (e.g. a "
+		"leftover \"-rc1\") can't slip through a substring check");
 }
 
 static void	test_help_mentions_key_concepts(void)

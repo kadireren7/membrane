@@ -11,7 +11,7 @@ quantization, synthesizable RTL, and near-memory/CXL simulation.
 It can run llama.cpp-compatible models with a Q8_0 KV cache instead of
 the native full-precision cache, reducing KV-cache memory while
 preserving a usable inference path — measured, not assumed (see
-"Measured Example" below). `v0.2.0-rc1`, single model/host verified so
+"Measured Example" below). `v0.2.0`, single model/host verified so
 far; see "Limitations."
 
 ## Quick Start
