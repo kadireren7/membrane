@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "phase": "9B-gpu-vulkan-runtime-productization",
-  "membrane_commit": "PENDING_COMMIT_ON_feature/gpu-vulkan-runtime_9B1",
+  "membrane_commit": "53ef6188f37ee793bf00e97fad5d91cd6699537d",
   "membrane_base_commit": "64cffc0e45f2633caf533af851f441873da7db97",
   "llama_cpp_commit": "c0bc8591e8815c63cb01dd3f051a8b0df02501c9",
   "ggml_version": "0.17.0",
