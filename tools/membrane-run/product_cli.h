@@ -26,7 +26,14 @@
 # define MEMBRANE_EXIT_CLI_ERROR		2
 # define MEMBRANE_EXIT_MODEL_ERROR		3
 # define MEMBRANE_EXIT_RUNTIME_ERROR	4
-# define MEMBRANE_EXIT_UNSUPPORTED_KV	5
+# define MEMBRANE_EXIT_UNSUPPORTED_KV	5	/* also used for an
+											 * unsupported/unavailable
+											 * GPU or device request
+											 * (Phase 9B) -- same
+											 * "runtime configuration
+											 * this build/model can't
+											 * satisfy, fail closed"
+											 * semantic as Q8 KV. */
 
 typedef enum e_membrane_run_prompt_mode
 {
@@ -57,6 +64,22 @@ typedef struct s_membrane_run_opts
 	int			compare_kv;		/* Section 6: explicit benchmark/compare
 								 * mode, reuses the Phase 7 3-pass
 								 * machinery -- never the default */
+
+	int32_t		gpu_layers;		/* Phase 9B: --gpu-layers. 0 = CPU-only
+								 * (default, also settable explicitly
+								 * as the CPU-forcing option) -- a
+								 * build with a GPU backend compiled
+								 * in still defaults to CPU-only
+								 * unless requested. -1 = "all"
+								 * (--gpu-layers all). N>0 = exactly
+								 * N layers. Never implicit. */
+	std::string	device;			/* --device NAME, empty if not given.
+								 * Only meaningful with gpu_layers != 0
+								 * (validated at parse time). */
+	int			want_device;	/* whether --device was explicitly
+								 * given (device.empty() alone can't
+								 * distinguish "not given" from a
+								 * name that happens to be empty) */
 
 	int			want_version;
 	int			want_help;

@@ -440,6 +440,145 @@ def _c24():
 		f"{row['rss_reduction_pct']:.2f}% (recomputed={expected_pct:.2f}%)")
 
 
+V03_ARTIFACT_PATH = REPO_ROOT / "results" / "v0.3" / "gpu-vulkan-validation.json"
+_V03_CACHE = {}
+
+
+def _load_v03_artifact():
+	key = str(V03_ARTIFACT_PATH)
+	if key not in _V03_CACHE:
+		_V03_CACHE[key] = json.loads(V03_ARTIFACT_PATH.read_text())
+	return _V03_CACHE[key]
+
+
+def _v03_context_rows(a):
+	"""Flattens both models' per-context rows into one list -- 135M's
+	multi-context sweep (context_matrix) and 360M's single ctx=2048
+	spot-check (ctx2048) use different key names in the artifact
+	because they cover different scope, not different schemas; every
+	row itself has the same native/q8 shape either way."""
+	rows = []
+	models = a.get("models", {})
+	m135 = models.get("SmolLM2-135M-Instruct-f16", {})
+	rows.extend(m135.get("context_matrix", []))
+	m360 = models.get("SmolLM2-360M-Instruct-f16", {})
+	if "ctx2048" in m360:
+		rows.append(m360["ctx2048"])
+	return rows
+
+
+@check("v0.3 GPU artifact exists, is valid JSON, and has schema_version 1")
+def _c25():
+	if not V03_ARTIFACT_PATH.exists():
+		return False, f"{V03_ARTIFACT_PATH} does not exist"
+	a = _load_v03_artifact()
+	ok = a.get("schema_version") == 1
+	return ok, f"schema_version={a.get('schema_version')!r}"
+
+
+@check("v0.3 GPU artifact: membrane_base_commit looks like a real "
+	"commit SHA (40 hex chars)")
+def _c26():
+	a = _load_v03_artifact()
+	sha = a.get("membrane_base_commit", "")
+	ok = bool(re.fullmatch(r"[0-9a-f]{40}", sha))
+	return ok, f"membrane_base_commit={sha!r}"
+
+
+@check("v0.3 GPU artifact: q8 VRAM peak < native VRAM peak at every "
+	"row, reduction arithmetic self-consistent")
+def _c27():
+	a = _load_v03_artifact()
+	bad = []
+	rows = _v03_context_rows(a)
+	for row in rows:
+		native_vram = row["native"]["vram_peak_mib"]
+		q8_vram = row["q8"]["vram_peak_mib"]
+		reduction_mib = row["vram_reduction_mib"]
+		reduction_pct = row["vram_reduction_pct"]
+		if not (q8_vram < native_vram):
+			bad.append(f"ctx={row['ctx']}: q8 VRAM({q8_vram}) not < "
+				f"native VRAM({native_vram})")
+			continue
+		if reduction_mib != native_vram - q8_vram:
+			bad.append(f"ctx={row['ctx']}: vram_reduction_mib={reduction_mib} "
+				f"but native-q8={native_vram - q8_vram}")
+		expected_pct = 100.0 * reduction_mib / native_vram
+		if abs(expected_pct - reduction_pct) > 0.01:
+			bad.append(f"ctx={row['ctx']}: vram_reduction_pct={reduction_pct} "
+				f"but computed={expected_pct:.4f}")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(rows)} rows checked"
+
+
+@check("v0.3 GPU artifact: q8 KV allocated bytes < native at every row")
+def _c28():
+	a = _load_v03_artifact()
+	bad = []
+	rows = _v03_context_rows(a)
+	for row in rows:
+		native_kv = row["native"]["kv_allocated_bytes"]
+		q8_kv = row["q8"]["kv_allocated_bytes"]
+		if not (q8_kv < native_kv):
+			bad.append(f"ctx={row['ctx']}: q8 KV({q8_kv}) not < "
+				f"native KV({native_kv})")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(rows)} rows checked"
+
+
+@check("v0.3 GPU artifact: no_fallback_occurred is true and exit_code "
+	"is 0 for every native/q8 run recorded")
+def _c29():
+	a = _load_v03_artifact()
+	bad = []
+	rows = _v03_context_rows(a)
+	for row in rows:
+		for kv in ("native", "q8"):
+			r = row[kv]
+			if not r.get("no_fallback_occurred", False):
+				bad.append(f"ctx={row['ctx']} {kv}: no_fallback_occurred is false")
+			if r.get("exit_code") != 0:
+				bad.append(f"ctx={row['ctx']} {kv}: exit_code={r.get('exit_code')}")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(rows)} rows checked"
+
+
+@check("v0.3 GPU artifact: no absolute filesystem paths anywhere in "
+	"the file")
+def _c30():
+	text = V03_ARTIFACT_PATH.read_text()
+	posix = re.findall(
+		r'(?<![\w.\-])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		text,
+	)
+	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
+	hits = posix + windows
+	return len(hits) == 0, f"suspicious path-like strings: {hits[:5]}" if hits else "none found"
+
+
+@check("v0.3 GPU artifact: no NaN/Infinity anywhere in the file")
+def _c31():
+	a = _load_v03_artifact()
+	bad = _no_nan_inf(a)
+	return len(bad) == 0, f"non-finite at: {bad[:5]}" if bad else "all values finite"
+
+
+@check("v0.3 GPU artifact: compare-kv quality fields are in valid "
+	"ranges for both models")
+def _c32():
+	a = _load_v03_artifact()
+	bad = []
+	for label, m in a.get("models", {}).items():
+		q = m.get("compare_kv_ctx2048_256tok", {}).get("quality", {})
+		top1 = q.get("top1_preservation")
+		rel_l2 = q.get("logit_rel_l2")
+		fd = q.get("first_divergence")
+		if top1 is None or not (0.0 <= top1 <= 1.0):
+			bad.append(f"{label}: top1_preservation={top1} out of [0,1]")
+		if rel_l2 is None or rel_l2 < 0.0:
+			bad.append(f"{label}: logit_rel_l2={rel_l2} negative")
+		if fd is None or fd < -1:
+			bad.append(f"{label}: first_divergence={fd} invalid")
+	return len(bad) == 0, "; ".join(bad) if bad else "2 models checked"
+
+
 def main() -> int:
 	global ARTIFACT_PATH
 	ap = argparse.ArgumentParser()
@@ -457,6 +596,7 @@ def main() -> int:
 		checks = (
 			_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12, _c13,
 			_c14, _c15, _c16, _c17, _c18, _c19, _c20, _c21, _c22, _c23, _c24,
+			_c25, _c26, _c27, _c28, _c29, _c30, _c31, _c32,
 		)
 	for fn in checks:
 		fn()

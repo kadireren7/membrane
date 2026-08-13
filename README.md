@@ -150,6 +150,80 @@ KV cache's own allocated tensor type with genuinely compressed Q8_0
 storage (no `third_party/llama.cpp` patch required; see
 `docs/live-runtime.md`).
 
+## GPU / Vulkan (development branch, not yet in v0.2.0 stable)
+
+`v0.2.0` stable was CPU-first: every claim in this document up to this
+section is CPU-only. The `feature/gpu-vulkan-runtime` development
+branch adds explicit, opt-in GPU runtime controls to `membrane-run` on
+top of the existing, unmodified `ggml`/llama.cpp Vulkan backend — no
+custom GPU kernels, no `third_party/llama.cpp` changes.
+
+**What was found (Phase 9A/9B), on one tested host** (Pop!_OS 24.04,
+NVIDIA GeForce GTX 1650 Mobile, 4 GB VRAM, driver 580.159.03): with the
+Vulkan backend, the Q8_0 KV cache is genuinely allocated in GPU VRAM
+(not host RAM), and its VRAM footprint measured lower than native F16
+KV at every tested context — from roughly 2% at small contexts up to
+roughly 25% at `ctx=16384` on a 135M-parameter model. **This is one
+model family, one GPU, one driver, one host — not a general GPU/VRAM
+claim.** Measured reduction depends on model, context size, and
+hardware, and will differ elsewhere. The GPU path also has a measured
+throughput cost on this host (roughly 12-13% lower q8 generation
+speed vs native, on GPU) — reported as measured, not explained.
+
+CUDA is not yet a supported MEMBRANE product path — this section is
+about the Vulkan backend only.
+
+### Build
+
+```bash
+cmake -S . -B build-vulkan \
+  -DMEMBRANE_ENABLE_LLAMA=ON \
+  -DGGML_VULKAN=ON \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-vulkan -j
+```
+
+Vulkan is an optional, non-default build path — a plain
+`-DMEMBRANE_ENABLE_LLAMA=ON` build (no `-DGGML_VULKAN=ON`) remains
+CPU-only, unchanged. Building the Vulkan backend needs Vulkan
+development headers, the `glslc` shader compiler, and SPIR-V headers
+already on the system — MEMBRANE never installs system packages
+automatically. Required package names vary by distribution; for
+Pop!_OS/Ubuntu (24.04, the only distribution this was verified on),
+the packages actually confirmed necessary in this project are:
+
+```bash
+sudo apt install libvulkan-dev glslc vulkan-tools spirv-headers
+```
+
+Do not assume these exact package names apply to other distributions.
+
+### CLI
+
+GPU use is **explicit only** — `membrane-run` never uses a GPU unless
+asked to, even when built with `-DGGML_VULKAN=ON`:
+
+- `--gpu-layers all|N` — offload every layer (`all`) or exactly `N`.
+  Default: `0` (CPU-only). `--gpu-layers 0` is also the explicit
+  CPU-forcing form, equivalent to omitting the flag. Requesting GPU
+  layers on a build with no GPU backend compiled in, or with no GPU
+  device found at runtime, fails clearly (exit 5) — it never silently
+  falls back to CPU.
+- `--device NAME` — select a GPU device by a case-insensitive
+  substring match against its name or description (e.g. `nvidia`,
+  `radeon`, `1650`). Requires `--gpu-layers all|N`. Fails clearly if no
+  device matches, or if more than one does.
+
+`--json`/human output report a `gpu` block: whether GPU use was
+requested, whether the build supports it, the requested layer count,
+and the backend/device membrane-run explicitly selected via public
+`ggml_backend_dev_*()` enumeration — never left to llama.cpp's own
+implicit upstream default (which otherwise auto-selects the first
+discrete GPU it finds). This reflects what was *requested and
+selected*, not an independently-confirmed post-load allocation — no
+public API exposes that without scraping runtime logs, so none is
+claimed.
+
 ## Build from source (llama-free library only)
 
 ```bash

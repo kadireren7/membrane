@@ -68,14 +68,32 @@ void	membrane_run_usage(FILE *out)
 		"                     side by side. Slower and more memory-\n"
 		"                     hungry than a normal run by design --\n"
 		"                     never implied by --kv q8 alone.\n"
+		"  --gpu-layers all|N GPU layer offload (default: 0, i.e. CPU-\n"
+		"                     only -- explicit CPU-forcing option too;\n"
+		"                     never implied by a GPU-capable build).\n"
+		"                     \"all\" offloads every layer; N offloads\n"
+		"                     exactly N. Requires a build with a GPU\n"
+		"                     backend compiled in (e.g. -DGGML_VULKAN=\n"
+		"                     ON); fails clearly on a CPU-only build\n"
+		"                     instead of silently running on CPU.\n"
+		"  --device NAME      select a specific GPU device by name\n"
+		"                     substring (see --verbose output for\n"
+		"                     available device names). Requires\n"
+		"                     --gpu-layers all|N. Fails clearly if no\n"
+		"                     device matches, or if more than one\n"
+		"                     does.\n"
 		"  --version          print version and exit\n"
 		"  --help             print this message and exit\n"
 		"\n"
 		"Exit codes: 0 success, 2 CLI/config error, 3 model load "
 		"error,\n"
-		"            4 inference error, 5 unsupported KV configuration.\n"
+		"            4 inference error, 5 unsupported KV or GPU/device\n"
+		"            configuration.\n"
 		"\n"
-		"Scope: verified against LLM_ARCH_LLAMA models on CPU only.\n"
+		"Scope: verified against LLM_ARCH_LLAMA models. CPU backend\n"
+		"always supported; GPU (Vulkan) offload is an explicit, opt-in\n"
+		"path with measured VRAM/throughput/quality effects that\n"
+		"depend on model, context, and host GPU -- see README.\n"
 		"See tools/membrane-llama-runtime/ (membrane-llama-run) for\n"
 		"the diagnostic shadow/injection research tooling this is\n"
 		"built on top of.\n", MEMBRANE_VERSION);
@@ -89,6 +107,22 @@ static bool	parse_u32(const char *s, uint32_t *out, const char *flag_name)
 		return (fprintf(stderr, "membrane-run: %s must be an integer in "
 				"[1, %u]\n", flag_name, UINT32_MAX), false);
 	*out = (uint32_t)val;
+	return (true);
+}
+
+/* "all" (every layer) or a non-negative layer count. 0 is a valid,
+ * meaningful value here (explicit CPU-only) -- unlike parse_u32's
+ * flags, so this does not reuse it. */
+static bool	parse_gpu_layers(const char *s, int32_t *out)
+{
+	uint64_t	val;
+
+	if (strcmp(s, "all") == 0)
+		return (*out = -1, true);
+	if (!parse_u64_strict(s, &val) || val > (uint64_t)INT32_MAX)
+		return (fprintf(stderr, "membrane-run: --gpu-layers must be "
+				"\"all\" or an integer in [0, %d]\n", INT32_MAX), false);
+	*out = (int32_t)val;
 	return (true);
 }
 
@@ -109,6 +143,9 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 	o->verbose = 0;
 	o->include_text = 0;
 	o->compare_kv = 0;
+	o->gpu_layers = 0;
+	o->device.clear();
+	o->want_device = 0;
 	o->want_version = 0;
 	o->want_help = 0;
 	i = 1;
@@ -193,6 +230,18 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 			o->verbose = 1;
 		else if (strcmp(argv[i], "--compare-kv") == 0)
 			o->compare_kv = 1;
+		else if (strcmp(argv[i], "--gpu-layers") == 0 && i + 1 < argc)
+		{
+			++i;
+			if (!parse_gpu_layers(argv[i], &o->gpu_layers))
+				return (MEMBRANE_EXIT_CLI_ERROR);
+		}
+		else if (strcmp(argv[i], "--device") == 0 && i + 1 < argc)
+		{
+			++i;
+			o->want_device = 1;
+			o->device = argv[i];
+		}
 		else
 			return (fprintf(stderr, "membrane-run: unknown option: %s\n",
 					argv[i]), MEMBRANE_EXIT_CLI_ERROR);
@@ -214,6 +263,12 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 				"membrane-run: --include-text requires --json -- it has "
 				"no defined effect on human-readable output (which "
 				"already prints generated text by default)\n"),
+			MEMBRANE_EXIT_CLI_ERROR);
+	if (o->want_device && o->gpu_layers == 0)
+		return (fprintf(stderr,
+				"membrane-run: --device requires --gpu-layers to be "
+				"\"all\" or a positive count -- naming a device with "
+				"zero GPU layers requested is ambiguous\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
 	return (MEMBRANE_EXIT_SUCCESS);
 }
