@@ -1,6 +1,7 @@
 #include "gpu_device.h"
 
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -55,7 +56,10 @@ static bool	parse_blk_layer_index(const char *name, int *out_idx)
 		++p;
 	if (p == digits_start || *p != '.')
 		return (false);
+	errno = 0;
 	val = strtol(digits_start, NULL, 10);
+	if (errno == ERANGE)
+		return (false);
 	if (val < 0 || val > INT32_MAX)
 		return (false);
 	*out_idx = (int)val;

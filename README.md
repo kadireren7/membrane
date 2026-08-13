@@ -209,8 +209,10 @@ asked to, even when built with `-DGGML_VULKAN=ON`:
 - `--gpu-layers all` — offload every layer. Rejected (exit 5) if the
   estimated memory requirement exceeds a safe budget on the selected
   device — see "Memory-aware offload" below.
-- `--gpu-layers N` — offload exactly `N` layers. Same budget check as
-  `all`.
+- `--gpu-layers N` — offload `N` layers, clamped to the model's real
+  layer count if `N` exceeds it (the common llama.cpp `-ngl 99`-style
+  idiom for "offload everything" without knowing the exact count).
+  Same budget check as `all`.
 - `--gpu-layers auto` (Phase 9B.1) — MEMBRANE picks a layer count from
   real device-free-memory and model-size information, leaving an
   explicit safety margin.
