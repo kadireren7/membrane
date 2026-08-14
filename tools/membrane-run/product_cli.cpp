@@ -41,7 +41,8 @@ void	membrane_run_usage(FILE *out)
 		"                     mutually exclusive; exactly one required)\n"
 		"  --ctx N            KV cache context size (default: prompt\n"
 		"                     length + --gen-tokens + 8)\n"
-		"  --kv native|q8|q5  KV cache storage (default: native).\n"
+		"  --kv native|q8|q5|adaptive\n"
+		"                     KV cache storage (default: native).\n"
 		"                     native: unmodified llama.cpp behavior.\n"
 		"                     q8: KV cache tensors are genuinely\n"
 		"                     Q8_0-typed (not a shadow copy -- see\n"
@@ -63,13 +64,39 @@ void	membrane_run_usage(FILE *out)
 		"                     to the same depth as q8. Prefer q8 when\n"
 		"                     quality matters most; prefer q5 when\n"
 		"                     memory/VRAM is the binding constraint.\n"
+		"                     adaptive: MEMBRANE picks exactly ONE of\n"
+		"                     q8 or q5 for the entire context (never a\n"
+		"                     per-layer/per-block mix) based on\n"
+		"                     memory pressure / GPU budget / requested\n"
+		"                     context -- q8 whenever it safely fits\n"
+		"                     with the same practical residency as\n"
+		"                     q5; q5 only when q8 would lose full GPU\n"
+		"                     residency, fail the memory guard, or\n"
+		"                     exceed --kv-budget-mib, while q5 still\n"
+		"                     fits safely. Never picks q5 merely\n"
+		"                     because it is smaller. The resolved\n"
+		"                     mode and machine-readable reason are\n"
+		"                     always reported (requested_kv/\n"
+		"                     selected_kv/adaptive_reason in --json,\n"
+		"                     shown in human output too) -- never a\n"
+		"                     silent fallback to native. See README\n"
+		"                     for the full policy and its limitations\n"
+		"                     (point-in-time GPU memory snapshot, not\n"
+		"                     an OOM guarantee).\n"
 		"                     Both q8 and q5 are real quantization: it\n"
 		"                     can shift a greedy generation's exact\n"
 		"                     token sequence on long enough runs.\n"
-		"                     Both are checked for compatibility\n"
-		"                     before use; fail clearly (never silently\n"
-		"                     fall back to native) if unsupported for\n"
-		"                     this model.\n"
+		"                     All compressed modes are checked for\n"
+		"                     compatibility before use; fail clearly\n"
+		"                     (never silently fall back to native) if\n"
+		"                     unsupported for this model, or if\n"
+		"                     adaptive finds no mode that fits.\n"
+		"  --kv-budget-mib N  ADVANCED: a hard memory-budget input to\n"
+		"                     --kv adaptive's own policy (CPU and\n"
+		"                     GPU) -- a candidate mode whose KV bytes\n"
+		"                     exceed this is treated as not fitting.\n"
+		"                     Requires --kv adaptive; never alters an\n"
+		"                     explicit native/q8/q5 choice.\n"
 		"  --gen-tokens N     tokens to generate (default 128)\n"
 		"  --threads N        decode thread count (default: let\n"
 		"                     llama.cpp choose)\n"
@@ -85,8 +112,12 @@ void	membrane_run_usage(FILE *out)
 		"                     pass) and report memory/quality/\n"
 		"                     performance side by side. The compressed\n"
 		"                     mode compared is q5 if --kv q5 was also\n"
-		"                     given, otherwise q8 (the default, for\n"
-		"                     backward compatibility) -- never a 4-way\n"
+		"                     given, q8 (the default, for backward\n"
+		"                     compatibility) otherwise -- unless --kv\n"
+		"                     adaptive was given, in which case\n"
+		"                     adaptive resolves ONCE and that same\n"
+		"                     resolved mode (q8 or q5) is what native\n"
+		"                     is compared against. Never a 4-way\n"
 		"                     comparison, always native vs exactly one\n"
 		"                     selected compressed mode. Slower and\n"
 		"                     more memory-hungry than a normal run by\n"
@@ -123,10 +154,11 @@ void	membrane_run_usage(FILE *out)
 		"                     under a GPU configuration (selected\n"
 		"                     device, KV bytes, throughput, quality\n"
 		"                     where available). Compares native vs q5\n"
-		"                     if --kv q5 was also given, otherwise vs\n"
-		"                     q8 (the default, for backward\n"
-		"                     compatibility) -- same one-selected-mode\n"
-		"                     rule as --compare-kv. Requires\n"
+		"                     if --kv q5 was also given, q8 (the\n"
+		"                     default, for backward compatibility)\n"
+		"                     otherwise -- same one-selected-mode rule\n"
+		"                     as --compare-kv, including --kv adaptive\n"
+		"                     resolving once beforehand. Requires\n"
 		"                     --gpu-layers all|auto|N. Mutually\n"
 		"                     exclusive with --compare-kv.\n"
 		"  --version          print version and exit\n"
@@ -188,6 +220,8 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 	o->prompt_file = NULL;
 	o->ctx = 0;
 	o->kv_mode = MEMBRANE_KV_STORE_NATIVE;
+	o->want_kv_budget = 0;
+	o->kv_budget_bytes = 0;
 	o->gen_tokens = 128;
 	o->threads = 0;
 	o->want_json = 0;
@@ -250,10 +284,25 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 				o->kv_mode = MEMBRANE_KV_STORE_Q8;
 			else if (strcmp(argv[i], "q5") == 0)
 				o->kv_mode = MEMBRANE_KV_STORE_Q5;
+			else if (strcmp(argv[i], "adaptive") == 0)
+				o->kv_mode = MEMBRANE_KV_STORE_ADAPTIVE;
 			else
-				return (fprintf(stderr,
-						"membrane-run: --kv must be native, q8, or q5\n"),
+				return (fprintf(stderr, "membrane-run: --kv must be "
+						"native, q8, q5, or adaptive\n"),
 					MEMBRANE_EXIT_CLI_ERROR);
+		}
+		else if (strcmp(argv[i], "--kv-budget-mib") == 0 && i + 1 < argc)
+		{
+			uint64_t	val;
+
+			++i;
+			if (!parse_u64_strict(argv[i], &val) || val < 1
+				|| val > (UINT64_MAX / (1024 * 1024)))
+				return (fprintf(stderr, "membrane-run: --kv-budget-mib "
+						"must be a positive integer number of MiB\n"),
+					MEMBRANE_EXIT_CLI_ERROR);
+			o->want_kv_budget = 1;
+			o->kv_budget_bytes = val * 1024 * 1024;
 		}
 		else if (strcmp(argv[i], "--gen-tokens") == 0 && i + 1 < argc)
 		{
@@ -350,6 +399,13 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 				"membrane-run: --gpu-bench requires --gpu-layers to be "
 				"\"all\", \"auto\", or a positive count -- it compares "
 				"native vs q8 under a GPU configuration, not CPU-only\n"),
+			MEMBRANE_EXIT_CLI_ERROR);
+	if (o->want_kv_budget && o->kv_mode != MEMBRANE_KV_STORE_ADAPTIVE)
+		return (fprintf(stderr,
+				"membrane-run: --kv-budget-mib requires --kv adaptive -- "
+				"it is a policy input to adaptive's own Q8-vs-Q5 "
+				"decision and never silently alters an explicit "
+				"native/q8/q5 choice\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
 	return (MEMBRANE_EXIT_SUCCESS);
 }

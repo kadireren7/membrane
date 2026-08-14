@@ -344,6 +344,70 @@ selected compressed mode at a time — `q8` by default (unchanged), or
 `q5` if `--kv q5` is also given — never a combined 3-way/4-way
 comparison.
 
+## Adaptive Q8/Q5 KV policy (development branch, not yet in stable)
+
+`feature/adaptive-kv-policy` adds `--kv adaptive`, alongside the
+existing `native`/`q8`/`q5` — explicit opt-in, `native` stays the
+default. Adaptive chooses exactly **one** real storage mode — `Q8_0`
+or `Q5_1` — for the **entire** context. This is a whole-cache mode
+selector, **not** mixed/block-level precision: it never stores some
+layers or blocks in `q8` and others in `q5`, and it is not
+quality-aware per token or per layer.
+
+**Policy: `q8` preferred, `q5` only under meaningful memory
+pressure.** On GPU (`--gpu-layers all|auto|N`), adaptive evaluates
+both candidates against the exact same device/model estimates the
+existing `--gpu-layers auto` guard already uses: `q8` is chosen
+whenever it safely reaches full model-layer residency; `q5` is chosen
+only if `q8` would lose full residency, fail the memory guard
+outright, or (if `--kv-budget-mib` was given) exceed that budget,
+while `q5` still fits safely. Among partial-offload plans that tie on
+layer count, `q8` still wins — adaptive never sacrifices quality for
+zero practical memory benefit. On CPU (no GPU requested), there is no
+free-memory query to drive the choice, so adaptive defaults to `q8`
+unless an explicit `--kv-budget-mib` rules it out and `q5` fits.
+Adaptive never silently falls back to `native` — an unresolvable
+request fails closed with the same exit code (`5`) `q8`/`q5`
+compatibility failures already use.
+
+The resolved mode and machine-readable reason are always reported:
+`requested_kv`/`selected_kv`/`kv_type`/`adaptive_reason` in `--json`
+output (plus per-candidate KV-byte/validity telemetry), and a matching
+`kv adaptive requested=... selected=... reason=...` line in
+human-readable output. `--compare-kv`/`--gpu-bench` with `--kv
+adaptive` resolve adaptive **once** and compare native against that
+single resolved mode — never differently between the native and
+compressed passes.
+
+**Verified on real hardware, on this host** — CPU and Vulkan (real GTX
+1650) validation matrices at three context sizes each
+(`results/v0.4/adaptive-kv-validation.json`): adaptive selected `q8`
+in every case, matching explicit `--kv q8`'s real KV bytes (and, on
+GPU, its real selected layer count) exactly. Two real explicit-vs-
+adaptive equivalence checks (one `q8`-selected, one `q5`-selected) show
+bit-for-bit identical generated text, generated token count, allocated
+KV bytes, KV type, and (GPU case) selected layer count against the
+explicit mode adaptive resolved to — adaptive is a selection over the
+same `run_kv_store_pass()` code path `q8`/`q5` already use, not a new
+codec.
+
+A real memory-pressure sweep on `SmolLM2-360M`/the same GTX 1650 found
+all three transition zones without forcing an OOM: **Zone A**
+(`q8` fully fits, adaptive picks `q8`), **Zone B** (`q8` loses full
+residency or fails the guard outright while `q5` still fits, fully or
+partially — adaptive picks `q5`), and **Zone C** (neither mode fits
+under any layer count — adaptive fails closed, no allocation
+attempted). The specific context sizes where these zones occur are
+device/model-specific, not universal constants.
+
+**Limitations, stated plainly.** GPU adaptive selection is based on a
+point-in-time free-memory snapshot taken before model load (the same
+estimate `--gpu-layers auto` already uses) — if external GPU usage
+changes after selection, allocation can still fail; this is **not** an
+OOM guarantee. CPU adaptive has no equivalent free-memory signal at
+all. `Q4_0`/`Q5_0` remain research-only and are never selectable by
+adaptive or exposed as `--kv` values.
+
 ## Build from source (llama-free library only)
 
 ```bash

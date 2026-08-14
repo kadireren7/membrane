@@ -20,6 +20,20 @@
  * a release version bump only needs to change this one line. */
 # define MEMBRANE_VERSION "0.3.0-rc1"
 
+/* Phase 11A: --kv adaptive's CLI-level request value -- NOT a real
+ * storage type (kv_store_telemetry.h's MEMBRANE_KV_STORE_NATIVE/Q8/Q5
+ * are the only real ggml types; decode_loop.cpp/run_kv_store_pass()
+ * never receives this value). main.cpp resolves an adaptive request
+ * into a concrete MEMBRANE_KV_STORE_Q8/Q5 exactly once (CPU: after
+ * model load, from real hparams; GPU: inside resolve_gpu_config(),
+ * from the same pre-load GGUF estimate the existing --gpu-layers auto
+ * guard already uses) before it ever reaches run_kv_store_pass/
+ * kv_bytes_for_mode/membrane_check_kv_compat -- see main.cpp's
+ * resolve_effective_kv_mode(). Deliberately defined here (product_cli
+ * is the only CLI surface that exposes "adaptive") rather than in
+ * kv_store_telemetry.h, which stays real-storage-only. */
+# define MEMBRANE_KV_STORE_ADAPTIVE	3
+
 /* Stable exit codes (Section 8) -- never change the meaning of an
  * already-shipped code, only add new ones. */
 # define MEMBRANE_EXIT_SUCCESS			0
@@ -51,7 +65,7 @@ typedef struct s_membrane_run_opts
 	const char					*prompt_file;	/* PROMPT_FILE only */
 
 	uint32_t	ctx;			/* 0 = auto-size to prompt + gen_tokens + 8 */
-	int			kv_mode;		/* MEMBRANE_KV_STORE_NATIVE/Q8/Q5 (default
+	int			kv_mode;		/* MEMBRANE_KV_STORE_NATIVE/Q8/Q5/ADAPTIVE (default
 								 * NATIVE -- Section 4: v0.2 never
 								 * unexpectedly changes model behavior).
 								 * Also selects which compressed mode
@@ -59,7 +73,19 @@ typedef struct s_membrane_run_opts
 								 * native against (Q8 unless Q5 was
 								 * explicitly requested -- see
 								 * run_compare_mode()/
-								 * run_gpu_bench_mode() in main.cpp). */
+								 * run_gpu_bench_mode() in main.cpp). May
+								 * also resolve to a real mode chosen by
+								 * --kv adaptive's policy -- see
+								 * main.cpp's resolve_effective_kv_mode(). */
+	int			want_kv_budget;	/* whether --kv-budget-mib was given */
+	uint64_t	kv_budget_bytes;	/* --kv-budget-mib N * 1024 * 1024,
+									 * Section 5: a hard input to --kv
+									 * adaptive's policy only -- rejected
+									 * at parse time if given without
+									 * --kv adaptive, so it can never
+									 * silently alter an explicit q8/q5
+									 * choice. Only meaningful when
+									 * want_kv_budget. */
 	int			gen_tokens;
 	int			threads;		/* 0 = let llama.cpp pick its own default */
 

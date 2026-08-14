@@ -1090,6 +1090,231 @@ def _c51():
 	return len(bad) == 0, "; ".join(bad) if bad else "README has no unsupported Q5 product claims"
 
 
+# ---------------------------------------------------------------------
+# Phase 11A: adaptive whole-cache KV policy validation artifact
+# ---------------------------------------------------------------------
+V11A_ARTIFACT_PATH = REPO_ROOT / "results" / "v0.4" / "adaptive-kv-validation.json"
+_V11A_CACHE = {}
+_ADAPTIVE_REASON_CODES = {
+	"Q8_FITS",
+	"Q8_FULL_RESIDENCY",
+	"Q5_REQUIRED_FOR_FULL_RESIDENCY",
+	"Q5_REQUIRED_FOR_MEMORY_GUARD",
+	"Q5_ONLY_COMPRESSED_MODE_THAT_FITS",
+	"NO_COMPRESSED_MODE_FITS",
+	"CPU_ADAPTIVE_Q8_DEFAULT",
+	"CPU_MEMORY_PRESSURE_Q5",
+}
+
+
+def _load_adaptive_artifact():
+	key = str(V11A_ARTIFACT_PATH)
+	if key not in _V11A_CACHE:
+		_V11A_CACHE[key] = json.loads(V11A_ARTIFACT_PATH.read_text())
+	return _V11A_CACHE[key]
+
+
+@check("Phase 11A adaptive artifact exists, is valid JSON, and has "
+	"schema_version 1")
+def _c52():
+	if not V11A_ARTIFACT_PATH.exists():
+		return False, f"{V11A_ARTIFACT_PATH} does not exist"
+	a = _load_adaptive_artifact()
+	ok = a.get("schema_version") == 1
+	return ok, f"schema_version={a.get('schema_version')!r}"
+
+
+@check("Phase 11A adaptive artifact: membrane_commit and llama_cpp_commit "
+	"look like real commit SHAs (40 hex chars)")
+def _c53():
+	a = _load_adaptive_artifact()
+	bad = []
+	for key in ("membrane_commit", "llama_cpp_commit"):
+		sha = a.get(key, "")
+		if not re.fullmatch(r"[0-9a-f]{40}", sha):
+			bad.append(f"{key}={sha!r}")
+	return len(bad) == 0, "; ".join(bad) if bad else "both commit fields well-formed"
+
+
+@check("Phase 11A adaptive artifact: q5 < q8 storage bytes on every "
+	"CPU/Vulkan validation-matrix context, and adaptive's own bytes "
+	"exactly match whichever explicit mode it selected")
+def _c54():
+	bad = []
+	a = _load_adaptive_artifact()
+	for section in ("cpu_validation_matrix", "vulkan_validation_matrix"):
+		runs = a.get(section, {}).get("runs", [])
+		by_ctx = {}
+		for r in runs:
+			by_ctx.setdefault(r["ctx_size"], {})[r["requested_kv"]] = r
+		if not by_ctx:
+			bad.append(f"{section}: no runs found")
+			continue
+		for ctx, modes in by_ctx.items():
+			if "q8" not in modes or "q5" not in modes:
+				bad.append(f"{section} ctx={ctx}: missing explicit q8/q5 rows")
+				continue
+			q8_bytes = modes["q8"]["kv_allocated_bytes"]
+			q5_bytes = modes["q5"]["kv_allocated_bytes"]
+			if not (q5_bytes < q8_bytes):
+				bad.append(f"{section} ctx={ctx}: q5 bytes {q5_bytes} not < "
+					f"q8 bytes {q8_bytes}")
+			if "adaptive" in modes:
+				ad = modes["adaptive"]
+				expected = modes.get(ad["selected_kv"], {}).get("kv_allocated_bytes")
+				if expected is not None and ad["kv_allocated_bytes"] != expected:
+					bad.append(f"{section} ctx={ctx}: adaptive selected "
+						f"{ad['selected_kv']} but its bytes "
+						f"({ad['kv_allocated_bytes']}) != that explicit "
+						f"mode's bytes ({expected})")
+	return len(bad) == 0, "; ".join(bad) if bad else "storage ordering and adaptive/explicit byte equality both hold"
+
+
+@check("Phase 11A adaptive artifact: at least one Zone A (Q8 full "
+	"residency), Zone B (Q5 required), and Zone C (fail closed) "
+	"transition row exist")
+def _c55():
+	a = _load_adaptive_artifact()
+	zones = a.get("memory_pressure_transition", {}).get("zones", [])
+	present = {z.get("zone") for z in zones}
+	missing = {"A", "B", "C"} - present
+	return len(missing) == 0, (
+		f"missing zone(s): {missing}" if missing else
+		f"all three zones present across {len(zones)} rows")
+
+
+@check("Phase 11A adaptive artifact: Zone A rows select q8 and Zone B "
+	"rows select q5 -- the transition direction is correct, not just "
+	"present")
+def _c56():
+	a = _load_adaptive_artifact()
+	zones = a.get("memory_pressure_transition", {}).get("zones", [])
+	bad = []
+	for z in zones:
+		if z.get("zone") == "A" and z.get("selected_kv") != "q8":
+			bad.append(f"ctx={z['ctx_requested']}: Zone A selected "
+				f"{z.get('selected_kv')!r}, expected q8")
+		if z.get("zone") == "B" and z.get("selected_kv") != "q5":
+			bad.append(f"ctx={z['ctx_requested']}: Zone B selected "
+				f"{z.get('selected_kv')!r}, expected q5")
+		if z.get("zone") == "C" and z.get("exit_code", 0) == 0:
+			bad.append(f"ctx={z['ctx_requested']}: Zone C did not fail "
+				f"closed (exit_code=0)")
+	return len(bad) == 0, "; ".join(bad) if bad else "every zone's selection matches its label"
+
+
+@check("Phase 11A adaptive artifact: every adaptive_reason field, in "
+	"both validation matrices and the transition zones, is one of the "
+	"8 fixed, stable reason codes")
+def _c57():
+	a = _load_adaptive_artifact()
+	bad = []
+	for section in ("cpu_validation_matrix", "vulkan_validation_matrix"):
+		for r in a.get(section, {}).get("runs", []):
+			reason = r.get("adaptive_reason", "")
+			if r.get("requested_kv") == "adaptive" and reason not in _ADAPTIVE_REASON_CODES:
+				bad.append(f"{section} ctx={r['ctx_size']}: unknown reason {reason!r}")
+	for z in a.get("memory_pressure_transition", {}).get("zones", []):
+		reason = z.get("adaptive_reason", "")
+		if reason not in _ADAPTIVE_REASON_CODES:
+			bad.append(f"zone ctx={z['ctx_requested']}: unknown reason {reason!r}")
+	return len(bad) == 0, "; ".join(bad) if bad else "every reason code is from the fixed, documented set"
+
+
+@check("Phase 11A adaptive artifact: the selected mode in every "
+	"successful transition-zone row is recorded as valid in its own "
+	"candidate estimate (the decision matches the recorded evidence, "
+	"not just an assertion)")
+def _c58():
+	a = _load_adaptive_artifact()
+	bad = []
+	for z in a.get("memory_pressure_transition", {}).get("zones", []):
+		if z.get("exit_code", 1) != 0:
+			continue
+		selected = z.get("selected_kv")
+		cand = z.get("candidates", {}).get(selected, {})
+		if not cand.get("valid"):
+			bad.append(f"ctx={z['ctx_requested']}: selected {selected!r} "
+				f"but its own candidate.valid is not true")
+		if cand.get("selected_layers") != z.get("gpu_layers_selected"):
+			bad.append(f"ctx={z['ctx_requested']}: winning candidate's "
+				f"selected_layers ({cand.get('selected_layers')}) != "
+				f"reported gpu_layers_selected ({z.get('gpu_layers_selected')})")
+	return len(bad) == 0, "; ".join(bad) if bad else "every selection is backed by its own recorded, valid candidate"
+
+
+@check("Phase 11A adaptive artifact: explicit-vs-adaptive equivalence "
+	"is reported as an exact match for both the Q8-selected and "
+	"Q5-selected real cases (no new codec path)")
+def _c59():
+	a = _load_adaptive_artifact()
+	eq = a.get("explicit_vs_adaptive_equivalence", {})
+	bad = []
+	for case_name in ("q8_selected_case", "q5_selected_case"):
+		case = eq.get(case_name, {})
+		for field in ("text_match", "generated_tokens_match",
+				"kv_allocated_bytes_match", "kv_type_match"):
+			if case.get(field) is not True:
+				bad.append(f"{case_name}.{field} is not True: {case.get(field)!r}")
+	return len(bad) == 0, "; ".join(bad) if bad else "both real equivalence cases fully match"
+
+
+@check("Phase 11A adaptive artifact: no run ever reports selected_kv "
+	"as native -- adaptive only ever resolves to a real compressed "
+	"mode or fails closed")
+def _c60():
+	a = _load_adaptive_artifact()
+	bad = []
+	for section in ("cpu_validation_matrix", "vulkan_validation_matrix"):
+		for r in a.get(section, {}).get("runs", []):
+			if r.get("requested_kv") == "adaptive" and r.get("selected_kv") == "native":
+				bad.append(f"{section} ctx={r['ctx_size']}: adaptive silently "
+					f"resolved to native")
+	for z in a.get("memory_pressure_transition", {}).get("zones", []):
+		if z.get("selected_kv") == "native":
+			bad.append(f"zone ctx={z['ctx_requested']}: adaptive silently "
+				f"resolved to native")
+	return len(bad) == 0, "; ".join(bad) if bad else "no silent native fallback anywhere in the artifact"
+
+
+@check("Phase 11A adaptive artifact: no absolute filesystem paths "
+	"anywhere in the file")
+def _c61():
+	text = V11A_ARTIFACT_PATH.read_text()
+	posix = re.findall(
+		r'(?<![\w.\-:/])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		text,
+	)
+	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
+	hits = posix + windows
+	return len(hits) == 0, f"suspicious path-like strings: {hits[:5]}" if hits else "none found"
+
+
+@check("Phase 11A adaptive artifact: no NaN/Infinity anywhere in the file")
+def _c62():
+	a = _load_adaptive_artifact()
+	bad = _no_nan_inf(a)
+	return len(bad) == 0, f"non-finite at: {bad[:5]}" if bad else "all values finite"
+
+
+@check("Phase 11A adaptive artifact: policy rules and limitations do "
+	"not claim Q4 or Q5_0 are selectable, or that adaptive is an OOM "
+	"guarantee")
+def _c63():
+	a = _load_adaptive_artifact()
+	bad = []
+	rules_text = " ".join(a.get("policy", {}).get("rules", []))
+	if re.search(r"\bq4\b", rules_text, re.IGNORECASE) or "q5_0" in rules_text.lower():
+		bad.append("policy.rules references q4 or q5_0 as a selectable mode")
+	limitations_text = " ".join(a.get("limitations", []))
+	if re.search(r"guarantee[sd]?\s+(against|no)\s+oom", limitations_text, re.IGNORECASE):
+		bad.append("limitations claims an OOM guarantee, contradicting Section 17")
+	if "point-in-time" not in limitations_text and "point in time" not in limitations_text:
+		bad.append("limitations does not disclose the point-in-time GPU "
+			"memory snapshot caveat")
+	return len(bad) == 0, "; ".join(bad) if bad else "no unsupported claims, snapshot caveat disclosed"
+
+
 def main() -> int:
 	global ARTIFACT_PATH
 	ap = argparse.ArgumentParser()
@@ -1111,6 +1336,8 @@ def main() -> int:
 			_c33, _c34, _c35, _c36, _c37,
 			_c38, _c39, _c40, _c41, _c42, _c43, _c44, _c45, _c46, _c47,
 			_c48, _c49, _c50, _c51,
+			_c52, _c53, _c54, _c55, _c56, _c57, _c58, _c59, _c60, _c61,
+			_c62, _c63,
 		)
 	for fn in checks:
 		fn()

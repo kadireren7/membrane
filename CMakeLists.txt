@@ -182,6 +182,16 @@ add_library(membrane_gpu_policy STATIC
   tools/membrane-run/gpu_policy.c)
 target_include_directories(membrane_gpu_policy PUBLIC tools/membrane-run)
 
+# Phase 11A: --kv adaptive's pure Q8-vs-Q5 decision, deliberately
+# llama-free and independent of gpu_policy's own arithmetic (it only
+# consumes gpu_policy_resolve()'s already-computed results, passed in
+# by the caller) -- same testable-without-a-model/GPU pattern as
+# membrane_compat_check/membrane_gpu_policy above.
+add_library(membrane_adaptive_kv_policy STATIC
+  tools/membrane-run/adaptive_kv_policy.c)
+target_include_directories(membrane_adaptive_kv_policy PUBLIC
+  tools/membrane-run)
+
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
 # unlike tools/membrane-kv-capture etc, which need MEMBRANE_ENABLE_LLAMA.
@@ -557,6 +567,14 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_gpu_policy PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_gpu_policy COMMAND test_gpu_policy)
+
+  add_executable(test_adaptive_kv_policy
+    tools/membrane-run/test_adaptive_kv_policy.c)
+  target_link_libraries(test_adaptive_kv_policy PRIVATE
+    membrane_adaptive_kv_policy)
+  target_include_directories(test_adaptive_kv_policy PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_adaptive_kv_policy COMMAND test_adaptive_kv_policy)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test
