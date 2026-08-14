@@ -2,6 +2,28 @@
   "schema_version": 1,
   "phase": "10C-q5-derisk-and-productization",
   "note": "Development evidence, not release evidence. Backs the feature/q5-kv-runtime branch's --kv q5 (maps to GGML_TYPE_Q5_1). The prior experimental Q4_0/Q5_0/Q5_1 evaluation this productization decision is based on lives on the experiment/q4-kv-storage and experiment/q5-kv-evaluation branches (results/phase10/ there) -- not committed on this branch.",
+  "success_gate": {
+    "verdict": "READY_TO_MERGE_Q5_RUNTIME",
+    "pr": "https://github.com/kadireren7/membrane/pull/19",
+    "checklist": {
+      "q5_1_derisk_passes": true,
+      "product_cli_exposes_only_q5_not_q5_0_or_q4": true,
+      "q5_authoritative_no_shadow_cache": true,
+      "memory_win_over_q8_confirmed": true,
+      "cpu_works": true,
+      "vulkan_works": true,
+      "auto_offload_works": true,
+      "guard_works": true,
+      "gpu_bench_works": true,
+      "no_silent_fallback": true,
+      "broader_quality_evidence_supports_candidacy": true,
+      "tests_green": true,
+      "verifier_green": true,
+      "codeql_zero_findings": true,
+      "coderabbit_resolved": true
+    },
+    "note": "READY_TO_MERGE means the phase's own success-gate checklist is satisfied and CI/CodeQL/CodeRabbit are clean on the PR HEAD commit -- it is NOT a merge action. Per this phase's explicit instructions, nothing was merged, released, or version-bumped, and no adaptive Q4/Q5/Q8 policy was started."
+  },
   "membrane_commit": "a6d5377c852cc1eeb88d224b25726f74c515a405",
   "llama_cpp_commit": "c0bc8591e8815c63cb01dd3f051a8b0df02501c9",
   "models": {

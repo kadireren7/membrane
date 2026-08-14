@@ -367,7 +367,7 @@ def _c20():
 	# /home/ or /Users/: a leaked /tmp/..., /mnt/..., or /var/... path
 	# is just as much a privacy problem and must be caught too.
 	posix = re.findall(
-		r'(?<![\w.\-])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		r'(?<![\w.\-:/])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
 		text,
 	)
 	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
@@ -546,7 +546,7 @@ def _c29():
 def _c30():
 	text = V03_ARTIFACT_PATH.read_text()
 	posix = re.findall(
-		r'(?<![\w.\-])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		r'(?<![\w.\-:/])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
 		text,
 	)
 	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
@@ -1041,7 +1041,7 @@ def _c47():
 def _c48():
 	text = V04_ARTIFACT_PATH.read_text()
 	posix = re.findall(
-		r'(?<![\w.\-])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		r'(?<![\w.\-:/])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
 		text,
 	)
 	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
