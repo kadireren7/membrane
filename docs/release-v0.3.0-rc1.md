@@ -21,10 +21,13 @@ automatic offload policy and a memory safety guard on top of it.
   requires an explicit `--ctx`.
 - `--device NAME` — select a GPU device by case-insensitive substring
   match against its name or description.
-- Memory safety guard: an unsatisfiable request (`all`, explicit `N`,
-  or `auto` with nothing fitting) is rejected before model load —
-  clear error, exit 5, no partial inference, no silent fallback to
-  CPU, no silent reduction of an explicit request.
+- Memory safety guard: an explicit request that doesn't fit the
+  estimated memory budget (`all`, explicit `N`, or `auto` with nothing
+  fitting) is rejected before model load — clear error, exit 5, no
+  partial inference, no silent fallback to CPU, and never a silent
+  *memory-budget-driven* reduction of an explicit request (distinct
+  from the model-depth clamp on `N` above, which is reported in
+  telemetry, not silent).
 - Partial GPU offload: `auto` genuinely selects fewer than all layers
   when the full set doesn't fit, rather than only ever being
   full-offload-or-nothing (see "Verified result" below for the
@@ -72,8 +75,8 @@ SmolLM2-135M, `--gpu-layers auto`:
 | 8192 | 482 MiB | 400 MiB | 17.01% |
 | 16384 | 656 MiB | 493 MiB | 24.85% |
 
-SmolLM2-360M, ctx=2048, `--gpu-layers auto`: 32/32 layers, 809 → 772
-MiB (4.6% reduction).
+SmolLM2-360M, ctx=2048, `--gpu-layers auto`: 32/32 layers, 808 → 772
+MiB (4.46% reduction).
 
 Partial offload, proven near the guard boundary (not forced OOM):
 at ctx=145000, `--gpu-layers all` is rejected (exit 5, before decode)
@@ -81,12 +84,18 @@ while `--gpu-layers auto` succeeds *at the same context* by selecting
 17 of 30 layers — concrete evidence `auto` is not merely
 full-offload-or-nothing.
 
-`--gpu-bench` throughput: mean generation delta ≈ −9 to −10% (q8 vs
-native) across repeated independent runs on both models, with
-run-to-run variance (roughly −6% to −16% observed across 13
-repetitions) — q8's decode throughput is measurably noisier run to
-run than native's on this host; quality metrics were bit-identical
-across all repetitions of a given configuration.
+The table above and the partial-offload figures are the committed,
+`scripts/verify-results.py`-checked numbers from
+`results/v0.3/gpu-vulkan-validation.json`. The following `--gpu-bench`
+throughput characterization, by contrast, is from this release's own
+local pre-release validation sprint (13 independent `--gpu-bench`
+repetitions across both models on the same host) and is **not**
+committed as a machine-verified artifact -- reported here as observed,
+not as a checked claim: mean generation delta ≈ −9 to −10% (q8 vs
+native), run-to-run range roughly −6% to −16% -- q8's decode
+throughput was measurably noisier run to run than native's on this
+host; quality metrics were bit-identical across all repetitions of a
+given configuration.
 
 ## Known limitations
 
@@ -112,6 +121,25 @@ across all repetitions of a given configuration.
 - `test_mem_guard` (`tools/membrane-kv-exact-sim/`) is a known,
   pre-existing, host-memory-pressure-dependent flake on
   memory-constrained local dev hosts — does not reproduce on CI.
+
+## Validation status
+
+Local dev host (this branch, this commit):
+
+- llama-free Release: 63/63
+- llama-free ASan/UBSan: 63/63
+- llama-enabled CPU Release: 64/65 (`test_mem_guard` only -- known,
+  pre-existing, host-memory-pressure-dependent flake, see "Known
+  limitations")
+- llama-enabled CPU ASan/UBSan: 64/65 (same)
+- Vulkan Release smoke (native/q8/`--gpu-layers auto`/`--gpu-bench`):
+  all exit 0, no fallback, correct device selection
+- `scripts/verify-results.py`: 37/37
+
+GitHub CI (`build-and-test` Debug/ASan, `thread-sanitizer`, CodeQL):
+green, including a clean `test_mem_guard` pass -- this test's failures
+are specific to this memory-constrained local host and do not
+reproduce on CI runners.
 
 ## Model/backend scope
 
