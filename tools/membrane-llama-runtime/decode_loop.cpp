@@ -231,6 +231,16 @@ bool	run_kv_store_pass(llama_model *model,
 		cp.type_k = GGML_TYPE_Q8_0;
 		cp.type_v = GGML_TYPE_Q8_0;
 	}
+	else if (kv_store_mode == MEMBRANE_KV_STORE_Q5)
+	{
+		/* Phase 10C: GGML_TYPE_Q5_1 specifically -- the product "q5"
+		 * mode always maps to Q5_1, never Q5_0, per the Phase 10B
+		 * evaluation (Q5_1 was consistently the stronger of the two
+		 * on quality, at a modest memory cost). Same "requires
+		 * flash_attn" upstream rule as Q8 above. */
+		cp.type_k = GGML_TYPE_Q5_1;
+		cp.type_v = GGML_TYPE_Q5_1;
+	}
 	collector = membrane_runtime_collector_create(
 			MEMBRANE_RUNTIME_MODE_BASELINE, MEMBRANE_RUNTIME_MAX_LAYERS);
 	if (collector == NULL)

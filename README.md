@@ -279,6 +279,71 @@ Vulkan was tested on exactly one host, one GPU (NVIDIA GeForce GTX
 1650 Mobile). There is no universal CUDA or AMD support claim yet —
 this is a Vulkan-only, single-host validation.
 
+## Q5 KV compression (development branch, not yet in stable)
+
+`feature/q5-kv-runtime` adds a second compressed KV mode, `--kv q5`,
+alongside the existing `native`/`q8` — same opt-in, fail-closed,
+no-shadow-cache design as `--kv q8`, on both CPU and Vulkan. `q5`
+maps internally to `GGML_TYPE_Q5_1` specifically (never `Q5_0`, which
+was evaluated and set aside — see below); JSON output reports
+`kv_type: "Q5_1"` explicitly so this is never ambiguous.
+
+**Why a second compressed mode.** `q8` roughly halves native's KV
+memory. `q5` goes further — genuinely `Q5_1`-typed KV tensors, ~37.5%
+of native's memory (an additional ~29% reduction beyond `q8`) — at a
+real, measured quality cost `q8` doesn't have. This project evaluated
+`Q4_0`, `Q5_0`, and `Q5_1` as candidates on the `experiment/q4-kv-storage`
+and `experiment/q5-kv-evaluation` branches (`results/phase10/` there,
+not committed on this branch) before choosing `Q5_1` as the only one
+worth productizing: `Q4_0` and `Q5_0` remain **research-only**
+comparison baselines, never exposed as product `--kv` values.
+
+**`q8` is still the safer default compressed mode.** Prefer `q8` when
+output quality matters most; prefer `q5` when memory/VRAM is the
+binding constraint and some additional quality risk is acceptable.
+Both are real quantization — either can shift a greedy generation's
+exact token sequence on long enough runs.
+
+**What was measured, on the same two small models this whole project
+has used so far** (SmolLM2-135M/360M, `results/v0.4/q5-validation.json`
+— the prior `Q4_0`/`Q5_0`/`Q5_1` evaluation this productization
+decision is based on lives on the `experiment/q5-kv-evaluation`
+branch, not committed here): across a 31-prompt set spanning 11
+categories (factual recall, instruction following, multi-step/
+arithmetic/logical reasoning, code completion/reasoning/explanation,
+structured output, summarization, prose continuation), `q5`'s
+aggregate quality stayed materially closer to `q8` than to the
+rejected `Q4_0` baseline on the full-prompt-set mean (both models) and
+on mean logit rel-L2 in every slice measured. On mean top1
+preservation specifically, `q5` clearly beats `Q4_0` in absolute terms
+on every model and subset — but on one specific slice (135M's
+10-prompt reasoning-heavy subset), `q5`'s mean top1 sits almost
+exactly between `q8` and `Q4_0`, fractionally closer to `Q4_0` than to
+`q8` by that one distance metric. This is disclosed, not smoothed
+into the headline: see `results/v0.4/derisk_decision.json`'s
+`distance_to_q8_nuance_found_during_review` for the exact numbers. On
+the reasoning-heavy subset overall, `q5` still measured clearly better
+than `Q4_0` on both models — including a worst individual prompt (a
+reasoning-category prompt, on the smaller 135M model) disclosed in the
+artifact rather than hidden behind the averages.
+
+**This is not a universal quality claim.** Two small (<400M
+parameter) models, one architecture family (`LLM_ARCH_LLAMA`), a
+hand-authored (not standardized-benchmark) prompt set, one GPU. `q5`'s
+memory-pressure advantage over `q8` is real and measured the same way
+`q8`'s was, with the same single-host caveat: on a 4342 MiB adapter
+(`ggml_backend_dev_memory()`'s real reported total, not a rounded "4
+GB"), at contexts where `q8` fails closed entirely (`exit 5`, real
+guard rejection), `q5` keeps `SmolLM2-360M` **fully** GPU-resident —
+all 32 of 32 model layers, not just "some layers"/"didn't fail" —
+verified by `scripts/verify-results.py` against
+`results/v0.4/q5-validation.json`'s `capacity_reconfirm_360m_vulkan`.
+
+`--compare-kv` and `--gpu-bench` compare native against exactly one
+selected compressed mode at a time — `q8` by default (unchanged), or
+`q5` if `--kv q5` is also given — never a combined 3-way/4-way
+comparison.
+
 ## Build from source (llama-free library only)
 
 ```bash

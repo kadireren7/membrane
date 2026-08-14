@@ -157,9 +157,48 @@ static void	test_kv_flag(void)
 
 	args = base_args();
 	args.push_back("--kv");
+	args.push_back("q5");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--kv q5 accepted");
+	TEST_ASSERT(o.kv_mode == 2 /* MEMBRANE_KV_STORE_Q5 */,
+		"--kv q5 sets q5 mode (maps to Q5_1 internally, see decode_loop.cpp)");
+
+	args = base_args();
+	args.push_back("--kv");
 	args.push_back("bogus");
 	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
 		"--kv with an invalid value is a CLI error");
+}
+
+/* Phase 10C Section 18: the experimental Q5_0/Q4 aliases that existed
+ * on the research branches (experiment/q5-kv-evaluation,
+ * experiment/q4-kv-storage) must NOT be carried over into the product
+ * CLI -- only native/q8/q5 (Q5_1) are exposed here. */
+static void	test_no_q5_0_or_q4_public_alias(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("q5_0");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv q5_0 is rejected -- not a public product alias");
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("q5_1");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv q5_1 (the experimental spelling) is rejected -- \"q5\" is "
+		"the only public spelling, and it must not silently succeed by "
+		"accident");
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("q4");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv q4 is rejected -- Q4 stays a research-only comparison "
+		"baseline, never a public product mode");
 }
 
 static void	test_compare_kv_flag(void)
@@ -547,6 +586,7 @@ int	main(void)
 	test_prompt_dash_is_stdin_mode();
 	test_prompt_file_mode();
 	test_kv_flag();
+	test_no_q5_0_or_q4_public_alias();
 	test_compare_kv_flag();
 	test_ctx_and_gen_tokens_malformed_rejected();
 	test_ctx_and_gen_tokens_valid_stored();

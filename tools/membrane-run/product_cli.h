@@ -51,9 +51,15 @@ typedef struct s_membrane_run_opts
 	const char					*prompt_file;	/* PROMPT_FILE only */
 
 	uint32_t	ctx;			/* 0 = auto-size to prompt + gen_tokens + 8 */
-	int			kv_mode;		/* MEMBRANE_KV_STORE_NATIVE/Q8 (default
+	int			kv_mode;		/* MEMBRANE_KV_STORE_NATIVE/Q8/Q5 (default
 								 * NATIVE -- Section 4: v0.2 never
-								 * unexpectedly changes model behavior) */
+								 * unexpectedly changes model behavior).
+								 * Also selects which compressed mode
+								 * --compare-kv/--gpu-bench compare
+								 * native against (Q8 unless Q5 was
+								 * explicitly requested -- see
+								 * run_compare_mode()/
+								 * run_gpu_bench_mode() in main.cpp). */
 	int			gen_tokens;
 	int			threads;		/* 0 = let llama.cpp pick its own default */
 

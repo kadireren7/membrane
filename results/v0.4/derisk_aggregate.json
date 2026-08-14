@@ -1,0 +1,294 @@
+{
+  "135M": {
+    "q8": {
+      "full_set": {
+        "n_prompts": 31,
+        "n_quality_available": 30,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.992346,
+        "median_top1_preservation": 1.0,
+        "mean_logit_rel_l2": 0.009033,
+        "mean_delta_nll": 0.000686,
+        "worst_case_prompt": "instruction_following_2",
+        "worst_case_top1_preservation": 0.909091,
+        "logit_rel_l2_at_worst_top1_prompt": 0.010915,
+        "worst_case_logit_rel_l2_prompt": "summarization_1",
+        "worst_case_logit_rel_l2": 0.013202
+      },
+      "reasoning_subset": {
+        "n_prompts": 10,
+        "n_quality_available": 9,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.996046,
+        "median_top1_preservation": 1.0,
+        "mean_logit_rel_l2": 0.008513,
+        "mean_delta_nll": 0.000336,
+        "worst_case_prompt": "arithmetic_reasoning_3",
+        "worst_case_top1_preservation": 0.972222,
+        "logit_rel_l2_at_worst_top1_prompt": 0.009701,
+        "worst_case_logit_rel_l2_prompt": "logical_reasoning_1",
+        "worst_case_logit_rel_l2": 0.011424
+      }
+    },
+    "q5_0": {
+      "full_set": {
+        "n_prompts": 31,
+        "n_quality_available": 30,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.9748,
+        "median_top1_preservation": 0.978847,
+        "mean_logit_rel_l2": 0.058373,
+        "mean_delta_nll": 0.007098,
+        "worst_case_prompt": "summarization_2",
+        "worst_case_top1_preservation": 0.904762,
+        "logit_rel_l2_at_worst_top1_prompt": 0.088068,
+        "worst_case_logit_rel_l2_prompt": "code_explanation_1",
+        "worst_case_logit_rel_l2": 0.088677
+      },
+      "reasoning_subset": {
+        "n_prompts": 10,
+        "n_quality_available": 9,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.984831,
+        "median_top1_preservation": 0.992188,
+        "mean_logit_rel_l2": 0.051877,
+        "mean_delta_nll": 0.001231,
+        "worst_case_prompt": "arithmetic_reasoning_1",
+        "worst_case_top1_preservation": 0.945946,
+        "logit_rel_l2_at_worst_top1_prompt": 0.043289,
+        "worst_case_logit_rel_l2_prompt": "logical_reasoning_1",
+        "worst_case_logit_rel_l2": 0.072394
+      }
+    },
+    "q5_1": {
+      "full_set": {
+        "n_prompts": 31,
+        "n_quality_available": 30,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.961749,
+        "median_top1_preservation": 0.96875,
+        "mean_logit_rel_l2": 0.055807,
+        "mean_delta_nll": 0.014207,
+        "worst_case_prompt": "instruction_following_2",
+        "worst_case_top1_preservation": 0.818182,
+        "logit_rel_l2_at_worst_top1_prompt": 0.07788,
+        "worst_case_logit_rel_l2_prompt": "prose_continuation_3",
+        "worst_case_logit_rel_l2": 0.082762
+      },
+      "reasoning_subset": {
+        "n_prompts": 10,
+        "n_quality_available": 9,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.950523,
+        "median_top1_preservation": 0.953125,
+        "mean_logit_rel_l2": 0.054447,
+        "mean_delta_nll": 0.016678,
+        "worst_case_prompt": "multistep_reasoning_3",
+        "worst_case_top1_preservation": 0.9,
+        "logit_rel_l2_at_worst_top1_prompt": 0.066641,
+        "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
+        "worst_case_logit_rel_l2": 0.066641
+      }
+    },
+    "q4": {
+      "full_set": {
+        "n_prompts": 31,
+        "n_quality_available": 30,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.924939,
+        "median_top1_preservation": 0.922704,
+        "mean_logit_rel_l2": 0.135614,
+        "mean_delta_nll": 0.030118,
+        "worst_case_prompt": "multistep_reasoning_3",
+        "worst_case_top1_preservation": 0.8,
+        "logit_rel_l2_at_worst_top1_prompt": 0.148449,
+        "worst_case_logit_rel_l2_prompt": "summarization_1",
+        "worst_case_logit_rel_l2": 0.278849
+      },
+      "reasoning_subset": {
+        "n_prompts": 10,
+        "n_quality_available": 9,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.91412,
+        "median_top1_preservation": 0.914062,
+        "mean_logit_rel_l2": 0.12821,
+        "mean_delta_nll": 0.042155,
+        "worst_case_prompt": "multistep_reasoning_3",
+        "worst_case_top1_preservation": 0.8,
+        "logit_rel_l2_at_worst_top1_prompt": 0.148449,
+        "worst_case_logit_rel_l2_prompt": "logical_reasoning_1",
+        "worst_case_logit_rel_l2": 0.237474
+      }
+    }
+  },
+  "360M": {
+    "q8": {
+      "full_set": {
+        "n_prompts": 31,
+        "n_quality_available": 30,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.995737,
+        "median_top1_preservation": 1.0,
+        "mean_logit_rel_l2": 0.008704,
+        "mean_delta_nll": -0.000374,
+        "worst_case_prompt": "factual_recall_3",
+        "worst_case_top1_preservation": 0.976562,
+        "logit_rel_l2_at_worst_top1_prompt": 0.008409,
+        "worst_case_logit_rel_l2_prompt": "code_completion_3",
+        "worst_case_logit_rel_l2": 0.011828
+      },
+      "reasoning_subset": {
+        "n_prompts": 10,
+        "n_quality_available": 9,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.999132,
+        "median_top1_preservation": 1.0,
+        "mean_logit_rel_l2": 0.00868,
+        "mean_delta_nll": -0.000972,
+        "worst_case_prompt": "logical_reasoning_3",
+        "worst_case_top1_preservation": 0.992188,
+        "logit_rel_l2_at_worst_top1_prompt": 0.008951,
+        "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
+        "worst_case_logit_rel_l2": 0.010647
+      }
+    },
+    "q5_0": {
+      "full_set": {
+        "n_prompts": 31,
+        "n_quality_available": 30,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.974235,
+        "median_top1_preservation": 0.979021,
+        "mean_logit_rel_l2": 0.055465,
+        "mean_delta_nll": 0.00568,
+        "worst_case_prompt": "multistep_reasoning_2",
+        "worst_case_top1_preservation": 0.909091,
+        "logit_rel_l2_at_worst_top1_prompt": 0.065608,
+        "worst_case_logit_rel_l2_prompt": "code_completion_3",
+        "worst_case_logit_rel_l2": 0.074473
+      },
+      "reasoning_subset": {
+        "n_prompts": 10,
+        "n_quality_available": 9,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.971292,
+        "median_top1_preservation": 0.981481,
+        "mean_logit_rel_l2": 0.056487,
+        "mean_delta_nll": 0.002911,
+        "worst_case_prompt": "multistep_reasoning_2",
+        "worst_case_top1_preservation": 0.909091,
+        "logit_rel_l2_at_worst_top1_prompt": 0.065608,
+        "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
+        "worst_case_logit_rel_l2": 0.071816
+      }
+    },
+    "q5_1": {
+      "full_set": {
+        "n_prompts": 31,
+        "n_quality_available": 30,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.975941,
+        "median_top1_preservation": 0.983867,
+        "mean_logit_rel_l2": 0.050061,
+        "mean_delta_nll": 0.005015,
+        "worst_case_prompt": "instruction_following_3",
+        "worst_case_top1_preservation": 0.914062,
+        "logit_rel_l2_at_worst_top1_prompt": 0.05344,
+        "worst_case_logit_rel_l2_prompt": "code_explanation_1",
+        "worst_case_logit_rel_l2": 0.082273
+      },
+      "reasoning_subset": {
+        "n_prompts": 10,
+        "n_quality_available": 9,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.987392,
+        "median_top1_preservation": 1.0,
+        "mean_logit_rel_l2": 0.051286,
+        "mean_delta_nll": 0.006334,
+        "worst_case_prompt": "arithmetic_reasoning_1",
+        "worst_case_top1_preservation": 0.958333,
+        "logit_rel_l2_at_worst_top1_prompt": 0.048253,
+        "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
+        "worst_case_logit_rel_l2": 0.060538
+      }
+    },
+    "q4": {
+      "full_set": {
+        "n_prompts": 31,
+        "n_quality_available": 30,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.929291,
+        "median_top1_preservation": 0.938899,
+        "mean_logit_rel_l2": 0.117179,
+        "mean_delta_nll": 0.03232,
+        "worst_case_prompt": "summarization_1",
+        "worst_case_top1_preservation": 0.666667,
+        "logit_rel_l2_at_worst_top1_prompt": 0.103866,
+        "worst_case_logit_rel_l2_prompt": "instruction_following_2",
+        "worst_case_logit_rel_l2": 0.154829
+      },
+      "reasoning_subset": {
+        "n_prompts": 10,
+        "n_quality_available": 9,
+        "n_quality_unavailable": 1,
+        "unavailable_prompts": [
+          "multistep_reasoning_1"
+        ],
+        "mean_top1_preservation": 0.93688,
+        "median_top1_preservation": 0.935185,
+        "mean_logit_rel_l2": 0.117104,
+        "mean_delta_nll": 0.025631,
+        "worst_case_prompt": "arithmetic_reasoning_3",
+        "worst_case_top1_preservation": 0.894737,
+        "logit_rel_l2_at_worst_top1_prompt": 0.112232,
+        "worst_case_logit_rel_l2_prompt": "multistep_reasoning_2",
+        "worst_case_logit_rel_l2": 0.131751
+      }
+    }
+  }
+}

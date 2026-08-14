@@ -5,6 +5,7 @@
 
 #define KV_NATIVE	0
 #define KV_Q8		1
+#define KV_Q5		2
 
 static void	test_native_always_ok(void)
 {
@@ -104,6 +105,52 @@ static void	test_q8_zero_ctx_rejected(void)
 			&r) == 0, "ctx_size 0 rejected");
 }
 
+/* Phase 10C Section 18: q5 (Q5_1) compatibility, checked independently
+ * of q8 -- same shapes as the q8 tests above, run through KV_Q5. */
+static void	test_q5_llama_smollm2_shape_ok(void)
+{
+	membrane_compat_result_t	r;
+
+	TEST_ASSERT(membrane_check_kv_compat("llama", 576, 9, 3, 2048, KV_Q5,
+			&r) == 1, "SmolLM2-135M's real shape passes q5 compat");
+	TEST_ASSERT(r.ok == 1, "out->ok reflects success");
+}
+
+static void	test_q5_wrong_architecture_rejected(void)
+{
+	membrane_compat_result_t	r;
+
+	TEST_ASSERT(membrane_check_kv_compat("gemma3", 576, 9, 3, 2048, KV_Q5,
+			&r) == 0, "non-llama architecture rejected for q5");
+	TEST_ASSERT(strstr(r.reason, "Q5_1") != NULL,
+		"the q5-specific reason names Q5_1 explicitly (not just \"q5\")");
+}
+
+/* This is the exact example from the Phase 8 task's own spec (same as
+ * the q8 test): head dim 80 (n_embd=640, n_head=8) is not divisible by
+ * 32 -- q5's own unsupported-head-dimension case. */
+static void	test_q5_head_dim_not_block_aligned_rejected(void)
+{
+	membrane_compat_result_t	r;
+
+	TEST_ASSERT(membrane_check_kv_compat("llama", 640, 8, 8, 2048, KV_Q5,
+			&r) == 0, "head dim 80 (not divisible by 32) rejected for q5");
+	TEST_ASSERT(strstr(r.reason, "80") != NULL,
+		"the actual head dimension appears in the reason");
+	TEST_ASSERT(strstr(r.reason, "Q5_1") != NULL,
+		"the reason names Q5_1");
+	TEST_ASSERT(strstr(r.reason, "Q8_0") == NULL,
+		"a q5 check's reason never mentions Q8_0 (no accidental aliasing)");
+}
+
+static void	test_q5_head_dim_block_aligned_accepted(void)
+{
+	membrane_compat_result_t	r;
+
+	TEST_ASSERT(membrane_check_kv_compat("llama", 512, 8, 8, 2048, KV_Q5,
+			&r) == 1, "head dim 64 (divisible by 32) accepted for q5");
+}
+
 static void	test_null_out_is_safe(void)
 {
 	TEST_ASSERT(membrane_check_kv_compat("llama", 576, 9, 3, 2048, KV_Q8,
@@ -121,6 +168,10 @@ int	main(void)
 	test_q8_degenerate_shapes_rejected();
 	test_q8_uneven_embd_head_split_rejected();
 	test_q8_zero_ctx_rejected();
+	test_q5_llama_smollm2_shape_ok();
+	test_q5_wrong_architecture_rejected();
+	test_q5_head_dim_not_block_aligned_rejected();
+	test_q5_head_dim_block_aligned_accepted();
 	test_null_out_is_safe();
 	printf("test_compat_check: all tests passed\n");
 	return (0);

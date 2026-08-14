@@ -27,6 +27,13 @@ extern "C" {
  */
 
 # define MEMBRANE_Q8_0_BLOCK_SIZE	32u
+/* Phase 10C: Q5_1's own ggml block size, checked explicitly rather
+ * than reused from MEMBRANE_Q8_0_BLOCK_SIZE above -- both happen to
+ * be 32 in the pinned ggml commit, but that is a fact about ggml's
+ * block formats, not something this header should assume stays true;
+ * see membrane_check_kv_compat()'s kv_mode-specific block-size
+ * selection. */
+# define MEMBRANE_Q5_1_BLOCK_SIZE	32u
 
 typedef struct s_membrane_compat_result
 {
@@ -41,10 +48,10 @@ typedef struct s_membrane_compat_result
  * n_embd/n_head/n_head_kv: real model hparams (llama_model_n_*).
  * ctx_size: the resolved (nonzero) context size the caller intends to
  * use.
- * kv_mode: MEMBRANE_KV_STORE_NATIVE (always ok, no checks) or
- * MEMBRANE_KV_STORE_Q8 (see kv_store_telemetry.h for the constants;
- * not included here to keep this header dependency-free -- pass the
- * raw 0/1 value).
+ * kv_mode: MEMBRANE_KV_STORE_NATIVE (always ok, no checks),
+ * MEMBRANE_KV_STORE_Q8, or MEMBRANE_KV_STORE_Q5 (see
+ * kv_store_telemetry.h for the constants; not included here to keep
+ * this header dependency-free -- pass the raw 0/1/2 value).
  *
  * Returns 1 (out->ok = 1) if supported, 0 otherwise with out->reason
  * filled in. Never crashes on NULL/zero/negative inputs.

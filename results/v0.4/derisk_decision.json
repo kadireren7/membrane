@@ -1,0 +1,50 @@
+{
+  "note": "Phase 10C Section 5: derisk decision bar applied to the 31-prompt (10 category) evaluation in derisk_aggregate.json.",
+  "prompt_set": {
+    "total_prompts": 31,
+    "categories": ["factual_recall", "instruction_following", "multistep_reasoning",
+      "arithmetic_reasoning", "logical_reasoning", "code_completion", "code_reasoning",
+      "code_explanation", "structured_output", "summarization", "prose_continuation"],
+    "reasoning_heavy_subset_size": 10,
+    "reasoning_heavy_subset_labels": ["multistep_reasoning_1", "multistep_reasoning_2",
+      "multistep_reasoning_3", "arithmetic_reasoning_1", "arithmetic_reasoning_2",
+      "arithmetic_reasoning_3", "logical_reasoning_1", "logical_reasoning_2",
+      "logical_reasoning_3", "code_reasoning_1"],
+    "known_edge_case": "multistep_reasoning_1 ('Tom has 3 apples...Answer:') causes the NATIVE reference itself to generate 0 tokens (immediate EOS) on BOTH models -- reproduced identically on 135M and 360M, confirmed with a direct membrane-run invocation, not a probe artifact. No quality comparison is possible for this prompt on any candidate mode (native has nothing to compare against). Kept in the persisted prompt set and raw data (not removed), excluded only from the mean/worst-case computation where it is mathematically undefined -- reported explicitly via n_quality_unavailable, not silently dropped."
+  },
+  "bar": {
+    "aggregate_quality_closer_to_q8_than_q4": {
+      "135M": "top1 distance-to-q8=0.0306 vs distance-to-q4=0.0368 -- closer to q8 (moderate margin). rel-L2: q5_1 is ~6.2x q8's, q4 is ~15x q8's -- q5_1 clearly better positioned relatively.",
+      "360M": "top1 distance-to-q8=0.0198 vs distance-to-q4=0.0466 -- clearly closer to q8 (more than 2x closer). rel-L2 tells the same story.",
+      "verdict": "PASS on both models, more convincingly on 360M."
+    },
+    "reasoning_subset_materially_better_than_q4": {
+      "135M": "q5_1 mean top1=0.9505 vs q4=0.9141 (+3.6pp); mean rel-L2=0.0544 vs q4=0.1282 (~2.4x better)",
+      "360M": "q5_1 mean top1=0.9874 vs q4=0.9369 (+5.0pp); mean rel-L2=0.0513 vs q4=0.1171 (~2.3x better)",
+      "verdict": "PASS clearly on both models, both metrics."
+    },
+    "no_repeated_catastrophic_corruption": {
+      "method": "Spot-checked the actual generated text at every model's worst-case prompt (lowest top1) for both q5_1 and q4.",
+      "135M_q5_1_worst_case_text": "'Name two programming languages:' -> 'Python and Java.\\n\\nWhat are the key differences between Python and Java?' -- coherent, correct, low top1 score is from choosing a different (also valid) follow-up question than native, not corruption.",
+      "360M_q5_1_worst_case_text": "'Give one example of a mammal:' -> full coherent paragraph about mammals with correct examples.",
+      "360M_q4_worst_case_text": "'...In one sentence, this describes' -> 'a scene.' -- terse but not garbled.",
+      "verdict": "PASS -- no corruption found anywhere; low top1 in the worst cases reflects legitimate alternative phrasing, not broken output."
+    },
+    "no_repeated_severe_early_divergence": {
+      "135M": "5/30 comparable prompts diverge before token 5 (17%); 6/30 are token-identical (0 divergence)",
+      "360M": "6/30 comparable prompts diverge before token 5 (20%); 8/30 are token-identical",
+      "verdict": "PASS -- early divergence is a minority pattern (~1 in 5 prompts), not systemic across most prompts, and roughly the same order as what Phase 10A/10B already observed for Q8 on some prompts."
+    },
+    "worst_case_understood_and_disclosed": {
+      "135M": "worst_case_prompt=instruction_following_2, top1=0.8182 (full set) / multistep_reasoning_3, top1=0.9000 (reasoning subset)",
+      "360M": "worst_case_prompt=instruction_following_3, top1=0.9141 (full set) / arithmetic_reasoning_1, top1=0.9583 (reasoning subset, actually a GOOD score -- reasoning subset's worst case is better than the full set's)",
+      "verdict": "PASS -- exact prompts and values identified, not hand-waved. Notably, on 360M the reasoning subset's own worst case is BETTER than the full set's worst case -- directly addressing Phase 10B's concern that reasoning prompts specifically might be fragile."
+    },
+    "no_systemic_model_degradation": {
+      "verdict": "PASS -- both models show the same consistent, bounded pattern (q5_1 meaningfully better than q4, meaningfully behind q8, no runaway failure on either model)."
+    }
+  },
+  "distance_to_q8_nuance_found_during_review": "CodeRabbit review (PR #19) prompted a stricter distance check: 'closer to q8 than q4' does NOT hold on every single (model, subset, metric) triple -- specifically, on 135M's reasoning subset, q5_1's mean top1 (0.9505) sits almost exactly between q8's (0.9960) and q4's (0.9141), and is numerically fractionally CLOSER to q4 (distance 0.0364) than to q8 (distance 0.0455) on that one metric/slice. On the same slice, rel-L2 IS clearly closer to q8 (0.0459 vs 0.0738), and q5's absolute top1 (95.05%) still clearly beats q4's (91.41%) in direction, satisfying Section 5's literal bar ('materially better than Q4 overall'), which does not require a closer-to-q8 distance claim on every metric. This is disclosed here rather than smoothed over in the README/PR summary language, which has been corrected to not claim closer-to-q8-on-every-metric.",
+  "overall_verdict": "DERISK PASSED. All 6 bar criteria pass on both tested models, exactly as specified in Section 5. Q5_1's quality profile is materially closer to Q8 than Q4 on the full-set aggregate (both models) and on rel-L2 everywhere measured, and clearly better than Q4 in direction on the reasoning-heavy subset specifically (directly answering Phase 10B's open question) -- with no corruption and a disclosed, understood worst case, including the one distance-metric nuance above. Proceeding to productization.",
+  "note_on_phase_10b_caveat": "Phase 10B flagged a 135M 'simple_reasoning' prompt at 85.7% top1 as a worst-case concern. This broader 10-prompt reasoning subset (multiple categories, not one prompt) shows 135M reasoning-subset mean top1=95.05% and worst-case=90.0% -- still a real, disclosed gap below q8's near-perfect reasoning performance, but not the kind of severe, repeated degradation that would fail this phase's bar. The original single fragile prompt was not systemic."
+}

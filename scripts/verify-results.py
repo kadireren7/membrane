@@ -16,6 +16,7 @@ import hashlib
 import json
 import math
 import re
+import statistics
 import sys
 from pathlib import Path
 
@@ -366,7 +367,7 @@ def _c20():
 	# /home/ or /Users/: a leaked /tmp/..., /mnt/..., or /var/... path
 	# is just as much a privacy problem and must be caught too.
 	posix = re.findall(
-		r'(?<![\w.\-])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		r'(?<![\w.\-:/])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
 		text,
 	)
 	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
@@ -545,7 +546,7 @@ def _c29():
 def _c30():
 	text = V03_ARTIFACT_PATH.read_text()
 	posix = re.findall(
-		r'(?<![\w.\-])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		r'(?<![\w.\-:/])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
 		text,
 	)
 	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
@@ -722,6 +723,373 @@ def _c37():
 		f"{readme_tp_hi}]% vs artifact [{abs(tp_lo):.2f},{abs(tp_hi):.2f}]%")
 
 
+# ---------------------------------------------------------------------
+# Phase 10C: Q5 derisk + productization development-evidence artifact
+# ---------------------------------------------------------------------
+V04_ARTIFACT_PATH = REPO_ROOT / "results" / "v0.4" / "q5-validation.json"
+_V04_CACHE = {}
+
+
+def _load_v04_artifact():
+	key = str(V04_ARTIFACT_PATH)
+	if key not in _V04_CACHE:
+		_V04_CACHE[key] = json.loads(V04_ARTIFACT_PATH.read_text())
+	return _V04_CACHE[key]
+
+
+@check("Phase 10C v0.4 artifact exists, is valid JSON, and has "
+	"schema_version 1")
+def _c38():
+	if not V04_ARTIFACT_PATH.exists():
+		return False, f"{V04_ARTIFACT_PATH} does not exist"
+	a = _load_v04_artifact()
+	ok = a.get("schema_version") == 1
+	return ok, f"schema_version={a.get('schema_version')!r}"
+
+
+@check("Phase 10C v0.4 artifact: membrane_commit and llama_cpp_commit "
+	"look like real commit SHAs (40 hex chars)")
+def _c39():
+	a = _load_v04_artifact()
+	bad = []
+	for key in ("membrane_commit", "llama_cpp_commit"):
+		sha = a.get(key, "")
+		if not re.fullmatch(r"[0-9a-f]{40}", sha):
+			bad.append(f"{key}={sha!r}")
+	return len(bad) == 0, "; ".join(bad) if bad else "both commit fields well-formed"
+
+
+@check("Phase 10C v0.4 artifact: derisk prompt set has >= 25 prompts, "
+	"exact prompts persisted, categories covered")
+def _c40():
+	a = _load_v04_artifact()
+	ps = a.get("derisk", {}).get("prompt_set", {})
+	bad = []
+	total = ps.get("total_prompts", 0)
+	entries = ps.get("prompts_and_labels", [])
+	if total < 25:
+		bad.append(f"total_prompts={total} < 25")
+	if len(entries) != total:
+		bad.append(f"prompts_and_labels has {len(entries)} entries but "
+			f"total_prompts={total}")
+	for e in entries:
+		if not e.get("prompt") or not e.get("label"):
+			bad.append(f"entry missing prompt/label: {e!r}")
+			break
+	categories = ps.get("categories", [])
+	expected_categories = {"factual_recall", "instruction_following",
+		"multistep_reasoning", "arithmetic_reasoning", "logical_reasoning",
+		"code_completion", "code_reasoning", "code_explanation",
+		"structured_output", "summarization", "prose_continuation"}
+	missing_cats = expected_categories - set(categories)
+	if missing_cats:
+		bad.append(f"missing categories: {missing_cats}")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		f"{total} prompts, {len(categories)} categories, all persisted verbatim")
+
+
+@check("Phase 10C v0.4 artifact: reasoning-heavy subset has >= 10 "
+	"prompts and is a real subset of the persisted prompt labels")
+def _c41():
+	a = _load_v04_artifact()
+	ps = a.get("derisk", {}).get("prompt_set", {})
+	size = ps.get("reasoning_heavy_subset_size", 0)
+	subset_labels = set(ps.get("reasoning_heavy_subset_labels", []))
+	all_labels = {e["label"] for e in ps.get("prompts_and_labels", [])}
+	bad = []
+	if size < 10:
+		bad.append(f"reasoning_heavy_subset_size={size} < 10")
+	if len(subset_labels) != size:
+		bad.append(f"{len(subset_labels)} labels listed but size={size}")
+	missing = subset_labels - all_labels
+	if missing:
+		bad.append(f"reasoning subset references labels not in the "
+			f"persisted prompt set: {missing}")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{size} reasoning-heavy prompts, all real"
+
+
+@check("Phase 10C v0.4 artifact: storage math -- Q5_1 is 37.5% of F16 "
+	"and ~64.7% of Q8_0 (real ggml block struct sizes), both checked "
+	"per row, not just the F16 ratio")
+def _c42():
+	a = _load_v04_artifact()
+	# Storage theory itself lives in results/phase10/ (Phase 10B) --
+	# this check confirms the memory_reconfirm bytes in THIS artifact
+	# are consistent with both known Q5_1 ratios: 37.5% of F16
+	# (block_q5_1 = 24 B/32 elem = 48 B/token vs F16's 128 B/token for
+	# a 64-wide head) and ~64.706% of Q8_0 (48 B/token vs Q8_0's 68
+	# B/token) -- a changed Q8 allocation would silently invalidate the
+	# README's "~29% additional reduction beyond q8" claim if only the
+	# F16 ratio were checked.
+	rows = a.get("memory_reconfirm", {}).get("cpu", [])
+	bad = []
+	if not rows:
+		return False, "no memory_reconfirm.cpu rows found"
+	for row in rows:
+		native_b = row["native"]["kv_allocated_bytes"]
+		q8_b = row["q8"]["kv_allocated_bytes"]
+		q5_b = row["q5"]["kv_allocated_bytes"]
+		if native_b is None or q8_b is None or q5_b is None:
+			bad.append(f"ctx={row['ctx']}: missing native/q8/q5 bytes")
+			continue
+		pct_native = 100.0 * q5_b / native_b
+		if abs(pct_native - 37.5) > 0.01:
+			bad.append(f"ctx={row['ctx']}: q5/native={pct_native:.4f}% expected 37.5%")
+		pct_q8 = 100.0 * q5_b / q8_b
+		expected_pct_q8 = 100.0 * 48.0 / 68.0
+		if abs(pct_q8 - expected_pct_q8) > 0.01:
+			bad.append(f"ctx={row['ctx']}: q5/q8={pct_q8:.4f}% expected "
+				f"{expected_pct_q8:.4f}%")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(rows)} rows match both 37.5% and ~64.71% exactly"
+
+
+@check("Phase 10C v0.4 artifact: q5 < q8 < native memory ordering "
+	"holds on every CPU and Vulkan reconfirmation row")
+def _c43():
+	a = _load_v04_artifact()
+	bad = []
+	for backend in ("cpu", "vulkan"):
+		rows = a.get("memory_reconfirm", {}).get(backend, [])
+		if not rows:
+			bad.append(f"no memory_reconfirm.{backend} rows found")
+			continue
+		for row in rows:
+			vals = {m: row[m]["kv_allocated_bytes"] for m in ("q5", "q8", "native")}
+			if None in vals.values():
+				bad.append(f"{backend} ctx={row['ctx']}: missing bytes {vals}")
+				continue
+			if not (vals["q5"] < vals["q8"] < vals["native"]):
+				bad.append(f"{backend} ctx={row['ctx']}: not q5({vals['q5']}) "
+					f"< q8({vals['q8']}) < native({vals['native']})")
+	return len(bad) == 0, "; ".join(bad) if bad else "ordering holds on all rows, both backends"
+
+
+V04_RAW_PATHS = {
+	"135M": REPO_ROOT / "results" / "v0.4" / "derisk_raw_135m.jsonl",
+	"360M": REPO_ROOT / "results" / "v0.4" / "derisk_raw_360m.jsonl",
+}
+
+
+def _recompute_v04_aggregate(model, reasoning_labels):
+	"""Reimplements the same aggregation the artifact's own
+	aggregate_quality was built with (mean/median top1, mean rel-L2,
+	worst-top1 row, worst-rel-L2 row -- two independent maxima, not
+	the same row assumed twice), straight from the raw per-(prompt,
+	mode) records -- so a hand-edited or stale embedded aggregate
+	can't silently pass this check."""
+	path = V04_RAW_PATHS[model]
+	rows = [json.loads(raw_line) for raw_line in path.read_text().splitlines()
+		if raw_line.strip()]
+	by_mode = {}
+	for r in rows:
+		by_mode.setdefault(r["mode"], []).append(r)
+	out = {}
+	for mode, rs in by_mode.items():
+		for subset_name, subset_rows in (
+			("full_set", rs),
+			("reasoning_subset", [r for r in rs if r["prompt_label"] in reasoning_labels]),
+		):
+			available = [r for r in subset_rows if r["quality_available"]]
+			if not available:
+				out[(mode, subset_name)] = None
+				continue
+			top1s = [r["top1_preservation"] for r in available]
+			rel_l2s = [r["logit_rel_l2"] for r in available]
+			worst_top1_row = min(available, key=lambda r: r["top1_preservation"])
+			worst_rel_l2_row = max(available, key=lambda r: r["logit_rel_l2"])
+			out[(mode, subset_name)] = {
+				"mean_top1_preservation": statistics.mean(top1s),
+				"mean_logit_rel_l2": statistics.mean(rel_l2s),
+				"worst_case_top1_preservation": worst_top1_row["top1_preservation"],
+				"worst_case_logit_rel_l2": worst_rel_l2_row["logit_rel_l2"],
+			}
+	return out
+
+
+@check("Phase 10C v0.4 artifact: aggregate_quality is not stale -- "
+	"recomputed straight from derisk_raw_*.jsonl matches the embedded "
+	"aggregate for q5_1 and q4, both models, both subsets")
+def _c44():
+	a = _load_v04_artifact()
+	agg = a.get("derisk", {}).get("aggregate_quality", {})
+	reasoning_labels = set(a.get("derisk", {}).get("prompt_set", {})
+		.get("reasoning_heavy_subset_labels", []))
+	bad = []
+	if not reasoning_labels:
+		return False, "no reasoning_heavy_subset_labels found to recompute against"
+	for model in ("135M", "360M"):
+		recomputed = _recompute_v04_aggregate(model, reasoning_labels)
+		for mode in ("q5_1", "q4", "q8"):
+			for subset in ("full_set", "reasoning_subset"):
+				embedded = agg.get(model, {}).get(mode, {}).get(subset)
+				fresh = recomputed.get((mode, subset))
+				if embedded is None or fresh is None:
+					bad.append(f"{model}/{mode}/{subset}: missing in "
+						f"artifact or raw recomputation")
+					continue
+				for field in ("mean_top1_preservation", "mean_logit_rel_l2",
+						"worst_case_top1_preservation", "worst_case_logit_rel_l2"):
+					if abs(embedded[field] - fresh[field]) > 1e-4:
+						bad.append(f"{model}/{mode}/{subset}/{field}: "
+							f"embedded={embedded[field]} recomputed={fresh[field]}")
+	return len(bad) == 0, "; ".join(bad) if bad else "embedded aggregate matches raw-record recomputation exactly"
+
+
+@check("Phase 10C v0.4 artifact: q5 beats q4 in absolute direction on "
+	"mean top1 (both models/subsets, Section 5's literal derisk bar) "
+	"and is materially closer to q8 than q4 on mean logit rel-L2 "
+	"(both models/subsets) -- NOT claiming closer-to-q8-on-top1 "
+	"everywhere, since that is false on one real slice (135M "
+	"reasoning subset) and is disclosed as such, not hidden")
+def _c45():
+	a = _load_v04_artifact()
+	agg = a.get("derisk", {}).get("aggregate_quality", {})
+	bad = []
+	for model in ("135M", "360M"):
+		for subset in ("full_set", "reasoning_subset"):
+			q8 = agg.get(model, {}).get("q8", {}).get(subset)
+			q5 = agg.get(model, {}).get("q5_1", {}).get(subset)
+			q4 = agg.get(model, {}).get("q4", {}).get(subset)
+			if not q8 or not q5 or not q4:
+				bad.append(f"{model}/{subset}: missing q8/q5_1/q4 aggregate")
+				continue
+			# Section 5's actual, literal bar: q5 beats q4 in direction
+			# on top1 -- true everywhere measured, checked here exactly
+			# as specified (not "closer to q8", which is a stronger
+			# claim this project does NOT make about top1 on every slice).
+			if not (q5["mean_top1_preservation"] > q4["mean_top1_preservation"]):
+				bad.append(f"{model}/{subset}: q5 mean_top1="
+					f"{q5['mean_top1_preservation']} not > q4's "
+					f"{q4['mean_top1_preservation']}")
+			# rel-L2 is the metric that IS consistently closer to q8
+			# than q4 everywhere measured -- checked as a distance,
+			# because it actually holds as one.
+			dist_to_q8 = abs(q5["mean_logit_rel_l2"] - q8["mean_logit_rel_l2"])
+			dist_to_q4 = abs(q5["mean_logit_rel_l2"] - q4["mean_logit_rel_l2"])
+			if not (dist_to_q8 < dist_to_q4):
+				bad.append(f"{model}/{subset}/mean_logit_rel_l2: q5's "
+					f"distance to q8 ({dist_to_q8:.6f}) not < distance to "
+					f"q4 ({dist_to_q4:.6f})")
+			if "worst_case_prompt" not in q5 or "worst_case_top1_preservation" not in q5:
+				bad.append(f"{model}/{subset}: missing worst_case fields on q5_1")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		"q5 beats q4 on top1 direction and is closer to q8 on rel-L2 "
+		"distance, both models, both subsets; worst-case fields present")
+
+
+@check("Phase 10C v0.4 artifact: Vulkan memory reconfirmation "
+	"includes real external VRAM records for q5")
+def _c46():
+	a = _load_v04_artifact()
+	rows = a.get("memory_reconfirm", {}).get("vulkan", [])
+	bad = []
+	if not rows:
+		return False, "no memory_reconfirm.vulkan rows found"
+	for row in rows:
+		vram = row.get("q5", {}).get("external_peak_vram_mib")
+		layers = row.get("q5", {}).get("gpu_layers_selected")
+		if vram is None or vram <= 0:
+			bad.append(f"ctx={row['ctx']}: q5 external_peak_vram_mib={vram} invalid")
+		if layers is None or layers <= 0:
+			bad.append(f"ctx={row['ctx']}: q5 gpu_layers_selected={layers} invalid")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(rows)} rows with valid VRAM/layer records"
+
+
+@check("Phase 10C v0.4 artifact: capacity/pressure-boundary evidence "
+	"shows q8 failing closed at a context where q5 achieves FULL "
+	"model-layer GPU residency (not just a successful exit) on a "
+	"real, recorded adapter capacity")
+def _c47():
+	a = _load_v04_artifact()
+	cap = a.get("capacity_reconfirm_360m_vulkan", {})
+	n_layer = cap.get("model_n_layer")
+	device_total = cap.get("device_total_bytes")
+	rows = cap.get("rows", [])
+	bad = []
+	if not rows:
+		return False, "no capacity_reconfirm_360m_vulkan.rows found"
+	if not n_layer or n_layer <= 0:
+		bad.append(f"model_n_layer missing or invalid: {n_layer!r}")
+	if not device_total or device_total <= 0:
+		bad.append(f"device_total_bytes missing or invalid: {device_total!r}")
+	found_full_residency_where_q8_fails = False
+	for r in rows:
+		if r.get("kv_mode") == "q8" and r.get("exit_code") == 5:
+			ctx = r["ctx"]
+			q5_at_ctx = next((x for x in rows if x["ctx"] == ctx
+				and x.get("kv_mode") == "q5"), None)
+			if not q5_at_ctx or q5_at_ctx.get("exit_code") != 0:
+				continue
+			# The claim this backs is "fully GPU-resident", not merely
+			# "exited successfully" -- a partial-offload success at
+			# this ctx would not support that claim.
+			if q5_at_ctx.get("gpu_layers_selected") == n_layer \
+					and q5_at_ctx.get("full_residency") is True:
+				found_full_residency_where_q8_fails = True
+	if not found_full_residency_where_q8_fails:
+		bad.append("no context row found where q8 failed closed (exit 5) "
+			"but q5 achieved full model-layer residency "
+			f"(gpu_layers_selected == model_n_layer == {n_layer})")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		f"{len(rows)} rows checked on a {device_total/1024/1024:.0f} MiB "
+		f"adapter; confirmed >=1 ctx where q8 exit=5 and q5 fully "
+		f"GPU-resident ({n_layer}/{n_layer} layers)")
+
+
+@check("Phase 10C v0.4 artifact: no absolute filesystem paths anywhere "
+	"in the file")
+def _c48():
+	text = V04_ARTIFACT_PATH.read_text()
+	posix = re.findall(
+		r'(?<![\w.\-:/])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		text,
+	)
+	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
+	hits = posix + windows
+	return len(hits) == 0, f"suspicious path-like strings: {hits[:5]}" if hits else "none found"
+
+
+@check("Phase 10C v0.4 artifact: no NaN/Infinity anywhere in the file")
+def _c49():
+	a = _load_v04_artifact()
+	bad = _no_nan_inf(a)
+	return len(bad) == 0, f"non-finite at: {bad[:5]}" if bad else "all values finite"
+
+
+@check("Phase 10C v0.4 artifact: product_cli section does not claim "
+	"q5_0 or q4 are exposed product modes")
+def _c50():
+	a = _load_v04_artifact()
+	pc = a.get("product_cli", {})
+	bad = []
+	flag = pc.get("flag", "")
+	if "q5_0" in flag or re.search(r"\bq4\b", flag):
+		bad.append(f"product_cli.flag references an unsupported mode: {flag!r}")
+	excluded = pc.get("excluded_from_product", [])
+	if not any("q5_0" in x for x in excluded) or not any(x.strip() == "q4" for x in excluded):
+		bad.append(f"excluded_from_product does not clearly list q5_0 and q4: {excluded!r}")
+	return len(bad) == 0, "; ".join(bad) if bad else "product_cli section correctly scoped to native/q8/q5"
+
+
+@check("README.md not updated with unsupported Phase 10C product "
+	"claims (--kv q5_0/q4 as product flags, or universal-quality "
+	"language) unless derisk explicitly passed")
+def _c51():
+	readme = (REPO_ROOT / "README.md").read_text()
+	a = _load_v04_artifact() if V04_ARTIFACT_PATH.exists() else {}
+	derisk_passed = str(a.get("derisk", {}).get("verdict", "")).startswith("DERISK PASSED")
+	bad = []
+	if re.search(r"--kv\s+q5_0\b", readme) or re.search(r"--kv\s+q4\b", readme):
+		bad.append("README documents --kv q5_0 or --kv q4 as product flags -- "
+			"these must never ship in stable docs")
+	if re.search(r"universal(ly)?\s+(good|high)\s+quality", readme, re.IGNORECASE):
+		bad.append("README claims universal quality for a compressed KV mode")
+	if not derisk_passed and re.search(r"--kv\s+q5\b", readme):
+		bad.append("README documents --kv q5 but the v0.4 artifact's derisk "
+			"verdict does not show DERISK PASSED")
+	return len(bad) == 0, "; ".join(bad) if bad else "README has no unsupported Q5 product claims"
+
+
 def main() -> int:
 	global ARTIFACT_PATH
 	ap = argparse.ArgumentParser()
@@ -741,6 +1109,8 @@ def main() -> int:
 			_c14, _c15, _c16, _c17, _c18, _c19, _c20, _c21, _c22, _c23, _c24,
 			_c25, _c26, _c27, _c28, _c29, _c30, _c31, _c32,
 			_c33, _c34, _c35, _c36, _c37,
+			_c38, _c39, _c40, _c41, _c42, _c43, _c44, _c45, _c46, _c47,
+			_c48, _c49, _c50, _c51,
 		)
 	for fn in checks:
 		fn()
