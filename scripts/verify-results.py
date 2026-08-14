@@ -878,7 +878,8 @@ def _recompute_v04_aggregate(model, reasoning_labels):
 	mode) records -- so a hand-edited or stale embedded aggregate
 	can't silently pass this check."""
 	path = V04_RAW_PATHS[model]
-	rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+	rows = [json.loads(raw_line) for raw_line in path.read_text().splitlines()
+		if raw_line.strip()]
 	by_mode = {}
 	for r in rows:
 		by_mode.setdefault(r["mode"], []).append(r)
