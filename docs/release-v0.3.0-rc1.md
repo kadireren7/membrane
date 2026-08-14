@@ -84,18 +84,14 @@ while `--gpu-layers auto` succeeds *at the same context* by selecting
 17 of 30 layers — concrete evidence `auto` is not merely
 full-offload-or-nothing.
 
-The table above and the partial-offload figures are the committed,
+All figures above, and the following, are the committed,
 `scripts/verify-results.py`-checked numbers from
-`results/v0.3/gpu-vulkan-validation.json`. The following `--gpu-bench`
-throughput characterization, by contrast, is from this release's own
-local pre-release validation sprint (13 independent `--gpu-bench`
-repetitions across both models on the same host) and is **not**
-committed as a machine-verified artifact -- reported here as observed,
-not as a checked claim: mean generation delta ≈ −9 to −10% (q8 vs
-native), run-to-run range roughly −6% to −16% -- q8's decode
-throughput was measurably noisier run to run than native's on this
-host; quality metrics were bit-identical across all repetitions of a
-given configuration.
+`results/v0.3/gpu-vulkan-validation.json`: the committed `--gpu-bench`
+record (SmolLM2-135M, ctx=2048, 256 tokens) shows a 1.88x KV-bytes
+reduction and a −8.31% generation throughput delta (q8 vs native) for
+that single run. Run-to-run throughput variance was observed during
+local pre-release validation but is not committed as a machine-verified
+artifact and is intentionally not quoted here.
 
 ## Known limitations
 
@@ -124,22 +120,15 @@ given configuration.
 
 ## Validation status
 
-Local dev host (this branch, this commit):
-
-- llama-free Release: 63/63
-- llama-free ASan/UBSan: 63/63
-- llama-enabled CPU Release: 64/65 (`test_mem_guard` only -- known,
-  pre-existing, host-memory-pressure-dependent flake, see "Known
-  limitations")
-- llama-enabled CPU ASan/UBSan: 64/65 (same)
-- Vulkan Release smoke (native/q8/`--gpu-layers auto`/`--gpu-bench`):
-  all exit 0, no fallback, correct device selection
-- `scripts/verify-results.py`: 37/37
-
-GitHub CI (`build-and-test` Debug/ASan, `thread-sanitizer`, CodeQL):
-green, including a clean `test_mem_guard` pass -- this test's failures
-are specific to this memory-constrained local host and do not
-reproduce on CI runners.
+`scripts/verify-results.py` passes fully against the committed
+`results/v0.3/gpu-vulkan-validation.json` -- this is the one test
+result quoted here that is itself machine-checked. GitHub CI
+(`build-and-test` Debug/ASan, `thread-sanitizer`, CodeQL) is green on
+this branch. The full local test/sanitizer/Vulkan-smoke matrix for
+this specific PR, including the known, pre-existing, host-memory-
+pressure-dependent `test_mem_guard` flake (does not reproduce on CI),
+is recorded in the pull request description rather than restated here
+as an uncommitted, unverified number in a permanent document.
 
 ## Model/backend scope
 
