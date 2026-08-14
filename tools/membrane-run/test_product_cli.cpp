@@ -201,6 +201,98 @@ static void	test_no_q5_0_or_q4_public_alias(void)
 		"baseline, never a public product mode");
 }
 
+/* Phase 11A Section 1/18: --kv adaptive is a new, explicit opt-in
+ * request value (MEMBRANE_KV_STORE_ADAPTIVE), distinct from the three
+ * real storage modes -- default stays native (Section 1: "Adaptive is
+ * explicit opt-in"). */
+static void	test_kv_adaptive_flag(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("adaptive");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--kv adaptive accepted");
+	TEST_ASSERT(o.kv_mode == 3 /* MEMBRANE_KV_STORE_ADAPTIVE */,
+		"--kv adaptive sets the adaptive request value");
+
+	TEST_ASSERT(run_parse(base_args(), &o) == MEMBRANE_EXIT_SUCCESS,
+		"omitting --kv still parses cleanly");
+	TEST_ASSERT(o.kv_mode == 0 /* MEMBRANE_KV_STORE_NATIVE */,
+		"default --kv remains native even though adaptive now exists -- "
+		"adaptive is opt-in only, never a new default");
+}
+
+static void	test_kv_budget_mib_flag(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("adaptive");
+	args.push_back("--kv-budget-mib");
+	args.push_back("512");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--kv-budget-mib with --kv adaptive is accepted");
+	TEST_ASSERT(o.want_kv_budget == 1, "want_kv_budget is set");
+	TEST_ASSERT(o.kv_budget_bytes == (uint64_t)512 * 1024 * 1024,
+		"--kv-budget-mib is stored as bytes (MiB * 1024 * 1024)");
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("adaptive");
+	args.push_back("--kv-budget-mib");
+	args.push_back("0");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-budget-mib 0 is rejected -- must be a positive MiB count");
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("adaptive");
+	args.push_back("--kv-budget-mib");
+	args.push_back("nope");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-budget-mib non-numeric is rejected");
+}
+
+/* Section 5: "budget does NOT silently alter explicit q8/q5 choices"
+ * -- enforced here as an outright parse-time rejection of the
+ * combination, not a silent no-op, for native/q8/q5 and for the
+ * flag's absence-of-adaptive default (no --kv at all) alike. */
+static void	test_kv_budget_mib_requires_adaptive(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--kv-budget-mib");
+	args.push_back("512");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-budget-mib without --kv adaptive (--kv omitted, so native) "
+		"is a CLI error");
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("q8");
+	args.push_back("--kv-budget-mib");
+	args.push_back("512");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-budget-mib with an explicit --kv q8 is a CLI error -- it "
+		"must never silently alter an explicit compressed-mode choice");
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("q5");
+	args.push_back("--kv-budget-mib");
+	args.push_back("512");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-budget-mib with an explicit --kv q5 is a CLI error, same "
+		"as q8");
+}
+
 static void	test_compare_kv_flag(void)
 {
 	std::vector<std::string>	args;
@@ -567,6 +659,10 @@ static void	test_help_mentions_key_concepts(void)
 	TEST_ASSERT(strstr(buf, "native") != NULL
 		&& strstr(buf, "q8") != NULL,
 		"help explains both native and q8");
+	TEST_ASSERT(strstr(buf, "adaptive") != NULL,
+		"help documents --kv adaptive");
+	TEST_ASSERT(strstr(buf, "--kv-budget-mib") != NULL,
+		"help documents --kv-budget-mib");
 	TEST_ASSERT(strstr(buf, "--compare-kv") != NULL,
 		"help documents --compare-kv");
 	TEST_ASSERT(strstr(buf, "--ctx") != NULL, "help documents --ctx");
@@ -587,6 +683,9 @@ int	main(void)
 	test_prompt_file_mode();
 	test_kv_flag();
 	test_no_q5_0_or_q4_public_alias();
+	test_kv_adaptive_flag();
+	test_kv_budget_mib_flag();
+	test_kv_budget_mib_requires_adaptive();
 	test_compare_kv_flag();
 	test_ctx_and_gen_tokens_malformed_rejected();
 	test_ctx_and_gen_tokens_valid_stored();

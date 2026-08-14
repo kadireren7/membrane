@@ -13,6 +13,7 @@
 #include "compat_check.h"
 #include "gpu_policy.h"
 #include "gpu_device.h"
+#include "adaptive_kv_policy.h"
 
 /*
  * membrane-run: Product Phase 8, the user-facing MEMBRANE entry point.
@@ -196,6 +197,28 @@ typedef struct s_membrane_gpu_state
 	uint64_t	safety_reserve_bytes;
 	uint64_t	estimated_model_bytes;
 	uint64_t	estimated_kv_bytes;
+
+	/* Phase 11A: --kv adaptive's resolution, populated exactly once --
+	 * inside resolve_gpu_config() when a GPU was requested (using the
+	 * same pre-load GGUF estimate/gpu_policy_resolve() calls the
+	 * existing --gpu-layers auto guard already makes, so the KV mode
+	 * and layer count decisions can never use inconsistent estimates,
+	 * Section 6), or by resolve_cpu_adaptive_kv() after model load
+	 * otherwise (Section 5). adaptive_used is false whenever o.kv_mode
+	 * != MEMBRANE_KV_STORE_ADAPTIVE; every print/telemetry function
+	 * below gates on it to decide whether to show requested_kv/
+	 * selected_kv/adaptive_reason at all. */
+	bool		adaptive_used;
+	int			adaptive_selected_mode;	/* MEMBRANE_KV_STORE_Q8/Q5,
+											 * meaningful iff
+											 * adaptive_used */
+	std::string	adaptive_reason;
+	uint64_t	adaptive_q8_kv_bytes;
+	uint64_t	adaptive_q5_kv_bytes;
+	int32_t		adaptive_q8_layers;	/* GPU only, 0 for CPU */
+	int32_t		adaptive_q5_layers;	/* GPU only, 0 for CPU */
+	int			adaptive_q8_valid;
+	int			adaptive_q5_valid;
 }	membrane_gpu_state_t;
 
 static std::string	gpu_layers_label(int32_t gpu_layers)
@@ -248,6 +271,15 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	gs->safety_reserve_bytes = 0;
 	gs->estimated_model_bytes = 0;
 	gs->estimated_kv_bytes = 0;
+	gs->adaptive_used = false;
+	gs->adaptive_selected_mode = 0;
+	gs->adaptive_reason.clear();
+	gs->adaptive_q8_kv_bytes = 0;
+	gs->adaptive_q5_kv_bytes = 0;
+	gs->adaptive_q8_layers = 0;
+	gs->adaptive_q5_layers = 0;
+	gs->adaptive_q8_valid = 0;
+	gs->adaptive_q5_valid = 0;
 	gs->requested = (o.gpu_layers != 0);
 	gs->backend_gpu_capable = membrane_gpu_backend_available() != 0;
 	gs->gpu_layers_requested = o.gpu_layers;
@@ -349,10 +381,14 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	membrane_gpu_model_estimate_t	est;
 	int		have_est = membrane_gpu_estimate_model(o.model_path, &est);
 	uint64_t	kv_bytes_estimate = 0;
+	uint64_t	kv_bytes_estimate_q5 = 0;	/* adaptive's second
+											 * candidate only */
+	bool	adaptive_requested = (o.kv_mode == MEMBRANE_KV_STORE_ADAPTIVE);
 
 	if (have_est && est.hparams_available && ctx_size > 0)
 	{
 		model_shape_t	fake_shape;
+		uint64_t		native_estimate = 0;
 
 		fake_shape.n_layer = est.n_layer;
 		fake_shape.n_embd = est.n_embd;
@@ -360,28 +396,48 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		fake_shape.n_head_kv = est.n_head_kv;
 		fake_shape.n_embd_gqa = (est.n_head > 0)
 			? (int64_t)(est.n_embd / est.n_head) * est.n_head_kv : 0;
-		kv_bytes_estimate = kv_bytes_for_mode(fake_shape, ctx_size,
-			o.kv_mode);
-		/* --compare-kv/--gpu-bench allocate a NATIVE context in
-		 * addition to the candidate one (run_native_vs_compressed_
-		 * comparison() below) -- native's F16 KV is always the larger
-		 * of the two, so the guard must budget for native's bytes
-		 * here too, not just whatever --kv itself asked for, or auto
-		 * could pick a layer count the native pass then can't
-		 * actually fit. selected_comparison_mode() isn't visible yet
-		 * at this point in the file, but the guard only needs to know
-		 * "is a native pass also about to run", not which compressed
-		 * mode was picked -- kv_bytes_for_mode() below still uses
-		 * o.kv_mode for that. */
 		if (o.compare_kv || o.gpu_bench)
+			native_estimate = native_kv_bytes(fake_shape, ctx_size);
+		if (adaptive_requested)
 		{
-			uint64_t	native_estimate = native_kv_bytes(fake_shape,
-					ctx_size);
-
+			/* Both candidates computed from the SAME est/ctx_size, via
+			 * the exact same kv_bytes_for_mode() every explicit --kv
+			 * q8/q5 request already uses -- Section 9: no separate
+			 * arithmetic, no drift. */
+			kv_bytes_estimate = kv_bytes_for_mode(fake_shape, ctx_size,
+				MEMBRANE_KV_STORE_Q8);
+			kv_bytes_estimate_q5 = kv_bytes_for_mode(fake_shape, ctx_size,
+				MEMBRANE_KV_STORE_Q5);
+			if (native_estimate > kv_bytes_estimate)
+				kv_bytes_estimate = native_estimate;
+			if (native_estimate > kv_bytes_estimate_q5)
+				kv_bytes_estimate_q5 = native_estimate;
+		}
+		else
+		{
+			kv_bytes_estimate = kv_bytes_for_mode(fake_shape, ctx_size,
+				o.kv_mode);
+			/* --compare-kv/--gpu-bench allocate a NATIVE context in
+			 * addition to the candidate one (run_native_vs_compressed_
+			 * comparison() below) -- native's F16 KV is always the
+			 * larger of the two, so the guard must budget for native's
+			 * bytes here too, not just whatever --kv itself asked for,
+			 * or auto could pick a layer count the native pass then
+			 * can't actually fit. selected_comparison_mode() isn't
+			 * visible yet at this point in the file, but the guard
+			 * only needs to know "is a native pass also about to run",
+			 * not which compressed mode was picked. */
 			if (native_estimate > kv_bytes_estimate)
 				kv_bytes_estimate = native_estimate;
 		}
 	}
+	if (adaptive_requested && !(have_est && est.hparams_available
+			&& est.n_layer > 0))
+		return (fprintf(stderr, "membrane-run: --kv adaptive requires "
+				"the model's real hparams and layer structure to "
+				"choose safely between q8 and q5, but they could not "
+				"be read from '%s'\n", o.model_path),
+			false);
 	if (o.gpu_layers == MEMBRANE_GPU_LAYERS_AUTO && !(have_est
 			&& est.n_layer > 0))
 		return (fprintf(stderr, "membrane-run: --gpu-layers auto "
@@ -389,7 +445,61 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 				"be read from '%s' -- cannot resolve safely\n",
 				o.model_path),
 			false);
-	if (have_est && est.n_layer > 0)
+	if (adaptive_requested)
+	{
+		/* have_est && est.hparams_available && est.n_layer > 0 already
+		 * guaranteed by the fail-closed check above -- both candidates
+		 * are always evaluated against the SAME requested_layers/
+		 * device_free/device_total/bytes_per_layer inputs (Section 6:
+		 * "the policy and GPU planner must evaluate the same candidate
+		 * states"), differing only in kv_bytes_estimate. */
+		membrane_gpu_policy_result_t		pr_q8;
+		membrane_gpu_policy_result_t		pr_q5;
+		membrane_adaptive_kv_candidate_t	cand_q8;
+		membrane_adaptive_kv_candidate_t	cand_q5;
+		membrane_adaptive_kv_result_t		ar;
+		int		ok_q8 = membrane_gpu_policy_resolve(o.gpu_layers,
+				est.n_layer, dev.memory_free, dev.memory_total,
+				est.bytes_per_layer, kv_bytes_estimate, &pr_q8);
+		int		ok_q5 = membrane_gpu_policy_resolve(o.gpu_layers,
+				est.n_layer, dev.memory_free, dev.memory_total,
+				est.bytes_per_layer, kv_bytes_estimate_q5, &pr_q5);
+
+		gs->policy_used = true;
+		gs->safety_reserve_bytes = pr_q8.safety_reserve_bytes;
+		cand_q8.valid = ok_q8 && (!o.want_kv_budget
+			|| kv_bytes_estimate <= o.kv_budget_bytes);
+		cand_q8.full_residency = cand_q8.valid
+			&& pr_q8.selected_layers == est.n_layer;
+		cand_q8.selected_layers = ok_q8 ? pr_q8.selected_layers : 0;
+		cand_q8.kv_bytes = kv_bytes_estimate;
+		cand_q5.valid = ok_q5 && (!o.want_kv_budget
+			|| kv_bytes_estimate_q5 <= o.kv_budget_bytes);
+		cand_q5.full_residency = cand_q5.valid
+			&& pr_q5.selected_layers == est.n_layer;
+		cand_q5.selected_layers = ok_q5 ? pr_q5.selected_layers : 0;
+		cand_q5.kv_bytes = kv_bytes_estimate_q5;
+		gs->adaptive_q8_kv_bytes = cand_q8.kv_bytes;
+		gs->adaptive_q5_kv_bytes = cand_q5.kv_bytes;
+		gs->adaptive_q8_layers = cand_q8.selected_layers;
+		gs->adaptive_q5_layers = cand_q5.selected_layers;
+		gs->adaptive_q8_valid = cand_q8.valid;
+		gs->adaptive_q5_valid = cand_q5.valid;
+		membrane_adaptive_kv_resolve(&cand_q8, &cand_q5, 1, &ar);
+		if (!ar.ok)
+			return (fprintf(stderr, "membrane-run: --kv adaptive found "
+					"no KV storage mode that fits safely: %s\n",
+					ar.reason),
+				false);
+		gs->adaptive_used = true;
+		gs->adaptive_selected_mode = ar.selected_mode;
+		gs->adaptive_reason = ar.reason;
+		gs->estimated_model_bytes = ar.selected_mode == MEMBRANE_KV_STORE_Q8
+			? pr_q8.estimated_model_bytes : pr_q5.estimated_model_bytes;
+		gs->estimated_kv_bytes = ar.selected_kv_bytes;
+		gs->gpu_layers_selected = ar.selected_layers;
+	}
+	else if (have_est && est.n_layer > 0)
 	{
 		membrane_gpu_policy_result_t	pr;
 		int		ok = membrane_gpu_policy_resolve(o.gpu_layers, est.n_layer,
@@ -407,10 +517,11 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	else
 	{
 		/* No usable estimate at all (GGUF metadata unreadable) --
-		 * only reachable for explicit all/N (auto already returned
-		 * above): proceed unguarded, same as pre-9B.1 behavior. There
-		 * is no evidence to reject on, so the user's explicit request
-		 * is honored rather than blocked on a missing measurement. */
+		 * only reachable for explicit all/N (auto and adaptive both
+		 * already returned above): proceed unguarded, same as
+		 * pre-9B.1 behavior. There is no evidence to reject on, so
+		 * the user's explicit request is honored rather than blocked
+		 * on a missing measurement. */
 		gs->gpu_layers_selected = o.gpu_layers == MEMBRANE_GPU_LAYERS_ALL
 			? -1 : o.gpu_layers;
 	}
@@ -420,6 +531,52 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	mp->devices = device_storage->data();
 	mp->n_gpu_layers = gs->gpu_layers_selected;
 	mp->main_gpu = 0;
+	return (true);
+}
+
+/* Phase 11A Section 5: --kv adaptive on CPU (o.gpu_layers == 0, i.e.
+ * !gs->requested -- resolve_gpu_config() above never runs the GPU
+ * adaptive branch in that case). No GPU free-memory query exists here,
+ * so there is no full-residency/partial-offload comparison -- CPU
+ * adaptive defaults to Q8 unless an explicit --kv-budget-mib rules it
+ * out and Q5 fits, matching membrane_adaptive_kv_resolve()'s CPU path.
+ * Called AFTER model load (unlike the GPU path), since it uses the
+ * real post-load model shape rather than a pre-load GGUF estimate --
+ * ctx_size may still have been 0/auto-sized at CLI-parse time, and is
+ * only known for certain once the model's tokenizer has run. */
+static bool	resolve_cpu_adaptive_kv(const membrane_run_opts_t &o,
+				const model_shape_t &shape, uint32_t ctx_size,
+				membrane_gpu_state_t *gs)
+{
+	membrane_adaptive_kv_candidate_t	cand_q8;
+	membrane_adaptive_kv_candidate_t	cand_q5;
+	membrane_adaptive_kv_result_t		ar;
+	uint64_t	bytes_q8 = q8_kv_bytes(shape, ctx_size);
+	uint64_t	bytes_q5 = q5_kv_bytes(shape, ctx_size);
+
+	cand_q8.valid = !o.want_kv_budget || bytes_q8 <= o.kv_budget_bytes;
+	cand_q8.full_residency = cand_q8.valid;
+	cand_q8.selected_layers = 0;
+	cand_q8.kv_bytes = bytes_q8;
+	cand_q5.valid = !o.want_kv_budget || bytes_q5 <= o.kv_budget_bytes;
+	cand_q5.full_residency = cand_q5.valid;
+	cand_q5.selected_layers = 0;
+	cand_q5.kv_bytes = bytes_q5;
+	gs->adaptive_q8_kv_bytes = bytes_q8;
+	gs->adaptive_q5_kv_bytes = bytes_q5;
+	gs->adaptive_q8_layers = 0;
+	gs->adaptive_q5_layers = 0;
+	gs->adaptive_q8_valid = cand_q8.valid;
+	gs->adaptive_q5_valid = cand_q5.valid;
+	membrane_adaptive_kv_resolve(&cand_q8, &cand_q5, 0, &ar);
+	if (!ar.ok)
+		return (fprintf(stderr, "membrane-run: --kv adaptive found no "
+				"KV storage mode that fits safely: %s\n", ar.reason),
+			false);
+	gs->adaptive_used = true;
+	gs->adaptive_selected_mode = ar.selected_mode;
+	gs->adaptive_reason = ar.reason;
+	gs->estimated_kv_bytes = ar.selected_kv_bytes;
 	return (true);
 }
 
@@ -433,6 +590,15 @@ static void	print_startup_summary(const membrane_run_opts_t &o,
 	fprintf(stderr, "kv         %s\n",
 		o.kv_mode == MEMBRANE_KV_STORE_NATIVE ? "native (F16)"
 			: kv_type_label(o.kv_mode));
+	/* Section 1: "Human output must clearly show the same decision" --
+	 * o here is already resolved (main.cpp's effective_o), so the "kv"
+	 * line above always shows what actually runs; this line answers
+	 * the separate question of whether that came from an explicit
+	 * request or --kv adaptive's own policy, and why. */
+	if (gs.adaptive_used)
+		fprintf(stderr, "kv adaptive requested=adaptive selected=%s "
+			"reason=%s\n", kv_mode_name(gs.adaptive_selected_mode),
+			gs.adaptive_reason.c_str());
 	/* run_kv_store_pass() (decode_loop.cpp) forces flash attention
 	 * ENABLED unconditionally for both native and q8 -- not just q8 --
 	 * so a --compare-kv run never mixes "KV cache dtype" with "which
@@ -510,6 +676,23 @@ static void	print_json_escaped(const std::string &text)
 	}
 }
 
+/* Phase 11A: every print_*() site below receives `o` already resolved
+ * to a concrete storage mode (main.cpp's `effective_o` -- see
+ * resolve_cpu_adaptive_kv()'s and resolve_gpu_config()'s header
+ * comments), never the raw ADAPTIVE request value, so kv_mode_name()/
+ * kv_type_label() above are always safe to call on it directly. The
+ * ORIGINAL request ("was this --kv adaptive at all?") is instead
+ * carried by gs.adaptive_used/adaptive_selected_mode/adaptive_reason
+ * -- this helper renders the "requested_kv" field consistently from
+ * that, one place, for every print_*() function. */
+static const char	*requested_kv_name(const membrane_run_opts_t &o,
+					const membrane_gpu_state_t &gs)
+{
+	if (gs.adaptive_used)
+		return ("adaptive");
+	return (kv_mode_name(o.kv_mode));
+}
+
 static void	print_gpu_json(const membrane_gpu_state_t &gs)
 {
 	printf("\"gpu\":{\"requested\":%s,\"backend_gpu_capable\":%s,",
@@ -532,14 +715,43 @@ static void	print_gpu_json(const membrane_gpu_state_t &gs)
 	printf("\"},");
 	if (gs.policy_used)
 	{
+		/* Section 8: "Record: free memory, reserve, estimated usage,
+		 * headroom" -- headroom is the estimated slack left inside the
+		 * post-reserve budget after weights+KV, floored at 0 rather
+		 * than allowed to go negative when an explicit (non-auto)
+		 * request was still accepted right at the edge. */
+		uint64_t	used = gs.estimated_model_bytes + gs.estimated_kv_bytes;
+		uint64_t	budget = gs.device_free_bytes > gs.safety_reserve_bytes
+			? gs.device_free_bytes - gs.safety_reserve_bytes : 0;
+		uint64_t	headroom = budget > used ? budget - used : 0;
+
 		printf("\"gpu_policy\":{\"device_total_bytes\":%llu,"
 			"\"device_free_bytes\":%llu,\"safety_reserve_bytes\":%llu,"
-			"\"estimated_model_bytes\":%llu,\"estimated_kv_bytes\":%llu},",
+			"\"estimated_model_bytes\":%llu,\"estimated_kv_bytes\":%llu,"
+			"\"headroom_bytes\":%llu},",
 			(unsigned long long)gs.device_total_bytes,
 			(unsigned long long)gs.device_free_bytes,
 			(unsigned long long)gs.safety_reserve_bytes,
 			(unsigned long long)gs.estimated_model_bytes,
-			(unsigned long long)gs.estimated_kv_bytes);
+			(unsigned long long)gs.estimated_kv_bytes,
+			(unsigned long long)headroom);
+	}
+	if (gs.adaptive_used)
+	{
+		/* Section 4/21: the two already-evaluated candidates behind
+		 * the adaptive_reason decision -- selected_layers is 0/unused
+		 * for a CPU-resolved decision (see resolve_cpu_adaptive_kv()). */
+		printf("\"adaptive\":{\"selected_kv\":\"%s\",\"reason\":\"",
+			kv_mode_name(gs.adaptive_selected_mode));
+		print_json_escaped(gs.adaptive_reason);
+		printf("\",\"candidates\":{"
+			"\"q8\":{\"kv_bytes\":%llu,\"valid\":%s,\"selected_layers\":%d},"
+			"\"q5\":{\"kv_bytes\":%llu,\"valid\":%s,\"selected_layers\":%d}"
+			"}},",
+			(unsigned long long)gs.adaptive_q8_kv_bytes,
+			gs.adaptive_q8_valid ? "true" : "false", gs.adaptive_q8_layers,
+			(unsigned long long)gs.adaptive_q5_kv_bytes,
+			gs.adaptive_q5_valid ? "true" : "false", gs.adaptive_q5_layers);
 	}
 }
 
@@ -549,10 +761,13 @@ static void	print_run_json(const membrane_run_opts_t &o,
 {
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"run\",\"model_label\":\"%s\",\"kv_store\":\"%s\","
-		"\"kv_type\":\"%s\","
+		"\"kv_type\":\"%s\",\"requested_kv\":\"%s\",\"selected_kv\":\"%s\","
+		"\"adaptive_reason\":\"%s\","
 		"\"ctx_size\":%u,\"generated_tokens\":%llu,",
 		MEMBRANE_VERSION, model_label, kv_mode_name(o.kv_mode),
-		kv_type_label(o.kv_mode),
+		kv_type_label(o.kv_mode), requested_kv_name(o, gs),
+		kv_mode_name(o.kv_mode),
+		gs.adaptive_used ? gs.adaptive_reason.c_str() : "",
 		t.ctx_size, (unsigned long long)t.generated_tokens);
 	printf("\"storage\":{\"kv_allocated_bytes\":%llu},",
 		(unsigned long long)t.compressed_kv_allocated_bytes);
@@ -675,11 +890,21 @@ static void	print_compare_json(const char *model_label, uint32_t ctx_size,
 	bool	is_legacy_q8;
 
 	is_legacy_q8 = strcmp(tel_candidate.kv_store_mode_name, "q8") == 0;
+	/* Section 10: "adaptive resolves once before comparison ... JSON
+	 * should include requested_kv: adaptive, selected_kv: q8|q5,
+	 * compressed_kv: q8|q5, adaptive_reason". When --kv adaptive was
+	 * NOT given, requested_kv mirrors compressed_kv (the pre-existing
+	 * q8-default/--kv-q5 rule already fully determines it) -- purely
+	 * additive, no existing field's meaning changes. */
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"compare\",\"model_label\":\"%s\",\"ctx_size\":%u,"
-		"\"compressed_kv\":\"%s\",",
+		"\"compressed_kv\":\"%s\",\"requested_kv\":\"%s\","
+		"\"selected_kv\":\"%s\",\"adaptive_reason\":\"%s\",",
 		MEMBRANE_VERSION, model_label, ctx_size,
-		tel_candidate.kv_store_mode_name);
+		tel_candidate.kv_store_mode_name,
+		gs.adaptive_used ? "adaptive" : tel_candidate.kv_store_mode_name,
+		tel_candidate.kv_store_mode_name,
+		gs.adaptive_used ? gs.adaptive_reason.c_str() : "");
 	printf("\"storage\":{\"native_kv_allocated_bytes\":%llu,"
 		"\"compressed_kv_allocated_bytes\":%llu",
 		(unsigned long long)native_bytes,
@@ -726,6 +951,9 @@ static void	print_compare_human(const char *model_label, uint32_t ctx_size,
 		MEMBRANE_VERSION, mode_name);
 	fprintf(stderr, "model            %s\n", model_label);
 	fprintf(stderr, "context          %u\n", ctx_size);
+	if (gs.adaptive_used)
+		fprintf(stderr, "kv adaptive      requested=adaptive selected=%s "
+			"reason=%s\n", mode_name, gs.adaptive_reason.c_str());
 	if (!gs.requested)
 		fprintf(stderr, "backend          CPU (default)\n");
 	else
@@ -918,8 +1146,13 @@ static void	print_gpu_bench_json(const char *model_label, uint32_t ctx_size,
 			/ tel_native.generation_tok_per_s : 0.0;
 
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
-		"\"mode\":\"gpu_bench\",\"compressed_kv\":\"%s\",\"model_label\":\"",
-		MEMBRANE_VERSION, tel_candidate.kv_store_mode_name);
+		"\"mode\":\"gpu_bench\",\"compressed_kv\":\"%s\","
+		"\"requested_kv\":\"%s\",\"selected_kv\":\"%s\","
+		"\"adaptive_reason\":\"%s\",\"model_label\":\"",
+		MEMBRANE_VERSION, tel_candidate.kv_store_mode_name,
+		gs.adaptive_used ? "adaptive" : tel_candidate.kv_store_mode_name,
+		tel_candidate.kv_store_mode_name,
+		gs.adaptive_used ? gs.adaptive_reason.c_str() : "");
 	print_json_escaped(model_label);
 	printf("\",\"ctx_size\":%u,", ctx_size);
 	print_gpu_json(gs);
@@ -967,6 +1200,10 @@ static void	print_gpu_bench_human(const char *model_label, uint32_t ctx_size,
 		MEMBRANE_VERSION, mode_name);
 	fprintf(stderr, "model              %s\n", model_label);
 	fprintf(stderr, "context            %u\n", ctx_size);
+	if (gs.adaptive_used)
+		fprintf(stderr, "kv adaptive        requested=adaptive "
+			"selected=%s reason=%s\n", mode_name,
+			gs.adaptive_reason.c_str());
 	fprintf(stderr, "backend            %s, device: %s "
 		"(gpu-layers=%s, selected=%d)\n", gs.backend_selected.c_str(),
 		gs.device_selected.c_str(),
@@ -1119,16 +1356,40 @@ int	main(int argc, char **argv)
 		return (llama_backend_free(), MEMBRANE_EXIT_CLI_ERROR);
 	}
 	read_model_shape(model, &shape);
+	/* Phase 11A: resolve --kv adaptive into a concrete Q8/Q5 exactly
+	 * once, into a separate `effective_o` copy -- `o.kv_mode` itself is
+	 * left untouched (still ADAPTIVE when requested) so requested_kv_
+	 * name(o.kv_mode) below and every print_*() site (via gs.adaptive_
+	 * used/adaptive_selected_mode/adaptive_reason) can still report the
+	 * ORIGINAL request alongside the resolution. GPU adaptive was
+	 * already resolved inside resolve_gpu_config() above (before model
+	 * load, from the pre-load GGUF estimate) -- gs.adaptive_used is
+	 * already true there; only the CPU case (no GPU requested) still
+	 * needs resolving here, now that the real post-load model shape
+	 * and final ctx_size are both known. */
+	membrane_run_opts_t	effective_o = o;
+
+	if (o.kv_mode == MEMBRANE_KV_STORE_ADAPTIVE)
+	{
+		if (!gs.requested && !resolve_cpu_adaptive_kv(o, shape, ctx_size,
+				&gs))
+		{
+			llama_model_free(model);
+			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
+		}
+		effective_o.kv_mode = gs.adaptive_selected_mode;
+	}
 	/* --compare-kv/--gpu-bench precheck whichever mode they'll actually
-	 * compare against (selected_comparison_mode() -- q8 by default,
-	 * q5 only if --kv q5 was also given); a plain run precheck's
-	 * whatever --kv itself asked for. Either way this never checks
-	 * more than the one mode about to be used. */
+	 * compare against (selected_comparison_mode() -- q8 by default, q5
+	 * if --kv q5 was given, or adaptive's own resolved mode via
+	 * effective_o if --kv adaptive was given); a plain run precheck's
+	 * whatever effective_o.kv_mode resolved to. Either way this never
+	 * checks more than the one mode about to be used. */
 	if (o.compare_kv || o.gpu_bench)
 	{
 		if (!membrane_check_kv_compat(shape.arch_name.c_str(),
 				shape.n_embd, shape.n_head, shape.n_head_kv, ctx_size,
-				selected_comparison_mode(o), &compat))
+				selected_comparison_mode(effective_o), &compat))
 		{
 			fprintf(stderr, "MEMBRANE: KV storage unsupported for "
 				"this model: %s.\n", compat.reason);
@@ -1136,11 +1397,11 @@ int	main(int argc, char **argv)
 			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
 		}
 	}
-	else if (o.kv_mode != MEMBRANE_KV_STORE_NATIVE)
+	else if (effective_o.kv_mode != MEMBRANE_KV_STORE_NATIVE)
 	{
 		if (!membrane_check_kv_compat(shape.arch_name.c_str(),
 				shape.n_embd, shape.n_head, shape.n_head_kv, ctx_size,
-				o.kv_mode, &compat))
+				effective_o.kv_mode, &compat))
 		{
 			fprintf(stderr, "MEMBRANE: KV storage unsupported for "
 				"this model: %s.\n", compat.reason);
@@ -1149,14 +1410,14 @@ int	main(int argc, char **argv)
 		}
 	}
 	if (o.gpu_bench)
-		rc = run_gpu_bench_mode(o, model, prompt_tokens, model_label,
-				ctx_size, shape, gs);
+		rc = run_gpu_bench_mode(effective_o, model, prompt_tokens,
+				model_label, ctx_size, shape, gs);
 	else if (o.compare_kv)
-		rc = run_compare_mode(o, model, prompt_tokens, model_label,
-				ctx_size, shape, gs);
+		rc = run_compare_mode(effective_o, model, prompt_tokens,
+				model_label, ctx_size, shape, gs);
 	else
-		rc = run_normal_mode(o, model, prompt_tokens, model_label, ctx_size,
-				shape, gs);
+		rc = run_normal_mode(effective_o, model, prompt_tokens, model_label,
+				ctx_size, shape, gs);
 	llama_model_free(model);
 	llama_backend_free();
 	return (rc);
