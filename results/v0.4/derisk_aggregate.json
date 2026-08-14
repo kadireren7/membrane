@@ -14,7 +14,9 @@
         "mean_delta_nll": 0.000686,
         "worst_case_prompt": "instruction_following_2",
         "worst_case_top1_preservation": 0.909091,
-        "worst_case_logit_rel_l2": 0.010915
+        "logit_rel_l2_at_worst_top1_prompt": 0.010915,
+        "worst_case_logit_rel_l2_prompt": "summarization_1",
+        "worst_case_logit_rel_l2": 0.013202
       },
       "reasoning_subset": {
         "n_prompts": 10,
@@ -29,7 +31,9 @@
         "mean_delta_nll": 0.000336,
         "worst_case_prompt": "arithmetic_reasoning_3",
         "worst_case_top1_preservation": 0.972222,
-        "worst_case_logit_rel_l2": 0.009701
+        "logit_rel_l2_at_worst_top1_prompt": 0.009701,
+        "worst_case_logit_rel_l2_prompt": "logical_reasoning_1",
+        "worst_case_logit_rel_l2": 0.011424
       }
     },
     "q5_0": {
@@ -46,7 +50,9 @@
         "mean_delta_nll": 0.007098,
         "worst_case_prompt": "summarization_2",
         "worst_case_top1_preservation": 0.904762,
-        "worst_case_logit_rel_l2": 0.088068
+        "logit_rel_l2_at_worst_top1_prompt": 0.088068,
+        "worst_case_logit_rel_l2_prompt": "code_explanation_1",
+        "worst_case_logit_rel_l2": 0.088677
       },
       "reasoning_subset": {
         "n_prompts": 10,
@@ -61,7 +67,9 @@
         "mean_delta_nll": 0.001231,
         "worst_case_prompt": "arithmetic_reasoning_1",
         "worst_case_top1_preservation": 0.945946,
-        "worst_case_logit_rel_l2": 0.043289
+        "logit_rel_l2_at_worst_top1_prompt": 0.043289,
+        "worst_case_logit_rel_l2_prompt": "logical_reasoning_1",
+        "worst_case_logit_rel_l2": 0.072394
       }
     },
     "q5_1": {
@@ -78,7 +86,9 @@
         "mean_delta_nll": 0.014207,
         "worst_case_prompt": "instruction_following_2",
         "worst_case_top1_preservation": 0.818182,
-        "worst_case_logit_rel_l2": 0.07788
+        "logit_rel_l2_at_worst_top1_prompt": 0.07788,
+        "worst_case_logit_rel_l2_prompt": "prose_continuation_3",
+        "worst_case_logit_rel_l2": 0.082762
       },
       "reasoning_subset": {
         "n_prompts": 10,
@@ -93,6 +103,8 @@
         "mean_delta_nll": 0.016678,
         "worst_case_prompt": "multistep_reasoning_3",
         "worst_case_top1_preservation": 0.9,
+        "logit_rel_l2_at_worst_top1_prompt": 0.066641,
+        "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
         "worst_case_logit_rel_l2": 0.066641
       }
     },
@@ -110,7 +122,9 @@
         "mean_delta_nll": 0.030118,
         "worst_case_prompt": "multistep_reasoning_3",
         "worst_case_top1_preservation": 0.8,
-        "worst_case_logit_rel_l2": 0.148449
+        "logit_rel_l2_at_worst_top1_prompt": 0.148449,
+        "worst_case_logit_rel_l2_prompt": "summarization_1",
+        "worst_case_logit_rel_l2": 0.278849
       },
       "reasoning_subset": {
         "n_prompts": 10,
@@ -125,7 +139,9 @@
         "mean_delta_nll": 0.042155,
         "worst_case_prompt": "multistep_reasoning_3",
         "worst_case_top1_preservation": 0.8,
-        "worst_case_logit_rel_l2": 0.148449
+        "logit_rel_l2_at_worst_top1_prompt": 0.148449,
+        "worst_case_logit_rel_l2_prompt": "logical_reasoning_1",
+        "worst_case_logit_rel_l2": 0.237474
       }
     }
   },
@@ -144,7 +160,9 @@
         "mean_delta_nll": -0.000374,
         "worst_case_prompt": "factual_recall_3",
         "worst_case_top1_preservation": 0.976562,
-        "worst_case_logit_rel_l2": 0.008409
+        "logit_rel_l2_at_worst_top1_prompt": 0.008409,
+        "worst_case_logit_rel_l2_prompt": "code_completion_3",
+        "worst_case_logit_rel_l2": 0.011828
       },
       "reasoning_subset": {
         "n_prompts": 10,
@@ -159,7 +177,9 @@
         "mean_delta_nll": -0.000972,
         "worst_case_prompt": "logical_reasoning_3",
         "worst_case_top1_preservation": 0.992188,
-        "worst_case_logit_rel_l2": 0.008951
+        "logit_rel_l2_at_worst_top1_prompt": 0.008951,
+        "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
+        "worst_case_logit_rel_l2": 0.010647
       }
     },
     "q5_0": {
@@ -176,7 +196,9 @@
         "mean_delta_nll": 0.00568,
         "worst_case_prompt": "multistep_reasoning_2",
         "worst_case_top1_preservation": 0.909091,
-        "worst_case_logit_rel_l2": 0.065608
+        "logit_rel_l2_at_worst_top1_prompt": 0.065608,
+        "worst_case_logit_rel_l2_prompt": "code_completion_3",
+        "worst_case_logit_rel_l2": 0.074473
       },
       "reasoning_subset": {
         "n_prompts": 10,
@@ -191,7 +213,9 @@
         "mean_delta_nll": 0.002911,
         "worst_case_prompt": "multistep_reasoning_2",
         "worst_case_top1_preservation": 0.909091,
-        "worst_case_logit_rel_l2": 0.065608
+        "logit_rel_l2_at_worst_top1_prompt": 0.065608,
+        "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
+        "worst_case_logit_rel_l2": 0.071816
       }
     },
     "q5_1": {
@@ -208,7 +232,9 @@
         "mean_delta_nll": 0.005015,
         "worst_case_prompt": "instruction_following_3",
         "worst_case_top1_preservation": 0.914062,
-        "worst_case_logit_rel_l2": 0.05344
+        "logit_rel_l2_at_worst_top1_prompt": 0.05344,
+        "worst_case_logit_rel_l2_prompt": "code_explanation_1",
+        "worst_case_logit_rel_l2": 0.082273
       },
       "reasoning_subset": {
         "n_prompts": 10,
@@ -223,7 +249,9 @@
         "mean_delta_nll": 0.006334,
         "worst_case_prompt": "arithmetic_reasoning_1",
         "worst_case_top1_preservation": 0.958333,
-        "worst_case_logit_rel_l2": 0.048253
+        "logit_rel_l2_at_worst_top1_prompt": 0.048253,
+        "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
+        "worst_case_logit_rel_l2": 0.060538
       }
     },
     "q4": {
@@ -240,7 +268,9 @@
         "mean_delta_nll": 0.03232,
         "worst_case_prompt": "summarization_1",
         "worst_case_top1_preservation": 0.666667,
-        "worst_case_logit_rel_l2": 0.103866
+        "logit_rel_l2_at_worst_top1_prompt": 0.103866,
+        "worst_case_logit_rel_l2_prompt": "instruction_following_2",
+        "worst_case_logit_rel_l2": 0.154829
       },
       "reasoning_subset": {
         "n_prompts": 10,
@@ -255,7 +285,9 @@
         "mean_delta_nll": 0.025631,
         "worst_case_prompt": "arithmetic_reasoning_3",
         "worst_case_top1_preservation": 0.894737,
-        "worst_case_logit_rel_l2": 0.112232
+        "logit_rel_l2_at_worst_top1_prompt": 0.112232,
+        "worst_case_logit_rel_l2_prompt": "multistep_reasoning_2",
+        "worst_case_logit_rel_l2": 0.131751
       }
     }
   }

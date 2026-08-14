@@ -19,8 +19,11 @@ extern "C" {
  * quantization, not a shadow copy, same authoritative-storage shape
  * as Q8 above. "q5" on the CLI always means Q5_1 specifically (never
  * Q5_0) -- see tools/membrane-run/product_cli.cpp's --kv help text
- * and results/phase10/q5-kv-evaluation.json for why Q5_1 was chosen
- * over Q5_0 and Q4_0 after evaluation on the experiment branches. */
+ * and results/v0.4/q5-validation.json (this branch) for the
+ * productization derisk data; the prior Q4_0/Q5_0/Q5_1 comparison
+ * this choice is based on lives on the experiment/q5-kv-evaluation
+ * branch (results/phase10/q5-kv-evaluation.json there), not committed
+ * on this branch. */
 # define MEMBRANE_KV_STORE_Q5		2
 
 /*

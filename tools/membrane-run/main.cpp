@@ -362,6 +362,25 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 			? (int64_t)(est.n_embd / est.n_head) * est.n_head_kv : 0;
 		kv_bytes_estimate = kv_bytes_for_mode(fake_shape, ctx_size,
 			o.kv_mode);
+		/* --compare-kv/--gpu-bench allocate a NATIVE context in
+		 * addition to the candidate one (run_native_vs_compressed_
+		 * comparison() below) -- native's F16 KV is always the larger
+		 * of the two, so the guard must budget for native's bytes
+		 * here too, not just whatever --kv itself asked for, or auto
+		 * could pick a layer count the native pass then can't
+		 * actually fit. selected_comparison_mode() isn't visible yet
+		 * at this point in the file, but the guard only needs to know
+		 * "is a native pass also about to run", not which compressed
+		 * mode was picked -- kv_bytes_for_mode() below still uses
+		 * o.kv_mode for that. */
+		if (o.compare_kv || o.gpu_bench)
+		{
+			uint64_t	native_estimate = native_kv_bytes(fake_shape,
+					ctx_size);
+
+			if (native_estimate > kv_bytes_estimate)
+				kv_bytes_estimate = native_estimate;
+		}
 	}
 	if (o.gpu_layers == MEMBRANE_GPU_LAYERS_AUTO && !(have_est
 			&& est.n_layer > 0))
@@ -644,21 +663,44 @@ static void	print_compare_json(const char *model_label, uint32_t ctx_size,
 				const membrane_kv_store_telemetry_t &tel_candidate,
 				const membrane_gpu_state_t &gs)
 {
+	/* Backward compatibility: scripts/assemble-v0.2-artifact.py (and
+	 * potentially other external tooling) reads storage.
+	 * q8_kv_allocated_bytes/memory_q8 from --compare-kv's JSON output
+	 * -- Section 14's own rule is that existing behavior stays
+	 * unchanged unless q5 is explicitly requested, so when the
+	 * compared mode actually IS q8 (the default), keep emitting those
+	 * exact legacy keys too, purely additive, alongside the new
+	 * generic ones q5 needs. Never emitted (and never misleadingly
+	 * populated with q5 bytes) when the compared mode is q5. */
+	bool	is_legacy_q8;
+
+	is_legacy_q8 = strcmp(tel_candidate.kv_store_mode_name, "q8") == 0;
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"compare\",\"model_label\":\"%s\",\"ctx_size\":%u,"
 		"\"compressed_kv\":\"%s\",",
 		MEMBRANE_VERSION, model_label, ctx_size,
 		tel_candidate.kv_store_mode_name);
 	printf("\"storage\":{\"native_kv_allocated_bytes\":%llu,"
-		"\"compressed_kv_allocated_bytes\":%llu},",
+		"\"compressed_kv_allocated_bytes\":%llu",
 		(unsigned long long)native_bytes,
 		(unsigned long long)tel_candidate.compressed_kv_allocated_bytes);
+
+	if (is_legacy_q8)
+		printf(",\"q8_kv_allocated_bytes\":%llu",
+			(unsigned long long)tel_candidate.compressed_kv_allocated_bytes);
+	printf("},");
 	print_gpu_json(gs);
 	printf("\"memory_compressed\":{\"rss_after_context_kb\":%llu,"
 		"\"rss_final_kb\":%llu,\"peak_rss_kb\":%llu},",
 		(unsigned long long)tel_candidate.rss_after_context.vm_rss_kb,
 		(unsigned long long)tel_candidate.rss_final.vm_rss_kb,
 		(unsigned long long)tel_candidate.rss_peak.vm_hwm_kb);
+	if (is_legacy_q8)
+		printf("\"memory_q8\":{\"rss_after_context_kb\":%llu,"
+			"\"rss_final_kb\":%llu,\"peak_rss_kb\":%llu},",
+			(unsigned long long)tel_candidate.rss_after_context.vm_rss_kb,
+			(unsigned long long)tel_candidate.rss_final.vm_rss_kb,
+			(unsigned long long)tel_candidate.rss_peak.vm_hwm_kb);
 	printf("\"performance\":{\"prompt_tok_per_s\":%.6f,"
 		"\"generation_tok_per_s\":%.6f},",
 		tel_candidate.prompt_tok_per_s, tel_candidate.generation_tok_per_s);

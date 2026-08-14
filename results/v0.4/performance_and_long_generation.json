@@ -32,7 +32,7 @@
       "q8_reference": {"first_divergence": 40, "top1_preservation": 0.994141, "logit_rel_l2": 0.009941, "delta_nll": 0.000150},
       "q5": {"first_divergence": 81, "top1_preservation": 0.982422, "logit_rel_l2": 0.060368, "delta_nll": 0.006143}
     },
-    "memory_stability": "RSS flat across the full run (peak == final, ~1MB drift from context creation to end) -- no leak.",
-    "consistency_check": "Matches Phase 10B's equivalent measurement exactly (same prompt/ctx/gen_tokens) -- reproducible across the product CLI rewrite, not just the experimental probe."
+    "memory_stability": "RSS flat across this single 512-token run (peak == final, ~1MB drift from context creation to end) -- no leak observed in this run; not a claim about longer runs or repeated invocations.",
+    "consistency_check": "These exact values (first_divergence=81, top1=0.982422, logit_rel_l2=0.060368, delta_nll=0.006143) are numerically identical to the equivalent measurement recorded during Phase 10B's evaluation -- but that comparison is not machine-verified here, because the Phase 10B artifact it would be checked against (results/phase10/q5-kv-evaluation.json) lives on the experiment/q5-kv-evaluation branch and is not committed on this branch (see kv_store_telemetry.h's comment on MEMBRANE_KV_STORE_Q5). Reported as an observed match, not an asserted/verified one."
   }
 }

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "phase": "10C-q5-derisk-and-productization",
-  "note": "Development evidence, not release evidence. Backs the feature/q5-kv-runtime branch's --kv q5 (maps to GGML_TYPE_Q5_1). See results/phase10/ for the prior experimental Q4/Q5_0/Q5_1 evaluation this productization decision is based on.",
+  "note": "Development evidence, not release evidence. Backs the feature/q5-kv-runtime branch's --kv q5 (maps to GGML_TYPE_Q5_1). The prior experimental Q4_0/Q5_0/Q5_1 evaluation this productization decision is based on lives on the experiment/q4-kv-storage and experiment/q5-kv-evaluation branches (results/phase10/ there) -- not committed on this branch.",
   "membrane_commit": "a6d5377c852cc1eeb88d224b25726f74c515a405",
   "llama_cpp_commit": "c0bc8591e8815c63cb01dd3f051a8b0df02501c9",
   "models": {
@@ -193,7 +193,9 @@
             "mean_delta_nll": 0.000686,
             "worst_case_prompt": "instruction_following_2",
             "worst_case_top1_preservation": 0.909091,
-            "worst_case_logit_rel_l2": 0.010915
+            "logit_rel_l2_at_worst_top1_prompt": 0.010915,
+            "worst_case_logit_rel_l2_prompt": "summarization_1",
+            "worst_case_logit_rel_l2": 0.013202
           },
           "reasoning_subset": {
             "n_prompts": 10,
@@ -208,7 +210,9 @@
             "mean_delta_nll": 0.000336,
             "worst_case_prompt": "arithmetic_reasoning_3",
             "worst_case_top1_preservation": 0.972222,
-            "worst_case_logit_rel_l2": 0.009701
+            "logit_rel_l2_at_worst_top1_prompt": 0.009701,
+            "worst_case_logit_rel_l2_prompt": "logical_reasoning_1",
+            "worst_case_logit_rel_l2": 0.011424
           }
         },
         "q5_0": {
@@ -225,7 +229,9 @@
             "mean_delta_nll": 0.007098,
             "worst_case_prompt": "summarization_2",
             "worst_case_top1_preservation": 0.904762,
-            "worst_case_logit_rel_l2": 0.088068
+            "logit_rel_l2_at_worst_top1_prompt": 0.088068,
+            "worst_case_logit_rel_l2_prompt": "code_explanation_1",
+            "worst_case_logit_rel_l2": 0.088677
           },
           "reasoning_subset": {
             "n_prompts": 10,
@@ -240,7 +246,9 @@
             "mean_delta_nll": 0.001231,
             "worst_case_prompt": "arithmetic_reasoning_1",
             "worst_case_top1_preservation": 0.945946,
-            "worst_case_logit_rel_l2": 0.043289
+            "logit_rel_l2_at_worst_top1_prompt": 0.043289,
+            "worst_case_logit_rel_l2_prompt": "logical_reasoning_1",
+            "worst_case_logit_rel_l2": 0.072394
           }
         },
         "q5_1": {
@@ -257,7 +265,9 @@
             "mean_delta_nll": 0.014207,
             "worst_case_prompt": "instruction_following_2",
             "worst_case_top1_preservation": 0.818182,
-            "worst_case_logit_rel_l2": 0.07788
+            "logit_rel_l2_at_worst_top1_prompt": 0.07788,
+            "worst_case_logit_rel_l2_prompt": "prose_continuation_3",
+            "worst_case_logit_rel_l2": 0.082762
           },
           "reasoning_subset": {
             "n_prompts": 10,
@@ -272,6 +282,8 @@
             "mean_delta_nll": 0.016678,
             "worst_case_prompt": "multistep_reasoning_3",
             "worst_case_top1_preservation": 0.9,
+            "logit_rel_l2_at_worst_top1_prompt": 0.066641,
+            "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
             "worst_case_logit_rel_l2": 0.066641
           }
         },
@@ -289,7 +301,9 @@
             "mean_delta_nll": 0.030118,
             "worst_case_prompt": "multistep_reasoning_3",
             "worst_case_top1_preservation": 0.8,
-            "worst_case_logit_rel_l2": 0.148449
+            "logit_rel_l2_at_worst_top1_prompt": 0.148449,
+            "worst_case_logit_rel_l2_prompt": "summarization_1",
+            "worst_case_logit_rel_l2": 0.278849
           },
           "reasoning_subset": {
             "n_prompts": 10,
@@ -304,7 +318,9 @@
             "mean_delta_nll": 0.042155,
             "worst_case_prompt": "multistep_reasoning_3",
             "worst_case_top1_preservation": 0.8,
-            "worst_case_logit_rel_l2": 0.148449
+            "logit_rel_l2_at_worst_top1_prompt": 0.148449,
+            "worst_case_logit_rel_l2_prompt": "logical_reasoning_1",
+            "worst_case_logit_rel_l2": 0.237474
           }
         }
       },
@@ -323,7 +339,9 @@
             "mean_delta_nll": -0.000374,
             "worst_case_prompt": "factual_recall_3",
             "worst_case_top1_preservation": 0.976562,
-            "worst_case_logit_rel_l2": 0.008409
+            "logit_rel_l2_at_worst_top1_prompt": 0.008409,
+            "worst_case_logit_rel_l2_prompt": "code_completion_3",
+            "worst_case_logit_rel_l2": 0.011828
           },
           "reasoning_subset": {
             "n_prompts": 10,
@@ -338,7 +356,9 @@
             "mean_delta_nll": -0.000972,
             "worst_case_prompt": "logical_reasoning_3",
             "worst_case_top1_preservation": 0.992188,
-            "worst_case_logit_rel_l2": 0.008951
+            "logit_rel_l2_at_worst_top1_prompt": 0.008951,
+            "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
+            "worst_case_logit_rel_l2": 0.010647
           }
         },
         "q5_0": {
@@ -355,7 +375,9 @@
             "mean_delta_nll": 0.00568,
             "worst_case_prompt": "multistep_reasoning_2",
             "worst_case_top1_preservation": 0.909091,
-            "worst_case_logit_rel_l2": 0.065608
+            "logit_rel_l2_at_worst_top1_prompt": 0.065608,
+            "worst_case_logit_rel_l2_prompt": "code_completion_3",
+            "worst_case_logit_rel_l2": 0.074473
           },
           "reasoning_subset": {
             "n_prompts": 10,
@@ -370,7 +392,9 @@
             "mean_delta_nll": 0.002911,
             "worst_case_prompt": "multistep_reasoning_2",
             "worst_case_top1_preservation": 0.909091,
-            "worst_case_logit_rel_l2": 0.065608
+            "logit_rel_l2_at_worst_top1_prompt": 0.065608,
+            "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
+            "worst_case_logit_rel_l2": 0.071816
           }
         },
         "q5_1": {
@@ -387,7 +411,9 @@
             "mean_delta_nll": 0.005015,
             "worst_case_prompt": "instruction_following_3",
             "worst_case_top1_preservation": 0.914062,
-            "worst_case_logit_rel_l2": 0.05344
+            "logit_rel_l2_at_worst_top1_prompt": 0.05344,
+            "worst_case_logit_rel_l2_prompt": "code_explanation_1",
+            "worst_case_logit_rel_l2": 0.082273
           },
           "reasoning_subset": {
             "n_prompts": 10,
@@ -402,7 +428,9 @@
             "mean_delta_nll": 0.006334,
             "worst_case_prompt": "arithmetic_reasoning_1",
             "worst_case_top1_preservation": 0.958333,
-            "worst_case_logit_rel_l2": 0.048253
+            "logit_rel_l2_at_worst_top1_prompt": 0.048253,
+            "worst_case_logit_rel_l2_prompt": "multistep_reasoning_3",
+            "worst_case_logit_rel_l2": 0.060538
           }
         },
         "q4": {
@@ -419,7 +447,9 @@
             "mean_delta_nll": 0.03232,
             "worst_case_prompt": "summarization_1",
             "worst_case_top1_preservation": 0.666667,
-            "worst_case_logit_rel_l2": 0.103866
+            "logit_rel_l2_at_worst_top1_prompt": 0.103866,
+            "worst_case_logit_rel_l2_prompt": "instruction_following_2",
+            "worst_case_logit_rel_l2": 0.154829
           },
           "reasoning_subset": {
             "n_prompts": 10,
@@ -434,7 +464,9 @@
             "mean_delta_nll": 0.025631,
             "worst_case_prompt": "arithmetic_reasoning_3",
             "worst_case_top1_preservation": 0.894737,
-            "worst_case_logit_rel_l2": 0.112232
+            "logit_rel_l2_at_worst_top1_prompt": 0.112232,
+            "worst_case_logit_rel_l2_prompt": "multistep_reasoning_2",
+            "worst_case_logit_rel_l2": 0.131751
           }
         }
       }
@@ -471,7 +503,7 @@
         "verdict": "PASS -- both models show the same consistent, bounded pattern (q5_1 meaningfully better than q4, meaningfully behind q8, no runaway failure on either model)."
       }
     },
-    "verdict": "DERISK PASSED. All 6 bar criteria pass on both tested models. Q5_1's quality profile is confirmed materially closer to Q8 than Q4 in aggregate, clearly better than Q4 on the reasoning-heavy subset specifically (directly answering Phase 10B's open question), with no corruption and a disclosed, understood worst case. Proceeding to productization.",
+    "verdict": "DERISK PASSED. All 6 bar criteria pass on both tested models, exactly as specified in Section 5. Q5_1's quality profile is materially closer to Q8 than Q4 on the full-set aggregate (both models) and on rel-L2 everywhere measured, and clearly better than Q4 in direction on the reasoning-heavy subset specifically (directly answering Phase 10B's open question) -- with no corruption and a disclosed, understood worst case, including the one distance-metric nuance above. Proceeding to productization.",
     "note_on_phase_10b_caveat": "Phase 10B flagged a 135M 'simple_reasoning' prompt at 85.7% top1 as a worst-case concern. This broader 10-prompt reasoning subset (multiple categories, not one prompt) shows 135M reasoning-subset mean top1=95.05% and worst-case=90.0% -- still a real, disclosed gap below q8's near-perfect reasoning performance, but not the kind of severe, repeated degradation that would fail this phase's bar. The original single fragile prompt was not systemic."
   },
   "memory_reconfirm": {
@@ -606,44 +638,54 @@
       }
     ]
   },
-  "capacity_reconfirm_360m_vulkan": [
-    {
-      "ctx": 131072,
-      "kv_mode": "q8",
-      "exit_code": 0,
-      "gpu_layers_selected": 31
-    },
-    {
-      "ctx": 131072,
-      "kv_mode": "q5",
-      "exit_code": 0,
-      "gpu_layers_selected": 32
-    },
-    {
-      "ctx": 180000,
-      "kv_mode": "q8",
-      "exit_code": 5,
-      "gpu_layers_selected": null
-    },
-    {
-      "ctx": 180000,
-      "kv_mode": "q5",
-      "exit_code": 0,
-      "gpu_layers_selected": 32
-    },
-    {
-      "ctx": 220000,
-      "kv_mode": "q8",
-      "exit_code": 5,
-      "gpu_layers_selected": null
-    },
-    {
-      "ctx": 220000,
-      "kv_mode": "q5",
-      "exit_code": 0,
-      "gpu_layers_selected": 4
-    }
-  ],
+  "capacity_reconfirm_360m_vulkan": {
+    "model_n_layer": 32,
+    "device_total_bytes": 4552916992,
+    "rows": [
+      {
+        "ctx": 131072,
+        "kv_mode": "q8",
+        "exit_code": 0,
+        "gpu_layers_selected": 31,
+        "full_residency": false
+      },
+      {
+        "ctx": 131072,
+        "kv_mode": "q5",
+        "exit_code": 0,
+        "gpu_layers_selected": 32,
+        "full_residency": true
+      },
+      {
+        "ctx": 180000,
+        "kv_mode": "q8",
+        "exit_code": 5,
+        "gpu_layers_selected": null,
+        "full_residency": null
+      },
+      {
+        "ctx": 180000,
+        "kv_mode": "q5",
+        "exit_code": 0,
+        "gpu_layers_selected": 32,
+        "full_residency": true
+      },
+      {
+        "ctx": 220000,
+        "kv_mode": "q8",
+        "exit_code": 5,
+        "gpu_layers_selected": null,
+        "full_residency": null
+      },
+      {
+        "ctx": 220000,
+        "kv_mode": "q5",
+        "exit_code": 0,
+        "gpu_layers_selected": 4,
+        "full_residency": false
+      }
+    ]
+  },
   "performance_and_long_generation": {
     "note": "Phase 10C Sections 14-17: CPU/Vulkan regression, performance repetitions, long generation. SmolLM2-135M unless noted.",
     "regression_cpu": {
@@ -724,8 +766,8 @@
           "delta_nll": 0.006143
         }
       },
-      "memory_stability": "RSS flat across the full run (peak == final, ~1MB drift from context creation to end) -- no leak.",
-      "consistency_check": "Matches Phase 10B's equivalent measurement exactly (same prompt/ctx/gen_tokens) -- reproducible across the product CLI rewrite, not just the experimental probe."
+      "memory_stability": "RSS flat across this single 512-token run (peak == final, ~1MB drift from context creation to end) -- no leak observed in this run; not a claim about longer runs or repeated invocations.",
+      "consistency_check": "These exact values (first_divergence=81, top1=0.982422, logit_rel_l2=0.060368, delta_nll=0.006143) are numerically identical to the equivalent measurement recorded during Phase 10B's evaluation -- but that comparison is not machine-verified here, because the Phase 10B artifact it would be checked against (results/phase10/q5-kv-evaluation.json) lives on the experiment/q5-kv-evaluation branch and is not committed on this branch (see kv_store_telemetry.h's comment on MEMBRANE_KV_STORE_Q5). Reported as an observed match, not an asserted/verified one."
     }
   },
   "product_cli": {
