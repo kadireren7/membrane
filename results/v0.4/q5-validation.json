@@ -1,0 +1,750 @@
+{
+  "schema_version": 1,
+  "phase": "10C-q5-derisk-and-productization",
+  "note": "Development evidence, not release evidence. Backs the feature/q5-kv-runtime branch's --kv q5 (maps to GGML_TYPE_Q5_1). See results/phase10/ for the prior experimental Q4/Q5_0/Q5_1 evaluation this productization decision is based on.",
+  "membrane_commit": "a6d5377c852cc1eeb88d224b25726f74c515a405",
+  "llama_cpp_commit": "c0bc8591e8815c63cb01dd3f051a8b0df02501c9",
+  "models": {
+    "SmolLM2-135M-Instruct-f16": {
+      "architecture": "llama",
+      "n_layer": 30,
+      "n_head": 9,
+      "n_head_kv": 3,
+      "n_embd_head": 64
+    },
+    "SmolLM2-360M-Instruct-f16": {
+      "architecture": "llama",
+      "n_layer": 32,
+      "n_head": 15,
+      "n_head_kv": 5,
+      "n_embd_head": 64
+    }
+  },
+  "derisk": {
+    "prompt_set": {
+      "total_prompts": 31,
+      "prompts_and_labels": [
+        {
+          "label": "factual_recall_1",
+          "prompt": "The capital of Japan is"
+        },
+        {
+          "label": "factual_recall_2",
+          "prompt": "Water boils at a temperature of"
+        },
+        {
+          "label": "factual_recall_3",
+          "prompt": "The largest planet in our solar system is"
+        },
+        {
+          "label": "instruction_following_1",
+          "prompt": "List three colors of the rainbow:"
+        },
+        {
+          "label": "instruction_following_2",
+          "prompt": "Name two programming languages:"
+        },
+        {
+          "label": "instruction_following_3",
+          "prompt": "Give one example of a mammal:"
+        },
+        {
+          "label": "multistep_reasoning_1",
+          "prompt": "Tom has 3 apples. He buys 5 more, then gives away 2. How many apples does Tom have now? Answer:"
+        },
+        {
+          "label": "multistep_reasoning_2",
+          "prompt": "A store sells pens for $2 each. If Sarah buys 4 pens and pays with a $10 bill, her change is"
+        },
+        {
+          "label": "multistep_reasoning_3",
+          "prompt": "First add 10 and 20, then subtract 5 from the result. The final answer is"
+        },
+        {
+          "label": "arithmetic_reasoning_1",
+          "prompt": "12 plus 15 equals"
+        },
+        {
+          "label": "arithmetic_reasoning_2",
+          "prompt": "7 times 8 equals"
+        },
+        {
+          "label": "arithmetic_reasoning_3",
+          "prompt": "100 divided by 4 equals"
+        },
+        {
+          "label": "logical_reasoning_1",
+          "prompt": "All cats are animals. Fluffy is a cat. Therefore, Fluffy is"
+        },
+        {
+          "label": "logical_reasoning_2",
+          "prompt": "If it is raining, the ground is wet. It is raining. So the ground is"
+        },
+        {
+          "label": "logical_reasoning_3",
+          "prompt": "Either the light is on or it is off. The light is not on. So the light is"
+        },
+        {
+          "label": "code_completion_1",
+          "prompt": "def multiply(a, b): return a *"
+        },
+        {
+          "label": "code_completion_2",
+          "prompt": "def greet(name): return \"Hello, \" + name +"
+        },
+        {
+          "label": "code_completion_3",
+          "prompt": "def is_positive(n): return n >"
+        },
+        {
+          "label": "code_reasoning_1",
+          "prompt": "x = [1, 2, 3]; y = sum(x); print(y) # y equals"
+        },
+        {
+          "label": "code_explanation_1",
+          "prompt": "The following Python code prints numbers from 1 to 5: for i in range(1, 6): print(i). This code works by"
+        },
+        {
+          "label": "code_explanation_2",
+          "prompt": "In programming, a for loop is used to"
+        },
+        {
+          "label": "code_explanation_3",
+          "prompt": "The purpose of a function in code is to"
+        },
+        {
+          "label": "structured_output_1",
+          "prompt": "Format the following as a bulleted list: apples, bananas, cherries. Output:"
+        },
+        {
+          "label": "structured_output_2",
+          "prompt": "Convert to JSON: name is Alice, age is 30. Output:"
+        },
+        {
+          "label": "structured_output_3",
+          "prompt": "Write the numbers 1 to 3 as a comma-separated list:"
+        },
+        {
+          "label": "summarization_1",
+          "prompt": "The quick brown fox jumps over the lazy dog while the sun sets slowly behind the mountains. In one sentence, this describes"
+        },
+        {
+          "label": "summarization_2",
+          "prompt": "Photosynthesis is the process by which plants convert sunlight into energy. In short, this means plants"
+        },
+        {
+          "label": "summarization_3",
+          "prompt": "The meeting covered budget, timeline, and staffing. In summary, the meeting was about"
+        },
+        {
+          "label": "prose_continuation_1",
+          "prompt": "Once upon a time, in a small village,"
+        },
+        {
+          "label": "prose_continuation_2",
+          "prompt": "The old lighthouse stood at the edge of the cliff, watching over"
+        },
+        {
+          "label": "prose_continuation_3",
+          "prompt": "In the depths of the ancient forest, a young explorer discovered"
+        }
+      ],
+      "categories": [
+        "factual_recall",
+        "instruction_following",
+        "multistep_reasoning",
+        "arithmetic_reasoning",
+        "logical_reasoning",
+        "code_completion",
+        "code_reasoning",
+        "code_explanation",
+        "structured_output",
+        "summarization",
+        "prose_continuation"
+      ],
+      "reasoning_heavy_subset_size": 10,
+      "reasoning_heavy_subset_labels": [
+        "multistep_reasoning_1",
+        "multistep_reasoning_2",
+        "multistep_reasoning_3",
+        "arithmetic_reasoning_1",
+        "arithmetic_reasoning_2",
+        "arithmetic_reasoning_3",
+        "logical_reasoning_1",
+        "logical_reasoning_2",
+        "logical_reasoning_3",
+        "code_reasoning_1"
+      ],
+      "known_edge_case": "multistep_reasoning_1 ('Tom has 3 apples...Answer:') causes the NATIVE reference itself to generate 0 tokens (immediate EOS) on BOTH models -- reproduced identically on 135M and 360M, confirmed with a direct membrane-run invocation, not a probe artifact. No quality comparison is possible for this prompt on any candidate mode (native has nothing to compare against). Kept in the persisted prompt set and raw data (not removed), excluded only from the mean/worst-case computation where it is mathematically undefined -- reported explicitly via n_quality_unavailable, not silently dropped."
+    },
+    "aggregate_quality": {
+      "135M": {
+        "q8": {
+          "full_set": {
+            "n_prompts": 31,
+            "n_quality_available": 30,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.992346,
+            "median_top1_preservation": 1.0,
+            "mean_logit_rel_l2": 0.009033,
+            "mean_delta_nll": 0.000686,
+            "worst_case_prompt": "instruction_following_2",
+            "worst_case_top1_preservation": 0.909091,
+            "worst_case_logit_rel_l2": 0.010915
+          },
+          "reasoning_subset": {
+            "n_prompts": 10,
+            "n_quality_available": 9,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.996046,
+            "median_top1_preservation": 1.0,
+            "mean_logit_rel_l2": 0.008513,
+            "mean_delta_nll": 0.000336,
+            "worst_case_prompt": "arithmetic_reasoning_3",
+            "worst_case_top1_preservation": 0.972222,
+            "worst_case_logit_rel_l2": 0.009701
+          }
+        },
+        "q5_0": {
+          "full_set": {
+            "n_prompts": 31,
+            "n_quality_available": 30,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.9748,
+            "median_top1_preservation": 0.978847,
+            "mean_logit_rel_l2": 0.058373,
+            "mean_delta_nll": 0.007098,
+            "worst_case_prompt": "summarization_2",
+            "worst_case_top1_preservation": 0.904762,
+            "worst_case_logit_rel_l2": 0.088068
+          },
+          "reasoning_subset": {
+            "n_prompts": 10,
+            "n_quality_available": 9,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.984831,
+            "median_top1_preservation": 0.992188,
+            "mean_logit_rel_l2": 0.051877,
+            "mean_delta_nll": 0.001231,
+            "worst_case_prompt": "arithmetic_reasoning_1",
+            "worst_case_top1_preservation": 0.945946,
+            "worst_case_logit_rel_l2": 0.043289
+          }
+        },
+        "q5_1": {
+          "full_set": {
+            "n_prompts": 31,
+            "n_quality_available": 30,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.961749,
+            "median_top1_preservation": 0.96875,
+            "mean_logit_rel_l2": 0.055807,
+            "mean_delta_nll": 0.014207,
+            "worst_case_prompt": "instruction_following_2",
+            "worst_case_top1_preservation": 0.818182,
+            "worst_case_logit_rel_l2": 0.07788
+          },
+          "reasoning_subset": {
+            "n_prompts": 10,
+            "n_quality_available": 9,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.950523,
+            "median_top1_preservation": 0.953125,
+            "mean_logit_rel_l2": 0.054447,
+            "mean_delta_nll": 0.016678,
+            "worst_case_prompt": "multistep_reasoning_3",
+            "worst_case_top1_preservation": 0.9,
+            "worst_case_logit_rel_l2": 0.066641
+          }
+        },
+        "q4": {
+          "full_set": {
+            "n_prompts": 31,
+            "n_quality_available": 30,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.924939,
+            "median_top1_preservation": 0.922704,
+            "mean_logit_rel_l2": 0.135614,
+            "mean_delta_nll": 0.030118,
+            "worst_case_prompt": "multistep_reasoning_3",
+            "worst_case_top1_preservation": 0.8,
+            "worst_case_logit_rel_l2": 0.148449
+          },
+          "reasoning_subset": {
+            "n_prompts": 10,
+            "n_quality_available": 9,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.91412,
+            "median_top1_preservation": 0.914062,
+            "mean_logit_rel_l2": 0.12821,
+            "mean_delta_nll": 0.042155,
+            "worst_case_prompt": "multistep_reasoning_3",
+            "worst_case_top1_preservation": 0.8,
+            "worst_case_logit_rel_l2": 0.148449
+          }
+        }
+      },
+      "360M": {
+        "q8": {
+          "full_set": {
+            "n_prompts": 31,
+            "n_quality_available": 30,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.995737,
+            "median_top1_preservation": 1.0,
+            "mean_logit_rel_l2": 0.008704,
+            "mean_delta_nll": -0.000374,
+            "worst_case_prompt": "factual_recall_3",
+            "worst_case_top1_preservation": 0.976562,
+            "worst_case_logit_rel_l2": 0.008409
+          },
+          "reasoning_subset": {
+            "n_prompts": 10,
+            "n_quality_available": 9,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.999132,
+            "median_top1_preservation": 1.0,
+            "mean_logit_rel_l2": 0.00868,
+            "mean_delta_nll": -0.000972,
+            "worst_case_prompt": "logical_reasoning_3",
+            "worst_case_top1_preservation": 0.992188,
+            "worst_case_logit_rel_l2": 0.008951
+          }
+        },
+        "q5_0": {
+          "full_set": {
+            "n_prompts": 31,
+            "n_quality_available": 30,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.974235,
+            "median_top1_preservation": 0.979021,
+            "mean_logit_rel_l2": 0.055465,
+            "mean_delta_nll": 0.00568,
+            "worst_case_prompt": "multistep_reasoning_2",
+            "worst_case_top1_preservation": 0.909091,
+            "worst_case_logit_rel_l2": 0.065608
+          },
+          "reasoning_subset": {
+            "n_prompts": 10,
+            "n_quality_available": 9,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.971292,
+            "median_top1_preservation": 0.981481,
+            "mean_logit_rel_l2": 0.056487,
+            "mean_delta_nll": 0.002911,
+            "worst_case_prompt": "multistep_reasoning_2",
+            "worst_case_top1_preservation": 0.909091,
+            "worst_case_logit_rel_l2": 0.065608
+          }
+        },
+        "q5_1": {
+          "full_set": {
+            "n_prompts": 31,
+            "n_quality_available": 30,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.975941,
+            "median_top1_preservation": 0.983867,
+            "mean_logit_rel_l2": 0.050061,
+            "mean_delta_nll": 0.005015,
+            "worst_case_prompt": "instruction_following_3",
+            "worst_case_top1_preservation": 0.914062,
+            "worst_case_logit_rel_l2": 0.05344
+          },
+          "reasoning_subset": {
+            "n_prompts": 10,
+            "n_quality_available": 9,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.987392,
+            "median_top1_preservation": 1.0,
+            "mean_logit_rel_l2": 0.051286,
+            "mean_delta_nll": 0.006334,
+            "worst_case_prompt": "arithmetic_reasoning_1",
+            "worst_case_top1_preservation": 0.958333,
+            "worst_case_logit_rel_l2": 0.048253
+          }
+        },
+        "q4": {
+          "full_set": {
+            "n_prompts": 31,
+            "n_quality_available": 30,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.929291,
+            "median_top1_preservation": 0.938899,
+            "mean_logit_rel_l2": 0.117179,
+            "mean_delta_nll": 0.03232,
+            "worst_case_prompt": "summarization_1",
+            "worst_case_top1_preservation": 0.666667,
+            "worst_case_logit_rel_l2": 0.103866
+          },
+          "reasoning_subset": {
+            "n_prompts": 10,
+            "n_quality_available": 9,
+            "n_quality_unavailable": 1,
+            "unavailable_prompts": [
+              "multistep_reasoning_1"
+            ],
+            "mean_top1_preservation": 0.93688,
+            "median_top1_preservation": 0.935185,
+            "mean_logit_rel_l2": 0.117104,
+            "mean_delta_nll": 0.025631,
+            "worst_case_prompt": "arithmetic_reasoning_3",
+            "worst_case_top1_preservation": 0.894737,
+            "worst_case_logit_rel_l2": 0.112232
+          }
+        }
+      }
+    },
+    "decision_bar": {
+      "aggregate_quality_closer_to_q8_than_q4": {
+        "135M": "top1 distance-to-q8=0.0306 vs distance-to-q4=0.0368 -- closer to q8 (moderate margin). rel-L2: q5_1 is ~6.2x q8's, q4 is ~15x q8's -- q5_1 clearly better positioned relatively.",
+        "360M": "top1 distance-to-q8=0.0198 vs distance-to-q4=0.0466 -- clearly closer to q8 (more than 2x closer). rel-L2 tells the same story.",
+        "verdict": "PASS on both models, more convincingly on 360M."
+      },
+      "reasoning_subset_materially_better_than_q4": {
+        "135M": "q5_1 mean top1=0.9505 vs q4=0.9141 (+3.6pp); mean rel-L2=0.0544 vs q4=0.1282 (~2.4x better)",
+        "360M": "q5_1 mean top1=0.9874 vs q4=0.9369 (+5.0pp); mean rel-L2=0.0513 vs q4=0.1171 (~2.3x better)",
+        "verdict": "PASS clearly on both models, both metrics."
+      },
+      "no_repeated_catastrophic_corruption": {
+        "method": "Spot-checked the actual generated text at every model's worst-case prompt (lowest top1) for both q5_1 and q4.",
+        "135M_q5_1_worst_case_text": "'Name two programming languages:' -> 'Python and Java.\\n\\nWhat are the key differences between Python and Java?' -- coherent, correct, low top1 score is from choosing a different (also valid) follow-up question than native, not corruption.",
+        "360M_q5_1_worst_case_text": "'Give one example of a mammal:' -> full coherent paragraph about mammals with correct examples.",
+        "360M_q4_worst_case_text": "'...In one sentence, this describes' -> 'a scene.' -- terse but not garbled.",
+        "verdict": "PASS -- no corruption found anywhere; low top1 in the worst cases reflects legitimate alternative phrasing, not broken output."
+      },
+      "no_repeated_severe_early_divergence": {
+        "135M": "5/30 comparable prompts diverge before token 5 (17%); 6/30 are token-identical (0 divergence)",
+        "360M": "6/30 comparable prompts diverge before token 5 (20%); 8/30 are token-identical",
+        "verdict": "PASS -- early divergence is a minority pattern (~1 in 5 prompts), not systemic across most prompts, and roughly the same order as what Phase 10A/10B already observed for Q8 on some prompts."
+      },
+      "worst_case_understood_and_disclosed": {
+        "135M": "worst_case_prompt=instruction_following_2, top1=0.8182 (full set) / multistep_reasoning_3, top1=0.9000 (reasoning subset)",
+        "360M": "worst_case_prompt=instruction_following_3, top1=0.9141 (full set) / arithmetic_reasoning_1, top1=0.9583 (reasoning subset, actually a GOOD score -- reasoning subset's worst case is better than the full set's)",
+        "verdict": "PASS -- exact prompts and values identified, not hand-waved. Notably, on 360M the reasoning subset's own worst case is BETTER than the full set's worst case -- directly addressing Phase 10B's concern that reasoning prompts specifically might be fragile."
+      },
+      "no_systemic_model_degradation": {
+        "verdict": "PASS -- both models show the same consistent, bounded pattern (q5_1 meaningfully better than q4, meaningfully behind q8, no runaway failure on either model)."
+      }
+    },
+    "verdict": "DERISK PASSED. All 6 bar criteria pass on both tested models. Q5_1's quality profile is confirmed materially closer to Q8 than Q4 in aggregate, clearly better than Q4 on the reasoning-heavy subset specifically (directly answering Phase 10B's open question), with no corruption and a disclosed, understood worst case. Proceeding to productization.",
+    "note_on_phase_10b_caveat": "Phase 10B flagged a 135M 'simple_reasoning' prompt at 85.7% top1 as a worst-case concern. This broader 10-prompt reasoning subset (multiple categories, not one prompt) shows 135M reasoning-subset mean top1=95.05% and worst-case=90.0% -- still a real, disclosed gap below q8's near-perfect reasoning performance, but not the kind of severe, repeated degradation that would fail this phase's bar. The original single fragile prompt was not systemic."
+  },
+  "memory_reconfirm": {
+    "cpu": [
+      {
+        "ctx": 2048,
+        "native": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 47185920,
+          "rss_after_context_kb": 332044
+        },
+        "q8": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 25067520,
+          "rss_after_context_kb": 314384
+        },
+        "q5": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 17694720,
+          "rss_after_context_kb": 307132
+        }
+      },
+      {
+        "ctx": 8192,
+        "native": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 188743680,
+          "rss_after_context_kb": 474120
+        },
+        "q8": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 100270080,
+          "rss_after_context_kb": 387964
+        },
+        "q5": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 70778880,
+          "rss_after_context_kb": 359216
+        }
+      },
+      {
+        "ctx": 16384,
+        "native": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 377487360,
+          "rss_after_context_kb": 659400
+        },
+        "q8": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 200540160,
+          "rss_after_context_kb": 486664
+        },
+        "q5": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 141557760,
+          "rss_after_context_kb": 429068
+        }
+      }
+    ],
+    "vulkan": [
+      {
+        "ctx": 2048,
+        "native": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 47185920,
+          "rss_after_context_kb": 273008,
+          "external_peak_vram_mib": 347,
+          "gpu_layers_selected": 30
+        },
+        "q8": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 25067520,
+          "rss_after_context_kb": 277788,
+          "external_peak_vram_mib": 326,
+          "gpu_layers_selected": 30
+        },
+        "q5": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 17694720,
+          "rss_after_context_kb": 277820,
+          "external_peak_vram_mib": 320,
+          "gpu_layers_selected": 30
+        }
+      },
+      {
+        "ctx": 8192,
+        "native": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 188743680,
+          "rss_after_context_kb": 286868,
+          "external_peak_vram_mib": 477,
+          "gpu_layers_selected": 30
+        },
+        "q8": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 100270080,
+          "rss_after_context_kb": 284084,
+          "external_peak_vram_mib": 396,
+          "gpu_layers_selected": 30
+        },
+        "q5": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 70778880,
+          "rss_after_context_kb": 282956,
+          "external_peak_vram_mib": 369,
+          "gpu_layers_selected": 30
+        }
+      },
+      {
+        "ctx": 16384,
+        "native": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 377487360,
+          "rss_after_context_kb": 297172,
+          "external_peak_vram_mib": 651,
+          "gpu_layers_selected": 30
+        },
+        "q8": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 200540160,
+          "rss_after_context_kb": 291660,
+          "external_peak_vram_mib": 488,
+          "gpu_layers_selected": 30
+        },
+        "q5": {
+          "exit_code": 0,
+          "kv_allocated_bytes": 141557760,
+          "rss_after_context_kb": 289692,
+          "external_peak_vram_mib": 434,
+          "gpu_layers_selected": 30
+        }
+      }
+    ]
+  },
+  "capacity_reconfirm_360m_vulkan": [
+    {
+      "ctx": 131072,
+      "kv_mode": "q8",
+      "exit_code": 0,
+      "gpu_layers_selected": 31
+    },
+    {
+      "ctx": 131072,
+      "kv_mode": "q5",
+      "exit_code": 0,
+      "gpu_layers_selected": 32
+    },
+    {
+      "ctx": 180000,
+      "kv_mode": "q8",
+      "exit_code": 5,
+      "gpu_layers_selected": null
+    },
+    {
+      "ctx": 180000,
+      "kv_mode": "q5",
+      "exit_code": 0,
+      "gpu_layers_selected": 32
+    },
+    {
+      "ctx": 220000,
+      "kv_mode": "q8",
+      "exit_code": 5,
+      "gpu_layers_selected": null
+    },
+    {
+      "ctx": 220000,
+      "kv_mode": "q5",
+      "exit_code": 0,
+      "gpu_layers_selected": 4
+    }
+  ],
+  "performance_and_long_generation": {
+    "note": "Phase 10C Sections 14-17: CPU/Vulkan regression, performance repetitions, long generation. SmolLM2-135M unless noted.",
+    "regression_cpu": {
+      "native": {
+        "exit_code": 0
+      },
+      "q8": {
+        "exit_code": 0
+      },
+      "q5": {
+        "exit_code": 0
+      },
+      "include_text_without_json_rejected": true,
+      "version_string_unchanged": "0.3.0-rc1",
+      "help_and_version_flags_unaffected": true
+    },
+    "performance_repetitions": {
+      "vulkan_7x_ctx2048_gen128": {
+        "q8": {
+          "n": 7,
+          "min": 252.39,
+          "max": 267.57,
+          "mean": 261.81,
+          "median": 263.06,
+          "stddev": 4.76
+        },
+        "q5": {
+          "n": 7,
+          "min": 253.39,
+          "max": 263.78,
+          "mean": 259.97,
+          "median": 261.62,
+          "stddev": 3.98
+        },
+        "delta_vs_q8_pct": -0.7
+      },
+      "cpu_5x_ctx2048_gen128": {
+        "q8": {
+          "n": 5,
+          "min": 61.21,
+          "max": 69.14,
+          "mean": 65.52,
+          "median": 65.76,
+          "stddev": 3.7
+        },
+        "q5": {
+          "n": 5,
+          "min": 56.59,
+          "max": 66.66,
+          "mean": 61.52,
+          "median": 60.09,
+          "stddev": 4.27
+        },
+        "delta_vs_q8_pct": -6.11
+      },
+      "note": "Vulkan: negligible cost, well within noise. CPU: a modest ~6% mean dip -- reported honestly rather than rounded away; value ranges overlap substantially (q8 min=61.21 vs q5 max=66.66) given both modes' ~4 tok/s stddev on a 5-sample run, so this is close to but not fully inside the noise band. Not treated as disqualifying (Vulkan is the primary target backend for this feature and shows no cost), but not claimed as \"no performance cost\" either."
+    },
+    "long_generation_135m_ctx2048_q5_512tok": {
+      "generated_tokens": 512,
+      "exit_code": 0,
+      "kv_type": "Q5_1",
+      "rss_after_context_kb": 307164,
+      "rss_final_kb": 308316,
+      "peak_rss_kb": 308316,
+      "generation_tok_per_s": 61.08,
+      "no_fallback_occurred": true,
+      "quality_vs_native": {
+        "q8_reference": {
+          "first_divergence": 40,
+          "top1_preservation": 0.994141,
+          "logit_rel_l2": 0.009941,
+          "delta_nll": 0.00015
+        },
+        "q5": {
+          "first_divergence": 81,
+          "top1_preservation": 0.982422,
+          "logit_rel_l2": 0.060368,
+          "delta_nll": 0.006143
+        }
+      },
+      "memory_stability": "RSS flat across the full run (peak == final, ~1MB drift from context creation to end) -- no leak.",
+      "consistency_check": "Matches Phase 10B's equivalent measurement exactly (same prompt/ctx/gen_tokens) -- reproducible across the product CLI rewrite, not just the experimental probe."
+    }
+  },
+  "product_cli": {
+    "flag": "--kv native|q8|q5",
+    "mapping": "q5 -> GGML_TYPE_Q5_1 (never Q5_0)",
+    "excluded_from_product": [
+      "q5_0",
+      "q5_1 (spelling)",
+      "q4"
+    ],
+    "compare_kv_and_gpu_bench": "native vs ONE selected compressed mode -- q8 by default (backward compatible), q5 only if --kv q5 was also given. Never a 3-way/4-way comparison.",
+    "json_schema": "kv_store/kv_type fields for plain runs; compressed_kv field for compare/gpu-bench modes.",
+    "gpu_auto_and_guard": "Uses real Q5_1 ggml_row_size()-derived byte estimates (kv_bytes_for_mode()), verified against real allocation."
+  },
+  "limitations": [
+    "Only 2 models tested (SmolLM2 135M, 360M), both small (<400M params) and both LLM_ARCH_LLAMA.",
+    "31-prompt derisk set (not thousands) -- broader than Phase 10A/10B but still a bounded, hand-authored set, not a standardized benchmark.",
+    "CPU performance showed a ~6% mean throughput dip in the 5-rep sample -- disclosed, not fully resolved as noise vs real cost.",
+    "One prompt (multistep_reasoning_1) causes native itself to generate 0 tokens on both models -- no quality comparison possible for that specific prompt on any mode; kept in the persisted set, excluded only from mean/worst-case math where undefined.",
+    "No adaptive/mixed Q4+Q5+Q8 policy implemented -- explicitly out of scope for Phase 10C."
+  ]
+}

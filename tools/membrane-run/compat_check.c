@@ -7,7 +7,9 @@ int	membrane_check_kv_compat(const char *arch_name, int32_t n_embd,
 		int32_t n_head, int32_t n_head_kv, uint32_t ctx_size, int kv_mode,
 		membrane_compat_result_t *out)
 {
-	int32_t	n_embd_head;
+	int32_t		n_embd_head;
+	uint32_t	block_size;
+	const char	*type_label;
 
 	if (out == NULL)
 		return (0);
@@ -15,6 +17,20 @@ int	membrane_check_kv_compat(const char *arch_name, int32_t n_embd,
 	out->ok = 1;
 	if (kv_mode == 0)	/* MEMBRANE_KV_STORE_NATIVE: no checks apply */
 		return (1);
+	/* Each mode's block size is checked against its own constant, not
+	 * silently reused from another's -- they are equal (32) in the
+	 * pinned ggml commit, but this keeps that a checked fact rather
+	 * than an assumption baked into a shared branch. */
+	if (kv_mode == 2)	/* MEMBRANE_KV_STORE_Q5 (Q5_1) */
+	{
+		block_size = MEMBRANE_Q5_1_BLOCK_SIZE;
+		type_label = "Q5_1";
+	}
+	else	/* MEMBRANE_KV_STORE_Q8 */
+	{
+		block_size = MEMBRANE_Q8_0_BLOCK_SIZE;
+		type_label = "Q8_0";
+	}
 	if (ctx_size < 1)
 	{
 		snprintf(out->reason, sizeof(out->reason),
@@ -25,10 +41,10 @@ int	membrane_check_kv_compat(const char *arch_name, int32_t n_embd,
 		|| strcmp(arch_name, "llama") != 0)
 	{
 		snprintf(out->reason, sizeof(out->reason),
-			"model architecture '%s' is not validated for Q8 KV "
+			"model architecture '%s' is not validated for %s KV "
 			"storage (only LLM_ARCH_LLAMA is supported)",
 			(arch_name != NULL && arch_name[0] != '\0')
-				? arch_name : "(unknown)");
+				? arch_name : "(unknown)", type_label);
 		return (out->ok = 0, 0);
 	}
 	if (n_head <= 0 || n_embd <= 0)
@@ -53,11 +69,11 @@ int	membrane_check_kv_compat(const char *arch_name, int32_t n_embd,
 		return (out->ok = 0, 0);
 	}
 	n_embd_head = n_embd / n_head;
-	if (n_embd_head % (int32_t)MEMBRANE_Q8_0_BLOCK_SIZE != 0)
+	if (n_embd_head % (int32_t)block_size != 0)
 	{
 		snprintf(out->reason, sizeof(out->reason),
-			"head dimension %d is not divisible by Q8_0 block size %u",
-			n_embd_head, MEMBRANE_Q8_0_BLOCK_SIZE);
+			"head dimension %d is not divisible by %s block size %u",
+			n_embd_head, type_label, block_size);
 		return (out->ok = 0, 0);
 	}
 	return (1);

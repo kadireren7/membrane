@@ -1,0 +1,31 @@
+The capital of Japan is
+Water boils at a temperature of
+The largest planet in our solar system is
+List three colors of the rainbow:
+Name two programming languages:
+Give one example of a mammal:
+Tom has 3 apples. He buys 5 more, then gives away 2. How many apples does Tom have now? Answer:
+A store sells pens for $2 each. If Sarah buys 4 pens and pays with a $10 bill, her change is
+First add 10 and 20, then subtract 5 from the result. The final answer is
+12 plus 15 equals
+7 times 8 equals
+100 divided by 4 equals
+All cats are animals. Fluffy is a cat. Therefore, Fluffy is
+If it is raining, the ground is wet. It is raining. So the ground is
+Either the light is on or it is off. The light is not on. So the light is
+def multiply(a, b): return a *
+def greet(name): return "Hello, " + name +
+def is_positive(n): return n >
+x = [1, 2, 3]; y = sum(x); print(y) # y equals
+The following Python code prints numbers from 1 to 5: for i in range(1, 6): print(i). This code works by
+In programming, a for loop is used to
+The purpose of a function in code is to
+Format the following as a bulleted list: apples, bananas, cherries. Output:
+Convert to JSON: name is Alice, age is 30. Output:
+Write the numbers 1 to 3 as a comma-separated list:
+The quick brown fox jumps over the lazy dog while the sun sets slowly behind the mountains. In one sentence, this describes
+Photosynthesis is the process by which plants convert sunlight into energy. In short, this means plants
+The meeting covered budget, timeline, and staffing. In summary, the meeting was about
+Once upon a time, in a small village,
+The old lighthouse stood at the edge of the cliff, watching over
+In the depths of the ancient forest, a young explorer discovered

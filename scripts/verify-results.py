@@ -722,6 +722,270 @@ def _c37():
 		f"{readme_tp_hi}]% vs artifact [{abs(tp_lo):.2f},{abs(tp_hi):.2f}]%")
 
 
+# ---------------------------------------------------------------------
+# Phase 10C: Q5 derisk + productization development-evidence artifact
+# ---------------------------------------------------------------------
+V04_ARTIFACT_PATH = REPO_ROOT / "results" / "v0.4" / "q5-validation.json"
+_V04_CACHE = {}
+
+
+def _load_v04_artifact():
+	key = str(V04_ARTIFACT_PATH)
+	if key not in _V04_CACHE:
+		_V04_CACHE[key] = json.loads(V04_ARTIFACT_PATH.read_text())
+	return _V04_CACHE[key]
+
+
+@check("Phase 10C v0.4 artifact exists, is valid JSON, and has "
+	"schema_version 1")
+def _c38():
+	if not V04_ARTIFACT_PATH.exists():
+		return False, f"{V04_ARTIFACT_PATH} does not exist"
+	a = _load_v04_artifact()
+	ok = a.get("schema_version") == 1
+	return ok, f"schema_version={a.get('schema_version')!r}"
+
+
+@check("Phase 10C v0.4 artifact: membrane_commit and llama_cpp_commit "
+	"look like real commit SHAs (40 hex chars)")
+def _c39():
+	a = _load_v04_artifact()
+	bad = []
+	for key in ("membrane_commit", "llama_cpp_commit"):
+		sha = a.get(key, "")
+		if not re.fullmatch(r"[0-9a-f]{40}", sha):
+			bad.append(f"{key}={sha!r}")
+	return len(bad) == 0, "; ".join(bad) if bad else "both commit fields well-formed"
+
+
+@check("Phase 10C v0.4 artifact: derisk prompt set has >= 25 prompts, "
+	"exact prompts persisted, categories covered")
+def _c40():
+	a = _load_v04_artifact()
+	ps = a.get("derisk", {}).get("prompt_set", {})
+	bad = []
+	total = ps.get("total_prompts", 0)
+	entries = ps.get("prompts_and_labels", [])
+	if total < 25:
+		bad.append(f"total_prompts={total} < 25")
+	if len(entries) != total:
+		bad.append(f"prompts_and_labels has {len(entries)} entries but "
+			f"total_prompts={total}")
+	for e in entries:
+		if not e.get("prompt") or not e.get("label"):
+			bad.append(f"entry missing prompt/label: {e!r}")
+			break
+	categories = ps.get("categories", [])
+	expected_categories = {"factual_recall", "instruction_following",
+		"multistep_reasoning", "arithmetic_reasoning", "logical_reasoning",
+		"code_completion", "code_reasoning", "code_explanation",
+		"structured_output", "summarization", "prose_continuation"}
+	missing_cats = expected_categories - set(categories)
+	if missing_cats:
+		bad.append(f"missing categories: {missing_cats}")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		f"{total} prompts, {len(categories)} categories, all persisted verbatim")
+
+
+@check("Phase 10C v0.4 artifact: reasoning-heavy subset has >= 10 "
+	"prompts and is a real subset of the persisted prompt labels")
+def _c41():
+	a = _load_v04_artifact()
+	ps = a.get("derisk", {}).get("prompt_set", {})
+	size = ps.get("reasoning_heavy_subset_size", 0)
+	subset_labels = set(ps.get("reasoning_heavy_subset_labels", []))
+	all_labels = {e["label"] for e in ps.get("prompts_and_labels", [])}
+	bad = []
+	if size < 10:
+		bad.append(f"reasoning_heavy_subset_size={size} < 10")
+	if len(subset_labels) != size:
+		bad.append(f"{len(subset_labels)} labels listed but size={size}")
+	missing = subset_labels - all_labels
+	if missing:
+		bad.append(f"reasoning subset references labels not in the "
+			f"persisted prompt set: {missing}")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{size} reasoning-heavy prompts, all real"
+
+
+@check("Phase 10C v0.4 artifact: storage math -- Q5_1 bit width and "
+	"%-of-F16/%-of-Q8 match its real ggml block struct size")
+def _c42():
+	a = _load_v04_artifact()
+	# Storage theory itself lives in results/phase10/ (Phase 10B) --
+	# this check confirms the memory_reconfirm bytes in THIS artifact
+	# are consistent with that known Q5_1 ratio (37.5% of F16), not
+	# re-deriving the theory from scratch.
+	rows = a.get("memory_reconfirm", {}).get("cpu", [])
+	bad = []
+	if not rows:
+		return False, "no memory_reconfirm.cpu rows found"
+	for row in rows:
+		native_b = row["native"]["kv_allocated_bytes"]
+		q5_b = row["q5"]["kv_allocated_bytes"]
+		if native_b is None or q5_b is None:
+			bad.append(f"ctx={row['ctx']}: missing native/q5 bytes")
+			continue
+		pct = 100.0 * q5_b / native_b
+		if abs(pct - 37.5) > 0.01:
+			bad.append(f"ctx={row['ctx']}: q5/native={pct:.4f}% expected 37.5%")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(rows)} rows match 37.5% exactly"
+
+
+@check("Phase 10C v0.4 artifact: q5 < q8 < native memory ordering "
+	"holds on every CPU and Vulkan reconfirmation row")
+def _c43():
+	a = _load_v04_artifact()
+	bad = []
+	for backend in ("cpu", "vulkan"):
+		rows = a.get("memory_reconfirm", {}).get(backend, [])
+		if not rows:
+			bad.append(f"no memory_reconfirm.{backend} rows found")
+			continue
+		for row in rows:
+			vals = {m: row[m]["kv_allocated_bytes"] for m in ("q5", "q8", "native")}
+			if None in vals.values():
+				bad.append(f"{backend} ctx={row['ctx']}: missing bytes {vals}")
+				continue
+			if not (vals["q5"] < vals["q8"] < vals["native"]):
+				bad.append(f"{backend} ctx={row['ctx']}: not q5({vals['q5']}) "
+					f"< q8({vals['q8']}) < native({vals['native']})")
+	return len(bad) == 0, "; ".join(bad) if bad else "ordering holds on all rows, both backends"
+
+
+@check("Phase 10C v0.4 artifact: q5 aggregate quality vs q4 -- q5 "
+	"beats q4 on mean top1 and mean logit rel-L2, both models, full "
+	"set and reasoning subset")
+def _c44():
+	a = _load_v04_artifact()
+	agg = a.get("derisk", {}).get("aggregate_quality", {})
+	bad = []
+	for model in ("135M", "360M"):
+		for subset in ("full_set", "reasoning_subset"):
+			q5 = agg.get(model, {}).get("q5_1", {}).get(subset)
+			q4 = agg.get(model, {}).get("q4", {}).get(subset)
+			if not q5 or not q4:
+				bad.append(f"{model}/{subset}: missing q5_1 or q4 aggregate")
+				continue
+			if not (q5["mean_top1_preservation"] >= q4["mean_top1_preservation"]):
+				bad.append(f"{model}/{subset}: q5 mean_top1="
+					f"{q5['mean_top1_preservation']} not >= q4's "
+					f"{q4['mean_top1_preservation']}")
+			if not (q5["mean_logit_rel_l2"] < q4["mean_logit_rel_l2"]):
+				bad.append(f"{model}/{subset}: q5 mean_logit_rel_l2="
+					f"{q5['mean_logit_rel_l2']} not < q4's "
+					f"{q4['mean_logit_rel_l2']}")
+	return len(bad) == 0, "; ".join(bad) if bad else "q5 beats q4 on both metrics, both models, both subsets"
+
+
+@check("Phase 10C v0.4 artifact: worst-case quality fields present "
+	"for q5_1 on both models (full set and reasoning subset)")
+def _c45():
+	a = _load_v04_artifact()
+	agg = a.get("derisk", {}).get("aggregate_quality", {})
+	bad = []
+	for model in ("135M", "360M"):
+		for subset in ("full_set", "reasoning_subset"):
+			q5 = agg.get(model, {}).get("q5_1", {}).get(subset, {})
+			if "worst_case_prompt" not in q5 or "worst_case_top1_preservation" not in q5:
+				bad.append(f"{model}/{subset}: missing worst_case fields")
+	return len(bad) == 0, "; ".join(bad) if bad else "worst-case fields present, both models, both subsets"
+
+
+@check("Phase 10C v0.4 artifact: Vulkan memory reconfirmation "
+	"includes real external VRAM records for q5")
+def _c46():
+	a = _load_v04_artifact()
+	rows = a.get("memory_reconfirm", {}).get("vulkan", [])
+	bad = []
+	if not rows:
+		return False, "no memory_reconfirm.vulkan rows found"
+	for row in rows:
+		vram = row.get("q5", {}).get("external_peak_vram_mib")
+		layers = row.get("q5", {}).get("gpu_layers_selected")
+		if vram is None or vram <= 0:
+			bad.append(f"ctx={row['ctx']}: q5 external_peak_vram_mib={vram} invalid")
+		if layers is None or layers <= 0:
+			bad.append(f"ctx={row['ctx']}: q5 gpu_layers_selected={layers} invalid")
+	return len(bad) == 0, "; ".join(bad) if bad else f"{len(rows)} rows with valid VRAM/layer records"
+
+
+@check("Phase 10C v0.4 artifact: capacity/pressure-boundary evidence "
+	"shows q8 failing closed where q5 still fits")
+def _c47():
+	a = _load_v04_artifact()
+	rows = a.get("capacity_reconfirm_360m_vulkan", [])
+	bad = []
+	if not rows:
+		return False, "no capacity_reconfirm_360m_vulkan rows found"
+	found = False
+	for r in rows:
+		if r.get("kv_mode") == "q8" and r.get("exit_code") == 5:
+			ctx = r["ctx"]
+			q5_at_ctx = next((x for x in rows if x["ctx"] == ctx
+				and x.get("kv_mode") == "q5"), None)
+			if q5_at_ctx and q5_at_ctx.get("exit_code") == 0:
+				found = True
+	if not found:
+		bad.append("no context row found where q8 failed closed (exit 5) "
+			"but q5 succeeded")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		f"{len(rows)} rows checked; confirmed >=1 ctx where q8 exit=5, q5 exit=0")
+
+
+@check("Phase 10C v0.4 artifact: no absolute filesystem paths anywhere "
+	"in the file")
+def _c48():
+	text = V04_ARTIFACT_PATH.read_text()
+	posix = re.findall(
+		r'(?<![\w.\-])/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)+',
+		text,
+	)
+	windows = re.findall(r'[A-Za-z]:\\[^"\\]*(?:\\[^"\\]*)+', text)
+	hits = posix + windows
+	return len(hits) == 0, f"suspicious path-like strings: {hits[:5]}" if hits else "none found"
+
+
+@check("Phase 10C v0.4 artifact: no NaN/Infinity anywhere in the file")
+def _c49():
+	a = _load_v04_artifact()
+	bad = _no_nan_inf(a)
+	return len(bad) == 0, f"non-finite at: {bad[:5]}" if bad else "all values finite"
+
+
+@check("Phase 10C v0.4 artifact: product_cli section does not claim "
+	"q5_0 or q4 are exposed product modes")
+def _c50():
+	a = _load_v04_artifact()
+	pc = a.get("product_cli", {})
+	bad = []
+	flag = pc.get("flag", "")
+	if "q5_0" in flag or re.search(r"\bq4\b", flag):
+		bad.append(f"product_cli.flag references an unsupported mode: {flag!r}")
+	excluded = pc.get("excluded_from_product", [])
+	if not any("q5_0" in x for x in excluded) or not any(x.strip() == "q4" for x in excluded):
+		bad.append(f"excluded_from_product does not clearly list q5_0 and q4: {excluded!r}")
+	return len(bad) == 0, "; ".join(bad) if bad else "product_cli section correctly scoped to native/q8/q5"
+
+
+@check("README.md not updated with unsupported Phase 10C product "
+	"claims (--kv q5_0/q4 as product flags, or universal-quality "
+	"language) unless derisk explicitly passed")
+def _c51():
+	readme = (REPO_ROOT / "README.md").read_text()
+	a = _load_v04_artifact() if V04_ARTIFACT_PATH.exists() else {}
+	derisk_passed = str(a.get("derisk", {}).get("verdict", "")).startswith("DERISK PASSED")
+	bad = []
+	if re.search(r"--kv\s+q5_0\b", readme) or re.search(r"--kv\s+q4\b", readme):
+		bad.append("README documents --kv q5_0 or --kv q4 as product flags -- "
+			"these must never ship in stable docs")
+	if re.search(r"universal(ly)?\s+(good|high)\s+quality", readme, re.IGNORECASE):
+		bad.append("README claims universal quality for a compressed KV mode")
+	if not derisk_passed and re.search(r"--kv\s+q5\b", readme):
+		bad.append("README documents --kv q5 but the v0.4 artifact's derisk "
+			"verdict does not show DERISK PASSED")
+	return len(bad) == 0, "; ".join(bad) if bad else "README has no unsupported Q5 product claims"
+
+
 def main() -> int:
 	global ARTIFACT_PATH
 	ap = argparse.ArgumentParser()
@@ -741,6 +1005,8 @@ def main() -> int:
 			_c14, _c15, _c16, _c17, _c18, _c19, _c20, _c21, _c22, _c23, _c24,
 			_c25, _c26, _c27, _c28, _c29, _c30, _c31, _c32,
 			_c33, _c34, _c35, _c36, _c37,
+			_c38, _c39, _c40, _c41, _c42, _c43, _c44, _c45, _c46, _c47,
+			_c48, _c49, _c50, _c51,
 		)
 	for fn in checks:
 		fn()

@@ -70,6 +70,49 @@ static void	test_q8_smaller_than_native_same_shape(void)
 		"unrelated number");
 }
 
+/* Phase 10C: Q5_1, 32-element blocks, 24 bytes/block (2x ggml_half
+ * scale+min + 4-byte qh[] 5th-bit group + 16 bytes packed nibbles) --
+ * a 64-wide head is 2 blocks = 48 bytes/token. */
+static void	test_total_bytes_q5(void)
+{
+	membrane_kv_store_bytes_t	b;
+	uint64_t					total;
+
+	b.n_layer = 30;
+	b.kv_size = 2048;
+	b.bytes_per_token_k = 48;	/* 2 blocks * 24 bytes (Q5_1) */
+	b.bytes_per_token_v = 48;
+	total = membrane_kv_store_total_bytes(&b);
+	TEST_ASSERT(total == 30ULL * 2048ULL * 96ULL,
+		"q5 bytes = n_layer * kv_size * (k_row + v_row)");
+}
+
+/* Phase 10C Section 21: q5 < q8 < native ordering, for the same
+ * layer/kv_size/head shape -- proves the byte totals are strictly
+ * ordered, not accidentally aliased (e.g. a copy-paste bug giving q5
+ * the same byte-per-token constant as q8). */
+static void	test_q5_between_q8_and_native_same_shape(void)
+{
+	membrane_kv_store_bytes_t	shape;
+	uint64_t					native_total;
+	uint64_t					q8_total;
+	uint64_t					q5_total;
+
+	shape.n_layer = 30;
+	shape.kv_size = 2048;
+
+	shape.bytes_per_token_k = shape.bytes_per_token_v = 128;
+	native_total = membrane_kv_store_total_bytes(&shape);
+	shape.bytes_per_token_k = shape.bytes_per_token_v = 68;
+	q8_total = membrane_kv_store_total_bytes(&shape);
+	shape.bytes_per_token_k = shape.bytes_per_token_v = 48;
+	q5_total = membrane_kv_store_total_bytes(&shape);
+
+	TEST_ASSERT(q5_total < q8_total && q8_total < native_total,
+		"q5 < q8 < native for the same layer/kv_size/head shape, no "
+		"two modes accidentally alias the same bytes");
+}
+
 static void	test_total_bytes_scales_with_ctx_size(void)
 {
 	membrane_kv_store_bytes_t	small;
@@ -136,6 +179,8 @@ int	main(void)
 	test_total_bytes_native_f16();
 	test_total_bytes_q8();
 	test_q8_smaller_than_native_same_shape();
+	test_total_bytes_q5();
+	test_q5_between_q8_and_native_same_shape();
 	test_total_bytes_scales_with_ctx_size();
 	test_read_rss_populates_ru_maxrss();
 	test_rss_max_is_componentwise();

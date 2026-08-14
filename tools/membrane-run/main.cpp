@@ -121,6 +121,51 @@ static uint64_t	q8_kv_bytes(const model_shape_t &s, uint32_t ctx_size)
 	return (membrane_kv_store_total_bytes(&b));
 }
 
+static uint64_t	q5_kv_bytes(const model_shape_t &s, uint32_t ctx_size)
+{
+	membrane_kv_store_bytes_t	b;
+
+	b.n_layer = (uint64_t)s.n_layer;
+	b.kv_size = ctx_size;
+	b.bytes_per_token_k = ggml_row_size(GGML_TYPE_Q5_1, s.n_embd_gqa);
+	b.bytes_per_token_v = ggml_row_size(GGML_TYPE_Q5_1, s.n_embd_gqa);
+	return (membrane_kv_store_total_bytes(&b));
+}
+
+/* Real ggml_row_size()-based byte accounting for whichever of the
+ * three storage modes was requested -- the single place every call
+ * site below dispatches through, so native/q8/q5's estimates (used
+ * here, and by --gpu-layers auto's policy resolution below) can never
+ * drift out of sync with each other the way separately-updated
+ * ternaries could. */
+static uint64_t	kv_bytes_for_mode(const model_shape_t &s, uint32_t ctx_size,
+				int kv_mode)
+{
+	if (kv_mode == MEMBRANE_KV_STORE_Q8)
+		return (q8_kv_bytes(s, ctx_size));
+	if (kv_mode == MEMBRANE_KV_STORE_Q5)
+		return (q5_kv_bytes(s, ctx_size));
+	return (native_kv_bytes(s, ctx_size));
+}
+
+static const char	*kv_mode_name(int kv_mode)
+{
+	if (kv_mode == MEMBRANE_KV_STORE_Q8)
+		return ("q8");
+	if (kv_mode == MEMBRANE_KV_STORE_Q5)
+		return ("q5");
+	return ("native");
+}
+
+static const char	*kv_type_label(int kv_mode)
+{
+	if (kv_mode == MEMBRANE_KV_STORE_Q8)
+		return ("Q8_0");
+	if (kv_mode == MEMBRANE_KV_STORE_Q5)
+		return ("Q5_1");
+	return ("F16");
+}
+
 /* Phase 9B/9B.1: what was requested vs what was actually resolved,
  * kept as separate fields throughout (never collapsed into one) so
  * JSON/human telemetry can honestly distinguish "the user asked for
@@ -315,9 +360,8 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		fake_shape.n_head_kv = est.n_head_kv;
 		fake_shape.n_embd_gqa = (est.n_head > 0)
 			? (int64_t)(est.n_embd / est.n_head) * est.n_head_kv : 0;
-		kv_bytes_estimate = o.kv_mode == MEMBRANE_KV_STORE_Q8
-			? q8_kv_bytes(fake_shape, ctx_size)
-			: native_kv_bytes(fake_shape, ctx_size);
+		kv_bytes_estimate = kv_bytes_for_mode(fake_shape, ctx_size,
+			o.kv_mode);
 	}
 	if (o.gpu_layers == MEMBRANE_GPU_LAYERS_AUTO && !(have_est
 			&& est.n_layer > 0))
@@ -368,7 +412,8 @@ static void	print_startup_summary(const membrane_run_opts_t &o,
 	fprintf(stderr, "model      %s\n", model_label);
 	fprintf(stderr, "context    %u\n", ctx_size);
 	fprintf(stderr, "kv         %s\n",
-		o.kv_mode == MEMBRANE_KV_STORE_Q8 ? "Q8_0" : "native (F16)");
+		o.kv_mode == MEMBRANE_KV_STORE_NATIVE ? "native (F16)"
+			: kv_type_label(o.kv_mode));
 	/* run_kv_store_pass() (decode_loop.cpp) forces flash attention
 	 * ENABLED unconditionally for both native and q8 -- not just q8 --
 	 * so a --compare-kv run never mixes "KV cache dtype" with "which
@@ -378,8 +423,7 @@ static void	print_startup_summary(const membrane_run_opts_t &o,
 	fprintf(stderr, "flash attn enabled\n");
 	fprintf(stderr, "kv bytes   %.2f MiB (%s, from real model "
 		"hparams -- not measured until context creation)\n",
-		(double)kv_bytes / (1024.0 * 1024.0),
-		o.kv_mode == MEMBRANE_KV_STORE_Q8 ? "Q8_0" : "F16");
+		(double)kv_bytes / (1024.0 * 1024.0), kv_type_label(o.kv_mode));
 	/* Phase 9B/9B.1: backend/device is a REQUEST membrane-run made via
 	 * public ggml_backend_dev_*() enumeration, not a confirmed
 	 * post-load allocation (no public API exposes that without log-
@@ -486,9 +530,10 @@ static void	print_run_json(const membrane_run_opts_t &o,
 {
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"run\",\"model_label\":\"%s\",\"kv_store\":\"%s\","
+		"\"kv_type\":\"%s\","
 		"\"ctx_size\":%u,\"generated_tokens\":%llu,",
-		MEMBRANE_VERSION, model_label,
-		o.kv_mode == MEMBRANE_KV_STORE_Q8 ? "q8" : "native",
+		MEMBRANE_VERSION, model_label, kv_mode_name(o.kv_mode),
+		kv_type_label(o.kv_mode),
 		t.ctx_size, (unsigned long long)t.generated_tokens);
 	printf("\"storage\":{\"kv_allocated_bytes\":%llu},",
 		(unsigned long long)t.compressed_kv_allocated_bytes);
@@ -547,15 +592,13 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 	uint64_t						kv_bytes;
 
 	memset(&tel, 0, sizeof(tel));
-	tel.kv_store_mode_name = o.kv_mode == MEMBRANE_KV_STORE_Q8
-		? "q8" : "native";
+	tel.kv_store_mode_name = kv_mode_name(o.kv_mode);
 	/* This implementation never falls back: run_kv_store_pass() either
 	 * succeeds with the requested storage type or fails the whole run
 	 * (see the "generation failed" branch below) -- there is no retry-
-	 * with-native path for a failed q8 context. */
+	 * with-native path for a failed q8/q5 context. */
 	tel.no_fallback_occurred = 1;
-	kv_bytes = o.kv_mode == MEMBRANE_KV_STORE_Q8
-		? q8_kv_bytes(shape, ctx_size) : native_kv_bytes(shape, ctx_size);
+	kv_bytes = kv_bytes_for_mode(shape, ctx_size, o.kv_mode);
 	membrane_kv_store_read_rss(&tel.rss_after_model_load);
 	if (!o.quiet)
 		print_startup_summary(o, model_label, ctx_size, kv_bytes, gs);
@@ -598,42 +641,47 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 
 static void	print_compare_json(const char *model_label, uint32_t ctx_size,
 				uint64_t native_bytes,
-				const membrane_kv_store_telemetry_t &tel_q8,
+				const membrane_kv_store_telemetry_t &tel_candidate,
 				const membrane_gpu_state_t &gs)
 {
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
-		"\"mode\":\"compare\",\"model_label\":\"%s\",\"ctx_size\":%u,",
-		MEMBRANE_VERSION, model_label, ctx_size);
+		"\"mode\":\"compare\",\"model_label\":\"%s\",\"ctx_size\":%u,"
+		"\"compressed_kv\":\"%s\",",
+		MEMBRANE_VERSION, model_label, ctx_size,
+		tel_candidate.kv_store_mode_name);
 	printf("\"storage\":{\"native_kv_allocated_bytes\":%llu,"
-		"\"q8_kv_allocated_bytes\":%llu},",
+		"\"compressed_kv_allocated_bytes\":%llu},",
 		(unsigned long long)native_bytes,
-		(unsigned long long)tel_q8.compressed_kv_allocated_bytes);
+		(unsigned long long)tel_candidate.compressed_kv_allocated_bytes);
 	print_gpu_json(gs);
-	printf("\"memory_q8\":{\"rss_after_context_kb\":%llu,"
+	printf("\"memory_compressed\":{\"rss_after_context_kb\":%llu,"
 		"\"rss_final_kb\":%llu,\"peak_rss_kb\":%llu},",
-		(unsigned long long)tel_q8.rss_after_context.vm_rss_kb,
-		(unsigned long long)tel_q8.rss_final.vm_rss_kb,
-		(unsigned long long)tel_q8.rss_peak.vm_hwm_kb);
+		(unsigned long long)tel_candidate.rss_after_context.vm_rss_kb,
+		(unsigned long long)tel_candidate.rss_final.vm_rss_kb,
+		(unsigned long long)tel_candidate.rss_peak.vm_hwm_kb);
 	printf("\"performance\":{\"prompt_tok_per_s\":%.6f,"
 		"\"generation_tok_per_s\":%.6f},",
-		tel_q8.prompt_tok_per_s, tel_q8.generation_tok_per_s);
+		tel_candidate.prompt_tok_per_s, tel_candidate.generation_tok_per_s);
 	printf("\"quality\":{\"available\":%s,\"token_identity\":%s,"
 		"\"first_divergence\":%d,\"logit_rel_l2\":%.6f,"
 		"\"top1_preservation\":%.6f,\"delta_nll\":%.6f},",
-		tel_q8.quality_available ? "true" : "false",
-		tel_q8.token_identity ? "true" : "false", tel_q8.first_divergence,
-		tel_q8.logit_rel_l2, tel_q8.top1_preservation, tel_q8.delta_nll);
+		tel_candidate.quality_available ? "true" : "false",
+		tel_candidate.token_identity ? "true" : "false",
+		tel_candidate.first_divergence, tel_candidate.logit_rel_l2,
+		tel_candidate.top1_preservation, tel_candidate.delta_nll);
 	printf("\"no_fallback_occurred\":%s}\n",
-		tel_q8.no_fallback_occurred ? "true" : "false");
+		tel_candidate.no_fallback_occurred ? "true" : "false");
 }
 
 static void	print_compare_human(const char *model_label, uint32_t ctx_size,
 				uint64_t native_bytes,
-				const membrane_kv_store_telemetry_t &tel_q8,
+				const membrane_kv_store_telemetry_t &tel_candidate,
 				const membrane_gpu_state_t &gs)
 {
-	fprintf(stderr, "MEMBRANE %s -- compare mode (native vs q8)\n",
-		MEMBRANE_VERSION);
+	const char	*mode_name = tel_candidate.kv_store_mode_name;
+
+	fprintf(stderr, "MEMBRANE %s -- compare mode (native vs %s)\n",
+		MEMBRANE_VERSION, mode_name);
 	fprintf(stderr, "model            %s\n", model_label);
 	fprintf(stderr, "context          %u\n", ctx_size);
 	if (!gs.requested)
@@ -645,19 +693,22 @@ static void	print_compare_human(const char *model_label, uint32_t ctx_size,
 			gpu_layers_label(gs.gpu_layers_requested).c_str());
 	fprintf(stderr, "native kv bytes  %.2f MiB\n",
 		(double)native_bytes / (1024.0 * 1024.0));
-	fprintf(stderr, "q8 kv bytes      %.2f MiB (%.3fx smaller)\n",
-		(double)tel_q8.compressed_kv_allocated_bytes / (1024.0 * 1024.0),
-		(double)native_bytes / (double)tel_q8.compressed_kv_allocated_bytes);
-	fprintf(stderr, "q8 rss (ctx)     %llu kB\n",
-		(unsigned long long)tel_q8.rss_after_context.vm_rss_kb);
-	fprintf(stderr, "q8 tok/s (gen)   %.1f\n", tel_q8.generation_tok_per_s);
-	if (tel_q8.quality_available)
+	fprintf(stderr, "%s kv bytes      %.2f MiB (%.3fx smaller)\n", mode_name,
+		(double)tel_candidate.compressed_kv_allocated_bytes
+			/ (1024.0 * 1024.0),
+		(double)native_bytes
+			/ (double)tel_candidate.compressed_kv_allocated_bytes);
+	fprintf(stderr, "%s rss (ctx)     %llu kB\n", mode_name,
+		(unsigned long long)tel_candidate.rss_after_context.vm_rss_kb);
+	fprintf(stderr, "%s tok/s (gen)   %.1f\n", mode_name,
+		tel_candidate.generation_tok_per_s);
+	if (tel_candidate.quality_available)
 		fprintf(stderr, "quality          token_identity=%s "
 			"first_divergence=%d top1=%.4f logit_rel_l2=%.6f "
 			"delta_nll=%.6f\n",
-			tel_q8.token_identity ? "identical" : "diverged",
-			tel_q8.first_divergence, tel_q8.top1_preservation,
-			tel_q8.logit_rel_l2, tel_q8.delta_nll);
+			tel_candidate.token_identity ? "identical" : "diverged",
+			tel_candidate.first_divergence, tel_candidate.top1_preservation,
+			tel_candidate.logit_rel_l2, tel_candidate.delta_nll);
 	else
 		fprintf(stderr, "quality          unavailable (aligned "
 			"comparison pass did not complete)\n");
@@ -665,50 +716,57 @@ static void	print_compare_human(const char *model_label, uint32_t ctx_size,
 
 /*
  * Explicit benchmark/compare mode (Section 6): reuses the exact Phase
- * 7 3-pass design (native reference, q8 canonical, q8 teacher-forced)
- * via the SAME run_kv_store_pass()/record_kv_store_behavior() as
- * membrane-llama-run's --kv-store q8 -- including the pass-ordering
- * fix from that phase's own review cycle (the canonical, memory-
- * reported pass runs FIRST, immediately after model load, so its
- * peak-RSS reading is never contaminated by an earlier pass in the
- * same process). Never runs during normal mode.
- */
-/* Shared by --compare-kv and --gpu-bench: both are "native reference,
- * q8 canonical, q8 teacher-forced" 3-pass runs via the same Phase 7
- * run_kv_store_pass()/record_kv_store_behavior() machinery -- they
- * only differ in output format and in what CLI/GPU state they also
- * report alongside it. Returns false (message already printed) only
- * on a hard pass failure; a failed teacher-forced pass alone still
- * returns true with tel_q8.quality_available left 0 (memory/
- * throughput results are still meaningful without it). */
-static bool	run_native_q8_comparison(const membrane_run_opts_t &o,
+ * 7 3-pass design (native reference, candidate canonical, candidate
+ * teacher-forced) via the SAME run_kv_store_pass()/
+ * record_kv_store_behavior() as membrane-llama-run's --kv-store q8 --
+ * including the pass-ordering fix from that phase's own review cycle
+ * (the canonical, memory-reported pass runs FIRST, immediately after
+ * model load, so its peak-RSS reading is never contaminated by an
+ * earlier pass in the same process). Never runs during normal mode.
+ *
+ * Phase 10C: generalized from a hardcoded q8-only comparison to take
+ * candidate_mode explicitly -- MEMBRANE_KV_STORE_Q8 (the backward-
+ * compatible default for both --compare-kv and --gpu-bench) or
+ * MEMBRANE_KV_STORE_Q5 (only if --kv q5 was also given). Always
+ * exactly native vs ONE selected compressed mode, never both at once
+ * -- see run_compare_mode()/run_gpu_bench_mode() below, which are the
+ * only callers and the only place candidate_mode is decided. Returns
+ * false (message already printed) only on a hard pass failure; a
+ * failed teacher-forced pass alone still returns true with
+ * tel_candidate.quality_available left 0 (memory/throughput results
+ * are still meaningful without it). */
+static bool	run_native_vs_compressed_comparison(const membrane_run_opts_t &o,
 				llama_model *model,
 				const std::vector<llama_token> &prompt_tokens,
 				uint32_t ctx_size, const model_shape_t &shape,
-				membrane_kv_store_telemetry_t *tel_q8,
+				int candidate_mode,
+				membrane_kv_store_telemetry_t *tel_candidate,
 				membrane_kv_store_telemetry_t *tel_native,
 				uint64_t *native_bytes, gen_run_result_t *result_native,
-				gen_run_result_t *result_q8)
+				gen_run_result_t *result_candidate)
 {
 	membrane_kv_store_telemetry_t	tel_scratch;
-	gen_run_result_t				result_q8_tf;
+	gen_run_result_t				result_candidate_tf;
 	membrane_runtime_divergence_t	divergence;
 	int32_t							n_vocab;
+	const char						*candidate_name;
 
-	memset(tel_q8, 0, sizeof(*tel_q8));
-	tel_q8->kv_store_mode_name = "q8";
-	tel_q8->no_fallback_occurred = 1;
-	tel_q8->ctx_size = ctx_size;
-	tel_q8->compressed_kv_allocated_bytes = q8_kv_bytes(shape, ctx_size);
+	candidate_name = kv_mode_name(candidate_mode);
+	memset(tel_candidate, 0, sizeof(*tel_candidate));
+	tel_candidate->kv_store_mode_name = candidate_name;
+	tel_candidate->no_fallback_occurred = 1;
+	tel_candidate->ctx_size = ctx_size;
+	tel_candidate->compressed_kv_allocated_bytes =
+		kv_bytes_for_mode(shape, ctx_size, candidate_mode);
 	*native_bytes = native_kv_bytes(shape, ctx_size);
 	n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(model));
-	membrane_kv_store_read_rss(&tel_q8->rss_after_model_load);
+	membrane_kv_store_read_rss(&tel_candidate->rss_after_model_load);
 	if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
-			MEMBRANE_KV_STORE_Q8, ctx_size, o.verbose, NULL, false, 0,
-			NULL, tel_q8, result_q8))
-		return (fprintf(stderr,
-				"membrane-run: q8 canonical pass failed\n"), false);
-	tel_q8->generated_tokens = result_q8->tokens.size();
+			candidate_mode, ctx_size, o.verbose, NULL, false, 0,
+			NULL, tel_candidate, result_candidate))
+		return (fprintf(stderr, "membrane-run: %s canonical pass failed\n",
+				candidate_name), false);
+	tel_candidate->generated_tokens = result_candidate->tokens.size();
 	memset(tel_native, 0, sizeof(*tel_native));
 	tel_native->kv_store_mode_name = "native";
 	tel_native->no_fallback_occurred = 1;
@@ -728,31 +786,43 @@ static bool	run_native_q8_comparison(const membrane_run_opts_t &o,
 	membrane_kv_store_rss_max(&tel_native->rss_peak, &tel_native->rss_final,
 		&tel_native->rss_peak);
 	membrane_runtime_detect_divergence(result_native->tokens.data(),
-		result_native->tokens.size(), result_q8->tokens.data(),
-		result_q8->tokens.size(), &divergence);
-	tel_q8->token_identity = divergence.identical;
-	tel_q8->first_divergence = (int32_t)divergence.first_divergence_step;
+		result_native->tokens.size(), result_candidate->tokens.data(),
+		result_candidate->tokens.size(), &divergence);
+	tel_candidate->token_identity = divergence.identical;
+	tel_candidate->first_divergence = (int32_t)divergence.first_divergence_step;
 	if (!result_native->tokens.empty())
 	{
 		memset(&tel_scratch, 0, sizeof(tel_scratch));
 		if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens,
-				MEMBRANE_KV_STORE_Q8, ctx_size, o.verbose,
+				candidate_mode, ctx_size, o.verbose,
 				&result_native->tokens, true, n_vocab, NULL, &tel_scratch,
-				&result_q8_tf))
+				&result_candidate_tf))
 			fprintf(stderr, "membrane-run: aligned teacher-forced pass "
 				"failed -- logit/NLL comparison unavailable, memory/"
 				"throughput results otherwise still reported\n");
-		else if (record_kv_store_behavior(*result_native, result_q8_tf,
-				n_vocab, tel_q8))
-			tel_q8->quality_available = 1;
+		else if (record_kv_store_behavior(*result_native, result_candidate_tf,
+				n_vocab, tel_candidate))
+			tel_candidate->quality_available = 1;
 	}
-	membrane_kv_store_rss_max(&tel_q8->rss_after_model_load,
-		&tel_q8->rss_after_context, &tel_q8->rss_peak);
-	membrane_kv_store_rss_max(&tel_q8->rss_peak, &tel_q8->rss_after_prompt,
-		&tel_q8->rss_peak);
-	membrane_kv_store_rss_max(&tel_q8->rss_peak, &tel_q8->rss_final,
-		&tel_q8->rss_peak);
+	membrane_kv_store_rss_max(&tel_candidate->rss_after_model_load,
+		&tel_candidate->rss_after_context, &tel_candidate->rss_peak);
+	membrane_kv_store_rss_max(&tel_candidate->rss_peak,
+		&tel_candidate->rss_after_prompt, &tel_candidate->rss_peak);
+	membrane_kv_store_rss_max(&tel_candidate->rss_peak,
+		&tel_candidate->rss_final, &tel_candidate->rss_peak);
 	return (true);
+}
+
+/* The one selected compressed mode --compare-kv/--gpu-bench compare
+ * native against: q5 if the user explicitly asked for it via --kv q5,
+ * otherwise q8 (the long-standing default, kept for backward
+ * compatibility so existing --compare-kv/--gpu-bench invocations
+ * without --kv never change behavior). Never a 4-way/3-way
+ * comparison -- exactly native vs exactly one candidate, always. */
+static int	selected_comparison_mode(const membrane_run_opts_t &o)
+{
+	return (o.kv_mode == MEMBRANE_KV_STORE_Q5
+		? MEMBRANE_KV_STORE_Q5 : MEMBRANE_KV_STORE_Q8);
 }
 
 static int	run_compare_mode(const membrane_run_opts_t &o, llama_model *model,
@@ -760,20 +830,25 @@ static int	run_compare_mode(const membrane_run_opts_t &o, llama_model *model,
 				const char *model_label, uint32_t ctx_size,
 				const model_shape_t &shape, const membrane_gpu_state_t &gs)
 {
-	membrane_kv_store_telemetry_t	tel_q8;
+	membrane_kv_store_telemetry_t	tel_candidate;
 	membrane_kv_store_telemetry_t	tel_native;
 	uint64_t						native_bytes;
 	gen_run_result_t				result_native;
-	gen_run_result_t				result_q8;
+	gen_run_result_t				result_candidate;
+	int								candidate_mode;
 
-	if (!run_native_q8_comparison(o, model, prompt_tokens, ctx_size, shape,
-			&tel_q8, &tel_native, &native_bytes, &result_native, &result_q8))
+	candidate_mode = selected_comparison_mode(o);
+	if (!run_native_vs_compressed_comparison(o, model, prompt_tokens,
+			ctx_size, shape, candidate_mode, &tel_candidate, &tel_native,
+			&native_bytes, &result_native, &result_candidate))
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);
 	if (o.want_json)
-		print_compare_json(model_label, ctx_size, native_bytes, tel_q8, gs);
+		print_compare_json(model_label, ctx_size, native_bytes,
+			tel_candidate, gs);
 	else
-		print_compare_human(model_label, ctx_size, native_bytes, tel_q8, gs);
-	return (result_q8.ok && result_native.ok
+		print_compare_human(model_label, ctx_size, native_bytes,
+			tel_candidate, gs);
+	return (result_candidate.ok && result_native.ok
 		? MEMBRANE_EXIT_SUCCESS : MEMBRANE_EXIT_RUNTIME_ERROR);
 }
 
@@ -787,19 +862,22 @@ static int	run_compare_mode(const membrane_run_opts_t &o, llama_model *model,
 static void	print_gpu_bench_json(const char *model_label, uint32_t ctx_size,
 				uint64_t native_bytes,
 				const membrane_kv_store_telemetry_t &tel_native,
-				const membrane_kv_store_telemetry_t &tel_q8,
+				const membrane_kv_store_telemetry_t &tel_candidate,
 				const membrane_gpu_state_t &gs)
 {
-	double	kv_reduction_ratio = tel_q8.compressed_kv_allocated_bytes > 0
-		? (double)native_bytes / (double)tel_q8.compressed_kv_allocated_bytes
+	double	kv_reduction_ratio =
+		tel_candidate.compressed_kv_allocated_bytes > 0
+		? (double)native_bytes
+			/ (double)tel_candidate.compressed_kv_allocated_bytes
 		: 0.0;
 	double	throughput_delta_pct = tel_native.generation_tok_per_s > 0.0
-		? 100.0 * (tel_q8.generation_tok_per_s
+		? 100.0 * (tel_candidate.generation_tok_per_s
 			- tel_native.generation_tok_per_s)
 			/ tel_native.generation_tok_per_s : 0.0;
 
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
-		"\"mode\":\"gpu_bench\",\"model_label\":\"", MEMBRANE_VERSION);
+		"\"mode\":\"gpu_bench\",\"compressed_kv\":\"%s\",\"model_label\":\"",
+		MEMBRANE_VERSION, tel_candidate.kv_store_mode_name);
 	print_json_escaped(model_label);
 	printf("\",\"ctx_size\":%u,", ctx_size);
 	print_gpu_json(gs);
@@ -809,39 +887,42 @@ static void	print_gpu_bench_json(const char *model_label, uint32_t ctx_size,
 		(unsigned long long)native_bytes,
 		(unsigned long long)tel_native.rss_after_context.vm_rss_kb,
 		tel_native.prompt_tok_per_s, tel_native.generation_tok_per_s);
-	printf("\"q8\":{\"kv_allocated_bytes\":%llu,"
+	printf("\"compressed\":{\"kv_allocated_bytes\":%llu,"
 		"\"rss_after_context_kb\":%llu,\"prompt_tok_per_s\":%.6f,"
 		"\"generation_tok_per_s\":%.6f},",
-		(unsigned long long)tel_q8.compressed_kv_allocated_bytes,
-		(unsigned long long)tel_q8.rss_after_context.vm_rss_kb,
-		tel_q8.prompt_tok_per_s, tel_q8.generation_tok_per_s);
+		(unsigned long long)tel_candidate.compressed_kv_allocated_bytes,
+		(unsigned long long)tel_candidate.rss_after_context.vm_rss_kb,
+		tel_candidate.prompt_tok_per_s, tel_candidate.generation_tok_per_s);
 	printf("\"comparison\":{\"kv_reduction_ratio\":%.6f,"
 		"\"generation_throughput_delta_pct\":%.4f},",
 		kv_reduction_ratio, throughput_delta_pct);
 	printf("\"quality\":{\"available\":%s,\"token_identity\":%s,"
 		"\"first_divergence\":%d,\"logit_rel_l2\":%.6f,"
 		"\"top1_preservation\":%.6f,\"delta_nll\":%.6f},",
-		tel_q8.quality_available ? "true" : "false",
-		tel_q8.token_identity ? "true" : "false", tel_q8.first_divergence,
-		tel_q8.logit_rel_l2, tel_q8.top1_preservation, tel_q8.delta_nll);
+		tel_candidate.quality_available ? "true" : "false",
+		tel_candidate.token_identity ? "true" : "false",
+		tel_candidate.first_divergence, tel_candidate.logit_rel_l2,
+		tel_candidate.top1_preservation, tel_candidate.delta_nll);
 	printf("\"no_fallback_occurred\":%s}\n",
-		(tel_native.no_fallback_occurred && tel_q8.no_fallback_occurred)
+		(tel_native.no_fallback_occurred
+				&& tel_candidate.no_fallback_occurred)
 			? "true" : "false");
 }
 
 static void	print_gpu_bench_human(const char *model_label, uint32_t ctx_size,
 				uint64_t native_bytes,
 				const membrane_kv_store_telemetry_t &tel_native,
-				const membrane_kv_store_telemetry_t &tel_q8,
+				const membrane_kv_store_telemetry_t &tel_candidate,
 				const membrane_gpu_state_t &gs)
 {
+	const char	*mode_name = tel_candidate.kv_store_mode_name;
 	double	throughput_delta_pct = tel_native.generation_tok_per_s > 0.0
-		? 100.0 * (tel_q8.generation_tok_per_s
+		? 100.0 * (tel_candidate.generation_tok_per_s
 			- tel_native.generation_tok_per_s)
 			/ tel_native.generation_tok_per_s : 0.0;
 
-	fprintf(stderr, "MEMBRANE %s -- gpu-bench (native vs q8)\n",
-		MEMBRANE_VERSION);
+	fprintf(stderr, "MEMBRANE %s -- gpu-bench (native vs %s)\n",
+		MEMBRANE_VERSION, mode_name);
 	fprintf(stderr, "model              %s\n", model_label);
 	fprintf(stderr, "context            %u\n", ctx_size);
 	fprintf(stderr, "backend            %s, device: %s "
@@ -859,21 +940,23 @@ static void	print_gpu_bench_human(const char *model_label, uint32_t ctx_size,
 	fprintf(stderr, "native kv bytes    %.2f MiB, %.1f tok/s (gen)\n",
 		(double)native_bytes / (1024.0 * 1024.0),
 		tel_native.generation_tok_per_s);
-	double	kv_ratio = tel_q8.compressed_kv_allocated_bytes > 0
-		? (double)native_bytes / (double)tel_q8.compressed_kv_allocated_bytes
+	double	kv_ratio = tel_candidate.compressed_kv_allocated_bytes > 0
+		? (double)native_bytes
+			/ (double)tel_candidate.compressed_kv_allocated_bytes
 		: 0.0;
 
-	fprintf(stderr, "q8 kv bytes        %.2f MiB (%.3fx smaller), "
-		"%.1f tok/s (gen, %+.1f%% vs native)\n",
-		(double)tel_q8.compressed_kv_allocated_bytes / (1024.0 * 1024.0),
-		kv_ratio, tel_q8.generation_tok_per_s, throughput_delta_pct);
-	if (tel_q8.quality_available)
+	fprintf(stderr, "%s kv bytes        %.2f MiB (%.3fx smaller), "
+		"%.1f tok/s (gen, %+.1f%% vs native)\n", mode_name,
+		(double)tel_candidate.compressed_kv_allocated_bytes
+			/ (1024.0 * 1024.0),
+		kv_ratio, tel_candidate.generation_tok_per_s, throughput_delta_pct);
+	if (tel_candidate.quality_available)
 		fprintf(stderr, "quality            token_identity=%s "
 			"first_divergence=%d top1=%.4f logit_rel_l2=%.6f "
 			"delta_nll=%.6f\n",
-			tel_q8.token_identity ? "identical" : "diverged",
-			tel_q8.first_divergence, tel_q8.top1_preservation,
-			tel_q8.logit_rel_l2, tel_q8.delta_nll);
+			tel_candidate.token_identity ? "identical" : "diverged",
+			tel_candidate.first_divergence, tel_candidate.top1_preservation,
+			tel_candidate.logit_rel_l2, tel_candidate.delta_nll);
 	else
 		fprintf(stderr, "quality            unavailable (aligned "
 			"comparison pass did not complete)\n");
@@ -882,31 +965,36 @@ static void	print_gpu_bench_human(const char *model_label, uint32_t ctx_size,
 /* --gpu-bench: like --compare-kv but always under an explicit GPU
  * configuration (product_cli.cpp's parse-time validation already
  * requires --gpu-layers != 0 for this mode), with gpu_policy telemetry
- * and a native/q8/comparison-shaped JSON schema instead of compare-
- * kv's. Reuses the exact same 3-pass machinery via
- * run_native_q8_comparison(). */
+ * and a native/candidate/comparison-shaped JSON schema instead of
+ * compare-kv's. Reuses the exact same 3-pass machinery via
+ * run_native_vs_compressed_comparison(); the selected candidate mode
+ * is the same q8-default/q5-if-requested rule as --compare-kv (see
+ * selected_comparison_mode()). */
 static int	run_gpu_bench_mode(const membrane_run_opts_t &o,
 				llama_model *model,
 				const std::vector<llama_token> &prompt_tokens,
 				const char *model_label, uint32_t ctx_size,
 				const model_shape_t &shape, const membrane_gpu_state_t &gs)
 {
-	membrane_kv_store_telemetry_t	tel_q8;
+	membrane_kv_store_telemetry_t	tel_candidate;
 	membrane_kv_store_telemetry_t	tel_native;
 	uint64_t						native_bytes;
 	gen_run_result_t				result_native;
-	gen_run_result_t				result_q8;
+	gen_run_result_t				result_candidate;
+	int								candidate_mode;
 
-	if (!run_native_q8_comparison(o, model, prompt_tokens, ctx_size, shape,
-			&tel_q8, &tel_native, &native_bytes, &result_native, &result_q8))
+	candidate_mode = selected_comparison_mode(o);
+	if (!run_native_vs_compressed_comparison(o, model, prompt_tokens,
+			ctx_size, shape, candidate_mode, &tel_candidate, &tel_native,
+			&native_bytes, &result_native, &result_candidate))
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);
 	if (o.want_json)
 		print_gpu_bench_json(model_label, ctx_size, native_bytes,
-			tel_native, tel_q8, gs);
+			tel_native, tel_candidate, gs);
 	else
 		print_gpu_bench_human(model_label, ctx_size, native_bytes,
-			tel_native, tel_q8, gs);
-	return (result_q8.ok && result_native.ok
+			tel_native, tel_candidate, gs);
+	return (result_candidate.ok && result_native.ok
 		? MEMBRANE_EXIT_SUCCESS : MEMBRANE_EXIT_RUNTIME_ERROR);
 }
 
@@ -989,13 +1077,30 @@ int	main(int argc, char **argv)
 		return (llama_backend_free(), MEMBRANE_EXIT_CLI_ERROR);
 	}
 	read_model_shape(model, &shape);
-	if (o.kv_mode == MEMBRANE_KV_STORE_Q8 || o.compare_kv || o.gpu_bench)
+	/* --compare-kv/--gpu-bench precheck whichever mode they'll actually
+	 * compare against (selected_comparison_mode() -- q8 by default,
+	 * q5 only if --kv q5 was also given); a plain run precheck's
+	 * whatever --kv itself asked for. Either way this never checks
+	 * more than the one mode about to be used. */
+	if (o.compare_kv || o.gpu_bench)
 	{
 		if (!membrane_check_kv_compat(shape.arch_name.c_str(),
 				shape.n_embd, shape.n_head, shape.n_head_kv, ctx_size,
-				MEMBRANE_KV_STORE_Q8, &compat))
+				selected_comparison_mode(o), &compat))
 		{
-			fprintf(stderr, "MEMBRANE: Q8 KV storage unsupported for "
+			fprintf(stderr, "MEMBRANE: KV storage unsupported for "
+				"this model: %s.\n", compat.reason);
+			llama_model_free(model);
+			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
+		}
+	}
+	else if (o.kv_mode != MEMBRANE_KV_STORE_NATIVE)
+	{
+		if (!membrane_check_kv_compat(shape.arch_name.c_str(),
+				shape.n_embd, shape.n_head, shape.n_head_kv, ctx_size,
+				o.kv_mode, &compat))
+		{
+			fprintf(stderr, "MEMBRANE: KV storage unsupported for "
 				"this model: %s.\n", compat.reason);
 			llama_model_free(model);
 			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);

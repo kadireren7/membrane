@@ -1,0 +1,38 @@
+{
+  "note": "Phase 10C Sections 14-17: CPU/Vulkan regression, performance repetitions, long generation. SmolLM2-135M unless noted.",
+  "regression_cpu": {
+    "native": {"exit_code": 0}, "q8": {"exit_code": 0}, "q5": {"exit_code": 0},
+    "include_text_without_json_rejected": true,
+    "version_string_unchanged": "0.3.0-rc1",
+    "help_and_version_flags_unaffected": true
+  },
+  "performance_repetitions": {
+    "vulkan_7x_ctx2048_gen128": {
+      "q8": {"n": 7, "min": 252.39, "max": 267.57, "mean": 261.81, "median": 263.06, "stddev": 4.76},
+      "q5": {"n": 7, "min": 253.39, "max": 263.78, "mean": 259.97, "median": 261.62, "stddev": 3.98},
+      "delta_vs_q8_pct": -0.70
+    },
+    "cpu_5x_ctx2048_gen128": {
+      "q8": {"n": 5, "min": 61.21, "max": 69.14, "mean": 65.52, "median": 65.76, "stddev": 3.70},
+      "q5": {"n": 5, "min": 56.59, "max": 66.66, "mean": 61.52, "median": 60.09, "stddev": 4.27},
+      "delta_vs_q8_pct": -6.11
+    },
+    "note": "Vulkan: negligible cost, well within noise. CPU: a modest ~6% mean dip -- reported honestly rather than rounded away; value ranges overlap substantially (q8 min=61.21 vs q5 max=66.66) given both modes' ~4 tok/s stddev on a 5-sample run, so this is close to but not fully inside the noise band. Not treated as disqualifying (Vulkan is the primary target backend for this feature and shows no cost), but not claimed as \"no performance cost\" either."
+  },
+  "long_generation_135m_ctx2048_q5_512tok": {
+    "generated_tokens": 512,
+    "exit_code": 0,
+    "kv_type": "Q5_1",
+    "rss_after_context_kb": 307164,
+    "rss_final_kb": 308316,
+    "peak_rss_kb": 308316,
+    "generation_tok_per_s": 61.08,
+    "no_fallback_occurred": true,
+    "quality_vs_native": {
+      "q8_reference": {"first_divergence": 40, "top1_preservation": 0.994141, "logit_rel_l2": 0.009941, "delta_nll": 0.000150},
+      "q5": {"first_divergence": 81, "top1_preservation": 0.982422, "logit_rel_l2": 0.060368, "delta_nll": 0.006143}
+    },
+    "memory_stability": "RSS flat across the full run (peak == final, ~1MB drift from context creation to end) -- no leak.",
+    "consistency_check": "Matches Phase 10B's equivalent measurement exactly (same prompt/ctx/gen_tokens) -- reproducible across the product CLI rewrite, not just the experimental probe."
+  }
+}
