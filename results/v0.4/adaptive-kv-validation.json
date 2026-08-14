@@ -1,0 +1,507 @@
+{
+  "schema_version": 1,
+  "phase": "11A",
+  "note": "Phase 11A: adaptive whole-cache KV policy (--kv adaptive). Chooses exactly ONE real storage mode (Q8_0 or Q5_1) for the entire context -- never mixed/per-layer precision. All data below is from real membrane-run invocations (CPU: this host's own CPU; GPU: this host's real GTX 1650 via Vulkan) on this feature branch, not simulated.",
+  "membrane_commit": "b40bbe2cb67ff095fddadbf5dc59fc1b3b3b6d1f",
+  "llama_cpp_commit": "c0bc8591e8815c63cb01dd3f051a8b0df02501c9",
+  "policy": {
+    "name": "adaptive_kv_policy",
+    "module": "tools/membrane-run/adaptive_kv_policy.h",
+    "version": 1,
+    "rules": [
+      "GPU: Q8 chosen if it safely reaches full residency (Q8_FULL_RESIDENCY).",
+      "GPU: else Q5 chosen if it safely reaches full residency (Q5_REQUIRED_FOR_FULL_RESIDENCY).",
+      "GPU: else, among safe partial-offload plans, Q8 wins ties on layer count (Q8_FITS); Q5 wins only if it offers materially more layers (Q5_REQUIRED_FOR_MEMORY_GUARD) or is the only mode that fits at all (Q5_ONLY_COMPRESSED_MODE_THAT_FITS).",
+      "GPU/CPU: neither mode fitting fails closed (NO_COMPRESSED_MODE_FITS) -- never a silent native fallback.",
+      "CPU: Q8 by default (CPU_ADAPTIVE_Q8_DEFAULT); Q5 only if an explicit --kv-budget-mib rules Q8 out and Q5 fits (CPU_MEMORY_PRESSURE_Q5)."
+    ]
+  },
+  "models": {
+    "SmolLM2-135M-Instruct-f16": {
+      "architecture": "llama",
+      "n_layer": 30,
+      "n_head": 9,
+      "n_head_kv": 3,
+      "n_embd_head": 64
+    },
+    "SmolLM2-360M-Instruct-f16": {
+      "architecture": "llama",
+      "n_layer": 32,
+      "n_head": 15,
+      "n_head_kv": 5,
+      "n_embd_head": 64
+    }
+  },
+  "device": {
+    "backend": "Vulkan",
+    "name": "Vulkan1",
+    "note": "Real GTX 1650 host, same device used by prior Phase 9B/10C Vulkan validation runs."
+  },
+  "cpu_validation_matrix": {
+    "model": "SmolLM2-135M-Instruct-f16",
+    "note": "Section 12: q8/q5/adaptive at ctx 2048/8192/16384, CPU only. Confirms adaptive selects Q8 under normal CPU conditions, matching explicit --kv q8's real KV bytes exactly at every context size.",
+    "runs": [
+      {
+        "ctx_size": 2048,
+        "requested_kv": "q8",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 0,
+        "kv_allocated_bytes": 25067520,
+        "rss_final_kb": 315676,
+        "generation_tok_per_s": 70.393109,
+        "headroom_bytes": null,
+        "device_free_bytes": null,
+        "device_total_bytes": null,
+        "safety_reserve_bytes": null
+      },
+      {
+        "ctx_size": 2048,
+        "requested_kv": "q5",
+        "selected_kv": "q5",
+        "kv_type": "Q5_1",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 0,
+        "kv_allocated_bytes": 17694720,
+        "rss_final_kb": 308716,
+        "generation_tok_per_s": 66.463627,
+        "headroom_bytes": null,
+        "device_free_bytes": null,
+        "device_total_bytes": null,
+        "safety_reserve_bytes": null
+      },
+      {
+        "ctx_size": 2048,
+        "requested_kv": "adaptive",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "CPU_ADAPTIVE_Q8_DEFAULT",
+        "gpu_layers_selected": 0,
+        "kv_allocated_bytes": 25067520,
+        "rss_final_kb": 315876,
+        "generation_tok_per_s": 68.972062,
+        "headroom_bytes": null,
+        "device_free_bytes": null,
+        "device_total_bytes": null,
+        "safety_reserve_bytes": null
+      },
+      {
+        "ctx_size": 8192,
+        "requested_kv": "q8",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 0,
+        "kv_allocated_bytes": 100270080,
+        "rss_final_kb": 389532,
+        "generation_tok_per_s": 69.492456,
+        "headroom_bytes": null,
+        "device_free_bytes": null,
+        "device_total_bytes": null,
+        "safety_reserve_bytes": null
+      },
+      {
+        "ctx_size": 8192,
+        "requested_kv": "q5",
+        "selected_kv": "q5",
+        "kv_type": "Q5_1",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 0,
+        "kv_allocated_bytes": 70778880,
+        "rss_final_kb": 360700,
+        "generation_tok_per_s": 67.766376,
+        "headroom_bytes": null,
+        "device_free_bytes": null,
+        "device_total_bytes": null,
+        "safety_reserve_bytes": null
+      },
+      {
+        "ctx_size": 8192,
+        "requested_kv": "adaptive",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "CPU_ADAPTIVE_Q8_DEFAULT",
+        "gpu_layers_selected": 0,
+        "kv_allocated_bytes": 100270080,
+        "rss_final_kb": 389560,
+        "generation_tok_per_s": 67.330682,
+        "headroom_bytes": null,
+        "device_free_bytes": null,
+        "device_total_bytes": null,
+        "safety_reserve_bytes": null
+      },
+      {
+        "ctx_size": 16384,
+        "requested_kv": "q8",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 0,
+        "kv_allocated_bytes": 200540160,
+        "rss_final_kb": 455868,
+        "generation_tok_per_s": 65.195302,
+        "headroom_bytes": null,
+        "device_free_bytes": null,
+        "device_total_bytes": null,
+        "safety_reserve_bytes": null
+      },
+      {
+        "ctx_size": 16384,
+        "requested_kv": "q5",
+        "selected_kv": "q5",
+        "kv_type": "Q5_1",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 0,
+        "kv_allocated_bytes": 141557760,
+        "rss_final_kb": 430680,
+        "generation_tok_per_s": 68.918745,
+        "headroom_bytes": null,
+        "device_free_bytes": null,
+        "device_total_bytes": null,
+        "safety_reserve_bytes": null
+      },
+      {
+        "ctx_size": 16384,
+        "requested_kv": "adaptive",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "CPU_ADAPTIVE_Q8_DEFAULT",
+        "gpu_layers_selected": 0,
+        "kv_allocated_bytes": 200540160,
+        "rss_final_kb": 488236,
+        "generation_tok_per_s": 66.873675,
+        "headroom_bytes": null,
+        "device_free_bytes": null,
+        "device_total_bytes": null,
+        "safety_reserve_bytes": null
+      }
+    ]
+  },
+  "vulkan_validation_matrix": {
+    "model": "SmolLM2-135M-Instruct-f16",
+    "note": "Section 13: q8/q5/adaptive at ctx 2048/8192/16384, --gpu-layers auto on the real GTX 1650. Confirms adaptive selects Q8 with full 30/30-layer residency throughout, matching explicit --kv q8's real KV bytes and layer count exactly at every context size.",
+    "runs": [
+      {
+        "ctx_size": 2048,
+        "requested_kv": "q8",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 30,
+        "kv_allocated_bytes": 25067520,
+        "rss_final_kb": 286796,
+        "generation_tok_per_s": 237.203923,
+        "headroom_bytes": 3228079937,
+        "device_free_bytes": 4148559872,
+        "device_total_bytes": 4552916992,
+        "safety_reserve_bytes": 682937535
+      },
+      {
+        "ctx_size": 2048,
+        "requested_kv": "q5",
+        "selected_kv": "q5",
+        "kv_type": "Q5_1",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 30,
+        "kv_allocated_bytes": 17694720,
+        "rss_final_kb": 287008,
+        "generation_tok_per_s": 233.112432,
+        "headroom_bytes": 3235452737,
+        "device_free_bytes": 4148559872,
+        "device_total_bytes": 4552916992,
+        "safety_reserve_bytes": 682937535
+      },
+      {
+        "ctx_size": 2048,
+        "requested_kv": "adaptive",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "Q8_FULL_RESIDENCY",
+        "gpu_layers_selected": 30,
+        "kv_allocated_bytes": 25067520,
+        "rss_final_kb": 286916,
+        "generation_tok_per_s": 275.412613,
+        "headroom_bytes": 3228079937,
+        "device_free_bytes": 4148559872,
+        "device_total_bytes": 4552916992,
+        "safety_reserve_bytes": 682937535
+      },
+      {
+        "ctx_size": 8192,
+        "requested_kv": "q8",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 30,
+        "kv_allocated_bytes": 100270080,
+        "rss_final_kb": 289988,
+        "generation_tok_per_s": 274.885626,
+        "headroom_bytes": 3152877377,
+        "device_free_bytes": 4148559872,
+        "device_total_bytes": 4552916992,
+        "safety_reserve_bytes": 682937535
+      },
+      {
+        "ctx_size": 8192,
+        "requested_kv": "q5",
+        "selected_kv": "q5",
+        "kv_type": "Q5_1",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 30,
+        "kv_allocated_bytes": 70778880,
+        "rss_final_kb": 289068,
+        "generation_tok_per_s": 266.003121,
+        "headroom_bytes": 3182368577,
+        "device_free_bytes": 4148559872,
+        "device_total_bytes": 4552916992,
+        "safety_reserve_bytes": 682937535
+      },
+      {
+        "ctx_size": 8192,
+        "requested_kv": "adaptive",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "Q8_FULL_RESIDENCY",
+        "gpu_layers_selected": 30,
+        "kv_allocated_bytes": 100270080,
+        "rss_final_kb": 290036,
+        "generation_tok_per_s": 254.350929,
+        "headroom_bytes": 3152877377,
+        "device_free_bytes": 4148559872,
+        "device_total_bytes": 4552916992,
+        "safety_reserve_bytes": 682937535
+      },
+      {
+        "ctx_size": 16384,
+        "requested_kv": "q8",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 30,
+        "kv_allocated_bytes": 200540160,
+        "rss_final_kb": 293692,
+        "generation_tok_per_s": 271.994791,
+        "headroom_bytes": 3052607297,
+        "device_free_bytes": 4148559872,
+        "device_total_bytes": 4552916992,
+        "safety_reserve_bytes": 682937535
+      },
+      {
+        "ctx_size": 16384,
+        "requested_kv": "q5",
+        "selected_kv": "q5",
+        "kv_type": "Q5_1",
+        "adaptive_reason": "",
+        "gpu_layers_selected": 30,
+        "kv_allocated_bytes": 141557760,
+        "rss_final_kb": 291696,
+        "generation_tok_per_s": 255.009027,
+        "headroom_bytes": 3111589697,
+        "device_free_bytes": 4148559872,
+        "device_total_bytes": 4552916992,
+        "safety_reserve_bytes": 682937535
+      },
+      {
+        "ctx_size": 16384,
+        "requested_kv": "adaptive",
+        "selected_kv": "q8",
+        "kv_type": "Q8_0",
+        "adaptive_reason": "Q8_FULL_RESIDENCY",
+        "gpu_layers_selected": 30,
+        "kv_allocated_bytes": 200540160,
+        "rss_final_kb": 293620,
+        "generation_tok_per_s": 260.720987,
+        "headroom_bytes": 3052607297,
+        "device_free_bytes": 4148559872,
+        "device_total_bytes": 4552916992,
+        "safety_reserve_bytes": 682937535
+      }
+    ]
+  },
+  "memory_pressure_transition": {
+    "model": "SmolLM2-360M-Instruct-f16",
+    "note": "Section 14: real --gpu-layers auto sweep on the GTX 1650 finding all three zones with actual hardware memory pressure, not simulated. No OOM was forced -- every non-fitting configuration was rejected safely by the existing memory guard before any allocation.",
+    "zones": [
+      {
+        "ctx_requested": 65536,
+        "exit_code": 0,
+        "selected_kv": "q8",
+        "adaptive_reason": "Q8_FULL_RESIDENCY",
+        "gpu_layers_selected": 32,
+        "candidates": {
+          "q8": {
+            "kv_bytes": 1426063360,
+            "valid": true,
+            "selected_layers": 32
+          },
+          "q5": {
+            "kv_bytes": 1006632960,
+            "valid": true,
+            "selected_layers": 32
+          }
+        },
+        "zone": "A"
+      },
+      {
+        "ctx_requested": 90000,
+        "exit_code": 0,
+        "selected_kv": "q8",
+        "adaptive_reason": "Q8_FULL_RESIDENCY",
+        "gpu_layers_selected": 32,
+        "candidates": {
+          "q8": {
+            "kv_bytes": 1958400000,
+            "valid": true,
+            "selected_layers": 32
+          },
+          "q5": {
+            "kv_bytes": 1382400000,
+            "valid": true,
+            "selected_layers": 32
+          }
+        },
+        "zone": "A"
+      },
+      {
+        "ctx_requested": 120000,
+        "exit_code": 0,
+        "selected_kv": "q8",
+        "adaptive_reason": "Q8_FULL_RESIDENCY",
+        "gpu_layers_selected": 32,
+        "candidates": {
+          "q8": {
+            "kv_bytes": 2611200000,
+            "valid": true,
+            "selected_layers": 32
+          },
+          "q5": {
+            "kv_bytes": 1843200000,
+            "valid": true,
+            "selected_layers": 32
+          }
+        },
+        "zone": "A"
+      },
+      {
+        "ctx_requested": 131072,
+        "exit_code": 0,
+        "selected_kv": "q5",
+        "adaptive_reason": "Q5_REQUIRED_FOR_FULL_RESIDENCY",
+        "gpu_layers_selected": 32,
+        "candidates": {
+          "q8": {
+            "kv_bytes": 2852126720,
+            "valid": true,
+            "selected_layers": 31
+          },
+          "q5": {
+            "kv_bytes": 2013265920,
+            "valid": true,
+            "selected_layers": 32
+          }
+        },
+        "zone": "B"
+      },
+      {
+        "ctx_requested": 180000,
+        "exit_code": 0,
+        "selected_kv": "q5",
+        "adaptive_reason": "Q5_REQUIRED_FOR_FULL_RESIDENCY",
+        "gpu_layers_selected": 32,
+        "candidates": {
+          "q8": {
+            "kv_bytes": 3916800000,
+            "valid": false,
+            "selected_layers": 0
+          },
+          "q5": {
+            "kv_bytes": 2764800000,
+            "valid": true,
+            "selected_layers": 32
+          }
+        },
+        "zone": "B"
+      },
+      {
+        "ctx_requested": 200000,
+        "exit_code": 0,
+        "selected_kv": "q5",
+        "adaptive_reason": "Q5_ONLY_COMPRESSED_MODE_THAT_FITS",
+        "gpu_layers_selected": 20,
+        "candidates": {
+          "q8": {
+            "kv_bytes": 4352000000,
+            "valid": false,
+            "selected_layers": 0
+          },
+          "q5": {
+            "kv_bytes": 3072000000,
+            "valid": true,
+            "selected_layers": 20
+          }
+        },
+        "zone": "B"
+      },
+      {
+        "ctx_requested": 250000,
+        "exit_code": 5,
+        "selected_kv": null,
+        "adaptive_reason": "NO_COMPRESSED_MODE_FITS",
+        "fail_reason": "membrane-run: --kv adaptive found no KV storage mode that fits safely: NO_COMPRESSED_MODE_FITS",
+        "zone": "C"
+      }
+    ],
+    "zone_definitions": {
+      "A": "Q8 safely reaches full residency -- adaptive chooses Q8 (observed ctx <= 120000).",
+      "B": "Q8 loses full residency or fails outright, but Q5 still fits (fully or partially) -- adaptive chooses Q5 (observed ctx 131072-200000).",
+      "C": "Neither mode fits under any layer count -- adaptive fails closed, exit code 5, no allocation attempted (observed ctx >= 250000)."
+    }
+  },
+  "explicit_vs_adaptive_equivalence": {
+    "note": "Section 15: adaptive is a selection over the SAME run_kv_store_pass()/kv_bytes_for_mode() code path explicit --kv q8/q5 already use -- no new codec or reconstruction logic. Verified bit-for-bit on real runs, not just by code inspection.",
+    "q8_selected_case": {
+      "config": "SmolLM2-135M-Instruct-f16, ctx=2048, --gpu-layers auto, Vulkan",
+      "adaptive_text": " Paris. Paris is the largest city in France and the capital of the French department",
+      "explicit_q8_text": " Paris. Paris is the largest city in France and the capital of the French department",
+      "text_match": true,
+      "generated_tokens_match": true,
+      "kv_allocated_bytes_match": true,
+      "kv_type_match": true
+    },
+    "q5_selected_case": {
+      "config": "SmolLM2-360M-Instruct-f16, ctx=131072, --gpu-layers auto, Vulkan",
+      "adaptive_text": " Paris.\n\nParis is the capital of France.\n\nParis is the",
+      "explicit_q5_text": " Paris.\n\nParis is the capital of France.\n\nParis is the",
+      "text_match": true,
+      "generated_tokens_match": true,
+      "kv_allocated_bytes_match": true,
+      "kv_type_match": true,
+      "gpu_layers_selected_match": true
+    }
+  },
+  "compare_and_gpu_bench_adaptive": {
+    "note": "Section 10: --compare-kv/--gpu-bench with --kv adaptive resolve adaptive ONCE (Q8_FULL_RESIDENCY at ctx=2048 on this host) and compare native against that single resolved mode -- verified both commands exit 0 with requested_kv=adaptive/selected_kv=q8 in their JSON output. --compare-kv/--gpu-bench without --kv remain unchanged (default to q8).",
+    "gpu_bench_adaptive_exit_code": 0,
+    "compare_kv_adaptive_exit_code": 0
+  },
+  "fail_closed_behavior": {
+    "note": "Section 11: an unresolvable --kv-budget-mib (smaller than both Q8 and Q5's real KV bytes) produces exit code 5 (MEMBRANE_EXIT_UNSUPPORTED_KV) with reason NO_COMPRESSED_MODE_FITS -- never a silent fallback to native. Verified with a real CPU run.",
+    "example_exit_code": 5,
+    "example_reason": "NO_COMPRESSED_MODE_FITS"
+  },
+  "tests": {
+    "test_adaptive_kv_policy": "13 llama-free unit tests -- Q8 full residency, Q5-required-for-full-residency, partial-tie prefers Q8, Q5 meaningfully-more-layers, Q5-only-fits, Q8-only-fits, neither-fits fail-closed, near-full-residency boundary, CPU default/budget-forced/neither-fits, determinism (byte-identical repeat calls), NULL input safety. All pass.",
+    "test_product_cli": "extended with --kv adaptive parse, --kv-budget-mib parse/validation (positive-integer, non-numeric, requires-adaptive rejection for native/q8/q5), help-text coverage. Existing q4/q5_0 alias-rejection tests unmodified and still pass."
+  },
+  "performance": {
+    "note": "Section 19: adaptive's own decision overhead is two extra membrane_gpu_policy_resolve() calls (GPU) or none beyond two kv_bytes_for_mode() calls (CPU) -- pure arithmetic, no extra inference pass, no hidden benchmarking. Generation throughput for adaptive-selected Q8/Q5 is within normal run-to-run variance of the equivalent explicit --kv q8/q5 run (see cpu_validation_matrix/vulkan_validation_matrix above)."
+  },
+  "limitations": [
+    "GPU adaptive selection is based on a point-in-time free-memory snapshot taken before model load (the same estimate --gpu-layers auto already uses) -- if external GPU usage changes after selection, allocation can still fail. This is not an OOM guarantee.",
+    "Adaptive is a whole-cache mode selector only -- it never stores some layers/blocks in Q8 and others in Q5, and it is not quality-aware per token or per layer.",
+    "CPU adaptive has no free-memory query to drive its choice (there is no CPU-side equivalent of the GPU memory guard) -- it defaults to Q8 unless --kv-budget-mib is given explicitly.",
+    "The GPU transition-zone sweep used one real device (GTX 1650, ~4.55 GiB) and one model (SmolLM2-360M) -- zone boundaries (the specific context sizes) are device/model-specific, not universal constants; only the existence and ordering of the three zones is a general policy property.",
+    "Q4_0 and Q5_0 remain research-only (experiment/q4-kv-storage, experiment/q5-kv-evaluation branches) -- adaptive never selects them and the product CLI never exposes them."
+  ]
+}
