@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <string.h>
 
 #include "adaptive_kv_policy.h"
@@ -95,6 +96,46 @@ static void	test_gpu_partial_q5_meaningfully_more_layers(void)
 			MEMBRANE_ADAPTIVE_REASON_Q5_REQUIRED_FOR_MEMORY_GUARD) == 0,
 		"reason is Q5_REQUIRED_FOR_MEMORY_GUARD");
 	TEST_ASSERT(r.selected_layers == 25, "selected_layers echoes Q5's 25");
+}
+
+/* Pins the exact margin the policy treats as "meaningfully more
+ * layers" (Section 7): any nonzero improvement in achievable layer
+ * count is a real GPU-offload benefit (one more real layer placed),
+ * so even a 1-layer difference must select Q5 -- while a 0-layer
+ * difference (a true tie, test_gpu_partial_same_layer_count_prefers_
+ * q8 above) must still select Q8. Both boundary directions pinned
+ * here so a future policy change that shifts this threshold either
+ * way trips a test, not just the wide 18-vs-25 gap already covered by
+ * test_gpu_partial_q5_meaningfully_more_layers. */
+static void	test_gpu_partial_smallest_margin_boundary(void)
+{
+	membrane_adaptive_kv_candidate_t	q8;
+	membrane_adaptive_kv_candidate_t	q5;
+	membrane_adaptive_kv_result_t		r;
+
+	/* Smallest possible nonzero improvement (19 vs 18) -> Q5. */
+	q8 = (membrane_adaptive_kv_candidate_t){1, 0, 18, KV_BYTES_Q8};
+	q5 = (membrane_adaptive_kv_candidate_t){1, 0, 19, KV_BYTES_Q5};
+	TEST_ASSERT(membrane_adaptive_kv_resolve(&q8, &q5, GPU, &r) == 1,
+		"resolves at the smallest possible nonzero layer-count margin");
+	TEST_ASSERT(r.selected_mode == MEMBRANE_ADAPTIVE_KV_MODE_Q5,
+		"a 1-layer improvement is still a real GPU-offload benefit -- "
+		"Q5 wins even at the smallest nonzero margin");
+	TEST_ASSERT(strcmp(r.reason,
+			MEMBRANE_ADAPTIVE_REASON_Q5_REQUIRED_FOR_MEMORY_GUARD) == 0,
+		"reason is Q5_REQUIRED_FOR_MEMORY_GUARD");
+
+	/* One layer short of the same margin, but Q8 now has the larger
+	 * count (19 vs 18) -- Q8 must win, confirming the comparison is
+	 * strictly "more layers", not merely "not equal". */
+	q8 = (membrane_adaptive_kv_candidate_t){1, 0, 19, KV_BYTES_Q8};
+	q5 = (membrane_adaptive_kv_candidate_t){1, 0, 18, KV_BYTES_Q5};
+	TEST_ASSERT(membrane_adaptive_kv_resolve(&q8, &q5, GPU, &r) == 1,
+		"resolves when Q8 has the larger partial layer count");
+	TEST_ASSERT(r.selected_mode == MEMBRANE_ADAPTIVE_KV_MODE_Q8,
+		"Q8 wins when IT has more layers than Q5, not just on a tie");
+	TEST_ASSERT(strcmp(r.reason, MEMBRANE_ADAPTIVE_REASON_Q8_FITS) == 0,
+		"reason is Q8_FITS");
 }
 
 static void	test_gpu_only_q5_fits_at_all(void)
@@ -258,6 +299,7 @@ int	main(void)
 	test_gpu_q5_required_for_full_residency();
 	test_gpu_partial_same_layer_count_prefers_q8();
 	test_gpu_partial_q5_meaningfully_more_layers();
+	test_gpu_partial_smallest_margin_boundary();
 	test_gpu_only_q5_fits_at_all();
 	test_gpu_only_q8_fits_at_all();
 	test_gpu_neither_fits_fails_closed();

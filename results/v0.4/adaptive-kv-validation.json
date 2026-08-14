@@ -495,7 +495,7 @@
     "test_product_cli": "extended with --kv adaptive parse, --kv-budget-mib parse/validation (positive-integer, non-numeric, requires-adaptive rejection for native/q8/q5), help-text coverage. Existing q4/q5_0 alias-rejection tests unmodified and still pass."
   },
   "performance": {
-    "note": "Section 19: adaptive's own decision overhead is two extra membrane_gpu_policy_resolve() calls (GPU) or none beyond two kv_bytes_for_mode() calls (CPU) -- pure arithmetic, no extra inference pass, no hidden benchmarking. Generation throughput for adaptive-selected Q8/Q5 is within normal run-to-run variance of the equivalent explicit --kv q8/q5 run (see cpu_validation_matrix/vulkan_validation_matrix above)."
+    "note": "Section 19: adaptive own decision overhead is two extra membrane_gpu_policy_resolve() calls (GPU) or none beyond two kv_bytes_for_mode() calls (CPU) -- pure arithmetic, no extra inference pass, no hidden benchmarking. Each configuration in cpu_validation_matrix/vulkan_validation_matrix above was run ONCE (not repeated) -- the generation_tok_per_s figures are single-run observations, not a measured variance distribution; no run-to-run variance bound is claimed. adaptive-selected Q8/Q5 throughput was observed in the same range as the equivalent explicit --kv q8/q5 single run at every tested context."
   },
   "limitations": [
     "GPU adaptive selection is based on a point-in-time free-memory snapshot taken before model load (the same estimate --gpu-layers auto already uses) -- if external GPU usage changes after selection, allocation can still fail. This is not an OOM guarantee.",

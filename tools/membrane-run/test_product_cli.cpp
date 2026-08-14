@@ -256,6 +256,24 @@ static void	test_kv_budget_mib_flag(void)
 	args.push_back("nope");
 	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
 		"--kv-budget-mib non-numeric is rejected");
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("adaptive");
+	args.push_back("--kv-budget-mib");
+	args.push_back("-1");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-budget-mib -1 is rejected (parse_u64_strict's leading '-' "
+		"guard, same class as --ctx's)");
+
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("adaptive");
+	args.push_back("--kv-budget-mib");
+	args.push_back("18446744073709551615");	/* UINT64_MAX */
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-budget-mib is rejected when MiB * 1024 * 1024 would "
+		"overflow uint64_t");
 }
 
 /* Section 5: "budget does NOT silently alter explicit q8/q5 choices"

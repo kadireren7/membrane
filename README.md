@@ -385,9 +385,11 @@ compressed passes.
 in every case, matching explicit `--kv q8`'s real KV bytes (and, on
 GPU, its real selected layer count) exactly. Two real explicit-vs-
 adaptive equivalence checks (one `q8`-selected, one `q5`-selected) show
-bit-for-bit identical generated text and telemetry — adaptive is a
-selection over the same `run_kv_store_pass()` code path `q8`/`q5`
-already use, not a new codec.
+bit-for-bit identical generated text, generated token count, allocated
+KV bytes, KV type, and (GPU case) selected layer count against the
+explicit mode adaptive resolved to — adaptive is a selection over the
+same `run_kv_store_pass()` code path `q8`/`q5` already use, not a new
+codec.
 
 A real memory-pressure sweep on `SmolLM2-360M`/the same GTX 1650 found
 all three transition zones without forcing an OOM: **Zone A**

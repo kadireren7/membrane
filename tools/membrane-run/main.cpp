@@ -383,6 +383,36 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	uint64_t	kv_bytes_estimate = 0;
 	uint64_t	kv_bytes_estimate_q5 = 0;	/* adaptive's second
 											 * candidate only */
+	uint64_t	kv_bytes_real_q8 = 0;	/* adaptive only: Q8's own real
+										 * KV bytes, NEVER folded with
+										 * native_estimate below --
+										 * kv_bytes_estimate itself IS
+										 * folded (a real bug: it fed
+										 * both the guard call AND, un-
+										 * folded-looking but actually
+										 * inflated, the reported
+										 * candidate telemetry/budget
+										 * check) -- CodeRabbit finding,
+										 * fixed by keeping this
+										 * separate real value for
+										 * cand_q8.kv_bytes/the --kv-
+										 * budget-mib comparison, while
+										 * kv_bytes_estimate itself
+										 * stays folded for ONLY the
+										 * membrane_gpu_policy_resolve()
+										 * guard call below (native and
+										 * the candidate context are
+										 * never resident at once --
+										 * see run_native_vs_compressed_
+										 * comparison()'s sequential
+										 * create/destroy -- so the
+										 * guard must budget for
+										 * whichever is larger, but
+										 * that is a GUARD sizing
+										 * concern only, never what
+										 * gets reported as "Q8's KV
+										 * bytes"). */
+	uint64_t	kv_bytes_real_q5 = 0;	/* same, for Q5 */
 	bool	adaptive_requested = (o.kv_mode == MEMBRANE_KV_STORE_ADAPTIVE);
 
 	if (have_est && est.hparams_available && ctx_size > 0)
@@ -403,15 +433,18 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 			/* Both candidates computed from the SAME est/ctx_size, via
 			 * the exact same kv_bytes_for_mode() every explicit --kv
 			 * q8/q5 request already uses -- Section 9: no separate
-			 * arithmetic, no drift. */
-			kv_bytes_estimate = kv_bytes_for_mode(fake_shape, ctx_size,
+			 * arithmetic, no drift. kv_bytes_real_q8/q5 are the true,
+			 * never-folded per-mode bytes; kv_bytes_estimate/_q5 are
+			 * then folded with native_estimate for the guard call
+			 * ONLY (see kv_bytes_real_q8's doc comment above). */
+			kv_bytes_real_q8 = kv_bytes_for_mode(fake_shape, ctx_size,
 				MEMBRANE_KV_STORE_Q8);
-			kv_bytes_estimate_q5 = kv_bytes_for_mode(fake_shape, ctx_size,
+			kv_bytes_real_q5 = kv_bytes_for_mode(fake_shape, ctx_size,
 				MEMBRANE_KV_STORE_Q5);
-			if (native_estimate > kv_bytes_estimate)
-				kv_bytes_estimate = native_estimate;
-			if (native_estimate > kv_bytes_estimate_q5)
-				kv_bytes_estimate_q5 = native_estimate;
+			kv_bytes_estimate = native_estimate > kv_bytes_real_q8
+				? native_estimate : kv_bytes_real_q8;
+			kv_bytes_estimate_q5 = native_estimate > kv_bytes_real_q5
+				? native_estimate : kv_bytes_real_q5;
 		}
 		else
 		{
@@ -468,17 +501,17 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		gs->policy_used = true;
 		gs->safety_reserve_bytes = pr_q8.safety_reserve_bytes;
 		cand_q8.valid = ok_q8 && (!o.want_kv_budget
-			|| kv_bytes_estimate <= o.kv_budget_bytes);
+			|| kv_bytes_real_q8 <= o.kv_budget_bytes);
 		cand_q8.full_residency = cand_q8.valid
 			&& pr_q8.selected_layers == est.n_layer;
 		cand_q8.selected_layers = ok_q8 ? pr_q8.selected_layers : 0;
-		cand_q8.kv_bytes = kv_bytes_estimate;
+		cand_q8.kv_bytes = kv_bytes_real_q8;
 		cand_q5.valid = ok_q5 && (!o.want_kv_budget
-			|| kv_bytes_estimate_q5 <= o.kv_budget_bytes);
+			|| kv_bytes_real_q5 <= o.kv_budget_bytes);
 		cand_q5.full_residency = cand_q5.valid
 			&& pr_q5.selected_layers == est.n_layer;
 		cand_q5.selected_layers = ok_q5 ? pr_q5.selected_layers : 0;
-		cand_q5.kv_bytes = kv_bytes_estimate_q5;
+		cand_q5.kv_bytes = kv_bytes_real_q5;
 		gs->adaptive_q8_kv_bytes = cand_q8.kv_bytes;
 		gs->adaptive_q5_kv_bytes = cand_q5.kv_bytes;
 		gs->adaptive_q8_layers = cand_q8.selected_layers;
