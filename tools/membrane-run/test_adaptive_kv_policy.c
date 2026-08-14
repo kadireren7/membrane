@@ -99,14 +99,19 @@ static void	test_gpu_partial_q5_meaningfully_more_layers(void)
 }
 
 /* Pins the exact margin the policy treats as "meaningfully more
- * layers" (Section 7): any nonzero improvement in achievable layer
- * count is a real GPU-offload benefit (one more real layer placed),
- * so even a 1-layer difference must select Q5 -- while a 0-layer
- * difference (a true tie, test_gpu_partial_same_layer_count_prefers_
- * q8 above) must still select Q8. Both boundary directions pinned
- * here so a future policy change that shifts this threshold either
- * way trips a test, not just the wide 18-vs-25 gap already covered by
- * test_gpu_partial_q5_meaningfully_more_layers. */
+ * layers" (Section 7): candidate selected_layers is itself an
+ * ESTIMATE from membrane_gpu_policy_resolve() (real hardware may
+ * still refuse the allocation this module has no way to see -- see
+ * gpu_policy.h's own doc comment), so this test's job is only to pin
+ * the policy's estimate-vs-estimate comparison rule, not to claim a
+ * measured hardware placement: any nonzero improvement in the
+ * ESTIMATED achievable layer count is treated as a real offload
+ * benefit, so even a 1-layer difference must select Q5 -- while a
+ * 0-layer difference (a true tie, test_gpu_partial_same_layer_count_
+ * prefers_q8 above) must still select Q8. Both boundary directions
+ * pinned here so a future policy change that shifts this threshold
+ * either way trips a test, not just the wide 18-vs-25 gap already
+ * covered by test_gpu_partial_q5_meaningfully_more_layers. */
 static void	test_gpu_partial_smallest_margin_boundary(void)
 {
 	membrane_adaptive_kv_candidate_t	q8;
@@ -118,9 +123,12 @@ static void	test_gpu_partial_smallest_margin_boundary(void)
 	q5 = (membrane_adaptive_kv_candidate_t){1, 0, 19, KV_BYTES_Q5};
 	TEST_ASSERT(membrane_adaptive_kv_resolve(&q8, &q5, GPU, &r) == 1,
 		"resolves at the smallest possible nonzero layer-count margin");
+	TEST_ASSERT(r.ok, "successful resolution marks the result as valid");
 	TEST_ASSERT(r.selected_mode == MEMBRANE_ADAPTIVE_KV_MODE_Q5,
-		"a 1-layer improvement is still a real GPU-offload benefit -- "
-		"Q5 wins even at the smallest nonzero margin");
+		"a 1-layer estimated-offload improvement still counts -- Q5 "
+		"wins even at the smallest nonzero margin");
+	TEST_ASSERT(r.selected_kv_bytes == KV_BYTES_Q5,
+		"Q5 selection reports the Q5 candidate bytes");
 	TEST_ASSERT(strcmp(r.reason,
 			MEMBRANE_ADAPTIVE_REASON_Q5_REQUIRED_FOR_MEMORY_GUARD) == 0,
 		"reason is Q5_REQUIRED_FOR_MEMORY_GUARD");
@@ -132,8 +140,11 @@ static void	test_gpu_partial_smallest_margin_boundary(void)
 	q5 = (membrane_adaptive_kv_candidate_t){1, 0, 18, KV_BYTES_Q5};
 	TEST_ASSERT(membrane_adaptive_kv_resolve(&q8, &q5, GPU, &r) == 1,
 		"resolves when Q8 has the larger partial layer count");
+	TEST_ASSERT(r.ok, "successful resolution marks the result as valid");
 	TEST_ASSERT(r.selected_mode == MEMBRANE_ADAPTIVE_KV_MODE_Q8,
 		"Q8 wins when IT has more layers than Q5, not just on a tie");
+	TEST_ASSERT(r.selected_kv_bytes == KV_BYTES_Q8,
+		"Q8 selection reports the Q8 candidate bytes");
 	TEST_ASSERT(strcmp(r.reason, MEMBRANE_ADAPTIVE_REASON_Q8_FITS) == 0,
 		"reason is Q8_FITS");
 }
