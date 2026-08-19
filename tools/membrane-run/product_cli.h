@@ -125,6 +125,18 @@ typedef struct s_membrane_run_opts
 								 * this one is GPU-specific and adds
 								 * memory-policy telemetry). */
 
+	int			kv_placement;	/* Phase 12H: MEMBRANE_KV_PLACEMENT_
+								 * DEFAULT/GPU/CPU/AUTO (default DEFAULT
+								 * -- zero behavior change unless
+								 * explicitly requested, Section 4). A
+								 * SEPARATE dimension from kv_mode
+								 * (precision): --kv-placement never
+								 * changes KV precision, --kv never
+								 * changes KV device residency. gpu/auto
+								 * require gpu_layers != 0 (no GPU
+								 * device to place KV on otherwise);
+								 * cpu/default are always valid. */
+
 	int			want_version;
 	int			want_help;
 }	membrane_run_opts_t;

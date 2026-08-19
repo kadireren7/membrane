@@ -1315,6 +1315,235 @@ def _c63():
 	return len(bad) == 0, "; ".join(bad) if bad else "no unsupported claims, snapshot caveat disclosed"
 
 
+# ---------------------------------------------------------------------
+# Phase 12H: KV residency productization (results/v0.3/kv-residency-
+# productization/) -- every check below recomputes its claim directly
+# from the raw *.txt/*.jsonl evidence files, never trusting the
+# accompanying summary JSON's own say-so, matching this project's
+# established verification style.
+# ---------------------------------------------------------------------
+V03_KV_RESIDENCY_DIR = REPO_ROOT / "results" / "v0.3" / "kv-residency-productization"
+
+
+def _kv_residency_json(name):
+	return json.loads((V03_KV_RESIDENCY_DIR / name).read_text())
+
+
+def _kv_residency_raw(name):
+	return (V03_KV_RESIDENCY_DIR / name).read_text()
+
+
+@check("Phase 12H: manifest.json exists, valid JSON, lists every actual "
+	"artifact/raw file in the directory and no others")
+def _c64():
+	manifest_path = V03_KV_RESIDENCY_DIR / "manifest.json"
+	if not manifest_path.exists():
+		return False, f"{manifest_path} does not exist"
+	m = json.loads(manifest_path.read_text())
+	listed = set(m.get("artifacts", [])) | set(m.get("raw_evidence_files", []))
+	on_disk = {p.name for p in V03_KV_RESIDENCY_DIR.iterdir() if p.is_file()
+		and p.name != "manifest.json"}
+	listed_minus_manifest = listed
+	missing = on_disk - listed_minus_manifest
+	extra = listed_minus_manifest - on_disk
+	ok = not missing and not extra
+	return ok, (f"missing_from_manifest={sorted(missing)} "
+		f"extra_in_manifest={sorted(extra)}" if not ok
+		else f"{len(on_disk)} files, exact match with manifest")
+
+
+@check("Phase 12H: weights-unchanged proof -- est_weights is byte-"
+	"identical across every default/auto/cpu raw run at --gpu-layers all, "
+	"recomputed by grepping the real captured stderr, not read from the "
+	"summary")
+def _c65():
+	files = ["raw_capacity_default_26500.txt", "raw_capacity_default_26800.txt",
+		"raw_capacity_default_28500.txt", "raw_control_b.txt", "raw_control_c.txt"]
+	values = {}
+	for f in files:
+		text = _kv_residency_raw(f)
+		m = re.search(r"est_weights=([\d.]+) MiB", text)
+		if not m:
+			return False, f"{f}: no est_weights= line found"
+		values[f] = float(m.group(1))
+	distinct = set(values.values())
+	ok = len(distinct) == 1
+	return ok, (f"values={values}" if not ok
+		else f"identical est_weights={distinct.pop()} MiB across all "
+			f"{len(files)} raw runs")
+
+
+@check("Phase 12H: capacity-uplift claim -- default fails (real Vulkan "
+	"OOM, non-zero exit) and auto/cpu succeed, at the identical ctx=28500 "
+	"configuration, recomputed from raw exit codes and error text")
+def _c66():
+	default_text = _kv_residency_raw("raw_capacity_default_28500.txt")
+	auto_text = _kv_residency_raw("raw_control_b.txt")
+	cpu_text = _kv_residency_raw("raw_control_c.txt")
+	bad = []
+	if "exit_default_28500=4" not in default_text:
+		bad.append("default run's captured exit code is not 4")
+	if "ErrorOutOfDeviceMemory" not in default_text:
+		bad.append("default run's failure is not a real Vulkan OOM")
+	if "generated" not in auto_text or "Paris" not in auto_text:
+		bad.append("auto run does not show successful generation")
+	if "generated" not in cpu_text or "Paris" not in cpu_text:
+		bad.append("cpu run does not show successful generation")
+	if "GPU KV layers: 26/28" not in auto_text:
+		bad.append("auto run's split is not the claimed 26/28")
+	return len(bad) == 0, "; ".join(bad) if bad else ("default really "
+		"fails (exit 4, real Vulkan OOM) while auto (26/28 split) and "
+		"cpu (0/28) both really succeed, at the same ctx/model/weights")
+
+
+@check("Phase 12H: default path's reproducible failure and success "
+	"boundary rows are internally consistent (26500 succeeds, "
+	"26800/28500 fail) -- recomputed from raw exit codes")
+def _c67():
+	rows = {
+		"raw_capacity_default_26500.txt": ("0", True),
+		"raw_capacity_default_26800.txt": ("4", False),
+		"raw_capacity_default_28500.txt": ("4", False),
+	}
+	bad = []
+	for fname, (expect_exit, expect_success) in rows.items():
+		text = _kv_residency_raw(fname)
+		ctx = fname.split("_")[-1].replace(".txt", "")
+		exit_marker = f"exit_default_{ctx}={expect_exit}"
+		if exit_marker not in text:
+			bad.append(f"{fname}: expected {exit_marker}")
+		has_error = "ErrorOutOfDeviceMemory" in text
+		if expect_success and has_error:
+			bad.append(f"{fname}: expected success but found a real error")
+		if not expect_success and not has_error:
+			bad.append(f"{fname}: expected a real Vulkan OOM but found none")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		"26500 succeeds, 26800 and 28500 both fail with a real Vulkan "
+		"OOM -- boundary is internally consistent")
+
+
+@check("Phase 12H: quality.json's IDENTICAL claim is reproduced by "
+	"recomputing md5 of every listed raw file independently, not trusted "
+	"from the summary's own md5_all_files field")
+def _c68():
+	q = _kv_residency_json("quality.json")
+	files = q.get("compared_files", [])
+	if len(files) < 2:
+		return False, "quality.json lists fewer than 2 compared files"
+	digests = {}
+	for f in files:
+		path = V03_KV_RESIDENCY_DIR / f
+		digests[f] = hashlib.md5(path.read_bytes()).hexdigest()
+	distinct = set(digests.values())
+	ok = len(distinct) == 1 and distinct.pop() == q.get("md5_all_files")
+	return ok, (f"digests={digests} claimed={q.get('md5_all_files')}"
+		if not ok else f"{len(files)} files independently re-hashed, all "
+			f"identical, matches the claimed md5")
+
+
+@check("Phase 12H: no unsupported performance claim -- performance.json "
+	"never asserts GPU-resident or CPU-resident KV is faster without the "
+	"noise/small-sample qualification, and explicitly disclaims marketing "
+	"a performance win")
+def _c69():
+	p = _kv_residency_json("performance.json")
+	full_text = json.dumps(p).lower()
+	bad = []
+	if '"no_marketing_claim"' not in json.dumps(p):
+		bad.append("no_marketing_claim field is missing")
+	# A bare, unqualified "is faster"/"proves" claim would be a red flag;
+	# the interpretation field is expected to hedge with words like
+	# "noisy"/"not... robust" rather than assert a clean winner.
+	interp = p.get("interpretation", "").lower()
+	if "not statistically robust" not in interp and "not a statistically robust" not in interp:
+		bad.append("interpretation does not hedge the throughput reading")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		"performance claim is explicitly hedged and non-marketing")
+
+
+@check("Phase 12H: minimal patch set claim -- CMakeLists.txt's "
+	"MEMBRANE_ENABLE_LLAMA block applies exactly the type-override and "
+	"device-override patches, and does NOT reference runtime-relocate or "
+	"buffer-retirement anywhere in the product build")
+def _c70():
+	cmake_text = (REPO_ROOT / "CMakeLists.txt").read_text()
+	bad = []
+	if "llama.cpp-membrane-kv-type-override.patch" not in cmake_text:
+		bad.append("type-override patch is not applied")
+	if "llama.cpp-membrane-kv-device-override.patch" not in cmake_text:
+		bad.append("device-override patch is not applied")
+	# Match the actual patch FILENAME (with the .patch extension a real
+	# execute_process(... git apply ...) command would need), not just
+	# the short "kv-runtime-relocate" substring, which also appears
+	# inside this very block's own comment explaining why it is
+	# deliberately excluded -- a naive substring match on the short
+	# name would false-positive on that comment.
+	if "llama.cpp-membrane-kv-runtime-relocate.patch" in cmake_text:
+		bad.append("runtime-relocate patch is applied in the product "
+			"build (must stay research-only)")
+	if "llama.cpp-membrane-kv-buffer-retirement.patch" in cmake_text:
+		bad.append("buffer-retirement patch is applied in the product "
+			"build (must stay research-only)")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		"exactly type-override + device-override applied; no reference "
+		"to runtime-relocate or buffer-retirement anywhere in "
+		"CMakeLists.txt")
+
+
+@check("Phase 12H: default CLI behavior is unchanged -- product_cli.cpp "
+	"initializes kv_placement to MEMBRANE_KV_PLACEMENT_DEFAULT and only "
+	"sets cp.kv_dev_override when a non-NULL placement map is passed")
+def _c71():
+	cli_text = (REPO_ROOT / "tools" / "membrane-run" / "product_cli.cpp").read_text()
+	decode_text = (REPO_ROOT / "tools" / "membrane-llama-runtime"
+		/ "decode_loop.cpp").read_text()
+	bad = []
+	if "o->kv_placement = MEMBRANE_KV_PLACEMENT_DEFAULT;" not in cli_text:
+		bad.append("kv_placement is not defaulted to MEMBRANE_KV_PLACEMENT_DEFAULT")
+	if "if (kv_placement != NULL)" not in decode_text:
+		bad.append("kv_dev_override is not conditionally gated on a "
+			"non-NULL placement map")
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		"default value and conditional gating both confirmed directly "
+		"in source")
+
+
+@check("Phase 12H: no private/absolute filesystem paths leaked in any "
+	"kv-residency-productization artifact")
+def _c72():
+	leaked = []
+	for p in V03_KV_RESIDENCY_DIR.iterdir():
+		if not p.is_file():
+			continue
+		text = p.read_text(errors="replace")
+		if re.search(r"/home/\w+|/tmp/\w+", text):
+			leaked.append(p.name)
+	return len(leaked) == 0, (f"leaked in: {leaked}" if leaked
+		else "none found across all kv-residency-productization files")
+
+
+@check("Phase 12H: summary.json's decision_gate is exactly one of the 5 "
+	"allowed values and is internally consistent with a real, reproduced "
+	"capacity-uplift finding (not upgraded beyond what capacity_uplift.json "
+	"actually shows)")
+def _c73():
+	s = _kv_residency_json("summary.json")
+	gate = s.get("decision_gate")
+	allowed = s.get("decision_gate_allowed_values", [])
+	if gate not in allowed:
+		return False, f"decision_gate={gate!r} not in allowed set"
+	cap = _kv_residency_json("capacity_uplift.json")
+	uplift_shown = "uplift_tokens_at_least" in cap.get("measured_uplift", {})
+	if gate == "KV_RESIDENCY_PRODUCT_VIABLE" and not uplift_shown:
+		return False, ("VIABLE claimed but capacity_uplift.json shows no "
+			"measured uplift")
+	if "important_qualification" not in s:
+		return False, ("VIABLE claimed without the required narrow-scope "
+			"qualification present")
+	return True, (f"decision_gate={gate!r} valid, backed by a real "
+		f"measured uplift, and the narrow-scope qualification is present")
+
+
 def main() -> int:
 	global ARTIFACT_PATH
 	ap = argparse.ArgumentParser()
@@ -1338,6 +1567,7 @@ def main() -> int:
 			_c48, _c49, _c50, _c51,
 			_c52, _c53, _c54, _c55, _c56, _c57, _c58, _c59, _c60, _c61,
 			_c62, _c63,
+			_c64, _c65, _c66, _c67, _c68, _c69, _c70, _c71, _c72, _c73,
 		)
 	for fn in checks:
 		fn()

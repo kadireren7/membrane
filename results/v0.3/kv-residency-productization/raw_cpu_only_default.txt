@@ -1,0 +1,13 @@
+MEMBRANE 0.3.0-rc1
+model      SmolLM2-135M-Instruct-f16.gguf
+context    2048
+kv         native (F16)
+flash attn enabled
+kv bytes   45.00 MiB (F16, from real model hparams -- not measured until context creation)
+backend    CPU (default -- pass --gpu-layers to use a GPU)
+ Paris. Paris is the largest city in
+generated  8 tokens
+speed      18.5 tok/s
+kv memory  45.00 MiB (real allocation)
+rss final  388380 kB (peak 388380 kB)
+exit=0

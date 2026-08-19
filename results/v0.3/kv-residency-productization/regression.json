@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "section": "31, 36-37: product regression and sanitizers",
+  "baseline_before_phase_12h": {
+    "llama_free_release_ctest": "64/64 (confirmed fresh on clean main before any Phase 12H change)"
+  },
+  "configurations": [
+    {"name": "llama-free Release", "build_dir": "build", "ctest": "65/65", "sanitizers": "none", "delta_vs_baseline": "+1 (test_kv_residency_policy)"},
+    {"name": "llama-free ASan/UBSan", "build_dir": "build-free-asan", "ctest": "65/65", "sanitizers": "ASan+UBSan clean"},
+    {"name": "llama-enabled CPU Release", "build_dir": "build-cpu-rc1", "ctest": "67/67", "sanitizers": "none"},
+    {"name": "llama-enabled CPU ASan/UBSan", "build_dir": "build-llama-asan", "ctest": "67/67", "sanitizers": "ASan+UBSan clean"},
+    {"name": "Vulkan Release", "build_dir": "build-vulkan", "ctest": "67/67", "sanitizers": "none"},
+    {"name": "Vulkan+ASan", "attempted": false, "reason": "Not established safe in any prior MEMBRANE phase (Phase 12F disclosed the same limitation for the same reason); building it fresh was judged not practical within this phase's time budget on a single shared host. Section 37 explicitly allows skipping this 'if safely practical' is not met."}
+  ],
+  "existing_cli_modes_unchanged": {
+    "method": "Every existing product_cli.cpp test (test_kv_flag, test_kv_adaptive_flag, test_compare_kv_flag, test_gpu_layers_*, test_gpu_bench_*, test_device_*, etc.) still passes unmodified in all 5 configurations above -- native/q8/q5/adaptive/compare/gpu-bench/auto(--gpu-layers auto)/guard(gpu_policy's own reserve/budget guard, covered by test_gpu_policy.c, untouched) semantics are all still exercised by the existing test suite and show zero regressions.",
+    "src_unchanged": "git diff --stat -- src/ against the Phase 12F baseline (79588b6) is empty -- no product src/ file was touched by this phase."
+  },
+  "known_flaky_test": {
+    "name": "test_mem_guard",
+    "note": "Pre-existing, unrelated (tools/membrane-kv-exact-sim, untouched by Phase 12H) test that reacts to REAL host swap pressure by design -- flakes on this shared, memory-constrained host when swap usage is genuinely elevated. Not a Phase 12H regression; documented in this project's own memory notes from prior phases too. All ctest counts reported above were captured with this host in a stable state (no test_mem_guard flake observed during the runs recorded here)."
+  }
+}

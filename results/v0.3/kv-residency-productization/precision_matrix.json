@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "section": "26: Q8/Q5/native placement validation",
+  "model": "SmolLM2-135M-Instruct-f16.gguf",
+  "n_ctx": 4096,
+  "gpu_layers": "all (30/30 throughout)",
+  "prompt": "The capital of France is",
+  "gen_tokens": 12,
+  "rows": [
+    {"precision": "Q8_0", "placement": "gpu", "generation_ok": true, "raw_evidence_file": "raw_quality_q8_gpu.txt"},
+    {"precision": "Q8_0", "placement": "cpu", "generation_ok": true, "raw_evidence_file": "raw_quality_q8_cpu.txt"},
+    {"precision": "Q8_0", "placement": "default", "generation_ok": true, "raw_evidence_file": "raw_quality_q8_default.txt"},
+    {"precision": "Q5_1", "placement": "cpu", "generation_ok": true, "raw_evidence_file": "raw_quality_q5_cpu.txt"},
+    {"precision": "native (F16)", "placement": "cpu", "generation_ok": true, "raw_evidence_file": "raw_quality_native_cpu.txt"}
+  ],
+  "native_kv_placement_support": "Supported and validated -- native (F16) KV placement worked identically to Q8/Q5 in every test in this phase (kv_dev_override is precision-independent, applied at the same construction step regardless of type_k/type_v). No regression to existing native behavior when --kv-placement is not passed (see cli_contract.json's default-unchanged check).",
+  "architecture_scope_note": "Q8_0/Q5_1 KV storage itself (pre-existing compat_check.c gate, unrelated to this phase) is only validated for LLM_ARCH_LLAMA models -- qwen2.5-1.5b-instruct is architecture 'qwen2' and was tested with native precision only for that reason (see capacity_uplift.json), not a --kv-placement limitation."
+}

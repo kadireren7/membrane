@@ -11,6 +11,8 @@
 #include "gpu_policy.h"			/* MEMBRANE_GPU_LAYERS_ALL/AUTO -- llama-
 								 * free, pure constants, no ggml/llama
 								 * dependency pulled in by this include */
+#include "kv_residency_policy.h"	/* MEMBRANE_KV_PLACEMENT_DEFAULT/GPU/
+									 * CPU/AUTO -- also llama-free */
 
 void	membrane_run_print_version(FILE *out)
 {
@@ -122,6 +124,37 @@ void	membrane_run_usage(FILE *out)
 		"                     selected compressed mode. Slower and\n"
 		"                     more memory-hungry than a normal run by\n"
 		"                     design -- never implied by --kv alone.\n"
+		"  --kv-placement default|gpu|cpu|auto\n"
+		"                     STATIC KV cache device residency (default:\n"
+		"                     default -- unmodified behavior, KV follows\n"
+		"                     whatever device llama.cpp itself would\n"
+		"                     already use; never changes unless this\n"
+		"                     flag is explicitly given). A SEPARATE\n"
+		"                     dimension from --kv: this never changes KV\n"
+		"                     precision, --kv never changes KV device\n"
+		"                     placement. The whole map is decided once,\n"
+		"                     before context construction -- no\n"
+		"                     movement during inference (see\n"
+		"                     docs/kv-residency.md).\n"
+		"                     gpu: every KV layer on the same GPU device\n"
+		"                     as the offloaded model weights, or fail\n"
+		"                     closed if it does not safely fit.\n"
+		"                     cpu: every KV layer in system RAM, model\n"
+		"                     weights unaffected (still governed by\n"
+		"                     --gpu-layers).\n"
+		"                     auto: MEMBRANE's planner keeps as many KV\n"
+		"                     layers GPU-resident as safely fit (in\n"
+		"                     ascending layer-index order) and places\n"
+		"                     the rest in system RAM -- chosen for\n"
+		"                     conservative compatibility with prior\n"
+		"                     behavior, NOT because GPU-resident KV was\n"
+		"                     measured faster (it was not -- see\n"
+		"                     docs/kv-residency.md). Never fails: an\n"
+		"                     all-CPU-KV plan is a valid auto outcome.\n"
+		"                     gpu/auto require --gpu-layers all|auto|N\n"
+		"                     (there is no GPU device to place KV on\n"
+		"                     otherwise); cpu and default are always\n"
+		"                     valid, including CPU-only builds.\n"
 		"  --gpu-layers all|auto|N\n"
 		"                     GPU layer offload (default: 0, i.e. CPU-\n"
 		"                     only -- explicit CPU-forcing option too;\n"
@@ -233,6 +266,7 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 	o->device.clear();
 	o->want_device = 0;
 	o->gpu_bench = 0;
+	o->kv_placement = MEMBRANE_KV_PLACEMENT_DEFAULT;
 	o->want_version = 0;
 	o->want_help = 0;
 	i = 1;
@@ -352,6 +386,22 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 		}
 		else if (strcmp(argv[i], "--gpu-bench") == 0)
 			o->gpu_bench = 1;
+		else if (strcmp(argv[i], "--kv-placement") == 0 && i + 1 < argc)
+		{
+			++i;
+			if (strcmp(argv[i], "default") == 0)
+				o->kv_placement = MEMBRANE_KV_PLACEMENT_DEFAULT;
+			else if (strcmp(argv[i], "gpu") == 0)
+				o->kv_placement = MEMBRANE_KV_PLACEMENT_GPU;
+			else if (strcmp(argv[i], "cpu") == 0)
+				o->kv_placement = MEMBRANE_KV_PLACEMENT_CPU;
+			else if (strcmp(argv[i], "auto") == 0)
+				o->kv_placement = MEMBRANE_KV_PLACEMENT_AUTO;
+			else
+				return (fprintf(stderr, "membrane-run: --kv-placement "
+						"must be default, gpu, cpu, or auto\n"),
+					MEMBRANE_EXIT_CLI_ERROR);
+		}
 		else
 			return (fprintf(stderr, "membrane-run: unknown option: %s\n",
 					argv[i]), MEMBRANE_EXIT_CLI_ERROR);
@@ -406,6 +456,22 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 				"it is a policy input to adaptive's own Q8-vs-Q5 "
 				"decision and never silently alters an explicit "
 				"native/q8/q5 choice\n"),
+			MEMBRANE_EXIT_CLI_ERROR);
+	if ((o->kv_placement == MEMBRANE_KV_PLACEMENT_GPU
+			|| o->kv_placement == MEMBRANE_KV_PLACEMENT_AUTO)
+		&& o->gpu_layers == 0)
+		return (fprintf(stderr,
+				"membrane-run: --kv-placement gpu|auto requires "
+				"--gpu-layers all|auto|N -- there is no GPU device to "
+				"place KV on with CPU-only weight placement\n"),
+			MEMBRANE_EXIT_CLI_ERROR);
+	if (o->kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT
+		&& (o->compare_kv || o->gpu_bench))
+		return (fprintf(stderr,
+				"membrane-run: --kv-placement is not yet supported "
+				"together with --compare-kv/--gpu-bench (Phase 12H "
+				"scope: a normal single-pass run only) -- rejected "
+				"rather than silently ignored\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
 	return (MEMBRANE_EXIT_SUCCESS);
 }

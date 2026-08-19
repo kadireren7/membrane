@@ -1,0 +1,16 @@
+MEMBRANE 0.3.0-rc1
+model      qwen2.5-1.5b-instruct-fp16.gguf
+context    28500
+kv         native (F16)
+flash attn enabled
+kv bytes   779.30 MiB (F16, from real model hparams -- not measured until context creation)
+backend    Vulkan, device selected: Vulkan1 (gpu-layers=all, selected=28)
+gpu policy device_free=3956.1 MiB reserve=651.3 MiB est_weights=2499.5 MiB est_kv=779.3 MiB (estimates, not measured)
+ggml_vulkan: Device memory allocation of size 157155328 failed.
+ggml_vulkan: vk::Device::allocateMemory: ErrorOutOfDeviceMemory
+ggml_gallocr_reserve_n_impl: failed to allocate Vulkan1 buffer of size 157155328
+graph_reserve: failed to allocate compute buffers
+llama_init_from_model: failed to initialize the context: failed to allocate compute pp buffers
+membrane: kv-store context creation failed (see llama's own stderr diagnostics above -- for q8, this fails closed rather than silently falling back to native storage)
+membrane-run: generation failed
+exit_default_28500=4

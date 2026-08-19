@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "section": "29: static placement must not change precision/output",
+  "claim": "token_identity_across_placement",
+  "model": "SmolLM2-135M-Instruct-f16.gguf",
+  "n_ctx": 4096,
+  "prompt": "The capital of France is",
+  "gen_tokens": 12,
+  "generated_text": " Paris. Paris is the largest city in France and the capital",
+  "compared_files": [
+    "raw_quality_q8_gpu.txt", "raw_quality_q8_cpu.txt", "raw_quality_q8_default.txt",
+    "raw_quality_q5_cpu.txt", "raw_quality_native_cpu.txt"
+  ],
+  "md5_all_files": "5fa992fa12220ad7ecf9c5b3d82cabde",
+  "verdict": "IDENTICAL across Q8-gpu, Q8-cpu, Q8-default, Q5-cpu, and native-cpu -- KV device placement introduces no additional quantization error and does not change greedy-decode output at this test point. Verifier recomputes the md5-equality claim directly from the raw files, not from this summary's own say-so."
+}

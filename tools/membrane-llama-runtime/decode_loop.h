@@ -60,6 +60,21 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 			uint64_t *abs_pos, std::string *text_out, gen_run_result_t *out,
 			membrane_token_cb_t token_cb = NULL, void *token_cb_ud = NULL);
 
+/* Phase 12H: optional static per-layer KV device residency map,
+ * threaded through to llama_context_params.kv_dev_override at
+ * construction time ONLY -- never consulted again afterward, no
+ * runtime movement. layer_on_gpu[i] (length n_layer) is 1 for
+ * GPU-resident KV, 0 for CPU-resident KV; only meaningful for indices
+ * < n_layer. A NULL membrane_kv_placement_map_t* (the default on every
+ * existing call site, including every membrane-llama-run caller)
+ * leaves llama_context_params.kv_dev_override NULL -- byte-identical
+ * to pre-Phase-12H behavior (Section 4/19). */
+typedef struct s_membrane_kv_placement_map
+{
+	int32_t			n_layer;
+	const uint8_t	*layer_on_gpu;
+}	membrane_kv_placement_map_t;
+
 /*
  * Product Phase 7: creates ONE llama_context whose KV cache tensors
  * are allocated at kv_store_mode's ggml type, decodes the prompt and
@@ -74,7 +89,8 @@ bool	run_kv_store_pass(llama_model *model,
 			const std::vector<int32_t> *teacher_force, bool capture_logits,
 			int32_t n_vocab_for_scratch, std::string *text_out,
 			membrane_kv_store_telemetry_t *tel, gen_run_result_t *out,
-			membrane_token_cb_t token_cb = NULL, void *token_cb_ud = NULL);
+			membrane_token_cb_t token_cb = NULL, void *token_cb_ud = NULL,
+			const membrane_kv_placement_map_t *kv_placement = NULL);
 
 /* Phase 7 analogue of the Phase 6 aligned-behavior comparison, for the
  * kv-store telemetry struct. `a` is the native-storage reference pass,

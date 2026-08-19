@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "section": "27-28: --kv adaptive composed with --kv-placement",
+  "design": "Strictly sequential (Section 27's recommended order, not a joint search): main.cpp resolves --kv adaptive into a concrete Q8/Q5 mode FIRST (existing Phase 11A resolve_gpu_config()/resolve_cpu_adaptive_kv() logic, completely unmodified by this phase), then resolve_kv_placement() is called AFTERWARD with effective_o.kv_mode (the resolved concrete mode, never MEMBRANE_KV_STORE_ADAPTIVE itself) to compute the per-layer KV byte cost the residency planner needs. Adaptive's own precision semantics are untouched -- this phase never changes which mode adaptive picks.",
+  "real_test": {
+    "model": "SmolLM2-135M-Instruct-f16.gguf",
+    "n_ctx": 4096,
+    "flags": "--kv adaptive --gpu-layers all --kv-placement auto",
+    "result": {
+      "adaptive_selected": "q8",
+      "adaptive_reason": "Q8_FULL_RESIDENCY",
+      "kv_placement_mode": "auto",
+      "gpu_kv_layers": 30,
+      "cpu_kv_layers": 0,
+      "placement_reason": "PLACEMENT_GPU_FULL",
+      "generation_ok": true
+    },
+    "raw_evidence_file": "raw_adaptive_composition.txt"
+  },
+  "joint_planning_research_note": "Section 28 raises whether a joint precision+placement search could beat sequential (e.g. Q8-split preferred over Q5-all-GPU purely for quality, since Phase 12G found no measured throughput penalty from CPU-resident KV in the tested regime). Phase 12H deliberately does NOT implement this -- no evidence was gathered in this phase to justify overriding adaptive's existing, already-validated Q8-vs-Q5 policy. Documented here as a legitimate future joint-planning opportunity, not built."
+}

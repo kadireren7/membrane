@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "phase": "12H",
+  "title": "KV Residency Runtime Productization",
+  "decision_gate": "KV_RESIDENCY_PRODUCT_VIABLE",
+  "decision_gate_allowed_values": [
+    "KV_RESIDENCY_PRODUCT_VIABLE",
+    "KV_RESIDENCY_PRODUCT_WORKS_BUT_NO_CAPACITY_WIN",
+    "KV_RESIDENCY_PRODUCT_PATCH_BURDEN_TOO_HIGH",
+    "KV_RESIDENCY_PRODUCT_BACKEND_LIMITED",
+    "KV_RESIDENCY_PRODUCT_INCONCLUSIVE"
+  ],
+  "why_this_gate": [
+    "Static split works reliably: control points A (30/30 GPU), B (26/28 split), C (0/28, all-CPU) all validated end-to-end on real GTX 1650 Vulkan hardware, correct generation in every case (control_points.json).",
+    "Planner is deterministic and safe: 18/18 pure unit tests passing, including exact-boundary, fail-closed, CPU-only, and deterministic-repeat cases (planner_validation.json).",
+    "Weight placement is proven unchanged: est_weights=2499.5 MiB and gpu_layers_selected=28 identical across default/auto/cpu placement at the same --gpu-layers all request, captured from real CLI output (capacity_uplift.json's weights_unchanged_proof).",
+    "A real, reproducible capacity uplift was measured: at ctx=28500 on qwen2.5-1.5B (native precision, 28/28 GPU weights unchanged), the DEFAULT all-GPU-KV path fails with a genuine Vulkan out-of-device-memory error (reproduced 2/2), while --kv-placement auto/cpu succeed (auto reproduced 3/3) -- capacity_uplift.json.",
+    "Quality preserved: 5/5 byte-identical generated outputs across Q8-gpu/Q8-cpu/Q8-default/Q5-cpu/native-cpu at the same prompt/context (quality.json).",
+    "Existing behavior is backward-compatible: default placement mode is a true no-op (kv_dev_override left NULL), all pre-existing tests pass unmodified in all 5 tested build configurations (regression.json).",
+    "Patch burden is minimal: exactly 2 small llama.cpp patches (type-override, already product-integrated pre-Phase-12H; device-override, added this phase), confirmed by direct patch-content inspection -- runtime-relocate and buffer-retirement are NOT applied to any product build (manifest.json)."
+  ],
+  "important_qualification": "The capacity uplift, while real and reproduced, is NARROW: it was demonstrated at exactly one measured configuration (qwen2.5-1.5B, native precision, ctx 26800-28500, GTX 1650), representing roughly a 6% context increase at that specific boundary -- not a broad or general claim. It also does NOT work the way a user might first expect: gpu_policy.c's own pre-flight weight-placement check (deliberately left UNMODIFIED, per Section 21) assumes the full KV cache always needs GPU room when deciding whether to grant ANY --gpu-layers request, regardless of --kv-placement's value -- confirmed directly, --kv-placement cpu is rejected by this pre-check identically to default at contexts beyond ~ctx=29500 on the tested model, even though cpu mode would need zero GPU KV bytes. This means --kv-placement currently helps in the gap between 'gpu_policy's ESTIMATE says it fits' and 'the real allocator can actually do it' (a real, measured gap -- see capacity_uplift.json) rather than unlocking arbitrarily larger contexts. This is disclosed prominently, not buried, and is the natural next-step material (see next_step_recommendation).",
+  "next_step_recommendation": "Prepare the next release candidate containing KV residency (static, opt-in, default-unchanged) -- but scope the release notes to the measured, narrow capacity claim above, not a general 'run bigger contexts' claim. Separately (not blocking this release), consider making gpu_policy.c's own pre-flight check --kv-placement-aware in a FUTURE phase, since that is the real lever that would turn this from 'closes a narrow estimate-vs-reality gap' into 'reliably unlocks larger --gpu-layers requests' -- but that changes weight-placement logic and needs its own dedicated design/review, deliberately out of Phase 12H's scope (Section 21).",
+  "explicit_non_actions_confirmed": {
+    "no_dynamic_scheduler_productized": true,
+    "no_automatic_hot_cold_movement": true,
+    "no_runtime_promotion_demotion": true,
+    "no_attention_score_heuristics": true,
+    "no_token_block_paging": true,
+    "no_cuda": true,
+    "no_mixed_precision_work": true,
+    "no_throughput_improvement_marketed": true,
+    "no_automatic_release": true,
+    "no_merge_performed": true,
+    "no_co_authored_by": true
+  }
+}

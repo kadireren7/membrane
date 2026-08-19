@@ -189,6 +189,27 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 	}
 }
 
+/* Phase 12H: the real llama_context_params.kv_dev_override callback --
+ * user_data is the caller's membrane_kv_placement_map_t*. default_dev
+ * is exactly the device upstream would already use for this layer's KV
+ * (the same device as its weights, since this product path never sets
+ * kv_dev_override without also having resolved weight placement first
+ * -- Section 21): returning default_dev unchanged for a GPU-resident
+ * layer is a genuine no-op, never a redundant re-placement. An
+ * out-of-range il (should not happen: the map is sized to the real
+ * model's own n_layer) falls back to default_dev, matching the
+ * patch's own documented "NULL return -> default_dev" contract. */
+static ggml_backend_dev_t	kv_placement_dev_override_cb(int32_t il,
+				ggml_backend_dev_t default_dev, void *user_data)
+{
+	const membrane_kv_placement_map_t	*m;
+
+	m = (const membrane_kv_placement_map_t *)user_data;
+	if (m == NULL || il < 0 || il >= m->n_layer || m->layer_on_gpu[il])
+		return (default_dev);
+	return (ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU));
+}
+
 bool	run_kv_store_pass(llama_model *model,
 				const std::vector<llama_token> &prompt_tokens,
 				int gen_tokens, int kv_store_mode, uint32_t ctx_size,
@@ -196,7 +217,7 @@ bool	run_kv_store_pass(llama_model *model,
 				bool capture_logits, int32_t n_vocab_for_scratch,
 				std::string *text_out, membrane_kv_store_telemetry_t *tel,
 				gen_run_result_t *out, membrane_token_cb_t token_cb,
-				void *token_cb_ud)
+				void *token_cb_ud, const membrane_kv_placement_map_t *kv_placement)
 {
 	llama_context				*ctx;
 	llama_context_params		cp;
@@ -240,6 +261,15 @@ bool	run_kv_store_pass(llama_model *model,
 		 * flash_attn" upstream rule as Q8 above. */
 		cp.type_k = GGML_TYPE_Q5_1;
 		cp.type_v = GGML_TYPE_Q5_1;
+	}
+	/* Phase 12H: kv_dev_override left NULL (byte-identical to every
+	 * prior phase) unless a caller explicitly passed a placement map --
+	 * every membrane-llama-run call site, and membrane-run's own calls
+	 * with --kv-placement default, leave kv_placement NULL here. */
+	if (kv_placement != NULL)
+	{
+		cp.kv_dev_override = kv_placement_dev_override_cb;
+		cp.kv_dev_override_ud = (void *)kv_placement;
 	}
 	collector = membrane_runtime_collector_create(
 			MEMBRANE_RUNTIME_MODE_BASELINE, MEMBRANE_RUNTIME_MAX_LAYERS);

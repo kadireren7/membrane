@@ -1,0 +1,2 @@
+membrane-run: --gpu-layers all requested but this build has no GPU backend compiled in (rebuild with e.g. -DGGML_VULKAN=ON)
+exit=5

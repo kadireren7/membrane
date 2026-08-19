@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "section": "19: CPU-only build behavior",
+  "build_config": "build-llama-asan (MEMBRANE_ENABLE_LLAMA=ON, GGML_VULKAN=OFF -- no GPU backend compiled in at all)",
+  "checks": [
+    {
+      "flags": "--kv-placement default (no flag)",
+      "expected": "continues working exactly as before",
+      "result": "PASS -- byte-identical output shape to pre-Phase-12H, no new stderr lines",
+      "raw_evidence_file": "raw_cpu_only_default.txt"
+    },
+    {
+      "flags": "--gpu-layers all --kv-placement gpu",
+      "expected": "fails cleanly, no crash/assert",
+      "result": "PASS -- rejected before model load with a clear message and stable exit code 5 (MEMBRANE_EXIT_UNSUPPORTED_KV), via the PRE-EXISTING resolve_gpu_config() 'no GPU backend compiled in' check (Phase 9B), not this phase's own PLACEMENT_BACKEND_UNAVAILABLE reason string -- that check already runs before --kv-placement is ever consulted on a build with no GPU backend at all, so this phase's own BACKEND_UNAVAILABLE reason is currently reachable only inside a real device query failure path, not exercised by this specific CPU-only-build scenario. Documented precisely rather than overclaiming which code path fired.",
+      "raw_evidence_file": "raw_cpu_only_gpu_fail.txt"
+    },
+    {
+      "flags": "--kv-placement cpu (no --gpu-layers needed)",
+      "expected": "works trivially",
+      "result": "PASS -- verified on the Vulkan-capable host with --gpu-layers 0 implied (see product_cli.cpp's test_kv_placement_values_parsed unit test: cpu needs no --gpu-layers at CLI-parse level) and exercised end-to-end via the pure planner's test_cpu_only_backend_scenario unit test (device_free=device_total=0, cpu mode still resolves ok)."
+    }
+  ]
+}

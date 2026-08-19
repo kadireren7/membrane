@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "section": "30: measured only, no performance-improvement claim",
+  "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+  "n_ctx": 28500,
+  "precision": "native",
+  "gpu_layers": "all (28/28, identical across rows)",
+  "batches": [
+    {
+      "label": "stderr_batch (human-output runs, gen_tokens=12)",
+      "auto_26_of_28_gpu_tok_s": [38.9, 36.3, 39.4],
+      "auto_mean": 38.2,
+      "cpu_0_of_28_gpu_tok_s": [32.4, 30.4, 29.5],
+      "cpu_mean": 30.77
+    },
+    {
+      "label": "json_batch (--json runs, gen_tokens=12, separate invocation)",
+      "auto_26_of_28_gpu_tok_s": [30.240054, 24.445041, 39.203268],
+      "auto_mean": 31.30,
+      "cpu_0_of_28_gpu_tok_s": [31.033373, 31.419577, 24.796685],
+      "cpu_mean": 29.08,
+      "raw_evidence_files": ["raw_perf_auto_28500.jsonl", "raw_perf_cpu_28500.jsonl"]
+    }
+  ],
+  "interpretation": "The stderr_batch shows GPU-resident KV noticeably faster than all-CPU KV at this large context (28500) on the 1.5B model. The json_batch, run separately on the same host/config, shows a much smaller and noisier gap that overlaps between the two conditions. With only 3 repeats per condition per batch (not Phase 12G's 7+), this is NOT a statistically robust throughput claim -- it is reported as measured only, per Section 30's explicit instruction. It is flagged as a genuinely interesting open question (does the CPU-KV-at-parity-or-faster finding from Phase 12G, which tested up to ctx=16384 on this same 1.5B model, hold at much larger contexts closer to the VRAM ceiling?) for a future phase to answer properly with Phase 12G's own repeat-count/host-noise-guard rigor -- NOT re-litigated here.",
+  "no_marketing_claim": "This phase does not claim GPU-resident KV is faster, does not claim CPU-resident KV is faster, and does not claim parity. It reports exactly what was measured, with its own noise."
+}

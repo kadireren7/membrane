@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "section": "24-25: the central Phase 12H product-value experiment",
+  "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+  "precision": "native",
+  "gpu_layers": "all (28/28, IDENTICAL across every row below -- weight placement never varies)",
+  "finding": "At ctx=26800 and above, the DEFAULT (all-GPU KV, no --kv-placement) path fails at REAL context construction with a genuine Vulkan out-of-device-memory error while allocating compute buffers -- NOT a planner rejection, a real ggml_vulkan allocation failure -- even though gpu_policy's own pre-load ESTIMATE said the request should fit (this is exactly the 'pure KV-byte math can be false-safe' gap Phase 11/12 research already documented, now observed again from the product side). --kv-placement auto (which moves 2 of 28 layers' KV to CPU RAM once real construction is attempted) and --kv-placement cpu (all 28 layers' KV to CPU RAM) both reliably SUCCEED at the exact same ctx/model/precision/weight-placement configuration.",
+  "reproducibility": "Default failure at ctx=28500 reproduced twice (2/2 real Vulkan OOM). Auto success at ctx=28500 reproduced 3 times across this session (3/3 success, real generated text byte-identical each time).",
+  "rows": [
+    {"n_ctx": 24000, "placement": "default", "result": "SUCCEEDS", "raw_evidence_file": null, "note": "characterization sweep, not separately saved"},
+    {"n_ctx": 26000, "placement": "default", "result": "SUCCEEDS", "raw_evidence_file": null, "note": "characterization sweep, not separately saved"},
+    {"n_ctx": 26500, "placement": "default", "result": "SUCCEEDS", "exit_code": 0, "raw_evidence_file": "raw_capacity_default_26500.txt"},
+    {"n_ctx": 26800, "placement": "default", "result": "FAILS", "exit_code": 4, "failure": "ggml_vulkan ErrorOutOfDeviceMemory allocating compute buffers", "raw_evidence_file": "raw_capacity_default_26800.txt"},
+    {"n_ctx": 28500, "placement": "default", "result": "FAILS", "exit_code": 4, "failure": "ggml_vulkan ErrorOutOfDeviceMemory allocating compute buffers", "raw_evidence_file": "raw_capacity_default_28500.txt"},
+    {"n_ctx": 28500, "placement": "auto", "result": "SUCCEEDS", "gpu_kv_layers": 26, "cpu_kv_layers": 2, "raw_evidence_file": "raw_control_b.txt"},
+    {"n_ctx": 28500, "placement": "cpu", "result": "SUCCEEDS", "gpu_kv_layers": 0, "cpu_kv_layers": 28, "raw_evidence_file": "raw_control_c.txt"}
+  ],
+  "measured_uplift": {
+    "default_path_ceiling_ctx": "between 26500 (works) and 26800 (fails) -- not narrowed further than this 300-token window",
+    "auto_placement_working_ctx": 28500,
+    "uplift_tokens_at_least": 1700,
+    "uplift_pct_at_least": "approximately 6.4% (1700 / 26500)",
+    "caveat": "This is a SINGLE measured configuration (this exact model/precision/weight-placement/host), not a general claim. The upper bound of auto's own working range was not fully characterized either (gpu_policy's own pre-check independently rejects --gpu-layers all above ~ctx=29500 regardless of --kv-placement -- see control_points.json's known_limitations -- so 28500 is the highest point tested within that window, not necessarily auto's true ceiling if a larger --gpu-layers request could ever be granted)."
+  },
+  "weights_unchanged_proof": {
+    "method": "gpu_policy's own printed est_weights value, captured from real CLI stderr output, compared across every row above",
+    "est_weights_mib": 2499.5,
+    "identical_across_rows": ["raw_capacity_default_26500.txt", "raw_capacity_default_26800.txt", "raw_capacity_default_28500.txt", "raw_control_b.txt", "raw_control_c.txt"],
+    "gpu_layers_selected_identical": 28,
+    "verifier_check": "Phase-v0.3 verify-results.py recomputes this by grepping 'est_weights=' out of each raw file and asserting exact equality -- not just eyeballed here."
+  }
+}
