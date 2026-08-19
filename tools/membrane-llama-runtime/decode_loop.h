@@ -75,6 +75,13 @@ typedef struct s_membrane_kv_placement_map
 	const uint8_t	*layer_on_gpu;
 }	membrane_kv_placement_map_t;
 
+/* Exposed (not `static`) ONLY for test_decode_loop.cpp -- not part of
+ * run_kv_store_pass's public contract, never called directly by any
+ * product call site (it is installed as llama_context_params.
+ * kv_dev_override, never invoked by MEMBRANE code itself). */
+ggml_backend_dev_t	kv_placement_dev_override_cb(int32_t il,
+			ggml_backend_dev_t default_dev, void *user_data);
+
 /*
  * Product Phase 7: creates ONE llama_context whose KV cache tensors
  * are allocated at kv_store_mode's ggml type, decodes the prompt and

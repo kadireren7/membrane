@@ -1,0 +1,63 @@
+MEMBRANE 0.3.0-rc1
+model      qwen2.5-1.5b-instruct-fp16.gguf
+context    28500
+kv         native (F16)
+flash attn enabled
+kv bytes   779.30 MiB (F16, from real model hparams -- not measured until context creation)
+backend    Vulkan, device selected: Vulkan1 (gpu-layers=all, selected=28)
+gpu policy device_free=3956.1 MiB reserve=651.3 MiB est_weights=2499.5 MiB est_kv=779.3 MiB (estimates, not measured)
+KV placement
+  mode: auto
+  GPU KV layers: 26/28
+  CPU KV layers: 2/28
+  KV precision: F16
+  estimated GPU KV: 723.63 MiB
+  estimated CPU KV: 55.66 MiB
+  reason: PLACEMENT_AUTO_SPLIT
+ Paris. The capital of France is also the capital of which
+generated  12 tokens
+speed      38.2 tok/s
+kv memory  779.30 MiB (real allocation)
+rss final  692672 kB (peak 2539184 kB)
+MEMBRANE 0.3.0-rc1
+model      qwen2.5-1.5b-instruct-fp16.gguf
+context    28500
+kv         native (F16)
+flash attn enabled
+kv bytes   779.30 MiB (F16, from real model hparams -- not measured until context creation)
+backend    Vulkan, device selected: Vulkan1 (gpu-layers=all, selected=28)
+gpu policy device_free=3956.1 MiB reserve=651.3 MiB est_weights=2499.5 MiB est_kv=779.3 MiB (estimates, not measured)
+KV placement
+  mode: auto
+  GPU KV layers: 26/28
+  CPU KV layers: 2/28
+  KV precision: F16
+  estimated GPU KV: 723.63 MiB
+  estimated CPU KV: 55.66 MiB
+  reason: PLACEMENT_AUTO_SPLIT
+ Paris. The capital of France is also the capital of which
+generated  12 tokens
+speed      37.6 tok/s
+kv memory  779.30 MiB (real allocation)
+rss final  690420 kB (peak 2733184 kB)
+MEMBRANE 0.3.0-rc1
+model      qwen2.5-1.5b-instruct-fp16.gguf
+context    28500
+kv         native (F16)
+flash attn enabled
+kv bytes   779.30 MiB (F16, from real model hparams -- not measured until context creation)
+backend    Vulkan, device selected: Vulkan1 (gpu-layers=all, selected=28)
+gpu policy device_free=3956.1 MiB reserve=651.3 MiB est_weights=2499.5 MiB est_kv=779.3 MiB (estimates, not measured)
+KV placement
+  mode: auto
+  GPU KV layers: 26/28
+  CPU KV layers: 2/28
+  KV precision: F16
+  estimated GPU KV: 723.63 MiB
+  estimated CPU KV: 55.66 MiB
+  reason: PLACEMENT_AUTO_SPLIT
+ Paris. The capital of France is also the capital of which
+generated  12 tokens
+speed      18.6 tok/s
+kv memory  779.30 MiB (real allocation)
+rss final  643620 kB (peak 2522564 kB)

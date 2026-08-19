@@ -420,8 +420,14 @@ promotion/demotion, no adaptive/learned policy — deliberately simpler
 than the Phase 12F research dynamic scheduler, which is **not**
 productized here.
 
-Prior research (`results/phase12/`) found CPU-resident KV at parity or
-faster than GPU-resident KV across every valid tested configuration —
+Prior research found CPU-resident KV at parity or faster than
+GPU-resident KV across every valid tested configuration (Phase 12G,
+`KV_PLACEMENT_CAPACITY_ONLY_ON_TESTED_REGIME` — branch
+`experiment/kv-placement-bottleneck-discovery`, commit
+`e91923a2e4ea8fb28d4d27bea91d604ffb6bda27`,
+`results/phase12/kv-placement-bottleneck/summary.json`; that branch's
+own `results/phase12/` tree is not part of this branch, which is
+deliberately built from clean `main` — see `docs/kv-residency.md`) —
 so this feature's value is **VRAM capacity**, not a performance
 optimization; no speed claim is made. `auto` maximizes GPU-resident KV
 layers subject to a safe budget (conservative compatibility, not a
@@ -432,8 +438,11 @@ all-CPU-KV plan is always a valid `auto` outcome.
 build. A real, reproduced capacity finding: at one measured
 configuration, the default all-GPU-KV path failed with a genuine
 Vulkan out-of-device-memory error at a context where `--kv-placement
-auto`/`cpu` succeeded, at byte-identical weight placement
-(`results/v0.3/kv-residency-productization/capacity_uplift.json`).
+auto`/`cpu` succeeded, with identical selected GPU layer count and
+estimated weight bytes across all three runs (a pre-load estimate
+and selection comparison, not a post-load buffer-placement
+measurement —
+`results/v0.3/kv-residency-productization/capacity_uplift.json`).
 This is a narrow, single-configuration result, not a general claim —
 see `docs/kv-residency.md` for the full scope, a known limitation
 around how the existing `--gpu-layers` memory guard interacts with

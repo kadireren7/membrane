@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "section": "27-28: --kv adaptive composed with --kv-placement",
-  "design": "Strictly sequential (Section 27's recommended order, not a joint search): main.cpp resolves --kv adaptive into a concrete Q8/Q5 mode FIRST (existing Phase 11A resolve_gpu_config()/resolve_cpu_adaptive_kv() logic, completely unmodified by this phase), then resolve_kv_placement() is called AFTERWARD with effective_o.kv_mode (the resolved concrete mode, never MEMBRANE_KV_STORE_ADAPTIVE itself) to compute the per-layer KV byte cost the residency planner needs. Adaptive's own precision semantics are untouched -- this phase never changes which mode adaptive picks.",
+  "design": "Strictly sequential (Section 27's recommended order, not a joint search): main.cpp resolves --kv adaptive into a concrete Q8/Q5 mode FIRST (existing Phase 11A resolve_gpu_config()/resolve_cpu_adaptive_kv() logic, completely unmodified by this phase), then resolve_kv_placement() is called AFTERWARD with effective_kv_mode (the resolved concrete mode, passed by the caller as effective_o.kv_mode -- never MEMBRANE_KV_STORE_ADAPTIVE itself) to compute the per-layer KV byte cost the residency planner needs. Adaptive's own precision semantics are untouched -- this phase never changes which mode adaptive picks.",
   "real_test": {
     "model": "SmolLM2-135M-Instruct-f16.gguf",
     "n_ctx": 4096,

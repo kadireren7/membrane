@@ -12,18 +12,32 @@ scheduler, which this phase does **not** productize.
 
 ## Why it exists
 
-Prior research (Phase 12B–12G, see `results/phase12/`) established:
+Prior research (Phase 12B–12G) established the facts below. That
+research lives entirely on the `experiment/*` branches this feature
+branch deliberately does NOT merge (Section 1: branched from clean
+`main`, minimum-required infrastructure only) -- `results/phase12/`
+is not present in this branch's tree at all, so citations below name
+the exact branch/commit/artifact rather than a path that would not
+resolve here:
 
 - KV placement can be chosen independently of weight placement
-  (`kv_dev_override`, Phase 12B).
+  (`kv_dev_override`, Phase 12B — branch `experiment/kv-device-override`,
+  commit `a1ebd9e285bd763cfb448c8d8202536802783bb9`,
+  `results/phase12/kv-device-override/summary.json`).
 - A deterministic dynamic scheduler works but showed no measured
   throughput advantage over static placement on the tested
-  hardware/model range (Phase 12F).
+  hardware/model range (Phase 12F — branch
+  `experiment/dynamic-kv-tiering-scheduler`, commit
+  `79588b607d06763eaf13da4357f0b6c679310592`,
+  `results/phase12/dynamic-tiering-scheduler/summary.json`).
 - CPU-resident KV was at parity or faster than GPU-resident KV across
   every valid Phase 12G measurement (135M/360M/1.5B, contexts up to
   65536) — so the value of KV placement on this hardware range is
   **capacity**, not a performance optimization
-  (`KV_PLACEMENT_CAPACITY_ONLY_ON_TESTED_REGIME`).
+  (`KV_PLACEMENT_CAPACITY_ONLY_ON_TESTED_REGIME` — branch
+  `experiment/kv-placement-bottleneck-discovery`, commit
+  `e91923a2e4ea8fb28d4d27bea91d604ffb6bda27`,
+  `results/phase12/kv-placement-bottleneck/summary.json`).
 
 Phase 12H turns that capacity finding into an opt-in product feature:
 move part (or all) of the KV cache to system RAM, while keeping model
@@ -44,17 +58,31 @@ reported as measured, not marketed as a speedup or a slowdown.
 - **default** (the default) — unmodified behavior. `kv_dev_override`
   is left `NULL`; KV follows whatever device llama.cpp itself would
   already use. This is the only mode with zero behavioral change from
-  before this feature existed — no opt-in, nothing changes.
+  before this feature existed — no opt-in, nothing changes. Verified
+  directly in source, not just by convention — `scripts/
+  verify-results.py`'s "default CLI behavior is unchanged" check
+  confirms `product_cli.cpp` defaults `kv_placement` to
+  `MEMBRANE_KV_PLACEMENT_DEFAULT` and that `decode_loop.cpp` only sets
+  `cp.kv_dev_override` inside the matching non-`NULL` guard.
 - **gpu** — every KV layer on the same GPU device as the offloaded
   weights, or fails closed (`PLACEMENT_BUDGET_INSUFFICIENT`) if it
-  doesn't safely fit. Requires `--gpu-layers all|auto|N`.
+  doesn't safely fit. Requires `--gpu-layers all|auto|N`. Explicit
+  real-hardware evidence in `quality.json`/`raw_quality_q8_gpu.txt`;
+  `auto` reaching the same all-GPU outcome is separately shown at
+  control point A (`results/v0.3/kv-residency-productization/
+  vulkan_behavior.json`, `control_points.json`).
 - **cpu** — every KV layer in system RAM. Model weights are
   unaffected (still governed entirely by `--gpu-layers`). Always
-  valid, including on CPU-only builds.
+  valid, including on CPU-only builds. Real-hardware control point C
+  and the CPU-only-build evidence
+  (`results/v0.3/kv-residency-productization/control_points.json`,
+  `cpu_behavior.json`).
 - **auto** — MEMBRANE's planner keeps as many KV layers GPU-resident
   as safely fit, in ascending layer-index order, and places the rest
   in system RAM. Requires `--gpu-layers all|auto|N`. Never fails for
   lack of GPU room — an all-CPU-KV plan is a valid `auto` outcome.
+  Real-hardware control point B
+  (`results/v0.3/kv-residency-productization/control_points.json`).
 
 `auto`'s "maximize GPU residency" objective is a **conservative
 compatibility** choice (closest to pre-existing behavior when the
@@ -73,15 +101,19 @@ adaptive_composition.json`) — no joint search.
 
 `--gpu-layers` resolution is completely unaffected by `--kv-placement`
 — the existing weight-layer guard (`gpu_policy.c`) runs first and
-never sees `--kv-placement`'s value; weight placement for the same
-`--gpu-layers` request is byte-identical no matter which
-`--kv-placement` mode is passed
+never sees `--kv-placement`'s value; the selected GPU layer count and
+gpu_policy's own pre-load estimated weight bytes for the same
+`--gpu-layers` request are identical no matter which `--kv-placement`
+mode is passed — a pre-load estimate/selection comparison, not a
+post-load buffer-placement measurement
 (`results/v0.3/kv-residency-productization/capacity_uplift.json`'s
-`weights_unchanged_proof`).
+`identical_selected_layers_and_estimated_weight_bytes`).
 
 `--kv-placement` is currently rejected together with `--compare-kv`/
 `--gpu-bench` (a clear CLI error, not a silent no-op) — composing with
-those two-context comparison modes is out of this phase's scope.
+those two-context comparison modes is out of this phase's scope
+(`tools/membrane-run/test_product_cli.cpp`'s
+`test_kv_placement_rejects_compare_and_bench_modes`).
 
 ## A known, disclosed limitation
 
@@ -93,30 +125,38 @@ grant a `--gpu-layers` request at all, regardless of what
 contexts, `--kv-placement cpu` is rejected by this pre-check
 identically to `default`, even though `cpu` mode needs zero GPU KV
 bytes. This means `--kv-placement` does not (yet) unlock arbitrarily
-larger `--gpu-layers` requests — see `capacity_uplift.json` for what
-it *does* reliably help with: a real, reproduced gap between what
+larger `--gpu-layers` requests — see
+`results/v0.3/kv-residency-productization/capacity_uplift.json` for
+what it *does* reliably help with: a real, reproduced gap between what
 `gpu_policy`'s pre-load estimate predicts and what the real allocator
 can do (measured on a GTX 1650: the default all-GPU-KV path fails with
 a genuine Vulkan out-of-device-memory error at a context where
-`--kv-placement auto`/`cpu` succeed, at identical weight placement).
+`--kv-placement auto`/`cpu` succeed, with identical selected GPU layer
+count and estimated weight bytes).
 
 ## Fail-closed reasons
 
 `PLACEMENT_GPU_FULL`, `PLACEMENT_CPU_FULL`, `PLACEMENT_AUTO_SPLIT`,
 `PLACEMENT_DEFAULT_UNCHANGED`, `PLACEMENT_BUDGET_INSUFFICIENT`,
 `PLACEMENT_BACKEND_UNAVAILABLE`, `PLACEMENT_INVALID_CONFIG` — stable
-strings, also emitted verbatim in `--json` output's
-`kv_placement.placement_reason` field. Never a silent fallback to an
-unrelated mode.
+strings defined in `tools/membrane-run/kv_residency_policy.h`, also
+emitted verbatim in `--json` output's `kv_placement.placement_reason`
+field (`results/v0.3/kv-residency-productization/json_contract.json`).
+Never a silent fallback to an unrelated mode.
 
 ## Validation scope
 
-Real GTX 1650 (Vulkan) and a CPU-only build (no GPU backend compiled
-in) — see `results/v0.3/kv-residency-productization/`. Not validated
-on CUDA or any other backend. Minimum llama.cpp patch set required:
-`kv-type-override` (pre-existing) + `kv-device-override` (added this
-phase) — the research-only `kv-runtime-relocate` and
-`kv-buffer-retirement` patches are not part of the product build.
+Real GTX 1650 (Vulkan,
+`results/v0.3/kv-residency-productization/vulkan_behavior.json`) and a
+CPU-only build (no GPU backend compiled in,
+`results/v0.3/kv-residency-productization/cpu_behavior.json`). Not
+validated on CUDA or any other backend. Minimum llama.cpp patch set
+required: `kv-type-override` (pre-existing) + `kv-device-override`
+(added this phase) — the research-only `kv-runtime-relocate` and
+`kv-buffer-retirement` patches are not part of the product build,
+confirmed by direct inspection of `CMakeLists.txt`
+(`results/v0.3/kv-residency-productization/manifest.json`, also
+independently recomputed by `scripts/verify-results.py`).
 
 ## Example commands
 

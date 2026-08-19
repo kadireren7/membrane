@@ -18,7 +18,8 @@
     {
       "flags": "--kv-placement cpu (no --gpu-layers needed)",
       "expected": "works trivially",
-      "result": "PASS -- verified on the Vulkan-capable host with --gpu-layers 0 implied (see product_cli.cpp's test_kv_placement_values_parsed unit test: cpu needs no --gpu-layers at CLI-parse level) and exercised end-to-end via the pure planner's test_cpu_only_backend_scenario unit test (device_free=device_total=0, cpu mode still resolves ok)."
+      "result": "PASS -- executed for real through this SAME CPU-only build (build-llama-asan, GGML_VULKAN=OFF), not just Vulkan-host/unit-test evidence: real model load, real 30/30-layer CPU KV allocation, real generation, ASan/UBSan clean. Also covered at CLI-parse level by product_cli.cpp's test_kv_placement_values_parsed (cpu needs no --gpu-layers) and by the pure planner's test_cpu_only_backend_scenario unit test (device_free=device_total=0, cpu mode still resolves ok).",
+      "raw_evidence_file": "raw_cpu_only_kv_placement_cpu.txt"
     }
   ]
 }

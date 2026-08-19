@@ -651,6 +651,23 @@ static bool	resolve_kv_placement(const membrane_run_opts_t &o,
 
 	if (o.kv_placement == MEMBRANE_KV_PLACEMENT_DEFAULT)
 		return (true);
+	/* Review fix: resolve_gpu_config()'s documented "GGUF metadata
+	 * unreadable, explicit numeric --gpu-layers N, proceed unguarded"
+	 * fallback (gs->policy_used stays false; see its own comment above)
+	 * leaves gs->estimated_model_bytes at 0 -- fine for DEFAULT
+	 * (already returned above) and for CPU (no GPU KV budget math at
+	 * all, see membrane_kv_residency_resolve's CPU branch), but unsafe
+	 * for GPU/AUTO: the planner would then believe the model's real
+	 * weight bytes are zero and could overcommit GPU-resident KV.
+	 * Fail closed instead of planning against an unverified estimate. */
+	if ((o.kv_placement == MEMBRANE_KV_PLACEMENT_GPU
+			|| o.kv_placement == MEMBRANE_KV_PLACEMENT_AUTO)
+		&& !gs->policy_used)
+		return (fprintf(stderr, "membrane-run: --kv-placement gpu|auto "
+				"requires a verified GPU weight-memory estimate, but "
+				"none is available for this model/--gpu-layers "
+				"combination -- try --kv-placement cpu or --gpu-layers "
+				"all/auto\n"), false);
 	total_kv_bytes = kv_bytes_for_mode(shape, ctx_size, effective_kv_mode);
 	kv_bytes_per_layer = shape.n_layer > 0
 		? total_kv_bytes / (uint64_t)shape.n_layer : 0;

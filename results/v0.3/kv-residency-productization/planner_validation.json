@@ -3,7 +3,7 @@
   "section": "7-12, 33: pure planner architecture and unit test validation",
   "module": "tools/membrane-run/kv_residency_policy.{c,h}",
   "test_binary": "test_kv_residency_policy",
-  "test_count": 18,
+  "test_count": 19,
   "test_names": [
     "test_default_mode_produces_no_plan",
     "test_all_gpu_fits",
@@ -22,6 +22,7 @@
     "test_zero_kv_bytes_per_layer_treated_as_free",
     "test_cpu_only_backend_scenario",
     "test_null_out_pointer_is_safe",
+    "test_max_fit_quotient_does_not_overflow_int32",
     "test_mode_name_strings"
   ],
   "all_passing": true,

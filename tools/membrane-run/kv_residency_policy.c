@@ -176,11 +176,19 @@ int	membrane_kv_residency_resolve(int placement_mode, int32_t n_layer,
 		max_fit = n_layer;
 	else
 	{
-		max_fit = (int32_t)(out->budget_for_kv_bytes / kv_bytes_per_layer);
-		if (max_fit > n_layer)
+		/* Compare the uint64_t quotient against n_layer BEFORE
+		 * narrowing to int32_t -- a budget/kv_bytes_per_layer ratio
+		 * exceeding INT32_MAX would otherwise hit an
+		 * implementation-defined (possibly negative) narrowing
+		 * conversion, which could wrongly select zero GPU layers
+		 * despite ample budget. n_layer is always in [1,
+		 * MEMBRANE_KV_RESIDENCY_MAX_LAYERS], so this cast is safe. */
+		if (out->budget_for_kv_bytes / kv_bytes_per_layer
+			> (uint64_t)n_layer)
 			max_fit = n_layer;
-		if (max_fit < 0)
-			max_fit = 0;
+		else
+			max_fit = (int32_t)(out->budget_for_kv_bytes
+					/ kv_bytes_per_layer);
 	}
 	fill_split(out, n_layer, max_fit);
 	out->gpu_kv_layers = max_fit;

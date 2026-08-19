@@ -19,6 +19,22 @@ target_include_directories(membrane_decode_loop PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
 
+if(MEMBRANE_BUILD_TESTS)
+  # Phase 12H review fix: kv_placement_dev_override_cb needs real
+  # ggml_backend_dev_by_type()/ggml_backend_dev_t, so unlike the
+  # llama-free planner tests (test_kv_residency_policy), this can only
+  # build here, inside MEMBRANE_ENABLE_LLAMA.
+  add_executable(test_decode_loop test_decode_loop.cpp)
+  set_target_properties(test_decode_loop PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_decode_loop PRIVATE membrane_decode_loop llama)
+  target_include_directories(test_decode_loop PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_decode_loop COMMAND test_decode_loop)
+endif()
+
 add_executable(membrane-llama-run main.cpp)
 set_target_properties(membrane-llama-run PROPERTIES
   CXX_STANDARD 17

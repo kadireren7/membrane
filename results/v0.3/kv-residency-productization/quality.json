@@ -12,5 +12,5 @@
     "raw_quality_q5_cpu.txt", "raw_quality_native_cpu.txt"
   ],
   "md5_all_files": "5fa992fa12220ad7ecf9c5b3d82cabde",
-  "verdict": "IDENTICAL across Q8-gpu, Q8-cpu, Q8-default, Q5-cpu, and native-cpu -- KV device placement introduces no additional quantization error and does not change greedy-decode output at this test point. Verifier recomputes the md5-equality claim directly from the raw files, not from this summary's own say-so."
+  "verdict": "IDENTICAL greedy-decode output across Q8-gpu, Q8-cpu, Q8-default, Q5-cpu, and native-cpu at this test point (byte-identical generated text, md5-verified). This shows KV device placement did not change the generated TOKENS here -- it is not a numeric quantization-error measurement, and no such measurement was taken this phase; identical output tokens do not by themselves prove zero numeric quantization error was introduced. Verifier recomputes the md5-equality claim directly from the raw files, not from this summary's own say-so."
 }

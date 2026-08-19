@@ -11,6 +11,6 @@ ggml_vulkan: vk::Device::allocateMemory: ErrorOutOfDeviceMemory
 ggml_gallocr_reserve_n_impl: failed to allocate Vulkan1 buffer of size 157155328
 graph_reserve: failed to allocate compute buffers
 llama_init_from_model: failed to initialize the context: failed to allocate compute pp buffers
-membrane: kv-store context creation failed (see llama's own stderr diagnostics above -- for q8, this fails closed rather than silently falling back to native storage)
+membrane: kv-store context creation failed (see llama's own stderr diagnostics above -- for native, this fails closed rather than silently falling back to native storage)
 membrane-run: generation failed
 exit_default_26800=4

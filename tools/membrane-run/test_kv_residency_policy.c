@@ -268,6 +268,41 @@ static void	test_null_out_pointer_is_safe(void)
 		"a NULL out pointer is rejected, not dereferenced");
 }
 
+/* Review fix regression: AUTO's max_fit computation must compare the
+ * uint64_t (budget / kv_bytes_per_layer) quotient against n_layer
+ * BEFORE narrowing to int32_t. Construct a quotient of exactly 2^31
+ * (kv_bytes_per_layer=1, budget_for_kv_bytes=2^31) -- reinterpreted as
+ * a two's-complement int32_t that value is INT32_MIN, which the
+ * pre-fix code's `if (max_fit < 0) max_fit = 0;` would silently turn
+ * into an all-CPU plan despite the budget vastly exceeding the real
+ * (4-layer, 4-byte-total) KV requirement. */
+static void	test_max_fit_quotient_does_not_overflow_int32(void)
+{
+	membrane_kv_residency_result_t	r;
+	uint64_t						device_total;
+	uint64_t						device_free;
+
+	/* reserve_for(1e9) = fixed 512 MiB floor (15% of 1e9 < 512 MiB).
+	 * budget_bytes = device_free - 512 MiB; after_weights = budget_bytes
+	 * (weights/compute both 0); margin_for(4 bytes total KV) = fixed
+	 * 64 MiB floor; budget_for_kv_bytes = after_weights - 64 MiB.
+	 * Solve for device_free so budget_for_kv_bytes == 2^31 exactly. */
+	device_total = 1000000000ull;
+	device_free = ((uint64_t)1 << 31) + 64 * MIB + 512 * MIB;
+	TEST_ASSERT(membrane_kv_residency_resolve(MEMBRANE_KV_PLACEMENT_AUTO,
+			4, 1 /* kv_bytes_per_layer */, device_free, device_total,
+			0, 0, &r) == 1, "auto mode resolves ok");
+	TEST_ASSERT(r.budget_for_kv_bytes == ((uint64_t)1 << 31),
+		"budget_for_kv_bytes lands exactly on the 2^31 boundary as "
+		"constructed (sanity check on the test's own arithmetic)");
+	TEST_ASSERT(r.gpu_kv_layers == 4 && r.cpu_kv_layers == 0,
+		"all 4 layers fit (4 bytes of KV against a >2 GiB budget) -- "
+		"the pre-fix narrowing bug would have wrongly produced 0 "
+		"GPU-resident layers here");
+	TEST_ASSERT(strcmp(r.reason, MEMBRANE_KV_PLACEMENT_REASON_GPU_FULL) == 0,
+		"reason reflects the correct full-GPU-fit outcome");
+}
+
 static void	test_mode_name_strings(void)
 {
 	TEST_ASSERT(strcmp(membrane_kv_placement_mode_name(
@@ -299,6 +334,7 @@ int	main(void)
 	test_zero_kv_bytes_per_layer_treated_as_free();
 	test_cpu_only_backend_scenario();
 	test_null_out_pointer_is_safe();
+	test_max_fit_quotient_does_not_overflow_int32();
 	test_mode_name_strings();
 	printf("test_kv_residency_policy: all tests passed\n");
 	return (0);

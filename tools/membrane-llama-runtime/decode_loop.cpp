@@ -198,14 +198,20 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
  * layer is a genuine no-op, never a redundant re-placement. An
  * out-of-range il (should not happen: the map is sized to the real
  * model's own n_layer) falls back to default_dev, matching the
- * patch's own documented "NULL return -> default_dev" contract. */
-static ggml_backend_dev_t	kv_placement_dev_override_cb(int32_t il,
+ * patch's own documented "NULL return -> default_dev" contract. A
+ * non-NULL map with a NULL layer_on_gpu (should not happen from any
+ * real call site either -- membrane_kv_placement_map_t's only
+ * producer always sets both together) also falls back to default_dev
+ * rather than dereferencing a null pointer -- not `static` so
+ * test_decode_loop.cpp can drive this fallback directly. */
+ggml_backend_dev_t	kv_placement_dev_override_cb(int32_t il,
 				ggml_backend_dev_t default_dev, void *user_data)
 {
 	const membrane_kv_placement_map_t	*m;
 
 	m = (const membrane_kv_placement_map_t *)user_data;
-	if (m == NULL || il < 0 || il >= m->n_layer || m->layer_on_gpu[il])
+	if (m == NULL || m->layer_on_gpu == NULL || il < 0
+		|| il >= m->n_layer || m->layer_on_gpu[il])
 		return (default_dev);
 	return (ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU));
 }
@@ -278,10 +284,16 @@ bool	run_kv_store_pass(llama_model *model,
 	ctx = llama_init_from_model(model, cp);
 	if (ctx == NULL)
 	{
+		/* Review fix: this used to unconditionally say "for q8" even
+		 * when kv_store_mode was native or q5 -- name the actual
+		 * requested precision instead of a hardcoded, sometimes-wrong
+		 * one. */
 		fprintf(stderr, "membrane: kv-store context creation failed (see "
-			"llama's own stderr diagnostics above -- for q8, this fails "
+			"llama's own stderr diagnostics above -- for %s, this fails "
 			"closed rather than silently falling back to native "
-			"storage)\n");
+			"storage)\n",
+			kv_store_mode == MEMBRANE_KV_STORE_Q8 ? "q8"
+				: kv_store_mode == MEMBRANE_KV_STORE_Q5 ? "q5" : "native");
 		membrane_runtime_collector_destroy(collector);
 		return (out->ok = false, false);
 	}
