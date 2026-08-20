@@ -1629,10 +1629,17 @@ def _c73():
 			return False, ("VIABLE claimed but capacity_uplift.json's "
 				"measured_uplift.uplift_tokens_at_least is missing or "
 				"not a positive number")
+	# Review fix: the success message used to unconditionally cite
+	# uplift/qualification even for gates where those fields aren't
+	# required (only VIABLE enforces them above) -- report only what
+	# was actually validated for the gate that was actually returned.
+	if gate == "KV_RESIDENCY_PRODUCT_VIABLE":
+		return True, (f"decision_gate={gate!r} valid against the "
+			f"verifier-owned enum, backed by a real positive measured "
+			f"uplift ({uplift_value}), and the narrow-scope qualification "
+			f"is present")
 	return True, (f"decision_gate={gate!r} valid against the "
-		f"verifier-owned enum, backed by a real positive measured "
-		f"uplift ({uplift_value}), and the narrow-scope qualification "
-		f"is present")
+		f"verifier-owned enum")
 
 
 def main() -> int:
