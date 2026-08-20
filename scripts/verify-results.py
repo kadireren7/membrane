@@ -1495,15 +1495,15 @@ def _c69():
 	p = _kv_residency_json("performance.json")
 	full_text = json.dumps(p).lower()
 	bad = []
-	# Review fix: this used to only check the KEY's substring appears
-	# anywhere in the JSON dump, so an empty string, a `false`, or any
-	# other falsy value would still pass. no_marketing_claim's actual
-	# schema here is a non-empty prose disclaimer string (not a plain
-	# boolean), so require it to be present AND truthy/non-empty rather
-	# than forcing `is True`, which would incorrectly reject the real,
-	# valid string-disclaimer schema this artifact already uses.
-	if not p.get("no_marketing_claim"):
-		bad.append("no_marketing_claim is missing, empty, or falsy")
+	# Review fix (round 2): the round-1 fix required a truthy value,
+	# which incorrectly still accepted `"no_marketing_claim": true` --
+	# a bare boolean is NOT a disclaimer, it says nothing. The
+	# documented schema (see the comment this replaces) is a non-empty
+	# prose string; enforce that exact type, not just truthiness.
+	claim = p.get("no_marketing_claim")
+	if not isinstance(claim, str) or not claim.strip():
+		bad.append("no_marketing_claim is missing, empty, or not a "
+			"non-empty string (a bare boolean is not a disclaimer)")
 	# A bare, unqualified "is faster"/"proves" claim would be a red flag;
 	# the interpretation field is expected to hedge with words like
 	# "noisy"/"not... robust" rather than assert a clean winner.

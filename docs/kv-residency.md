@@ -72,16 +72,22 @@ reported as measured, not marketed as a speedup or a slowdown.
   control point A (`results/v0.3/kv-residency-productization/
   vulkan_behavior.json`, `control_points.json`).
 - **cpu** — every KV layer in system RAM. Model weights are
-  unaffected (still governed entirely by `--gpu-layers`). Always
-  valid, including on CPU-only builds. Real-hardware control point C
-  and the CPU-only-build evidence
+  unaffected (still governed entirely by `--gpu-layers`). The
+  planner itself can always produce an all-CPU-KV plan, including on
+  CPU-only builds — but the overall run can still be rejected by the
+  unchanged `gpu_policy.c` pre-flight check below, which doesn't know
+  about `--kv-placement` and can reject `--gpu-layers` before KV
+  placement is ever applied. Real-hardware control point C and the
+  CPU-only-build evidence
   (`results/v0.3/kv-residency-productization/control_points.json`,
   `cpu_behavior.json`).
 - **auto** — MEMBRANE's planner keeps as many KV layers GPU-resident
   as safely fit, in ascending layer-index order, and places the rest
-  in system RAM. Requires `--gpu-layers all|auto|N`. Never fails for
-  lack of GPU room — an all-CPU-KV plan is a valid `auto` outcome.
-  Real-hardware control point B
+  in system RAM. Requires `--gpu-layers all|auto|N`. The planner
+  itself never fails for lack of GPU room — an all-CPU-KV plan is a
+  valid `auto` outcome — but, same as `cpu` above, the same unchanged
+  pre-flight check can still reject the overall run first. Real-hardware
+  control point B
   (`results/v0.3/kv-residency-productization/control_points.json`).
 
 `auto`'s "maximize GPU residency" objective is a **conservative
@@ -101,13 +107,15 @@ adaptive_composition.json`) — no joint search.
 
 `--gpu-layers` resolution is completely unaffected by `--kv-placement`
 — the existing weight-layer guard (`gpu_policy.c`) runs first and
-never sees `--kv-placement`'s value; the selected GPU layer count and
-gpu_policy's own pre-load estimated weight bytes for the same
-`--gpu-layers` request are identical no matter which `--kv-placement`
-mode is passed — a pre-load estimate/selection comparison, not a
-post-load buffer-placement measurement
-(`results/v0.3/kv-residency-productization/capacity_uplift.json`'s
-`identical_selected_layers_and_estimated_weight_bytes`).
+never takes `--kv-placement`'s value as an input, so its selected GPU
+layer count and pre-load estimated weight bytes cannot depend on which
+`--kv-placement` mode is passed, by construction. This is confirmed
+empirically across the validated configurations recorded in
+`results/v0.3/kv-residency-productization/capacity_uplift.json`'s
+`identical_selected_layers_and_estimated_weight_bytes` — a pre-load
+estimate/selection comparison, not a post-load buffer-placement
+measurement, and not claimed to be re-verified at every possible
+model/context/precision combination.
 
 `--kv-placement` is currently rejected together with `--compare-kv`/
 `--gpu-bench` (a clear CLI error, not a silent no-op) — composing with
