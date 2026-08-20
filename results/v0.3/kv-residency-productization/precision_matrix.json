@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "section": "26: Q8/Q5/native placement validation",
+  "model": "SmolLM2-135M-Instruct-f16.gguf",
+  "n_ctx": 4096,
+  "gpu_layers": "all (30/30 throughout)",
+  "prompt": "The capital of France is",
+  "gen_tokens": 12,
+  "rows": [
+    {"precision": "Q8_0", "placement": "gpu", "generation_ok": true, "raw_evidence_file": "raw_quality_q8_gpu.txt"},
+    {"precision": "Q8_0", "placement": "cpu", "generation_ok": true, "raw_evidence_file": "raw_quality_q8_cpu.txt"},
+    {"precision": "Q8_0", "placement": "default", "generation_ok": true, "raw_evidence_file": "raw_quality_q8_default.txt"},
+    {"precision": "Q5_1", "placement": "cpu", "generation_ok": true, "raw_evidence_file": "raw_quality_q5_cpu.txt"},
+    {"precision": "native (F16)", "placement": "cpu", "generation_ok": true, "raw_evidence_file": "raw_quality_native_cpu.txt"}
+  ],
+  "native_kv_placement_support": "Supported. Within THIS matrix, only the native+cpu row above was tested (SmolLM2-135M, ctx=4096) and it generated successfully, same as every Q8/Q5 row. Native placement at gpu/auto/default was NOT tested by this matrix -- but IS covered elsewhere in this phase's evidence at a different model/context: control_points.json's point A (native, auto->all-GPU, SmolLM2-135M) and capacity_uplift.json's rows (native, default/auto/cpu, qwen2.5-1.5B, ctx 24000-28500) all generated successfully too. Review fix: the sentence that used to be here claimed this as 'no regression to existing native default behavior... see scripts/verify-results.py's default-unchanged check' -- that check (_c71) verifies the SOURCE CODE STRUCTURE only (kv_placement defaults to MEMBRANE_KV_PLACEMENT_DEFAULT, kv_dev_override conditionally gated), not an executed runtime comparison against a pre-Phase-12H output baseline. No such executed regression artifact exists in this phase's evidence; the source-structure check is real evidence of a different, narrower claim (the code is written to preserve default behavior), not a substitute for one.",
+  "architecture_scope_note": "Q8_0/Q5_1 KV storage itself (pre-existing compat_check.c gate, unrelated to this phase) is only validated for LLM_ARCH_LLAMA models -- qwen2.5-1.5b-instruct is architecture 'qwen2' and was tested with native precision only for that reason (see capacity_uplift.json), not a --kv-placement limitation."
+}

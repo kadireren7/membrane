@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "section": "34: CLI tests",
+  "test_file": "tools/membrane-run/test_product_cli.cpp",
+  "new_tests": [
+    "test_kv_placement_default_unchanged",
+    "test_kv_placement_values_parsed",
+    "test_kv_placement_invalid_value_rejected",
+    "test_kv_placement_gpu_requires_gpu_layers",
+    "test_kv_placement_orthogonal_to_kv_precision",
+    "test_kv_placement_rejects_compare_and_bench_modes"
+  ],
+  "existing_tests_still_passing": true,
+  "buffer_fix_note": "test_help_mentions_key_concepts's capture buffer was grown from 8192 to 16384 bytes -- the new --kv-placement help block legitimately grew real --help output past the old buffer, silently truncating the 'Exit codes' substring check rather than testing anything meaningful; this is a test-harness fix, not a behavior change.",
+  "stable_exit_codes_confirmed": {
+    "invalid_value": "MEMBRANE_EXIT_CLI_ERROR (2)",
+    "gpu_without_gpu_layers": "MEMBRANE_EXIT_CLI_ERROR (2)",
+    "cpu_only_gpu_mode_at_runtime": "MEMBRANE_EXIT_UNSUPPORTED_KV (5), see cpu_behavior.json"
+  }
+}

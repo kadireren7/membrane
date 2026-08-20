@@ -14,6 +14,7 @@
 #include "gpu_policy.h"
 #include "gpu_device.h"
 #include "adaptive_kv_policy.h"
+#include "kv_residency_policy.h"
 
 /*
  * membrane-run: Product Phase 8, the user-facing MEMBRANE entry point.
@@ -219,6 +220,17 @@ typedef struct s_membrane_gpu_state
 	int32_t		adaptive_q5_layers;	/* GPU only, 0 for CPU */
 	int			adaptive_q8_valid;
 	int			adaptive_q5_valid;
+
+	/* Phase 12H: --kv-placement's resolved static residency plan,
+	 * populated by resolve_kv_placement() in main() AFTER model load
+	 * (needs the model's real, post-load layer count and shape) --
+	 * kv_placement_resolved stays false, and every other field below
+	 * stays at its zero value, whenever o.kv_placement ==
+	 * MEMBRANE_KV_PLACEMENT_DEFAULT (the only mode with zero decode-
+	 * path behavior change -- Section 4/19). Never consulted by
+	 * anything downstream unless kv_placement_resolved is true. */
+	bool		kv_placement_resolved;
+	membrane_kv_residency_result_t	kv_placement;
 }	membrane_gpu_state_t;
 
 static std::string	gpu_layers_label(int32_t gpu_layers)
@@ -280,6 +292,8 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	gs->adaptive_q5_layers = 0;
 	gs->adaptive_q8_valid = 0;
 	gs->adaptive_q5_valid = 0;
+	gs->kv_placement_resolved = false;
+	memset(&gs->kv_placement, 0, sizeof(gs->kv_placement));
 	gs->requested = (o.gpu_layers != 0);
 	gs->backend_gpu_capable = membrane_gpu_backend_available() != 0;
 	gs->gpu_layers_requested = o.gpu_layers;
@@ -613,6 +627,60 @@ static bool	resolve_cpu_adaptive_kv(const membrane_run_opts_t &o,
 	return (true);
 }
 
+/* Phase 12H: --kv-placement's static residency resolution -- called
+ * from main() AFTER model load (needs the real, post-load layer
+ * count; shape/ctx_size are only final at that point) and BEFORE
+ * dispatch to run_normal_mode(), using effective_kv_mode (the already-
+ * resolved concrete precision, NEVER MEMBRANE_KV_STORE_ADAPTIVE itself
+ * -- Section 27: precision is decided first, placement second,
+ * strictly sequential, no joint search). A no-op (returns true,
+ * gs->kv_placement_resolved left false) whenever o.kv_placement is
+ * MEMBRANE_KV_PLACEMENT_DEFAULT. gs->estimated_model_bytes/
+ * device_free_bytes/device_total_bytes are gpu_policy's OWN
+ * already-resolved weight-placement numbers, passed through unchanged
+ * -- this function never recomputes or influences weight placement
+ * (Section 21). Returns false (message already printed) on a fail-
+ * closed GPU-mode budget rejection; callers must not silently retry
+ * with a different mode. */
+static bool	resolve_kv_placement(const membrane_run_opts_t &o,
+				const model_shape_t &shape, uint32_t ctx_size,
+				int effective_kv_mode, membrane_gpu_state_t *gs)
+{
+	uint64_t	total_kv_bytes;
+	uint64_t	kv_bytes_per_layer;
+
+	if (o.kv_placement == MEMBRANE_KV_PLACEMENT_DEFAULT)
+		return (true);
+	/* Review fix: resolve_gpu_config()'s documented "GGUF metadata
+	 * unreadable, explicit numeric --gpu-layers N, proceed unguarded"
+	 * fallback (gs->policy_used stays false; see its own comment above)
+	 * leaves gs->estimated_model_bytes at 0 -- fine for DEFAULT
+	 * (already returned above) and for CPU (no GPU KV budget math at
+	 * all, see membrane_kv_residency_resolve's CPU branch), but unsafe
+	 * for GPU/AUTO: the planner would then believe the model's real
+	 * weight bytes are zero and could overcommit GPU-resident KV.
+	 * Fail closed instead of planning against an unverified estimate. */
+	if ((o.kv_placement == MEMBRANE_KV_PLACEMENT_GPU
+			|| o.kv_placement == MEMBRANE_KV_PLACEMENT_AUTO)
+		&& !gs->policy_used)
+		return (fprintf(stderr, "membrane-run: --kv-placement gpu|auto "
+				"requires a verified GPU weight-memory estimate, but "
+				"none is available for this model/--gpu-layers "
+				"combination -- try --kv-placement cpu or --gpu-layers "
+				"all/auto\n"), false);
+	total_kv_bytes = kv_bytes_for_mode(shape, ctx_size, effective_kv_mode);
+	kv_bytes_per_layer = shape.n_layer > 0
+		? total_kv_bytes / (uint64_t)shape.n_layer : 0;
+	if (!membrane_kv_residency_resolve(o.kv_placement, shape.n_layer,
+			kv_bytes_per_layer, gs->device_free_bytes,
+			gs->device_total_bytes, gs->estimated_model_bytes,
+			/* compute_buffer_estimate_bytes: */ 0, &gs->kv_placement))
+		return (fprintf(stderr, "membrane-run: %s\n",
+				gs->kv_placement.reason), false);
+	gs->kv_placement_resolved = true;
+	return (true);
+}
+
 static void	print_startup_summary(const membrane_run_opts_t &o,
 				const char *model_label, uint32_t ctx_size,
 				uint64_t kv_bytes, const membrane_gpu_state_t &gs)
@@ -664,6 +732,28 @@ static void	print_startup_summary(const membrane_run_opts_t &o,
 				(double)gs.safety_reserve_bytes / (1024.0 * 1024.0),
 				(double)gs.estimated_model_bytes / (1024.0 * 1024.0),
 				(double)gs.estimated_kv_bytes / (1024.0 * 1024.0));
+	}
+	/* Phase 12H, Section 16: one compact block when placement is
+	 * explicit (default mode prints nothing extra -- no behavior
+	 * change means no new noise in the common case). */
+	if (o.kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT)
+	{
+		fprintf(stderr, "KV placement\n");
+		fprintf(stderr, "  mode: %s\n",
+			membrane_kv_placement_mode_name(o.kv_placement));
+		if (gs.kv_placement_resolved)
+		{
+			fprintf(stderr, "  GPU KV layers: %d/%d\n",
+				gs.kv_placement.gpu_kv_layers, gs.kv_placement.n_layer);
+			fprintf(stderr, "  CPU KV layers: %d/%d\n",
+				gs.kv_placement.cpu_kv_layers, gs.kv_placement.n_layer);
+			fprintf(stderr, "  KV precision: %s\n", kv_type_label(o.kv_mode));
+			fprintf(stderr, "  estimated GPU KV: %.2f MiB\n",
+				(double)gs.kv_placement.gpu_kv_bytes / (1024.0 * 1024.0));
+			fprintf(stderr, "  estimated CPU KV: %.2f MiB\n",
+				(double)gs.kv_placement.cpu_kv_bytes / (1024.0 * 1024.0));
+			fprintf(stderr, "  reason: %s\n", gs.kv_placement.reason);
+		}
 	}
 }
 
@@ -788,6 +878,30 @@ static void	print_gpu_json(const membrane_gpu_state_t &gs)
 	}
 }
 
+/* Phase 12H, Section 17: additive-only -- callers parsing existing
+ * JSON output are unaffected (kv_placement_mode is always present and
+ * is "default" whenever nothing changed; the rest of the object only
+ * appears once a real plan was resolved). */
+static void	print_kv_placement_json(const membrane_run_opts_t &o,
+				const membrane_gpu_state_t &gs)
+{
+	printf("\"kv_placement\":{\"kv_placement_mode\":\"%s\"",
+		membrane_kv_placement_mode_name(o.kv_placement));
+	if (gs.kv_placement_resolved)
+	{
+		printf(",\"kv_gpu_layers\":%d,\"kv_cpu_layers\":%d,"
+			"\"kv_gpu_bytes\":%llu,\"kv_cpu_bytes\":%llu,"
+			"\"kv_total_bytes\":%llu,\"placement_reason\":\"",
+			gs.kv_placement.gpu_kv_layers, gs.kv_placement.cpu_kv_layers,
+			(unsigned long long)gs.kv_placement.gpu_kv_bytes,
+			(unsigned long long)gs.kv_placement.cpu_kv_bytes,
+			(unsigned long long)gs.kv_placement.total_kv_bytes);
+		print_json_escaped(gs.kv_placement.reason);
+		printf("\"");
+	}
+	printf("},");
+}
+
 static void	print_run_json(const membrane_run_opts_t &o,
 				const char *model_label, const membrane_kv_store_telemetry_t &t,
 				const std::string &text, const membrane_gpu_state_t &gs)
@@ -805,6 +919,7 @@ static void	print_run_json(const membrane_run_opts_t &o,
 	printf("\"storage\":{\"kv_allocated_bytes\":%llu},",
 		(unsigned long long)t.compressed_kv_allocated_bytes);
 	print_gpu_json(gs);
+	print_kv_placement_json(o, gs);
 	printf("\"memory\":{\"rss_after_model_load_kb\":%llu,"
 		"\"rss_after_context_kb\":%llu,\"rss_after_prompt_kb\":%llu,"
 		"\"rss_final_kb\":%llu,\"peak_rss_kb\":%llu},",
@@ -857,6 +972,8 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 	membrane_token_cb_t				cb;
 	bool							stream;
 	uint64_t						kv_bytes;
+	membrane_kv_placement_map_t	placement_map;
+	const membrane_kv_placement_map_t	*placement_arg;
 
 	memset(&tel, 0, sizeof(tel));
 	tel.kv_store_mode_name = kv_mode_name(o.kv_mode);
@@ -871,9 +988,22 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 		print_startup_summary(o, model_label, ctx_size, kv_bytes, gs);
 	stream = !o.want_json && !o.quiet;
 	cb = stream ? stream_token : NULL;
+	/* Phase 12H: gs.kv_placement_resolved is only true when
+	 * o.kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT AND
+	 * resolve_kv_placement() succeeded (main() already returned
+	 * MEMBRANE_EXIT_UNSUPPORTED_KV otherwise, before reaching here) --
+	 * placement_arg stays NULL (kv_dev_override left untouched) for
+	 * plain default-mode runs. */
+	placement_arg = NULL;
+	if (gs.kv_placement_resolved)
+	{
+		placement_map.n_layer = gs.kv_placement.n_layer;
+		placement_map.layer_on_gpu = gs.kv_placement.layer_on_gpu;
+		placement_arg = &placement_map;
+	}
 	if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens, o.kv_mode,
 			ctx_size, o.verbose, NULL, false, 0, &text, &tel, &result, cb,
-			NULL))
+			NULL, placement_arg))
 	{
 		fprintf(stderr, "membrane-run: generation failed\n");
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);
@@ -1441,6 +1571,18 @@ int	main(int argc, char **argv)
 			llama_model_free(model);
 			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
 		}
+	}
+	/* Phase 12H: product_cli.cpp's parse-time validation already
+	 * rejects --kv-placement combined with --compare-kv/--gpu-bench, so
+	 * this only ever runs on the plain single-pass path -- see
+	 * resolve_kv_placement()'s own doc comment for why AFTER model
+	 * load, using effective_o.kv_mode. */
+	if (!o.gpu_bench && !o.compare_kv
+		&& !resolve_kv_placement(o, shape, ctx_size, effective_o.kv_mode,
+			&gs))
+	{
+		llama_model_free(model);
+		return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
 	}
 	if (o.gpu_bench)
 		rc = run_gpu_bench_mode(effective_o, model, prompt_tokens,

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "section": "7-12, 33: pure planner architecture and unit test validation",
+  "module": "tools/membrane-run/kv_residency_policy.{c,h}",
+  "test_binary": "test_kv_residency_policy",
+  "test_count": 19,
+  "test_names": [
+    "test_default_mode_produces_no_plan",
+    "test_all_gpu_fits",
+    "test_split_fit_deterministic_order",
+    "test_all_cpu_required",
+    "test_impossible_gpu_budget_fails_closed",
+    "test_exact_boundary",
+    "test_reserve_matches_gpu_policy_convention",
+    "test_runtime_margin_applied",
+    "test_single_layer_model",
+    "test_zero_layers_rejected",
+    "test_negative_layers_rejected",
+    "test_over_max_layers_rejected",
+    "test_invalid_placement_mode_rejected",
+    "test_deterministic_repeat",
+    "test_zero_kv_bytes_per_layer_treated_as_free",
+    "test_cpu_only_backend_scenario",
+    "test_null_out_pointer_is_safe",
+    "test_max_fit_quotient_does_not_overflow_int32",
+    "test_mode_name_strings"
+  ],
+  "all_passing": true,
+  "margin_empirical_validation": "See capacity_uplift.json -- the margin's real-world necessity is demonstrated by the default-fails/auto-succeeds finding at ctx=28500 on real hardware, not by a separate synthetic margin-sizing experiment.",
+  "layer_order_rationale": "Ascending layer index, GPU-first (fill_split() in kv_residency_policy.c): the simplest possible stable, deterministic order. Deliberately NOT derived from Phase 11's precision-sensitivity ranking (that answered a quality-under-quantization question, not a placement-capacity question) and not any other learned/heuristic ordering -- Section 9 explicitly asks for the simplest stable choice, not an invented policy.",
+  "objective_rationale": "AUTO maximizes GPU-resident KV layers subject to budget (Section 8). This is a conservative-compatibility choice (closest to pre-Phase-12H behavior when budget allows), explicitly NOT a performance claim -- Phase 12G found no GPU-KV throughput advantage in its tested regime, and this phase's own performance.json shows an ambiguous, noisy result at a larger context. A CPU-first AUTO alternative is documented as a possible future policy (not built, no evidence gathered to justify it yet)."
+}

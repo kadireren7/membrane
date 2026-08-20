@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "section": "31, 36-37: product regression and sanitizers",
+  "baseline_before_phase_12h": {
+    "llama_free_release_ctest": "64/64 (confirmed fresh on clean main before any Phase 12H change)"
+  },
+  "configurations": [
+    {"name": "llama-free Release", "build_dir": "build", "ctest_total": 65, "ctest_passing_current": 64, "ctest_passing_excluding_test_mem_guard": 64, "test_mem_guard_status": "FAILING (host memory pressure, see known_flaky_test)", "sanitizers": "none", "delta_vs_baseline": "+1 (test_kv_residency_policy)"},
+    {"name": "llama-free ASan/UBSan", "build_dir": "build-free-asan", "ctest_total": 65, "ctest_passing_current": 64, "ctest_passing_excluding_test_mem_guard": 64, "test_mem_guard_status": "FAILING (host memory pressure, see known_flaky_test)", "sanitizers": "ASan+UBSan clean"},
+    {"name": "llama-enabled CPU Release", "build_dir": "build-cpu-rc1", "ctest_total": 68, "ctest_passing_current": 67, "ctest_passing_excluding_test_mem_guard": 67, "test_mem_guard_status": "FAILING (host memory pressure, see known_flaky_test)", "sanitizers": "none", "delta_vs_prior_phase12h_count": "+1 (test_decode_loop, review-fix regression test)"},
+    {"name": "llama-enabled CPU ASan/UBSan", "build_dir": "build-llama-asan", "ctest_total": 68, "ctest_passing_current": 67, "ctest_passing_excluding_test_mem_guard": 67, "test_mem_guard_status": "FAILING (host memory pressure, see known_flaky_test)", "sanitizers": "ASan+UBSan clean, test_decode_loop and test_kv_residency_policy individually re-verified clean under ASan"},
+    {"name": "Vulkan Release", "build_dir": "build-vulkan", "ctest_total": 68, "ctest_passing_current": 67, "ctest_passing_excluding_test_mem_guard": 67, "test_mem_guard_status": "FAILING (host memory pressure, see known_flaky_test)", "sanitizers": "none"},
+    {"name": "Vulkan+ASan", "attempted": false, "reason": "Not established safe in any prior MEMBRANE phase (Phase 12F disclosed the same limitation for the same reason); building it fresh was judged not practical within this phase's time budget on a single shared host. Section 37 explicitly allows skipping this 'if safely practical' is not met."},
+    {"name": "ThreadSanitizer (CI)", "attempted": true, "method": "This repo's own .github/workflows/ci.yml runs a thread-sanitizer job on every push/PR -- not reproduced as a separate local build this phase, but confirmed GREEN on PR #21 at the CURRENT head commit (989768a0dfe83a656653c0950e2f7bde78272406), both the push- and pull_request-triggered CI runs, job 'thread-sanitizer', conclusion SUCCESS.", "evidence": "GitHub Actions runs 32300805746 and 32300798620, job name 'thread-sanitizer', both head_sha=989768a0dfe83a656653c0950e2f7bde78272406, both conclusion=SUCCESS"}
+  ],
+  "existing_cli_modes_unchanged": {
+    "method": "Every existing product_cli.cpp test (test_kv_flag, test_kv_adaptive_flag, test_compare_kv_flag, test_gpu_layers_*, test_gpu_bench_*, test_device_*, etc.) still passes unmodified in all 5 configurations above -- native/q8/q5/adaptive/compare/gpu-bench/auto(--gpu-layers auto)/guard(gpu_policy's own reserve/budget guard, covered by test_gpu_policy.c, untouched) semantics are all still exercised by the existing test suite and show zero regressions.",
+    "src_unchanged": "git diff --stat -- src/ against the Phase 12F baseline (79588b6) is empty -- no product src/ file was touched by this phase."
+  },
+  "known_flaky_test": {
+    "name": "test_mem_guard",
+    "note": "Pre-existing, unrelated (tools/membrane-kv-exact-sim, untouched by Phase 12H) test that reacts to REAL host swap pressure by design -- flakes on this shared, memory-constrained host when swap usage is genuinely elevated. Not a Phase 12H regression; documented in this project's own memory notes from prior phases too. UPDATE (second review-fix pass, re-checked live against the already-built binaries rather than reformatted from the prior stale note): this host was under even heavier memory pressure at this check (MemAvailable ~290 MiB, ~6.3 GiB of 10.1 GiB swap in use) -- test_mem_guard was observed FAILING again, consistent with its documented by-design behavior, not a new bug. All ctest_passing_current/ctest_passing_excluding_test_mem_guard counts above are reported EXCLUDING this one test; every other test in every configuration passed. Re-verify test_mem_guard in isolation once host memory is available again before treating its earlier all-green status as re-confirmed."
+  }
+}

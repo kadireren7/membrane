@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "product_cli.h"
+#include "kv_residency_policy.h"
 #include "test_helpers.h"
 
 /* membrane_run_opts_t::prompt_file is a raw `const char *` pointing
@@ -621,6 +622,141 @@ static void	test_gpu_bench_compare_kv_mutually_exclusive(void)
 		"--gpu-bench and --compare-kv are mutually exclusive");
 }
 
+static void	test_kv_placement_default_unchanged(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"no --kv-placement given is accepted");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_DEFAULT,
+		"kv_placement defaults to MEMBRANE_KV_PLACEMENT_DEFAULT -- "
+		"Section 4: zero behavior change unless explicitly requested");
+}
+
+static void	test_kv_placement_values_parsed(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--gpu-layers");
+	args.push_back("all");
+	args.push_back("--kv-placement");
+	args.push_back("gpu");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--kv-placement gpu with --gpu-layers all is accepted");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_GPU,
+		"gpu value stored exactly");
+
+	args = base_args();
+	args.push_back("--kv-placement");
+	args.push_back("cpu");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--kv-placement cpu needs no --gpu-layers");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_CPU,
+		"cpu value stored exactly");
+
+	args = base_args();
+	args.push_back("--kv-placement");
+	args.push_back("default");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--kv-placement default needs no --gpu-layers");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_DEFAULT,
+		"default value stored exactly");
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--gpu-layers");
+	args.push_back("auto");
+	args.push_back("--kv-placement");
+	args.push_back("auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--kv-placement auto with --gpu-layers auto is accepted");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_AUTO,
+		"auto value stored exactly");
+}
+
+static void	test_kv_placement_invalid_value_rejected(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--kv-placement");
+	args.push_back("bogus");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-placement with an unrecognized value is a CLI error");
+}
+
+static void	test_kv_placement_gpu_requires_gpu_layers(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--kv-placement");
+	args.push_back("gpu");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-placement gpu without --gpu-layers is a CLI error");
+
+	args = base_args();
+	args.push_back("--kv-placement");
+	args.push_back("auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-placement auto without --gpu-layers is a CLI error");
+}
+
+static void	test_kv_placement_orthogonal_to_kv_precision(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	/* Section 5: precision and placement are independent dimensions --
+	 * --kv q5 with --kv-placement cpu must set BOTH fields exactly as
+	 * requested, neither overriding the other. */
+	args = base_args();
+	args.push_back("--kv");
+	args.push_back("q5");
+	args.push_back("--kv-placement");
+	args.push_back("cpu");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--kv q5 with --kv-placement cpu composes cleanly");
+	TEST_ASSERT(o.kv_mode == 2 /* MEMBRANE_KV_STORE_Q5 */,
+		"precision (q5) unaffected by placement");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_CPU,
+		"placement (cpu) unaffected by precision");
+}
+
+static void	test_kv_placement_rejects_compare_and_bench_modes(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--kv-placement");
+	args.push_back("cpu");
+	args.push_back("--compare-kv");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-placement with --compare-kv is rejected (Phase 12H scope), "
+		"not silently ignored");
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--gpu-layers");
+	args.push_back("all");
+	args.push_back("--kv-placement");
+	args.push_back("gpu");
+	args.push_back("--gpu-bench");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--kv-placement with --gpu-bench is rejected");
+}
+
 static void	test_help_and_version_short_circuit(void)
 {
 	std::vector<std::string>	args;
@@ -663,7 +799,12 @@ static void	test_version_output_format(void)
 static void	test_help_mentions_key_concepts(void)
 {
 	FILE	*tmp;
-	char	buf[8192];
+	char	buf[16384];	/* Phase 12H: grown from 8192 -- the
+						 * --kv-placement block legitimately grew the
+						 * real help text past the old buffer, which
+						 * silently truncated "Exit codes" out of the
+						 * captured tail rather than testing anything
+						 * meaningful about its absence. */
 	size_t	n;
 
 	tmp = tmpfile();
@@ -687,6 +828,8 @@ static void	test_help_mentions_key_concepts(void)
 	TEST_ASSERT(strstr(buf, "--json") != NULL, "help documents --json");
 	TEST_ASSERT(strstr(buf, "Exit codes") != NULL,
 		"help documents exit codes");
+	TEST_ASSERT(strstr(buf, "--kv-placement") != NULL,
+		"help documents --kv-placement");
 	TEST_ASSERT(strstr(buf, "LLM_ARCH_LLAMA") != NULL,
 		"help states the architecture-scope limitation");
 }
@@ -721,6 +864,12 @@ int	main(void)
 	test_gpu_layers_all_and_n_require_explicit_ctx();
 	test_gpu_bench_requires_gpu_layers();
 	test_gpu_bench_compare_kv_mutually_exclusive();
+	test_kv_placement_default_unchanged();
+	test_kv_placement_values_parsed();
+	test_kv_placement_invalid_value_rejected();
+	test_kv_placement_gpu_requires_gpu_layers();
+	test_kv_placement_orthogonal_to_kv_precision();
+	test_kv_placement_rejects_compare_and_bench_modes();
 	test_help_and_version_short_circuit();
 	test_version_output_format();
 	test_help_mentions_key_concepts();

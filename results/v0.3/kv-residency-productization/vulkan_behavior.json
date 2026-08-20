@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "section": "20: Vulkan behavior",
+  "host": "GTX 1650, 4096 MiB VRAM, real hardware (same host used by Phase 12B-12G research)",
+  "checks": [
+    {"flags": "--kv-placement gpu", "verified": true, "evidence": "raw_quality_q8_gpu.txt, and gpu mode is the natural result at control point A (raw_control_a.txt)"},
+    {"flags": "--kv-placement cpu", "verified": true, "evidence": "raw_control_c.txt, raw_quality_q8_cpu.txt"},
+    {"flags": "--kv-placement auto", "verified": true, "evidence": "raw_control_a.txt, raw_control_b.txt (genuine split)"},
+    {
+      "weight_layer_selection_and_estimated_bytes_follow_gpu_layers_independently": true,
+      "evidence": "capacity_uplift.json's identical_selected_layers_and_estimated_weight_bytes -- est_weights=2499.5 MiB and gpu_layers_selected=28 identical across default/auto/cpu placement at the same --gpu-layers all request (a pre-load estimate/selection comparison, not a post-load buffer-placement measurement)"
+    }
+  ]
+}

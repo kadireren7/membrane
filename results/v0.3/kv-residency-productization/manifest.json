@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "phase": "12H",
+  "title": "KV Residency Runtime Productization",
+  "artifacts": [
+    "adaptive_composition.json",
+    "capacity_uplift.json",
+    "cli_contract.json",
+    "control_points.json",
+    "cpu_behavior.json",
+    "json_contract.json",
+    "performance.json",
+    "planner_validation.json",
+    "precision_matrix.json",
+    "quality.json",
+    "regression.json",
+    "vulkan_behavior.json",
+    "summary.json"
+  ],
+  "raw_evidence_files": [
+    "raw_adaptive_composition.txt",
+    "raw_capacity_default_26500.txt",
+    "raw_capacity_default_26800.txt",
+    "raw_capacity_default_28500.txt",
+    "raw_control_a.txt",
+    "raw_control_b.txt",
+    "raw_control_c.txt",
+    "raw_cpu_only_default.txt",
+    "raw_cpu_only_gpu_fail.txt",
+    "raw_cpu_only_kv_placement_cpu.txt",
+    "raw_perf_auto_28500.jsonl",
+    "raw_perf_cpu_28500.jsonl",
+    "raw_perf_stderr_auto_28500.txt",
+    "raw_perf_stderr_cpu_28500.txt",
+    "raw_quality_native_cpu.txt",
+    "raw_quality_q5_cpu.txt",
+    "raw_quality_q8_cpu.txt",
+    "raw_quality_q8_default.txt",
+    "raw_quality_q8_gpu.txt"
+  ],
+  "minimum_llama_cpp_patch_set": {
+    "required": ["llama.cpp-membrane-kv-type-override.patch", "llama.cpp-membrane-kv-device-override.patch"],
+    "not_required": ["llama.cpp-membrane-kv-runtime-relocate.patch", "llama.cpp-membrane-kv-buffer-retirement.patch"],
+    "evidence": "Confirmed by direct patch-content inspection (base-hash chaining: type-override 9fab693->5216739, device-override 5216739->6387dae, runtime-relocate 6387dae->6679a26, buffer-retirement 6679a26->c0d79cb) and by runtime-relocate.patch's own comment: 'Research-only: not used by any product code path.' Neither runtime-relocate nor buffer-retirement was applied to any build in this phase -- verified by grep of third_party/llama.cpp's dirty-file diff against exactly the type-override+device-override union throughout this phase's work.",
+    "no_llama_cpp_source_changes_by_this_phase": true
+  },
+  "no_private_paths": true
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "section": "17, 35: JSON output backward compatibility",
+  "new_fields_object": "kv_placement",
+  "new_fields": ["kv_placement_mode", "kv_gpu_layers", "kv_cpu_layers", "kv_gpu_bytes", "kv_cpu_bytes", "kv_total_bytes", "placement_reason"],
+  "additive_only": true,
+  "always_present_field": "kv_placement_mode (always \"default\" when --kv-placement was not passed; the other 6 fields only appear once a real plan was resolved, i.e. never for default mode)",
+  "legacy_default_mode_real_capture": {
+    "flags": "no --kv-placement",
+    "kv_placement_object_shape": "{\"kv_placement_mode\":\"default\"}",
+    "note": "every pre-existing top-level JSON key (schema_version, membrane_version, mode, model_label, kv_store, kv_type, requested_kv, selected_kv, storage, gpu, memory, performance, no_fallback_occurred) is emitted exactly as before -- kv_placement is a new key, not a modification of any existing one"
+  },
+  "new_placement_mode_real_capture": {
+    "flags": "--gpu-layers all --kv-placement auto, qwen2.5-1.5b, ctx=28500",
+    "kv_placement_object": {
+      "kv_placement_mode": "auto",
+      "kv_gpu_layers": 26,
+      "kv_cpu_layers": 2,
+      "kv_gpu_bytes": 758784000,
+      "kv_cpu_bytes": 58368000,
+      "kv_total_bytes": 817152000,
+      "placement_reason": "PLACEMENT_AUTO_SPLIT"
+    },
+    "raw_evidence_file": "raw_perf_auto_28500.jsonl (first line)"
+  },
+  "scope_limitation": "--compare-kv/--gpu-bench JSON output (print_compare_json/print_gpu_bench_json) does NOT include a kv_placement key -- consistent with those modes rejecting --kv-placement at CLI-parse time (Section 27/cli_contract.json), not an oversight."
+}

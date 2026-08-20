@@ -192,6 +192,16 @@ add_library(membrane_adaptive_kv_policy STATIC
 target_include_directories(membrane_adaptive_kv_policy PUBLIC
   tools/membrane-run)
 
+# Phase 12H: --kv-placement's pure static KV residency planner --
+# llama-free, no device/model access, same testable-without-a-GPU
+# pattern as membrane_gpu_policy/membrane_adaptive_kv_policy above.
+# Independent of gpu_policy.c's own arithmetic (never recomputes or
+# feeds back into weight-layer selection -- see kv_residency_policy.h).
+add_library(membrane_kv_residency_policy STATIC
+  tools/membrane-run/kv_residency_policy.c)
+target_include_directories(membrane_kv_residency_policy PUBLIC
+  tools/membrane-run)
+
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
 # unlike tools/membrane-kv-capture etc, which need MEMBRANE_ENABLE_LLAMA.
@@ -223,13 +233,22 @@ if(MEMBRANE_ENABLE_LLAMA)
   # docs/phase4-runtime-policy.md). Applied here, idempotently, so a
   # fresh submodule checkout builds without a manual step -- the
   # submodule's own commit pin is never changed, only its working tree.
+  #
+  # Idempotency check (Section 15): a content-marker grep for
+  # "kv_type_override" in include/llama.h, NOT `git apply --reverse
+  # --check` -- Phase 12H discovered directly that reverse-checking an
+  # EARLIER patch in a stack spuriously fails once a LATER patch (kv-
+  # device-override, applied right below) has also been applied: the
+  # later patch's own context lines lean on the earlier patch's added
+  # lines, and `git apply --reverse --check` isn't reliable across that
+  # interleaving. A simple "does the file already contain what this
+  # patch adds" grep has no such failure mode and is deterministic.
   set(MEMBRANE_LLAMA_PATCH
     ${CMAKE_SOURCE_DIR}/patches/llama.cpp-membrane-kv-type-override.patch)
   execute_process(
-    COMMAND git apply --reverse --check ${MEMBRANE_LLAMA_PATCH}
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/llama.cpp
-    RESULT_VARIABLE MEMBRANE_PATCH_ALREADY_APPLIED
-    OUTPUT_QUIET ERROR_QUIET)
+    COMMAND grep -q "kv_type_override"
+      ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/include/llama.h
+    RESULT_VARIABLE MEMBRANE_PATCH_ALREADY_APPLIED)
   if(NOT MEMBRANE_PATCH_ALREADY_APPLIED EQUAL 0)
     execute_process(
       COMMAND git apply ${MEMBRANE_LLAMA_PATCH}
@@ -240,6 +259,37 @@ if(MEMBRANE_ENABLE_LLAMA)
         "third_party/llama.cpp -- see docs/phase4-runtime-policy.md")
     endif()
     message(STATUS "applied MEMBRANE kv_type_override patch to llama.cpp")
+  endif()
+
+  # Phase 12H: --kv-placement's static per-layer KV DEVICE override
+  # needs a second small patch on top of kv_type_override above (see
+  # patches/llama.cpp-membrane-kv-device-override.patch and
+  # docs/kv-residency.md). Deliberately the SAME two-patch set proven
+  # safe in Phase 12B-12G research -- the kv-runtime-relocate and
+  # kv-buffer-retirement patches are NOT applied here: static placement
+  # is decided once at context-construction time and never revisited
+  # during decode, so this product path has no use for runtime
+  # relocation or its buffer-retirement cleanup (both stay research-
+  # only, on their own experiment branches -- Section 14/44: minimal
+  # product patch surface is a hard requirement, not a convenience).
+  # Same content-marker idempotency check as kv_type_override above.
+  set(MEMBRANE_LLAMA_PATCH_DEVICE_OVERRIDE
+    ${CMAKE_SOURCE_DIR}/patches/llama.cpp-membrane-kv-device-override.patch)
+  execute_process(
+    COMMAND grep -q "kv_dev_override"
+      ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/include/llama.h
+    RESULT_VARIABLE MEMBRANE_DEVICE_PATCH_ALREADY_APPLIED)
+  if(NOT MEMBRANE_DEVICE_PATCH_ALREADY_APPLIED EQUAL 0)
+    execute_process(
+      COMMAND git apply ${MEMBRANE_LLAMA_PATCH_DEVICE_OVERRIDE}
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/third_party/llama.cpp
+      RESULT_VARIABLE MEMBRANE_DEVICE_PATCH_APPLY_RESULT)
+    if(NOT MEMBRANE_DEVICE_PATCH_APPLY_RESULT EQUAL 0)
+      message(FATAL_ERROR "failed to apply "
+        "${MEMBRANE_LLAMA_PATCH_DEVICE_OVERRIDE} to third_party/llama.cpp "
+        "-- see docs/kv-residency.md")
+    endif()
+    message(STATUS "applied MEMBRANE kv_dev_override patch to llama.cpp")
   endif()
 
   set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -567,6 +617,15 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_gpu_policy PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_gpu_policy COMMAND test_gpu_policy)
+
+  # Phase 12H: --kv-placement's pure planner tests.
+  add_executable(test_kv_residency_policy
+    tools/membrane-run/test_kv_residency_policy.c)
+  target_link_libraries(test_kv_residency_policy PRIVATE
+    membrane_kv_residency_policy)
+  target_include_directories(test_kv_residency_policy PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_kv_residency_policy COMMAND test_kv_residency_policy)
 
   add_executable(test_adaptive_kv_policy
     tools/membrane-run/test_adaptive_kv_policy.c)

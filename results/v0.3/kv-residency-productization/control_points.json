@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "section": "22-23: auto placement control points, real GTX 1650 Vulkan",
+  "points": [
+    {
+      "label": "A_plenty_of_vram",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "n_ctx": 2048,
+      "kv_precision": "native",
+      "gpu_layers_requested": "all",
+      "gpu_layers_selected": 30,
+      "placement_mode": "auto",
+      "gpu_kv_layers": 30,
+      "cpu_kv_layers": 0,
+      "placement_reason": "PLACEMENT_GPU_FULL",
+      "generation_ok": true,
+      "raw_evidence_file": "raw_control_a.txt"
+    },
+    {
+      "label": "B_constrained_split",
+      "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "n_ctx": 28500,
+      "kv_precision": "native",
+      "gpu_layers_requested": "all",
+      "gpu_layers_selected": 28,
+      "placement_mode": "auto",
+      "gpu_kv_layers": 26,
+      "cpu_kv_layers": 2,
+      "placement_reason": "PLACEMENT_AUTO_SPLIT",
+      "generation_ok": true,
+      "raw_evidence_file": "raw_control_b.txt"
+    },
+    {
+      "label": "C_strongly_constrained",
+      "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "n_ctx": 28500,
+      "kv_precision": "native",
+      "gpu_layers_requested": "all",
+      "gpu_layers_selected": 28,
+      "placement_mode": "cpu",
+      "gpu_kv_layers": 0,
+      "cpu_kv_layers": 28,
+      "placement_reason": "PLACEMENT_CPU_FULL",
+      "generation_ok": true,
+      "note": "AUTO itself never naturally reached an all-CPU or near-all-CPU plan within gpu_policy's own pre-check window on this host/model (see known_limitations.gpu_policy_not_placement_aware) -- point C is demonstrated via the always-valid explicit 'cpu' mode instead, at the SAME weight placement as points A/B, confirming the mechanism's far end works on real hardware. AUTO's own minimum-GPU behavior at a genuinely constrained budget is covered by the pure planner's test_all_cpu_required unit test (synthetic inputs, deterministic).",
+      "raw_evidence_file": "raw_control_c.txt"
+    }
+  ],
+  "point_d_impossible_config": {
+    "attempted": false,
+    "reason": "Not constructed as a separate point -- ctx=30000+ at --gpu-layers all on the 1.5B model already fails closed for EVERY placement mode identically (see known_limitations.gpu_policy_not_placement_aware and capacity_uplift.json's rejection boundary), which already demonstrates fail-closed behavior for an impossible configuration without needing a fourth, separately constructed case."
+  },
+  "known_limitations": {
+    "gpu_policy_not_placement_aware": "tools/membrane-run/gpu_policy.c's pre-flight check (Section 21-preserved, UNMODIFIED by this phase) always assumes the full KV cache must be GPU-resident when deciding whether a --gpu-layers request can be granted at all, regardless of --kv-placement's value. Verified directly: at ctx=32768 on the 1.5B model, --gpu-layers all is rejected by this pre-check identically whether --kv-placement is unset, cpu, or auto -- even though --kv-placement cpu would need ZERO GPU KV bytes in reality. This means --kv-placement cannot currently unlock a --gpu-layers request that the existing (intentionally untouched) weight-placement guard already refuses. See capacity_uplift.json for what CAN be demonstrated instead: within the requests gpu_policy DOES grant, --kv-placement auto/cpu measurably lets the real context construction succeed where the default (all-GPU KV) path fails at the ggml/Vulkan allocator level."
+  }
+}

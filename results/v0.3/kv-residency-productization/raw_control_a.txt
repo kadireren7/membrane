@@ -1,0 +1,21 @@
+MEMBRANE 0.3.0-rc1
+model      SmolLM2-135M-Instruct-f16.gguf
+context    2048
+kv         native (F16)
+flash attn enabled
+kv bytes   45.00 MiB (F16, from real model hparams -- not measured until context creation)
+backend    Vulkan, device selected: Vulkan1 (gpu-layers=all, selected=30)
+gpu policy device_free=3956.1 MiB reserve=651.3 MiB est_weights=202.6 MiB est_kv=45.0 MiB (estimates, not measured)
+KV placement
+  mode: auto
+  GPU KV layers: 30/30
+  CPU KV layers: 0/30
+  KV precision: F16
+  estimated GPU KV: 45.00 MiB
+  estimated CPU KV: 0.00 MiB
+  reason: PLACEMENT_GPU_FULL
+ Paris. Paris is the largest city in
+generated  8 tokens
+speed      226.0 tok/s
+kv memory  45.00 MiB (real allocation)
+rss final  284996 kB (peak 475120 kB)
