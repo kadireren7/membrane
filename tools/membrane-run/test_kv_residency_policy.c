@@ -315,6 +315,63 @@ static void	test_mode_name_strings(void)
 			MEMBRANE_KV_PLACEMENT_AUTO), "auto") == 0, "auto name");
 }
 
+/* Phase 13.1: membrane_kv_policy_preflight_reservation() -- the fix for
+ * gpu_policy's weight-layer preflight double-counting/incorrectly
+ * requiring GPU budget for KV that --kv-placement cpu/auto will never
+ * (cpu) or isn't guaranteed to (auto) place on the GPU. Pure function,
+ * no device/model inputs -- every case is a direct, hand-checkable
+ * mapping. */
+static void	test_preflight_reservation_cpu_is_zero(void)
+{
+	TEST_ASSERT(membrane_kv_policy_preflight_reservation(
+			MEMBRANE_KV_PLACEMENT_CPU, (uint64_t)6 * 1024 * 1024 * 1024)
+		== 0, "cpu placement never reserves GPU budget for KV, "
+		"regardless of how large the full KV estimate is");
+}
+
+static void	test_preflight_reservation_auto_is_zero(void)
+{
+	TEST_ASSERT(membrane_kv_policy_preflight_reservation(
+			MEMBRANE_KV_PLACEMENT_AUTO, (uint64_t)6 * 1024 * 1024 * 1024)
+		== 0, "auto placement reserves nothing at the weight-preflight "
+		"stage -- its own resolve() branch places whatever GPU budget "
+		"remains after weights, and never fails for lack of it");
+}
+
+static void	test_preflight_reservation_gpu_is_full_estimate(void)
+{
+	TEST_ASSERT(membrane_kv_policy_preflight_reservation(
+			MEMBRANE_KV_PLACEMENT_GPU, (uint64_t)123 * 1024 * 1024)
+		== (uint64_t)123 * 1024 * 1024, "explicit gpu placement keeps "
+		"the full KV estimate -- the user asked for 100%% GPU-resident "
+		"KV, so the preflight must still verify it fits");
+}
+
+static void	test_preflight_reservation_default_is_full_estimate(void)
+{
+	TEST_ASSERT(membrane_kv_policy_preflight_reservation(
+			MEMBRANE_KV_PLACEMENT_DEFAULT, (uint64_t)123 * 1024 * 1024)
+		== (uint64_t)123 * 1024 * 1024, "default placement is byte-"
+		"identical to pre-Phase-13.1 behavior (Section 4's zero-"
+		"behavioral-change requirement)");
+}
+
+static void	test_preflight_reservation_zero_estimate_stays_zero(void)
+{
+	TEST_ASSERT(membrane_kv_policy_preflight_reservation(
+			MEMBRANE_KV_PLACEMENT_GPU, 0) == 0,
+		"a zero full estimate stays zero under gpu placement too");
+}
+
+static void	test_preflight_reservation_invalid_mode_falls_through(void)
+{
+	TEST_ASSERT(membrane_kv_policy_preflight_reservation(999,
+			(uint64_t)50 * 1024 * 1024) == (uint64_t)50 * 1024 * 1024,
+		"an unrecognized placement_mode falls through to the full "
+		"estimate (fail-safe: the pre-existing conservative behavior), "
+		"never silently drops to zero");
+}
+
 int	main(void)
 {
 	test_default_mode_produces_no_plan();
@@ -336,6 +393,12 @@ int	main(void)
 	test_null_out_pointer_is_safe();
 	test_max_fit_quotient_does_not_overflow_int32();
 	test_mode_name_strings();
+	test_preflight_reservation_cpu_is_zero();
+	test_preflight_reservation_auto_is_zero();
+	test_preflight_reservation_gpu_is_full_estimate();
+	test_preflight_reservation_default_is_full_estimate();
+	test_preflight_reservation_zero_estimate_stays_zero();
+	test_preflight_reservation_invalid_mode_falls_through();
 	printf("test_kv_residency_policy: all tests passed\n");
 	return (0);
 }

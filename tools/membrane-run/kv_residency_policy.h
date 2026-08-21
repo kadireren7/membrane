@@ -170,6 +170,65 @@ int	membrane_kv_residency_resolve(int placement_mode, int32_t n_layer,
 
 const char	*membrane_kv_placement_mode_name(int placement_mode);
 
+/*
+ * Phase 13.1: the fix for a real gpu_policy/kv_residency integration
+ * gap -- gpu_policy_resolve()'s weight-layer preflight (main.cpp's
+ * resolve_gpu_config(), called BEFORE this module, BEFORE model load)
+ * previously reserved GPU budget for the model's FULL KV size
+ * unconditionally, regardless of --kv-placement, because gpu_policy.h
+ * has (and keeps) zero awareness of KV placement modes by design (weight
+ * placement must never depend on --kv-placement -- see this header's
+ * own top comment and Section 21 of docs/kv-residency.md). That made
+ * `--kv-placement cpu` (KV never GPU-resident at all) and
+ * `--kv-placement auto` (this module's own AUTO branch below already
+ * degrades to CPU-resident KV under pressure and NEVER fails for lack
+ * of GPU KV budget) reserve/require GPU memory for KV that either
+ * never lands on the GPU (cpu) or is never guaranteed to (auto) --
+ * needlessly shrinking the weight-layer budget, or rejecting an
+ * explicit --gpu-layers N that would truly fit once KV correctly
+ * placed itself off-GPU.
+ *
+ * This function is the single place that answers "how much of the
+ * model's full KV byte estimate should gpu_policy_resolve()'s weight
+ * preflight assume needs GPU budget, given the requested placement
+ * mode" -- called by main.cpp ONCE per candidate precision, BEFORE
+ * each membrane_gpu_policy_resolve() call, in place of the raw
+ * full_kv_bytes_estimate. It does not touch, call, or duplicate
+ * anything in gpu_policy.h -- gpu_policy_resolve()'s own signature and
+ * logic are unchanged; only the number a caller passes in for
+ * kv_bytes_estimate changes, and only for cpu/auto placement:
+ *
+ *   DEFAULT: full_kv_bytes_estimate, unchanged. Section 4's own zero-
+ *            behavioral-change requirement for DEFAULT means the
+ *            preflight must keep assuming the pre-Phase-12H
+ *            KV-follows-weights behavior exactly as before this
+ *            function existed.
+ *   GPU:     full_kv_bytes_estimate, unchanged. The user explicitly
+ *            asked for 100% GPU-resident KV, so the preflight
+ *            correctly needs the full amount -- membrane_kv_residency_
+ *            resolve()'s own GPU branch below still independently
+ *            re-checks and fails closed if it doesn't fit, this is
+ *            only about not needlessly rejecting/shrinking earlier.
+ *   CPU:     0. No KV byte will ever be GPU-resident under this mode
+ *            (membrane_kv_residency_resolve()'s CPU branch always
+ *            succeeds, unconditionally, below) -- there is nothing to
+ *            reserve GPU budget for.
+ *   AUTO:    0. This module's own AUTO branch below places whatever
+ *            GPU budget remains AFTER weights are already selected,
+ *            and never fails for lack of it (falls back to more
+ *            CPU-resident layers instead) -- reserving anything at the
+ *            weight-preflight stage would double-count against this
+ *            module's own later accounting for no safety benefit,
+ *            only a needlessly smaller weight-layer budget.
+ *
+ * Any other value falls through to full_kv_bytes_estimate unchanged
+ * (fail-safe: the pre-existing conservative behavior), matching this
+ * module's own invalid-placement_mode handling in
+ * membrane_kv_residency_resolve() rather than silently returning 0.
+ */
+uint64_t	membrane_kv_policy_preflight_reservation(int placement_mode,
+				uint64_t full_kv_bytes_estimate);
+
 # ifdef __cplusplus
 }
 # endif

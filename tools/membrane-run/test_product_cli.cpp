@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "product_cli.h"
+#include "gpu_policy.h"
 #include "kv_residency_policy.h"
 #include "test_helpers.h"
 
@@ -757,6 +758,198 @@ static void	test_kv_placement_rejects_compare_and_bench_modes(void)
 		"--kv-placement with --gpu-bench is rejected");
 }
 
+/* Phase 13.1, Section 7-9: --auto is a preset applied once, after the
+ * parse loop, to whichever of gpu_layers/kv_mode/kv_placement the user
+ * did not also explicitly pass. Every case below is checked at the CLI-
+ * parse level only -- whether the runtime GPU backend/device is
+ * actually available is a main.cpp/resolve_gpu_config() concern (not
+ * reachable from this llama-free parser), covered separately by a
+ * Vulkan smoke test and code review, not a unit test here. */
+static void	test_auto_alone_fills_all_three_fields(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--auto --ctx N alone is a complete, valid invocation");
+	TEST_ASSERT(o.auto_mode == 1, "auto_mode is set");
+	TEST_ASSERT(o.gpu_layers == MEMBRANE_GPU_LAYERS_AUTO,
+		"--auto fills gpu_layers with the auto sentinel");
+	TEST_ASSERT(o.kv_mode == MEMBRANE_KV_STORE_ADAPTIVE,
+		"--auto fills kv_mode with adaptive");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_AUTO,
+		"--auto fills kv_placement with auto (gpu_layers ended up "
+		"nonzero, so auto placement is valid)");
+}
+
+static void	test_auto_requires_explicit_ctx(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	/* Same underlying rule as --gpu-layers auto/all/N: the GPU memory
+	 * guard can't check a KV budget before ctx size is known. --auto
+	 * does not weaken this. */
+	args = base_args();
+	args.push_back("--auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--auto without --ctx is a CLI error, same as --gpu-layers auto");
+}
+
+static void	test_auto_explicit_kv_mode_overrides(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--auto");
+	args.push_back("--kv");
+	args.push_back("q8");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--auto --kv q8 composes cleanly");
+	TEST_ASSERT(o.kv_mode == 1 /* MEMBRANE_KV_STORE_Q8 */,
+		"explicit --kv q8 overrides --auto's own adaptive default");
+	TEST_ASSERT(o.gpu_layers == MEMBRANE_GPU_LAYERS_AUTO,
+		"gpu_layers is still auto-managed (not explicitly given)");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_AUTO,
+		"kv_placement is still auto-managed (not explicitly given)");
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--auto");
+	args.push_back("--kv");
+	args.push_back("q5");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--auto --kv q5 composes cleanly");
+	TEST_ASSERT(o.kv_mode == 2 /* MEMBRANE_KV_STORE_Q5 */,
+		"explicit --kv q5 overrides --auto's own adaptive default");
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--auto");
+	args.push_back("--kv");
+	args.push_back("native");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--auto --kv native composes cleanly");
+	TEST_ASSERT(o.kv_mode == 0 /* MEMBRANE_KV_STORE_NATIVE */,
+		"explicit --kv native overrides --auto's own adaptive default");
+}
+
+static void	test_auto_explicit_kv_placement_cpu_overrides(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--auto");
+	args.push_back("--kv-placement");
+	args.push_back("cpu");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--auto --kv-placement cpu composes cleanly");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_CPU,
+		"explicit --kv-placement cpu overrides --auto's own auto "
+		"default -- Section 8's own worked example");
+	TEST_ASSERT(o.gpu_layers == MEMBRANE_GPU_LAYERS_AUTO,
+		"gpu_layers is still auto-managed by --auto");
+	TEST_ASSERT(o.kv_mode == MEMBRANE_KV_STORE_ADAPTIVE,
+		"kv_mode is still auto-managed by --auto");
+}
+
+static void	test_auto_explicit_kv_placement_gpu_overrides(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--auto");
+	args.push_back("--kv-placement");
+	args.push_back("gpu");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--auto --kv-placement gpu composes cleanly (gpu_layers is "
+		"auto, so the gpu|auto-requires-nonzero-gpu_layers check "
+		"already passes)");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_GPU,
+		"explicit --kv-placement gpu overrides --auto's own default");
+}
+
+static void	test_auto_explicit_gpu_layers_zero_falls_back_to_cpu(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	/* Section 9/15: an explicit CPU-only override must not be rejected
+	 * by the gpu|auto-requires-nonzero-gpu_layers check just because
+	 * --auto's OWN kv_placement default would otherwise have picked
+	 * "auto" -- --auto must notice gpu_layers resolved to 0 and pick
+	 * "default" placement instead, the sensible CPU-only outcome. */
+	args = base_args();
+	args.push_back("--auto");
+	args.push_back("--gpu-layers");
+	args.push_back("0");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--auto --gpu-layers 0 composes cleanly, not a CLI error");
+	TEST_ASSERT(o.gpu_layers == 0,
+		"explicit --gpu-layers 0 overrides --auto's own auto default");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_DEFAULT,
+		"kv_placement falls back to default (not auto) once gpu_layers "
+		"is known to be 0 -- the sensible CPU-only outcome");
+	TEST_ASSERT(o.kv_mode == MEMBRANE_KV_STORE_ADAPTIVE,
+		"kv_mode is still auto-managed (CPU adaptive is still useful "
+		"with no GPU at all)");
+}
+
+static void	test_auto_explicit_gpu_layers_positive_stays(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--auto");
+	args.push_back("--gpu-layers");
+	args.push_back("16");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--auto --gpu-layers 16 composes cleanly");
+	TEST_ASSERT(o.gpu_layers == 16,
+		"explicit --gpu-layers N overrides --auto's own auto default");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_AUTO,
+		"kv_placement still auto-manages (gpu_layers ended up nonzero)");
+}
+
+static void	test_default_behavior_unaffected_by_auto_fields(void)
+{
+	membrane_run_opts_t	o;
+
+	/* Section 9: without --auto, nothing about the new fields changes
+	 * pre-existing default behavior at all. */
+	TEST_ASSERT(run_parse(base_args(), &o) == MEMBRANE_EXIT_SUCCESS,
+		"the plain base invocation is still valid with no new flags");
+	TEST_ASSERT(o.auto_mode == 0, "auto_mode is off by default");
+	TEST_ASSERT(o.want_gpu_layers == 0, "want_gpu_layers is 0 by default");
+	TEST_ASSERT(o.want_kv_mode == 0, "want_kv_mode is 0 by default");
+	TEST_ASSERT(o.want_kv_placement == 0,
+		"want_kv_placement is 0 by default");
+	TEST_ASSERT(o.gpu_layers == 0,
+		"default remains --gpu-layers 0 (CPU-only), unchanged");
+	TEST_ASSERT(o.kv_mode == 0 /* MEMBRANE_KV_STORE_NATIVE */,
+		"default remains --kv native, unchanged");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_DEFAULT,
+		"default remains --kv-placement default, unchanged");
+}
+
 static void	test_help_and_version_short_circuit(void)
 {
 	std::vector<std::string>	args;
@@ -832,6 +1025,11 @@ static void	test_help_mentions_key_concepts(void)
 		"help documents --kv-placement");
 	TEST_ASSERT(strstr(buf, "LLM_ARCH_LLAMA") != NULL,
 		"help states the architecture-scope limitation");
+	TEST_ASSERT(strstr(buf, "--auto") != NULL,
+		"help documents --auto");
+	TEST_ASSERT(strstr(buf, "AUTOMATIC POLICY") != NULL,
+		"help is organized into labeled sections, including "
+		"AUTOMATIC POLICY for --auto");
 }
 
 int	main(void)
@@ -870,6 +1068,14 @@ int	main(void)
 	test_kv_placement_gpu_requires_gpu_layers();
 	test_kv_placement_orthogonal_to_kv_precision();
 	test_kv_placement_rejects_compare_and_bench_modes();
+	test_auto_alone_fills_all_three_fields();
+	test_auto_requires_explicit_ctx();
+	test_auto_explicit_kv_mode_overrides();
+	test_auto_explicit_kv_placement_cpu_overrides();
+	test_auto_explicit_kv_placement_gpu_overrides();
+	test_auto_explicit_gpu_layers_zero_falls_back_to_cpu();
+	test_auto_explicit_gpu_layers_positive_stays();
+	test_default_behavior_unaffected_by_auto_fields();
 	test_help_and_version_short_circuit();
 	test_version_output_format();
 	test_help_mentions_key_concepts();

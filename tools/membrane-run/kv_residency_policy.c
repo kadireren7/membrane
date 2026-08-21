@@ -27,6 +27,15 @@ static uint64_t	margin_for(uint64_t candidate_gpu_kv_bytes)
 		? pct_margin : MEMBRANE_KV_RESIDENCY_MARGIN_FIXED_BYTES);
 }
 
+uint64_t	membrane_kv_policy_preflight_reservation(int placement_mode,
+				uint64_t full_kv_bytes_estimate)
+{
+	if (placement_mode == MEMBRANE_KV_PLACEMENT_CPU
+		|| placement_mode == MEMBRANE_KV_PLACEMENT_AUTO)
+		return (0);
+	return (full_kv_bytes_estimate);
+}
+
 const char	*membrane_kv_placement_mode_name(int placement_mode)
 {
 	if (placement_mode == MEMBRANE_KV_PLACEMENT_GPU)
