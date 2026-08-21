@@ -59,6 +59,11 @@
 # define MEMBRANE_REASON_CTX_TOO_SMALL			"CTX_TOO_SMALL_FOR_PROMPT"
 # define MEMBRANE_REASON_GENERATION_FAILED		"GENERATION_FAILED"
 # define MEMBRANE_REASON_KV_COMPAT_UNSUPPORTED	"KV_COMPAT_UNSUPPORTED"
+/* Review fix (CodeRabbit, PR #22): was an inline literal in main.cpp's
+ * plan_primary_reason() -- every other stable code in this cohort
+ * lives behind a macro; an inline literal can't be referenced by tests
+ * and is easy to change by accident. */
+# define MEMBRANE_REASON_DEFAULT_BEHAVIOR_PRESERVED	"DEFAULT_BEHAVIOR_PRESERVED"
 
 typedef enum e_membrane_run_prompt_mode
 {

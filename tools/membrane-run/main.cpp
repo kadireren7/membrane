@@ -288,6 +288,22 @@ static std::string	gpu_layers_label(int32_t gpu_layers)
 static void	print_error_json(const membrane_run_opts_t &o, int exit_code,
 				const char *reason_code, const std::string &message);
 
+/* Review fix (CodeRabbit, PR #22): the two --auto-implied CPU fallback
+ * sites inside resolve_gpu_config() below assigned these same six
+ * fields, in the same order, verbatim -- a future change to the
+ * fallback contract had to be applied twice or silently drift. Always
+ * returns true (there is no failure case for falling back to CPU). */
+static bool	fall_back_to_cpu(llama_model_params *mp, membrane_gpu_state_t *gs)
+{
+	mp->n_gpu_layers = 0;
+	mp->main_gpu = -1;
+	gs->gpu_layers_selected = 0;
+	gs->requested = false;
+	gs->auto_cpu_fallback = true;
+	gs->plan_reason_code = MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE;
+	return (true);
+}
+
 static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 				uint32_t ctx_size,
 				std::vector<ggml_backend_dev_t> *device_storage,
@@ -360,15 +376,7 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	if (!gs->backend_gpu_capable)
 	{
 		if (auto_implied_gpu)
-		{
-			mp->n_gpu_layers = 0;
-			mp->main_gpu = -1;
-			gs->gpu_layers_selected = 0;
-			gs->requested = false;
-			gs->auto_cpu_fallback = true;
-			gs->plan_reason_code = MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE;
-			return (true);
-		}
+			return (fall_back_to_cpu(mp, gs));
 		fprintf(stderr, "membrane-run: --gpu-layers %s requested but this "
 			"build has no GPU backend compiled in (rebuild with e.g. "
 			"-DGGML_VULKAN=ON)\n", label.c_str());
@@ -390,15 +398,7 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	if (gpu_count == 0)
 	{
 		if (auto_implied_gpu)
-		{
-			mp->n_gpu_layers = 0;
-			mp->main_gpu = -1;
-			gs->gpu_layers_selected = 0;
-			gs->requested = false;
-			gs->auto_cpu_fallback = true;
-			gs->plan_reason_code = MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE;
-			return (true);
-		}
+			return (fall_back_to_cpu(mp, gs));
 		fprintf(stderr, "membrane-run: --gpu-layers %s requested but no "
 			"GPU device was found on this host at runtime (driver/"
 			"hardware not detected)\n", label.c_str());
@@ -663,7 +663,18 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		gs->policy_used = true;
 		gs->safety_reserve_bytes = pr.safety_reserve_bytes;
 		gs->estimated_model_bytes = pr.estimated_model_bytes;
-		gs->estimated_kv_bytes = pr.estimated_kv_bytes;
+		/* Review fix (CodeRabbit, PR #22): report the real KV estimate,
+		 * not pr.estimated_kv_bytes -- that field only echoes back
+		 * whatever membrane_kv_policy_preflight_reservation() passed
+		 * IN to the preflight guard (0 for cpu/auto placement), which
+		 * is a guard input, not the real KV allocation. Reporting 0
+		 * here for --kv-placement cpu (which allocates real, nonzero
+		 * KV bytes, just not on the GPU) understated telemetry/JSON/
+		 * the plan summary and overstated the headroom_bytes
+		 * computation below. The adaptive branch above already used
+		 * the real, never-folded kv_bytes_real_q8/q5 value for this
+		 * same reason -- this branch now matches it. */
+		gs->estimated_kv_bytes = kv_bytes_estimate;
 		if (!ok)
 		{
 			fprintf(stderr, "membrane-run: %s\n", pr.reason);
@@ -765,21 +776,37 @@ static bool	resolve_kv_placement(const membrane_run_opts_t &o,
 
 	if (o.kv_placement == MEMBRANE_KV_PLACEMENT_DEFAULT)
 		return (true);
-	/* Phase 13.1, Section 1: --auto's own implicit kv_placement=auto
-	 * default (o.auto_mode && !o.want_kv_placement) already gracefully
-	 * degraded gpu_layers to CPU-only inside resolve_gpu_config()
-	 * (gs->auto_cpu_fallback) when no GPU backend/device existed at
+	/* Phase 13.1 review fix (Section 6): gs->auto_cpu_fallback is true
+	 * ONLY when --auto's own implicit gpu_layers=auto request (never an
+	 * explicit --gpu-layers) gracefully degraded to CPU-only inside
+	 * resolve_gpu_config() because no GPU backend/device existed at
 	 * runtime -- there is no GPU weight estimate to plan KV placement
-	 * against, and there never will be. Treat this exactly like
-	 * DEFAULT (no plan, zero decode-path behavior change) instead of
-	 * the "requires a verified GPU weight-memory estimate" failure
-	 * below, which exists for a genuinely explicit request that
-	 * legitimately can't be honored -- not for an auto-preset's own
-	 * default quietly adapting to a CPU-only host. An EXPLICIT --kv-
-	 * placement auto in the same situation still fails closed below,
-	 * unchanged (o.want_kv_placement is true there, so this branch
-	 * never applies). */
-	if (o.auto_mode && !o.want_kv_placement && gs->auto_cpu_fallback)
+	 * against, and there never will be on this host.
+	 *
+	 * --kv-placement auto's OWN documented contract (product_cli.cpp's
+	 * --help text, unchanged by this phase) is unconditional: "Never
+	 * fails: an all-CPU-KV plan is a valid auto outcome." That promise
+	 * is not scoped to "only when auto was chosen by --auto's own
+	 * default" -- an EXPLICIT `--kv-placement auto` makes the identical
+	 * promise. So this bypass checks o.kv_placement itself (not
+	 * o.want_kv_placement) -- it applies whether AUTO placement came
+	 * from --auto's own default OR was typed explicitly, as long as
+	 * the underlying reason is the same verified fact (no GPU exists at
+	 * all on this host, not "an unverified estimate" -- see the
+	 * distinct GGUF-metadata-unreadable case below, which this flag is
+	 * never set for and must keep failing closed).
+	 *
+	 * --kv-placement gpu deliberately does NOT get this bypass, even
+	 * though it is reachable with auto_cpu_fallback set too (--auto's
+	 * own implicit gpu_layers=auto can still gracefully degrade under
+	 * an explicit --kv-placement gpu, since gpu_layers itself was never
+	 * explicit) -- gpu's own documented contract is the opposite of
+	 * auto's: "every KV layer on the same GPU device ... or fail closed
+	 * if it does not safely fit." An explicit request for guaranteed
+	 * GPU residency must still fail honestly when there is no GPU,
+	 * exactly as it already does for an explicit --gpu-layers request
+	 * in the same situation (resolve_gpu_config() above). */
+	if (o.kv_placement == MEMBRANE_KV_PLACEMENT_AUTO && gs->auto_cpu_fallback)
 		return (true);
 	/* Review fix: resolve_gpu_config()'s documented "GGUF metadata
 	 * unreadable, explicit numeric --gpu-layers N, proceed unguarded"
@@ -850,7 +877,7 @@ static std::string	plan_primary_reason(const membrane_run_opts_t &o,
 	}
 	if (o.kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT)
 		return (MEMBRANE_KV_PLACEMENT_REASON_DEFAULT_UNCHANGED);
-	return ("DEFAULT_BEHAVIOR_PRESERVED");
+	return (MEMBRANE_REASON_DEFAULT_BEHAVIOR_PRESERVED);
 }
 
 /* Phase 13.1, Section 10: one short, product-facing block summarizing
@@ -1010,10 +1037,17 @@ static void	print_error_json(const membrane_run_opts_t &o, int exit_code,
 {
 	if (!o.want_json)
 		return ;
+	/* Review fix (CodeRabbit, PR #22): reason_code is escaped too, not
+	 * just message -- every current caller passes a bare stable-code
+	 * constant (safe by construction: no quotes/backslashes/control
+	 * chars), but this function's own JSON-validity contract must not
+	 * silently depend on that always staying true for every future
+	 * caller. */
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"run\",\"ok\":false,\"exit_code\":%d,\"error\":{"
-		"\"reason_code\":\"%s\",\"message\":\"", MEMBRANE_VERSION,
-		exit_code, reason_code);
+		"\"reason_code\":\"", MEMBRANE_VERSION, exit_code);
+	print_json_escaped(reason_code);
+	printf("\",\"message\":\"");
 	print_json_escaped(message);
 	printf("\"}}\n");
 }

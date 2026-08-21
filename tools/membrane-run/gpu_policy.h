@@ -88,9 +88,22 @@ typedef struct s_membrane_gpu_policy_result
 										 * REASON_* strings above, always
 										 * set (both on success and
 										 * failure) -- Section 5 */
-	char		reason[256];			/* code, or "CODE: details" when
+	char		reason[384];			/* code, or "CODE: details" when
 										 * !ok -- see reason_code's own
-										 * comment */
+										 * comment. Review fix (CodeRabbit,
+										 * PR #22): grown from 256 --
+										 * the insufficient-memory
+										 * message's fixed text plus 5
+										 * uint64 byte counts plus the
+										 * code prefix this phase added
+										 * can exceed 256, silently
+										 * truncating the remediation
+										 * hint via snprintf (still
+										 * NUL-terminated, never unsafe --
+										 * just loses the actionable
+										 * tail). 384 covers the
+										 * worst-case (max-width uint64
+										 * values) with room to spare. */
 }	membrane_gpu_policy_result_t;
 
 /*

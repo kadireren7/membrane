@@ -481,9 +481,21 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 		 * be rejected by the gpu|auto-requires-nonzero-gpu_layers check
 		 * a few lines below just because --auto's OWN default would
 		 * otherwise have picked "auto" placement; default (not auto)
-		 * is the correct, sensible CPU-only outcome instead. */
+		 * is the correct, sensible CPU-only outcome instead.
+		 *
+		 * Review fix (CodeRabbit, PR #22): --compare-kv/--gpu-bench
+		 * reject any non-DEFAULT kv_placement outright (a few lines
+		 * below) -- Phase 12H scope, unrelated to --auto. Before this
+		 * fix, --auto's own default silently picked AUTO placement
+		 * even in that mode, so `--auto --compare-kv` failed with an
+		 * error naming --kv-placement, a flag the user never typed.
+		 * --auto must not inject a placement value the current mode
+		 * cannot accept -- stay DEFAULT (a real, valid, unsurprising
+		 * outcome: --compare-kv/--gpu-bench never had KV placement
+		 * control to begin with) whenever either mode is requested. */
 		if (!o->want_kv_placement)
-			o->kv_placement = o->gpu_layers != 0
+			o->kv_placement = (o->gpu_layers != 0 && !o->compare_kv
+					&& !o->gpu_bench)
 				? MEMBRANE_KV_PLACEMENT_AUTO : MEMBRANE_KV_PLACEMENT_DEFAULT;
 	}
 	if (o->model_path == NULL)
