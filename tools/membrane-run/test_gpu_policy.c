@@ -277,6 +277,22 @@ static void	test_reason_code_metadata_unavailable(void)
 		"auto with no per-layer estimate is MODEL_METADATA_UNAVAILABLE");
 }
 
+/* Review fix (CodeRabbit, PR #22): test_invalid_layer_count_rejected()
+ * above already exercises this same n_layer_all<=0 path and checks the
+ * ok==0 return, but never asserted which reason_code it fails with --
+ * this is the missing case in this block's "one case per code"
+ * coverage. */
+static void	test_reason_code_invalid_config(void)
+{
+	membrane_gpu_policy_result_t	r;
+
+	membrane_gpu_policy_resolve(MEMBRANE_GPU_LAYERS_AUTO,
+		0 /* model reports no layers */, 4 * GIB, 4 * GIB, 9 * MIB, 0, &r);
+	TEST_ASSERT(strcmp(r.reason_code,
+			MEMBRANE_GPU_POLICY_REASON_INVALID_CONFIG) == 0,
+		"a non-positive model layer count is GPU_POLICY_INVALID_CONFIG");
+}
+
 int	main(void)
 {
 	test_auto_sufficient_memory_selects_all_layers();
@@ -299,6 +315,7 @@ int	main(void)
 	test_reason_code_cpu_only_requested();
 	test_reason_code_memory_insufficient();
 	test_reason_code_metadata_unavailable();
+	test_reason_code_invalid_config();
 	printf("test_gpu_policy: all tests passed\n");
 	return (0);
 }

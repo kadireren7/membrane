@@ -901,6 +901,12 @@ static void	print_plan_summary(const membrane_run_opts_t &o,
 	fprintf(stderr, "  device: %s\n",
 		gs.requested && !gs.device_selected.empty()
 			? gs.device_selected.c_str() : "CPU");
+	/* Review fix (CodeRabbit, PR #22): print_run_json() already reports
+	 * this via "auto":{"cpu_fallback":...} -- the human summary had no
+	 * equivalent, so a fallback run printed identically to an ordinary
+	 * CPU-only run with only the reason code (NO_GPU_DEVICE) as a clue. */
+	if (gs.auto_cpu_fallback)
+		fprintf(stderr, "  auto: no GPU available, resolved to CPU-only\n");
 	if (gs.requested)
 		fprintf(stderr, "  gpu layers: %d/%d\n", gs.gpu_layers_selected,
 			n_layer_total);
