@@ -87,7 +87,15 @@ static void	read_host_meminfo(membrane_host_meminfo_t *out)
 			out->swap_free_bytes = (uint64_t)kb * 1024, found |= 8;
 	}
 	fclose(f);
-	out->ok = (found == 15);
+	/* Review fix (CodeRabbit, PR #23): a kernel built without swap
+	 * support (CONFIG_SWAP=n) omits the SwapTotal/SwapFree lines from
+	 * /proc/meminfo entirely rather than printing them as 0 -- requiring
+	 * all four fields for `ok` suppressed every host-memory figure on
+	 * such a host even though MemTotal/MemAvailable were read
+	 * correctly. Require only the two memory fields; the already-
+	 * zeroed swap fields (memset above) are a truthful "0 swap" in that
+	 * case, not a fabricated value. */
+	out->ok = ((found & 3) == 3);
 }
 
 static std::string	read_stdin(void)
@@ -1169,9 +1177,24 @@ static void	print_verbose_plan(const membrane_run_opts_t &o,
 	fprintf(stderr, "  model layers: %d\n", n_layer_total);
 	if (gs.requested)
 	{
-		fprintf(stderr, "  gpu layers: %d\n", gs.gpu_layers_selected);
+		/* Review fix (CodeRabbit, PR #23): resolve_gpu_config()'s "no
+		 * usable estimate at all" fallback (GGUF metadata unreadable,
+		 * only reachable for an explicit --gpu-layers all/N) leaves
+		 * gs.gpu_layers_selected at the raw MEMBRANE_GPU_LAYERS_ALL
+		 * sentinel (-1) rather than a resolved count for the "all"
+		 * case -- printing that raw would show "gpu layers: -1" and
+		 * an arithmetically nonsensical "cpu layers: n_layer_total+1".
+		 * -1 means "every layer" by definition, so resolve it to
+		 * n_layer_total for display only (matches the true selection,
+		 * doesn't change gs itself). An explicit --gpu-layers N always
+		 * clamps to a non-negative selected_layers elsewhere, so N is
+		 * never negative here. */
+		int32_t	gpu_layers_display = gs.gpu_layers_selected < 0
+			? n_layer_total : gs.gpu_layers_selected;
+
+		fprintf(stderr, "  gpu layers: %d\n", gpu_layers_display);
 		fprintf(stderr, "  cpu layers: %d\n",
-			n_layer_total - gs.gpu_layers_selected);
+			n_layer_total - gpu_layers_display);
 	}
 	fprintf(stderr, "  kv type: %s\n", kv_type_label(o.kv_mode));
 	if (gs.kv_placement_resolved)
@@ -1666,18 +1689,23 @@ static void	print_plan_only_json(const membrane_run_opts_t &o,
 		membrane_kv_placement_mode_name(o.kv_placement));
 	printf("\"memory_plan\":{\"device_total_bytes\":%llu,"
 		"\"device_free_bytes_snapshot\":%llu,\"safety_reserve_bytes\":%llu,"
-		"\"estimated_model_bytes\":%llu,\"estimated_kv_bytes\":%llu,",
+		"\"estimated_model_bytes\":%llu,\"estimated_kv_bytes\":%llu",
 		(unsigned long long)gs.device_total_bytes,
 		(unsigned long long)gs.device_free_bytes,
 		(unsigned long long)gs.safety_reserve_bytes,
 		(unsigned long long)gs.estimated_model_bytes,
 		(unsigned long long)gs.estimated_kv_bytes);
 	if (gs.kv_placement_resolved)
-		printf("\"kv_gpu_layers\":%d,\"kv_cpu_layers\":%d,"
-			"\"kv_gpu_bytes\":%llu,\"kv_cpu_bytes\":%llu,",
+		printf(",\"kv_gpu_layers\":%d,\"kv_cpu_layers\":%d,"
+			"\"kv_gpu_bytes\":%llu,\"kv_cpu_bytes\":%llu",
 			gs.kv_placement.gpu_kv_layers, gs.kv_placement.cpu_kv_layers,
 			(unsigned long long)gs.kv_placement.gpu_kv_bytes,
 			(unsigned long long)gs.kv_placement.cpu_kv_bytes);
+	printf("},");
+	/* Review fix (CodeRabbit, PR #23): host_memory now sits at the same
+	 * top level in both JSON schemas (print_run_json emits it
+	 * top-level too) -- previously nested inside memory_plan here only,
+	 * forcing a consumer to branch on `mode` to find it. */
 	printf("\"host_memory\":{\"available\":%s", host.ok ? "true" : "false");
 	if (host.ok)
 		printf(",\"total_bytes\":%llu,\"available_bytes_snapshot\":%llu,"
@@ -1686,7 +1714,7 @@ static void	print_plan_only_json(const membrane_run_opts_t &o,
 			(unsigned long long)host.available_bytes,
 			(unsigned long long)host.swap_total_bytes,
 			(unsigned long long)host.swap_free_bytes);
-	printf("}},");
+	printf("},");
 	printf("\"reason_codes\":{\"primary\":\"");
 	print_json_escaped(plan_primary_reason(o, gs));
 	printf("\",\"trace\":");
@@ -2366,12 +2394,25 @@ int	main(int argc, char **argv)
 		if (o.want_json)
 			print_plan_only_json(effective_o, model_label, ctx_size,
 				shape.n_layer, gs, host);
-		else if (!o.quiet)
+		else
 		{
+			/* Review fix (CodeRabbit, PR #23): --quiet on a NORMAL run
+			 * suppresses the startup summary/stats while the actual
+			 * product of the command (generated text) still prints --
+			 * a real fallback exists. --plan-only has no such fallback:
+			 * the plan IS the product, so gating it on !o.quiet made
+			 * `--plan-only --quiet` a silent, indistinguishable-from-
+			 * broken no-op (exit 0, zero output). Always print the plan
+			 * here regardless of --quiet. Both lines now go to stderr
+			 * (the confirmation line previously went to stdout, mixing
+			 * streams for what is logically one human-readable block --
+			 * harmless for --json, since that branch never reaches
+			 * here, but inconsistent for plain text output). */
 			print_startup_summary(effective_o, model_label, ctx_size,
 				kv_bytes_for_mode(shape, ctx_size, effective_o.kv_mode),
 				shape.n_layer, gs, host);
-			printf("membrane-run: plan resolved (no generation performed)\n");
+			fprintf(stderr,
+				"membrane-run: plan resolved (no generation performed)\n");
 		}
 		llama_model_free(model);
 		return (llama_backend_free(), MEMBRANE_EXIT_SUCCESS);

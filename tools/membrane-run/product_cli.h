@@ -77,6 +77,13 @@
 # define MEMBRANE_WARNING_METADATA_ESTIMATE_ONLY	"METADATA_ESTIMATE_ONLY"
 # define MEMBRANE_WARNING_HOST_MEMORY_PRESSURE	"HOST_MEMORY_PRESSURE"
 # define MEMBRANE_WARNING_EXPLICIT_OVERRIDE		"EXPLICIT_OVERRIDE"
+/* Review fix (CodeRabbit, PR #23): EXPLICIT_OVERRIDE is the only code
+ * above emitted with a runtime suffix -- build_plan_warnings() (main.cpp)
+ * appends ":gpu_layers", ":kv", or ":kv_placement" to name which
+ * --auto-managed field the user explicitly overrode, one warning entry
+ * per overridden field. Every other code above is always emitted
+ * verbatim (never suffixed) -- a consumer comparing warning strings for
+ * exact equality must account for this one exception. */
 
 typedef enum e_membrane_run_prompt_mode
 {
