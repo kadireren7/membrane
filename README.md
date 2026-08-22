@@ -297,12 +297,17 @@ precision/placement, one reason code). Two ways to see more:
 - **`--plan-only`** resolves model load, shape, and the full GPU/
   adaptive/placement policy — the exact same planner a real run
   uses — and prints the result without generating. `--plan-only
-  --json` emits one `"mode":"plan"` object (`requested`/`resolved`/
-  `memory_plan`/`reason_codes`/`warnings`); a normal run's `--json`
-  object additively gained the same `requested`/`resolved`/
-  `reason_trace`/`warnings`/`host_memory` fields (Phase 13.1's fields
-  are unchanged, `schema_version` stays `1`). Not supported together
-  with `--compare-kv`/`--gpu-bench` (neither has one "plan").
+  --json` emits one `"mode":"plan"` object: `requested`/`resolved`,
+  `memory_plan` (GPU fields present only when a GPU policy estimate
+  ran), `reason_codes` (`{"primary":..., "trace":[...]}`), and
+  `warnings`. A normal run's `--json` object gained the
+  *corresponding* fields additively, in its own pre-existing shape —
+  `requested`/`resolved`/`host_memory` match, but `reason_code`
+  (singular, Phase 13.1) and `reason_trace` stay separate top-level
+  fields rather than nesting under a `reason_codes` object (Phase
+  13.1's fields are unchanged, `schema_version` stays `1`). Not
+  supported together with `--compare-kv`/`--gpu-bench` (neither has
+  one "plan").
 
 `--auto` also fills in `--kv-placement` for a normal run, but
 **leaves it at `default` under `--compare-kv`/`--gpu-bench`** — those

@@ -1687,14 +1687,28 @@ static void	print_plan_only_json(const membrane_run_opts_t &o,
 	printf("\",\"gpu_layers\":%d,\"kv\":\"%s\",\"kv_placement\":\"%s\"},",
 		gs.gpu_layers_selected, kv_mode_name(o.kv_mode),
 		membrane_kv_placement_mode_name(o.kv_placement));
-	printf("\"memory_plan\":{\"device_total_bytes\":%llu,"
-		"\"device_free_bytes_snapshot\":%llu,\"safety_reserve_bytes\":%llu,"
-		"\"estimated_model_bytes\":%llu,\"estimated_kv_bytes\":%llu",
-		(unsigned long long)gs.device_total_bytes,
-		(unsigned long long)gs.device_free_bytes,
-		(unsigned long long)gs.safety_reserve_bytes,
-		(unsigned long long)gs.estimated_model_bytes,
+	/* Review fix (CodeRabbit, PR #23): device_total_bytes/device_free_
+	 * bytes_snapshot/safety_reserve_bytes/estimated_model_bytes are
+	 * only ever populated when a GPU policy estimate actually ran
+	 * (gs.policy_used) -- a CPU-only plan (no --gpu-layers request at
+	 * all) leaves them at their gs-struct default of 0, which a
+	 * consumer could misread as "this device has 0 bytes" rather than
+	 * "no GPU policy applies here". print_gpu_json() above already
+	 * omits its entire "gpu_policy" object under the same condition
+	 * (Phase 13.1) -- this matches that established convention instead
+	 * of introducing a new, inconsistent one. estimated_kv_bytes is
+	 * unconditional: it is meaningful (and populated) for CPU-only KV
+	 * too, via resolve_cpu_adaptive_kv(). */
+	printf("\"memory_plan\":{\"estimated_kv_bytes\":%llu",
 		(unsigned long long)gs.estimated_kv_bytes);
+	if (gs.policy_used)
+		printf(",\"device_total_bytes\":%llu,"
+			"\"device_free_bytes_snapshot\":%llu,\"safety_reserve_bytes\":%llu,"
+			"\"estimated_model_bytes\":%llu",
+			(unsigned long long)gs.device_total_bytes,
+			(unsigned long long)gs.device_free_bytes,
+			(unsigned long long)gs.safety_reserve_bytes,
+			(unsigned long long)gs.estimated_model_bytes);
 	if (gs.kv_placement_resolved)
 		printf(",\"kv_gpu_layers\":%d,\"kv_cpu_layers\":%d,"
 			"\"kv_gpu_bytes\":%llu,\"kv_cpu_bytes\":%llu",
