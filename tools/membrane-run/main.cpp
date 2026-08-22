@@ -47,6 +47,49 @@ static void	quiet_log_callback(enum ggml_log_level level, const char *text,
 		fputs(text, stderr);
 }
 
+/* Phase 13.2, Section 17: Linux-only host-memory OBSERVABILITY (never a
+ * safety mechanism -- nothing in this file conditions a pass/fail
+ * decision on these numbers, only reports them). Isolated in this one
+ * function so the /proc/meminfo dependency stays contained rather than
+ * spread across call sites -- ok stays false (fields left at 0) on any
+ * non-Linux host or unreadable /proc, and every caller already treats
+ * that the same way membrane_kv_store_rss_t's own proc_status_ok does:
+ * omit the fields rather than report a fabricated zero as real. */
+typedef struct s_membrane_host_meminfo
+{
+	bool		ok;
+	uint64_t	total_bytes;
+	uint64_t	available_bytes;
+	uint64_t	swap_total_bytes;
+	uint64_t	swap_free_bytes;
+}	membrane_host_meminfo_t;
+
+static void	read_host_meminfo(membrane_host_meminfo_t *out)
+{
+	FILE		*f;
+	char		line[256];
+	unsigned long long	kb;
+	int			found = 0;
+
+	memset(out, 0, sizeof(*out));
+	f = fopen("/proc/meminfo", "r");
+	if (f == NULL)
+		return ;
+	while (fgets(line, sizeof(line), f) != NULL)
+	{
+		if (sscanf(line, "MemTotal: %llu kB", &kb) == 1)
+			out->total_bytes = (uint64_t)kb * 1024, found |= 1;
+		else if (sscanf(line, "MemAvailable: %llu kB", &kb) == 1)
+			out->available_bytes = (uint64_t)kb * 1024, found |= 2;
+		else if (sscanf(line, "SwapTotal: %llu kB", &kb) == 1)
+			out->swap_total_bytes = (uint64_t)kb * 1024, found |= 4;
+		else if (sscanf(line, "SwapFree: %llu kB", &kb) == 1)
+			out->swap_free_bytes = (uint64_t)kb * 1024, found |= 8;
+	}
+	fclose(f);
+	out->ok = (found == 15);
+}
+
 static std::string	read_stdin(void)
 {
 	std::string	s;
@@ -244,6 +287,22 @@ typedef struct s_membrane_gpu_state
 	 * sets it. */
 	std::string	plan_reason_code;
 	bool		auto_cpu_fallback;
+
+	/* Phase 13.2, Section 7: the ordered sequence of semantically
+	 * meaningful policy decisions that produced plan_reason_code above
+	 * -- e.g. ["AUTO_REQUESTED", "GPU_DEVICE_FOUND", "GPU_FULL_FIT",
+	 * "Q8_FULL_RESIDENCY"]. Deliberately short: one entry per real
+	 * decision point (device search outcome, layer-selection outcome,
+	 * adaptive-precision outcome, kv-placement outcome), never one per
+	 * branch condition inside those decisions -- see each push site's
+	 * own comment for why that entry is there. */
+	std::vector<std::string>	reason_trace;
+
+	/* Phase 13.2, Section 16: informational, non-fatal plan warnings --
+	 * built once by build_plan_warnings() after every other field above
+	 * is final. Never changes exit_code/ok; purely additive telemetry
+	 * for --verbose/--json consumers. */
+	std::vector<std::string>	warnings;
 }	membrane_gpu_state_t;
 
 static std::string	gpu_layers_label(int32_t gpu_layers)
@@ -285,8 +344,18 @@ static std::string	gpu_layers_label(int32_t gpu_layers)
  * anything but the one success object print_run_json() prints, and
  * plain stderr text is unaffected either way (it is not JSON, so it
  * stays available for humans/log-scraping regardless of --json). */
+/* Phase 13.2, Section 10/15: suggestion and available_devices are both
+ * optional and additive to the Phase 13.1 error-object shape -- a
+ * caller passing neither (the overwhelming majority, unchanged from
+ * Phase 13.1) gets the exact same object as before. suggestion must be
+ * an ACTIONABLE, factually appropriate remediation (Section 10: "Do
+ * not offer impossible fixes") -- only populated at the handful of
+ * call sites where one genuinely exists; every other call site passes
+ * NULL and the field is omitted entirely, not emitted empty. */
 static void	print_error_json(const membrane_run_opts_t &o, int exit_code,
-				const char *reason_code, const std::string &message);
+				const char *reason_code, const std::string &message,
+				const char *suggestion = NULL,
+				const std::vector<std::string> *available_devices = NULL);
 
 /* Review fix (CodeRabbit, PR #22): the two --auto-implied CPU fallback
  * sites inside resolve_gpu_config() below assigned these same six
@@ -301,6 +370,7 @@ static bool	fall_back_to_cpu(llama_model_params *mp, membrane_gpu_state_t *gs)
 	gs->requested = false;
 	gs->auto_cpu_fallback = true;
 	gs->plan_reason_code = MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE;
+	gs->reason_trace.push_back(MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE);
 	return (true);
 }
 
@@ -339,6 +409,10 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	memset(&gs->kv_placement, 0, sizeof(gs->kv_placement));
 	gs->plan_reason_code.clear();
 	gs->auto_cpu_fallback = false;
+	gs->reason_trace.clear();
+	gs->warnings.clear();
+	if (o.auto_mode)
+		gs->reason_trace.push_back("AUTO_REQUESTED");
 	gs->requested = (o.gpu_layers != 0);
 	gs->backend_gpu_capable = membrane_gpu_backend_available() != 0;
 	gs->gpu_layers_requested = o.gpu_layers;
@@ -359,6 +433,7 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		mp->n_gpu_layers = 0;
 		mp->main_gpu = -1;
 		gs->plan_reason_code = MEMBRANE_GPU_POLICY_REASON_CPU_ONLY_REQUESTED;
+		gs->reason_trace.push_back(MEMBRANE_GPU_POLICY_REASON_CPU_ONLY_REQUESTED);
 		return (true);
 	}
 	label = gpu_layers_label(o.gpu_layers);
@@ -383,7 +458,9 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
 			MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE,
 			"--gpu-layers " + label + " requested but this build has no "
-			"GPU backend compiled in");
+			"GPU backend compiled in",
+			"Try --gpu-layers 0 for CPU-only, or rebuild with a GPU "
+			"backend enabled (e.g. -DGGML_VULKAN=ON).");
 		return (false);
 	}
 
@@ -405,7 +482,9 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
 			MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE,
 			"--gpu-layers " + label + " requested but no GPU device was "
-			"found on this host at runtime");
+			"found on this host at runtime",
+			"Try --gpu-layers 0 for CPU-only, or verify a GPU driver is "
+			"installed and visible to this build's backend.");
 		return (false);
 	}
 
@@ -425,16 +504,28 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 				matches == 0 ? "" : ":");
 			if (matches == 0)
 				fprintf(stderr, "Available:\n");
+			/* Section 15: the exact same device list the human message
+			 * above already prints, kept for --json (available_devices
+			 * array) so a scripted caller doesn't have to scrape stderr
+			 * to offer the same "pick one of these" UX a human gets. */
+			std::vector<std::string>	available_names;
+
 			for (i = 0; i < n_devices; ++i)
 				if (devices[i].type == MEMBRANE_DEV_TYPE_GPU
 					|| devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
+				{
 					fprintf(stderr, "  %s (%s)\n", devices[i].name,
 						devices[i].description);
+					available_names.push_back(devices[i].name);
+				}
 			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
 				MEMBRANE_GPU_POLICY_REASON_DEVICE_NOT_FOUND,
 				"--device \"" + o.device + "\" matched "
 				+ std::to_string(matches) + " available GPU device(s), "
-				"expected exactly one");
+				"expected exactly one",
+				"Pass a --device substring matching exactly one of the "
+				"available devices, or omit --device to auto-select.",
+				&available_names);
 			return (false);
 		}
 		chosen_idx = idx;
@@ -469,6 +560,10 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	gs->backend_selected = dev.backend;
 	gs->device_total_bytes = dev.memory_total;
 	gs->device_free_bytes = dev.memory_free;
+	/* Section 7: a real, findable GPU device is its own meaningful
+	 * decision point, distinct from (and always preceding) whichever
+	 * layer-selection/precision outcome follows it below. */
+	gs->reason_trace.push_back("GPU_DEVICE_FOUND");
 
 	membrane_gpu_model_estimate_t	est;
 	int		have_est = membrane_gpu_estimate_model(o.model_path, &est);
@@ -567,7 +662,9 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 			MEMBRANE_GPU_POLICY_REASON_METADATA_UNAVAILABLE,
 			std::string("--kv adaptive requires the model's real "
 				"hparams and layer structure, but they could not be "
-				"read from '") + o.model_path + "'");
+				"read from '") + o.model_path + "'",
+			"Verify the model file is a valid GGUF, or use an explicit "
+			"--kv q8/q5/native instead of adaptive.");
 		return (false);
 	}
 	if (o.gpu_layers == MEMBRANE_GPU_LAYERS_AUTO && !(have_est
@@ -580,7 +677,9 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 			MEMBRANE_GPU_POLICY_REASON_METADATA_UNAVAILABLE,
 			std::string("--gpu-layers auto requested but the model's "
 				"layer structure could not be read from '")
-				+ o.model_path + "'");
+				+ o.model_path + "'",
+			"Verify the model file is a valid GGUF, or use an explicit "
+			"--gpu-layers N instead of auto.");
 		return (false);
 	}
 	if (adaptive_requested)
@@ -637,7 +736,9 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 			fprintf(stderr, "membrane-run: --kv adaptive found no KV "
 				"storage mode that fits safely: %s\n", ar.reason);
 			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV, ar.reason,
-				"--kv adaptive found no KV storage mode that fits safely");
+				"--kv adaptive found no KV storage mode that fits safely",
+				"Try --kv-placement cpu, reduce --ctx, or raise "
+				"--kv-budget-mib.");
 			return (false);
 		}
 		gs->adaptive_used = true;
@@ -679,7 +780,9 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		{
 			fprintf(stderr, "membrane-run: %s\n", pr.reason);
 			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
-				pr.reason_code, pr.reason);
+				pr.reason_code, pr.reason,
+				"Try --kv-placement cpu, reduce --ctx, or lower "
+				"--gpu-layers.");
 			return (false);
 		}
 		gs->gpu_layers_selected = pr.selected_layers;
@@ -697,6 +800,20 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 			? -1 : o.gpu_layers;
 		gs->plan_reason_code = MEMBRANE_GPU_POLICY_REASON_METADATA_UNAVAILABLE;
 	}
+	/* Section 7: the layer-selection/precision outcome for whichever of
+	 * the three branches above ran (adaptive, non-adaptive-with-
+	 * estimate, or no-estimate) -- always the same value plan_primary_
+	 * reason()/print_plan_summary() report as "reason:", pushed here
+	 * once so every path that reaches this shared tail is covered
+	 * without duplicating the push inside each branch. The adaptive
+	 * branch's own precision choice (e.g. "Q8_FULL_RESIDENCY") is a
+	 * distinct, later decision than the layer-selection code just
+	 * pushed -- both are real, semantically separate outcomes worth
+	 * keeping in the trace. */
+	if (!gs->plan_reason_code.empty())
+		gs->reason_trace.push_back(gs->plan_reason_code);
+	if (gs->adaptive_used)
+		gs->reason_trace.push_back(gs->adaptive_reason);
 	device_storage->clear();
 	device_storage->push_back((ggml_backend_dev_t)dev.native_handle);
 	device_storage->push_back(NULL);
@@ -749,6 +866,7 @@ static bool	resolve_cpu_adaptive_kv(const membrane_run_opts_t &o,
 	gs->adaptive_selected_mode = ar.selected_mode;
 	gs->adaptive_reason = ar.reason;
 	gs->estimated_kv_bytes = ar.selected_kv_bytes;
+	gs->reason_trace.push_back(ar.reason);
 	return (true);
 }
 
@@ -828,7 +946,8 @@ static bool	resolve_kv_placement(const membrane_run_opts_t &o,
 		print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
 			MEMBRANE_KV_PLACEMENT_REASON_INVALID_CONFIG,
 			"--kv-placement gpu|auto requires a verified GPU "
-			"weight-memory estimate, but none is available");
+			"weight-memory estimate, but none is available",
+			"Try --kv-placement cpu, or --gpu-layers all/auto.");
 		return (false);
 	}
 	total_kv_bytes = kv_bytes_for_mode(shape, ctx_size, effective_kv_mode);
@@ -848,11 +967,91 @@ static bool	resolve_kv_placement(const membrane_run_opts_t &o,
 
 		print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
 			(colon == std::string::npos ? reason
-				: reason.substr(0, colon)).c_str(), gs->kv_placement.reason);
+				: reason.substr(0, colon)).c_str(), gs->kv_placement.reason,
+			"Try --kv-placement cpu, reduce --ctx, or lower "
+			"--gpu-layers.");
 		return (false);
 	}
 	gs->kv_placement_resolved = true;
+	/* Section 7: gs.kv_placement.reason is already "CODE" or "CODE:
+	 * detail" (kv_residency_policy.c's convention) -- extract just the
+	 * code, same rule plan_primary_reason() uses, so the trace only
+	 * ever carries stable codes, never free text. */
+	{
+		std::string	reason(gs->kv_placement.reason);
+		size_t		colon = reason.find(": ");
+
+		gs->reason_trace.push_back(colon == std::string::npos ? reason
+			: reason.substr(0, colon));
+	}
 	return (true);
+}
+
+/* Phase 13.2, Section 16: a small, deliberately non-exhaustive set of
+ * informational plan warnings -- each one only pushed when it is both
+ * true AND actionable (Section 16: "Do NOT spam warnings... Do not
+ * create warnings without actionable meaning"). Called once, after
+ * resolve_gpu_config()/resolve_cpu_adaptive_kv()/resolve_kv_placement()
+ * have all already run, so every gs field consulted here is final.
+ * Never affects exit_code/ok -- these are additive telemetry only. */
+static void	build_plan_warnings(const membrane_run_opts_t &o,
+				const membrane_host_meminfo_t &host, membrane_gpu_state_t *gs)
+{
+	if (gs->auto_cpu_fallback)
+		gs->warnings.push_back(MEMBRANE_WARNING_CPU_FALLBACK);
+	/* Section 13: a real, valid override -- not an error -- but worth
+	 * a machine-readable note so a --json/--verbose consumer can tell
+	 * "the user's explicit flag won over --auto's own default" apart
+	 * from "every field came from --auto". One entry per overridden
+	 * field, not a blanket "something was overridden" note, so a
+	 * consumer knows exactly which. */
+	if (o.auto_mode)
+	{
+		if (o.want_gpu_layers)
+			gs->warnings.push_back(std::string(MEMBRANE_WARNING_EXPLICIT_OVERRIDE)
+				+ ":gpu_layers");
+		if (o.want_kv_mode)
+			gs->warnings.push_back(std::string(MEMBRANE_WARNING_EXPLICIT_OVERRIDE)
+				+ ":kv");
+		if (o.want_kv_placement)
+			gs->warnings.push_back(std::string(MEMBRANE_WARNING_EXPLICIT_OVERRIDE)
+				+ ":kv_placement");
+	}
+	/* Section 15/9: gs.requested but no gpu_policy estimate was ever
+	 * available (GGUF metadata unreadable, explicit numeric --gpu-
+	 * layers N proceeding unguarded -- resolve_gpu_config()'s own
+	 * documented fallback, see its "no usable estimate at all" branch)
+	 * -- the plan below is real device/backend selection, but the
+	 * memory numbers a --verbose/--json consumer would otherwise expect
+	 * simply do not exist for this run. */
+	if (gs->requested && !gs->policy_used)
+		gs->warnings.push_back(MEMBRANE_WARNING_METADATA_ESTIMATE_ONLY);
+	/* Section 16 example condition: an accepted GPU plan that leaves
+	 * very little estimated headroom is worth flagging even though it
+	 * was accepted -- 10% of the post-reserve budget, the same
+	 * "estimate, not a guarantee" spirit as gpu_policy.h's own reserve.
+	 * Never applies when nothing was actually estimated (policy_used)
+	 * or the budget itself is 0 (already MEMORY_INSUFFICIENT territory,
+	 * which fails closed before reaching here at all). */
+	if (gs->policy_used)
+	{
+		uint64_t	used = gs->estimated_model_bytes + gs->estimated_kv_bytes;
+		uint64_t	budget = gs->device_free_bytes > gs->safety_reserve_bytes
+			? gs->device_free_bytes - gs->safety_reserve_bytes : 0;
+		uint64_t	headroom = budget > used ? budget - used : 0;
+
+		if (budget > 0 && headroom * 10 < budget)
+			gs->warnings.push_back(MEMBRANE_WARNING_LOW_GPU_HEADROOM);
+	}
+	/* Section 17: observability only, and deliberately conservative --
+	 * this never influenced any pass/fail decision above, it only
+	 * flags a host-wide condition worth a human's attention when KV (or
+	 * anything else) is about to compete for system RAM. host.ok is
+	 * false (fields all 0) on any host where /proc/meminfo could not
+	 * be read -- never warn from a value that was never actually
+	 * observed. */
+	if (host.ok && host.available_bytes < (uint64_t)512 * 1024 * 1024)
+		gs->warnings.push_back(MEMBRANE_WARNING_HOST_MEMORY_PRESSURE);
 }
 
 /* Phase 13.1, Section 5/10: the single overall "why did the plan end
@@ -930,10 +1129,117 @@ static void	print_plan_summary(const membrane_run_opts_t &o,
 	fprintf(stderr, "  reason: %s\n", plan_primary_reason(o, gs).c_str());
 }
 
+/* Phase 13.2, Section 5: the detailed requested/resolved/memory/policy
+ * breakdown --verbose adds on top of print_plan_summary()'s concise
+ * block above. Same "only print what actually applies" gating as the
+ * concise block (Section 4: normal output stays compact; this is the
+ * opt-in detail layer, not a replacement for it -- both print when
+ * policy_active and --verbose). Every memory figure here is explicitly
+ * labelled ESTIMATED/SNAPSHOT (Section 8: never claim measured peak
+ * VRAM or a safety guarantee this project cannot make). */
+static void	print_verbose_plan(const membrane_run_opts_t &o,
+				int32_t n_layer_total, const membrane_gpu_state_t &gs,
+				const membrane_host_meminfo_t &host)
+{
+	bool	policy_active = o.auto_mode || gs.requested
+		|| o.kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT || gs.adaptive_used;
+	size_t	i;
+
+	if (!policy_active)
+		return ;
+	fprintf(stderr, "MEMBRANE verbose plan\n");
+	fprintf(stderr, "requested:\n");
+	fprintf(stderr, "  gpu layers: %s\n",
+		gpu_layers_label(gs.gpu_layers_requested).c_str());
+	/* requested_kv_name() (below, print_gpu_json's neighbor) isn't
+	 * declared yet at this point in the file -- same logic inlined,
+	 * one place fewer to keep in sync would be nice, but a forward
+	 * declaration purely to avoid two identical lines is not worth it
+	 * here. */
+	fprintf(stderr, "  kv precision: %s\n",
+		gs.adaptive_used ? "adaptive" : kv_mode_name(o.kv_mode));
+	fprintf(stderr, "  kv placement: %s\n",
+		membrane_kv_placement_mode_name(o.kv_placement));
+	fprintf(stderr, "  device: %s\n",
+		gs.device_requested.empty() ? "(any)" : gs.device_requested.c_str());
+	fprintf(stderr, "resolved:\n");
+	fprintf(stderr, "  backend: %s\n", gs.backend_selected.c_str());
+	fprintf(stderr, "  device: %s\n",
+		gs.device_selected.empty() ? "(none)" : gs.device_selected.c_str());
+	fprintf(stderr, "  model layers: %d\n", n_layer_total);
+	if (gs.requested)
+	{
+		fprintf(stderr, "  gpu layers: %d\n", gs.gpu_layers_selected);
+		fprintf(stderr, "  cpu layers: %d\n",
+			n_layer_total - gs.gpu_layers_selected);
+	}
+	fprintf(stderr, "  kv type: %s\n", kv_type_label(o.kv_mode));
+	if (gs.kv_placement_resolved)
+	{
+		fprintf(stderr, "  gpu kv layers: %d\n", gs.kv_placement.gpu_kv_layers);
+		fprintf(stderr, "  cpu kv layers: %d\n", gs.kv_placement.cpu_kv_layers);
+	}
+	fprintf(stderr, "memory (ESTIMATED unless noted SNAPSHOT):\n");
+	if (gs.requested)
+		fprintf(stderr, "  gpu free (SNAPSHOT): %.1f MiB\n",
+			(double)gs.device_free_bytes / (1024.0 * 1024.0));
+	if (gs.policy_used)
+	{
+		uint64_t	used = gs.estimated_model_bytes + gs.estimated_kv_bytes;
+		uint64_t	budget = gs.device_free_bytes > gs.safety_reserve_bytes
+			? gs.device_free_bytes - gs.safety_reserve_bytes : 0;
+		uint64_t	remaining = budget > used ? budget - used : 0;
+
+		fprintf(stderr, "  safety reserve: %.1f MiB\n",
+			(double)gs.safety_reserve_bytes / (1024.0 * 1024.0));
+		fprintf(stderr, "  estimated weight bytes: %.1f MiB\n",
+			(double)gs.estimated_model_bytes / (1024.0 * 1024.0));
+		fprintf(stderr, "  remaining budget: %.1f MiB\n",
+			(double)remaining / (1024.0 * 1024.0));
+	}
+	if (gs.kv_placement_resolved)
+		fprintf(stderr, "  estimated gpu kv: %.1f MiB, estimated cpu kv: "
+			"%.1f MiB\n",
+			(double)gs.kv_placement.gpu_kv_bytes / (1024.0 * 1024.0),
+			(double)gs.kv_placement.cpu_kv_bytes / (1024.0 * 1024.0));
+	else if (gs.policy_used)
+		fprintf(stderr, "  estimated kv bytes: %.1f MiB\n",
+			(double)gs.estimated_kv_bytes / (1024.0 * 1024.0));
+	if (host.ok)
+		fprintf(stderr, "  host available (SNAPSHOT): %.1f MiB / %.1f MiB "
+			"total, swap free (SNAPSHOT): %.1f MiB\n",
+			(double)host.available_bytes / (1024.0 * 1024.0),
+			(double)host.total_bytes / (1024.0 * 1024.0),
+			(double)host.swap_free_bytes / (1024.0 * 1024.0));
+	fprintf(stderr, "policy:\n");
+	fprintf(stderr, "  primary reason: %s\n", plan_primary_reason(o, gs).c_str());
+	if (!gs.reason_trace.empty())
+	{
+		fprintf(stderr, "  reason trace:");
+		for (i = 0; i < gs.reason_trace.size(); ++i)
+			fprintf(stderr, "%s%s", i == 0 ? " " : " -> ",
+				gs.reason_trace[i].c_str());
+		fprintf(stderr, "\n");
+	}
+	fprintf(stderr, "  auto fallback: %s\n",
+		gs.auto_cpu_fallback ? "yes" : "no");
+	if (gs.adaptive_used)
+		fprintf(stderr, "  adaptive reason: %s\n", gs.adaptive_reason.c_str());
+	if (!gs.warnings.empty())
+	{
+		fprintf(stderr, "  warnings:");
+		for (i = 0; i < gs.warnings.size(); ++i)
+			fprintf(stderr, "%s%s", i == 0 ? " " : ", ",
+				gs.warnings[i].c_str());
+		fprintf(stderr, "\n");
+	}
+}
+
 static void	print_startup_summary(const membrane_run_opts_t &o,
 				const char *model_label, uint32_t ctx_size,
 				uint64_t kv_bytes, int32_t n_layer_total,
-				const membrane_gpu_state_t &gs)
+				const membrane_gpu_state_t &gs,
+				const membrane_host_meminfo_t &host)
 {
 	fprintf(stderr, "MEMBRANE %s\n", MEMBRANE_VERSION);
 	fprintf(stderr, "model      %s\n", model_label);
@@ -978,6 +1284,8 @@ static void	print_startup_summary(const membrane_run_opts_t &o,
 	 * plan summary -- same information, one place, always ending in a
 	 * single stable reason code. */
 	print_plan_summary(o, n_layer_total, gs);
+	if (o.verbose)
+		print_verbose_plan(o, n_layer_total, gs, host);
 }
 
 typedef struct s_token_print_ud
@@ -1039,7 +1347,8 @@ static void	print_json_escaped(const std::string &text)
  * to distinguish programmatically (model/metadata/GPU/device
  * failures), not every CLI-parse-time misuse. */
 static void	print_error_json(const membrane_run_opts_t &o, int exit_code,
-				const char *reason_code, const std::string &message)
+				const char *reason_code, const std::string &message,
+				const char *suggestion, const std::vector<std::string> *available_devices)
 {
 	if (!o.want_json)
 		return ;
@@ -1055,7 +1364,29 @@ static void	print_error_json(const membrane_run_opts_t &o, int exit_code,
 	print_json_escaped(reason_code);
 	printf("\",\"message\":\"");
 	print_json_escaped(message);
-	printf("\"}}\n");
+	printf("\"");
+	if (suggestion != NULL)
+	{
+		printf(",\"suggestion\":\"");
+		print_json_escaped(suggestion);
+		printf("\"");
+	}
+	if (available_devices != NULL && !available_devices->empty())
+	{
+		size_t	i;
+
+		printf(",\"available_devices\":[");
+		for (i = 0; i < available_devices->size(); ++i)
+		{
+			if (i > 0)
+				printf(",");
+			printf("\"");
+			print_json_escaped((*available_devices)[i]);
+			printf("\"");
+		}
+		printf("]");
+	}
+	printf("}}\n");
 }
 
 /* Phase 11A: every print_*() site below receives `o` already resolved
@@ -1161,9 +1492,33 @@ static void	print_kv_placement_json(const membrane_run_opts_t &o,
 	printf("},");
 }
 
+static void	print_json_string_array(const std::vector<std::string> &arr)
+{
+	size_t	i;
+
+	printf("[");
+	for (i = 0; i < arr.size(); ++i)
+	{
+		if (i > 0)
+			printf(",");
+		printf("\"");
+		print_json_escaped(arr[i]);
+		printf("\"");
+	}
+	printf("]");
+}
+
+/* Phase 13.2, Section 6/9/17: additive-only JSON, same contract as
+ * every other print_*_json() function in this file (Section 18: never
+ * rename/remove an existing Phase 13.1 field, only add new ones) --
+ * host/success/exit_code/prompt_tokens_count are new inputs purely to
+ * populate the new "host_memory"/"execution" objects below; every
+ * existing field/argument stays byte-for-byte what it already was. */
 static void	print_run_json(const membrane_run_opts_t &o,
 				const char *model_label, const membrane_kv_store_telemetry_t &t,
-				const std::string &text, const membrane_gpu_state_t &gs)
+				const std::string &text, const membrane_gpu_state_t &gs,
+				const membrane_host_meminfo_t &host, bool success,
+				int exit_code, size_t prompt_tokens_count)
 {
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"run\",\"ok\":true,\"model_label\":\"%s\","
@@ -1200,8 +1555,60 @@ static void	print_run_json(const membrane_run_opts_t &o,
 	printf("\"performance\":{\"prompt_tok_per_s\":%.6f,"
 		"\"generation_tok_per_s\":%.6f},",
 		t.prompt_tok_per_s, t.generation_tok_per_s);
-	printf("\"no_fallback_occurred\":%s",
+	printf("\"no_fallback_occurred\":%s,",
 		t.no_fallback_occurred ? "true" : "false");
+	/* Phase 13.2, Section 6: a canonical grouping of the requested-side
+	 * and resolved-side fields Phase 13.1 already emits scattered
+	 * across "auto"/"gpu"/"kv_placement"/top-level requested_kv/
+	 * selected_kv above -- same values, one place, so a consumer never
+	 * has to reconstruct "what did the user ask for" vs "what did
+	 * MEMBRANE pick" from several objects. Existing fields are
+	 * unchanged; this is a convenience view only. */
+	printf("\"requested\":{\"auto\":%s,\"gpu_layers\":\"%s\",\"kv\":\"%s\","
+		"\"kv_placement\":\"%s\",\"device\":\"",
+		o.auto_mode ? "true" : "false",
+		gpu_layers_label(gs.gpu_layers_requested).c_str(),
+		gs.adaptive_used ? "adaptive" : kv_mode_name(o.kv_mode),
+		membrane_kv_placement_mode_name(o.kv_placement));
+	print_json_escaped(gs.device_requested);
+	printf("\"},");
+	printf("\"resolved\":{\"backend\":\"");
+	print_json_escaped(gs.backend_selected);
+	printf("\",\"device\":\"");
+	print_json_escaped(gs.device_selected);
+	printf("\",\"gpu_layers\":%d,\"kv\":\"%s\",\"kv_placement\":\"%s\"},",
+		gs.gpu_layers_selected, kv_mode_name(o.kv_mode),
+		membrane_kv_placement_mode_name(o.kv_placement));
+	/* Section 7: ordered, semantically-meaningful decision trace behind
+	 * reason_code above -- may be empty (e.g. a plain run with no
+	 * policy active at all). */
+	printf("\"reason_trace\":");
+	print_json_string_array(gs.reason_trace);
+	printf(",\"warnings\":");
+	print_json_string_array(gs.warnings);
+	/* Section 9: only fields backed by real measurements -- no
+	 * fabricated prompt_eval_time/generation_time/total_time (this
+	 * codebase measures throughput, not wall-clock phase durations;
+	 * see kv_store_telemetry.h's own performance fields). */
+	printf(",\"execution\":{\"success\":%s,\"exit_code\":%d,"
+		"\"prompt_tokens\":%zu,\"generated_tokens\":%llu,"
+		"\"prompt_tok_per_sec\":%.6f,\"generation_tok_per_sec\":%.6f},",
+		success ? "true" : "false", exit_code, prompt_tokens_count,
+		(unsigned long long)t.generated_tokens, t.prompt_tok_per_s,
+		t.generation_tok_per_s);
+	/* Section 17: observability only -- omitted entirely (not zeroed)
+	 * when /proc/meminfo could not be read, so a consumer never mistakes
+	 * "unavailable" for "zero host memory". Field names say SNAPSHOT
+	 * explicitly (Section 8) -- neither a guarantee nor a live figure. */
+	printf("\"host_memory\":{\"available\":%s", host.ok ? "true" : "false");
+	if (host.ok)
+		printf(",\"total_bytes\":%llu,\"available_bytes_snapshot\":%llu,"
+			"\"swap_total_bytes\":%llu,\"swap_free_bytes_snapshot\":%llu",
+			(unsigned long long)host.total_bytes,
+			(unsigned long long)host.available_bytes,
+			(unsigned long long)host.swap_total_bytes,
+			(unsigned long long)host.swap_free_bytes);
+	printf("}");
 	if (o.include_text)
 	{
 		printf(",\"text\":\"");
@@ -1223,6 +1630,72 @@ static void	print_run_human_stats(const membrane_kv_store_telemetry_t &t)
 		(unsigned long long)t.rss_peak.vm_hwm_kb);
 }
 
+/* Phase 13.2, Section 12: --plan-only --json's dedicated schema --
+ * deliberately NOT print_run_json() with fields omitted: that object's
+ * shape (generated_tokens, execution, performance, ...) claims a
+ * completed generation happened, which --plan-only must never imply
+ * (Section 11: "NOT run generation"). mode:"plan" instead of "run" so
+ * a consumer can tell the two apart unambiguously, and no field here
+ * is ever fabricated from incomplete metadata (Section 11) -- every
+ * number below comes from the exact same resolved gs the real planner
+ * (resolve_gpu_config()/resolve_kv_placement()) already produced. */
+static void	print_plan_only_json(const membrane_run_opts_t &o,
+				const char *model_label, uint32_t ctx_size,
+				int32_t n_layer_total, const membrane_gpu_state_t &gs,
+				const membrane_host_meminfo_t &host)
+{
+	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
+		"\"mode\":\"plan\",\"ok\":true,\"model_label\":\"",
+		MEMBRANE_VERSION);
+	print_json_escaped(model_label);
+	printf("\",\"ctx_size\":%u,\"model_layers\":%d,", ctx_size, n_layer_total);
+	printf("\"requested\":{\"auto\":%s,\"gpu_layers\":\"%s\",\"kv\":\"%s\","
+		"\"kv_placement\":\"%s\",\"device\":\"",
+		o.auto_mode ? "true" : "false",
+		gpu_layers_label(gs.gpu_layers_requested).c_str(),
+		gs.adaptive_used ? "adaptive" : kv_mode_name(o.kv_mode),
+		membrane_kv_placement_mode_name(o.kv_placement));
+	print_json_escaped(gs.device_requested);
+	printf("\"},");
+	printf("\"resolved\":{\"backend\":\"");
+	print_json_escaped(gs.backend_selected);
+	printf("\",\"device\":\"");
+	print_json_escaped(gs.device_selected);
+	printf("\",\"gpu_layers\":%d,\"kv\":\"%s\",\"kv_placement\":\"%s\"},",
+		gs.gpu_layers_selected, kv_mode_name(o.kv_mode),
+		membrane_kv_placement_mode_name(o.kv_placement));
+	printf("\"memory_plan\":{\"device_total_bytes\":%llu,"
+		"\"device_free_bytes_snapshot\":%llu,\"safety_reserve_bytes\":%llu,"
+		"\"estimated_model_bytes\":%llu,\"estimated_kv_bytes\":%llu,",
+		(unsigned long long)gs.device_total_bytes,
+		(unsigned long long)gs.device_free_bytes,
+		(unsigned long long)gs.safety_reserve_bytes,
+		(unsigned long long)gs.estimated_model_bytes,
+		(unsigned long long)gs.estimated_kv_bytes);
+	if (gs.kv_placement_resolved)
+		printf("\"kv_gpu_layers\":%d,\"kv_cpu_layers\":%d,"
+			"\"kv_gpu_bytes\":%llu,\"kv_cpu_bytes\":%llu,",
+			gs.kv_placement.gpu_kv_layers, gs.kv_placement.cpu_kv_layers,
+			(unsigned long long)gs.kv_placement.gpu_kv_bytes,
+			(unsigned long long)gs.kv_placement.cpu_kv_bytes);
+	printf("\"host_memory\":{\"available\":%s", host.ok ? "true" : "false");
+	if (host.ok)
+		printf(",\"total_bytes\":%llu,\"available_bytes_snapshot\":%llu,"
+			"\"swap_total_bytes\":%llu,\"swap_free_bytes_snapshot\":%llu",
+			(unsigned long long)host.total_bytes,
+			(unsigned long long)host.available_bytes,
+			(unsigned long long)host.swap_total_bytes,
+			(unsigned long long)host.swap_free_bytes);
+	printf("}},");
+	printf("\"reason_codes\":{\"primary\":\"");
+	print_json_escaped(plan_primary_reason(o, gs));
+	printf("\",\"trace\":");
+	print_json_string_array(gs.reason_trace);
+	printf("},\"warnings\":");
+	print_json_string_array(gs.warnings);
+	printf("}\n");
+}
+
 /*
  * Normal single-pass mode. Loads the model, creates exactly ONE
  * llama_context (native or q8 per --kv), ingests the prompt, generates,
@@ -1233,7 +1706,8 @@ static void	print_run_human_stats(const membrane_kv_store_telemetry_t &t)
 static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 				const std::vector<llama_token> &prompt_tokens,
 				const char *model_label, uint32_t ctx_size,
-				const model_shape_t &shape, const membrane_gpu_state_t &gs)
+				const model_shape_t &shape, const membrane_gpu_state_t &gs,
+				const membrane_host_meminfo_t &host)
 {
 	membrane_kv_store_telemetry_t	tel;
 	gen_run_result_t				result;
@@ -1255,7 +1729,7 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 	membrane_kv_store_read_rss(&tel.rss_after_model_load);
 	if (!o.quiet)
 		print_startup_summary(o, model_label, ctx_size, kv_bytes,
-			shape.n_layer, gs);
+			shape.n_layer, gs, host);
 	stream = !o.want_json && !o.quiet;
 	cb = stream ? stream_token : NULL;
 	/* Phase 12H: gs.kv_placement_resolved is only true when
@@ -1295,7 +1769,9 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 		&tel.rss_peak);
 	membrane_kv_store_rss_max(&tel.rss_peak, &tel.rss_final, &tel.rss_peak);
 	if (o.want_json)
-		print_run_json(o, model_label, tel, text, gs);
+		print_run_json(o, model_label, tel, text, gs, host, result.ok,
+			result.ok ? MEMBRANE_EXIT_SUCCESS : MEMBRANE_EXIT_RUNTIME_ERROR,
+			prompt_tokens.size());
 	else
 	{
 		if (!stream)
@@ -1727,6 +2203,7 @@ int	main(int argc, char **argv)
 	membrane_gpu_state_t			gs;
 	llama_model_params				mp;
 	std::vector<ggml_backend_dev_t>	device_storage;
+	membrane_host_meminfo_t			host;
 
 	rc = membrane_run_parse_opts(argc, argv, &o);
 	if (o.want_help)
@@ -1742,6 +2219,11 @@ int	main(int argc, char **argv)
 	}
 	if (!o.verbose)
 		llama_log_set(quiet_log_callback, NULL);
+	/* Section 17: read once, before any of the potentially-slow model/
+	 * GPU work below -- a snapshot taken here is no less valid than one
+	 * taken later, and reading it once (not per print site) keeps every
+	 * consumer of `host` this run looking at the exact same numbers. */
+	read_host_meminfo(&host);
 	llama_backend_init();
 	/* GPU/device resolution needs no loaded model -- fail fast, before
 	 * spending time on model load, if the request can't be satisfied.
@@ -1795,7 +2277,9 @@ int	main(int argc, char **argv)
 		print_error_json(o, MEMBRANE_EXIT_CLI_ERROR,
 			MEMBRANE_REASON_CTX_TOO_SMALL,
 			"--ctx " + std::to_string(o.ctx) + " is too small for this "
-			"prompt (" + std::to_string(prompt_tokens.size()) + " tokens)");
+			"prompt (" + std::to_string(prompt_tokens.size()) + " tokens)",
+			("Increase --ctx to at least "
+				+ std::to_string(prompt_tokens.size() + 1) + ".").c_str());
 		llama_model_free(model);
 		return (llama_backend_free(), MEMBRANE_EXIT_CLI_ERROR);
 	}
@@ -1869,6 +2353,29 @@ int	main(int argc, char **argv)
 		llama_model_free(model);
 		return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
 	}
+	/* Phase 13.2, Section 11: --plan-only stops exactly here -- every
+	 * resolution step above (GPU/adaptive/placement) has already run,
+	 * using the real planner, no separate/lighter-weight estimate path
+	 * (product_cli.cpp's parse-time validation already rejected
+	 * --plan-only with --compare-kv/--gpu-bench, so this is never
+	 * reached for those modes). Nothing below this point (run_kv_store_
+	 * pass and everything downstream of it) ever executes. */
+	if (o.plan_only)
+	{
+		build_plan_warnings(o, host, &gs);
+		if (o.want_json)
+			print_plan_only_json(effective_o, model_label, ctx_size,
+				shape.n_layer, gs, host);
+		else if (!o.quiet)
+		{
+			print_startup_summary(effective_o, model_label, ctx_size,
+				kv_bytes_for_mode(shape, ctx_size, effective_o.kv_mode),
+				shape.n_layer, gs, host);
+			printf("membrane-run: plan resolved (no generation performed)\n");
+		}
+		llama_model_free(model);
+		return (llama_backend_free(), MEMBRANE_EXIT_SUCCESS);
+	}
 	if (o.gpu_bench)
 		rc = run_gpu_bench_mode(effective_o, model, prompt_tokens,
 				model_label, ctx_size, shape, gs);
@@ -1876,8 +2383,11 @@ int	main(int argc, char **argv)
 		rc = run_compare_mode(effective_o, model, prompt_tokens,
 				model_label, ctx_size, shape, gs);
 	else
+	{
+		build_plan_warnings(o, host, &gs);
 		rc = run_normal_mode(effective_o, model, prompt_tokens, model_label,
-				ctx_size, shape, gs);
+				ctx_size, shape, gs, host);
+	}
 	llama_model_free(model);
 	llama_backend_free();
 	return (rc);
