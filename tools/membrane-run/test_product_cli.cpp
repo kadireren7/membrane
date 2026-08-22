@@ -697,7 +697,13 @@ static void	test_plan_only_rejects_gpu_bench(void)
  * while the real help text still says it. */
 static void	test_help_text_documents_auto_compare_bench_exception(void)
 {
-	char	buf[16384];
+	/* Review fix (CodeRabbit, PR #23): zero-initialized so strstr()
+	 * below stays safely NUL-terminated even in the (currently
+	 * unreachable, but not guaranteed to stay that way as this help
+	 * text keeps growing phase over phase) case where the real --help
+	 * output fills the entire buffer and fmemopen("w")'s own trailing-
+	 * NUL-on-close has no room left to write. */
+	char	buf[16384] = {0};
 	FILE	*f = fmemopen(buf, sizeof(buf), "w");
 
 	TEST_ASSERT(f != NULL, "fmemopen for capturing --help output");
