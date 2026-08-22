@@ -2391,29 +2391,36 @@ int	main(int argc, char **argv)
 	if (o.plan_only)
 	{
 		build_plan_warnings(o, host, &gs);
+		/* Review fix (CodeRabbit, PR #23): --quiet on a NORMAL run
+		 * suppresses the startup summary/stats while the actual
+		 * product of the command (generated text) still prints -- a
+		 * real fallback exists. --plan-only has no such fallback: the
+		 * plan IS the product, so gating it on !o.quiet made
+		 * `--plan-only --quiet` a silent, indistinguishable-from-broken
+		 * no-op (exit 0, zero output). Always print it regardless of
+		 * --quiet.
+		 *
+		 * Self-review follow-up (same PR): this also must not be
+		 * gated on !o.want_json -- run_normal_mode() above already
+		 * establishes the project's own convention that stderr
+		 * diagnostics print unconditionally on --json (only --quiet
+		 * gates them; --json only changes what's on STDOUT). The
+		 * previous version of this fix put print_startup_summary()
+		 * behind an `else` on o.want_json, which silently dropped
+		 * --verbose's own diagnostic block for `--plan-only --verbose
+		 * --json` despite --help's "(both) always go to stderr"
+		 * promise for --verbose. Printing it here unconditionally
+		 * matches run_normal_mode()'s own convention and is harmless
+		 * for a --json caller, which is expected to ignore stderr. */
+		print_startup_summary(effective_o, model_label, ctx_size,
+			kv_bytes_for_mode(shape, ctx_size, effective_o.kv_mode),
+			shape.n_layer, gs, host);
 		if (o.want_json)
 			print_plan_only_json(effective_o, model_label, ctx_size,
 				shape.n_layer, gs, host);
 		else
-		{
-			/* Review fix (CodeRabbit, PR #23): --quiet on a NORMAL run
-			 * suppresses the startup summary/stats while the actual
-			 * product of the command (generated text) still prints --
-			 * a real fallback exists. --plan-only has no such fallback:
-			 * the plan IS the product, so gating it on !o.quiet made
-			 * `--plan-only --quiet` a silent, indistinguishable-from-
-			 * broken no-op (exit 0, zero output). Always print the plan
-			 * here regardless of --quiet. Both lines now go to stderr
-			 * (the confirmation line previously went to stdout, mixing
-			 * streams for what is logically one human-readable block --
-			 * harmless for --json, since that branch never reaches
-			 * here, but inconsistent for plain text output). */
-			print_startup_summary(effective_o, model_label, ctx_size,
-				kv_bytes_for_mode(shape, ctx_size, effective_o.kv_mode),
-				shape.n_layer, gs, host);
 			fprintf(stderr,
 				"membrane-run: plan resolved (no generation performed)\n");
-		}
 		llama_model_free(model);
 		return (llama_backend_free(), MEMBRANE_EXIT_SUCCESS);
 	}
