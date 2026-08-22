@@ -623,6 +623,99 @@ static void	test_gpu_bench_compare_kv_mutually_exclusive(void)
 		"--gpu-bench and --compare-kv are mutually exclusive");
 }
 
+static void	test_plan_only_accepted_alone(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--plan-only");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--plan-only alone is accepted");
+	TEST_ASSERT(o.plan_only == 1, "plan_only flag is stored");
+}
+
+static void	test_plan_only_off_by_default(void)
+{
+	membrane_run_opts_t	o;
+
+	TEST_ASSERT(run_parse(base_args(), &o) == MEMBRANE_EXIT_SUCCESS,
+		"base invocation still parses");
+	TEST_ASSERT(o.plan_only == 0, "--plan-only is off by default");
+}
+
+static void	test_plan_only_with_auto(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--auto");
+	args.push_back("--plan-only");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--auto --plan-only composes cleanly");
+	TEST_ASSERT(o.plan_only == 1 && o.auto_mode == 1,
+		"both flags are stored independently");
+}
+
+static void	test_plan_only_rejects_compare_kv(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--plan-only");
+	args.push_back("--compare-kv");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--plan-only with --compare-kv is a CLI error -- neither mode "
+		"has a single \"plan\" of its own");
+}
+
+static void	test_plan_only_rejects_gpu_bench(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--gpu-layers");
+	args.push_back("auto");
+	args.push_back("--plan-only");
+	args.push_back("--gpu-bench");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--plan-only with --gpu-bench is a CLI error");
+}
+
+/* Phase 13.2, Section 14: the deferred docs follow-up from PR #22 --
+ * --auto's help text must mention the --compare-kv/--gpu-bench
+ * placement exception (product_cli.cpp:496-499's actual behavior). A
+ * substring check against the real membrane_run_usage() output, not a
+ * hand-copied duplicate of the text, so this test only stays green
+ * while the real help text still says it. */
+static void	test_help_text_documents_auto_compare_bench_exception(void)
+{
+	char	buf[16384];
+	FILE	*f = fmemopen(buf, sizeof(buf), "w");
+
+	TEST_ASSERT(f != NULL, "fmemopen for capturing --help output");
+	membrane_run_usage(f);
+	fclose(f);
+	TEST_ASSERT(strstr(buf, "--compare-kv") != NULL
+			&& strstr(buf, "--gpu-bench") != NULL
+			&& strstr(buf, "AUTOMATIC POLICY") != NULL,
+		"--help mentions --compare-kv/--gpu-bench in the AUTOMATIC "
+		"POLICY section");
+	/* The specific sentence added for this follow-up -- "leaves --kv-
+	 * placement at default instead" is the actual behavioral claim,
+	 * not just an incidental mention of the flag names above. */
+	TEST_ASSERT(strstr(buf, "leaves --kv-placement") != NULL,
+		"--help states the placement exception itself, not just the "
+		"flag names");
+}
+
 static void	test_kv_placement_default_unchanged(void)
 {
 	std::vector<std::string>	args;
@@ -1161,6 +1254,12 @@ int	main(void)
 	test_gpu_layers_all_and_n_require_explicit_ctx();
 	test_gpu_bench_requires_gpu_layers();
 	test_gpu_bench_compare_kv_mutually_exclusive();
+	test_plan_only_accepted_alone();
+	test_plan_only_off_by_default();
+	test_plan_only_with_auto();
+	test_plan_only_rejects_compare_kv();
+	test_plan_only_rejects_gpu_bench();
+	test_help_text_documents_auto_compare_bench_exception();
 	test_kv_placement_default_unchanged();
 	test_kv_placement_values_parsed();
 	test_kv_placement_invalid_value_rejected();

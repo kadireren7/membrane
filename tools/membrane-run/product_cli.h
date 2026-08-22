@@ -65,6 +65,26 @@
  * and is easy to change by accident. */
 # define MEMBRANE_REASON_DEFAULT_BEHAVIOR_PRESERVED	"DEFAULT_BEHAVIOR_PRESERVED"
 
+/* Phase 13.2, Section 16: stable, machine-readable plan-warning codes --
+ * informational, never errors (a warning never changes exit_code or
+ * ok). Same never-change-the-meaning convention as every other reason-
+ * code set in this project. Kept small and deliberately non-exhaustive:
+ * only semantically meaningful, actionable conditions get a code, not
+ * every branch that COULD be worth mentioning (Section 16: "Do NOT
+ * spam warnings"). */
+# define MEMBRANE_WARNING_CPU_FALLBACK			"CPU_FALLBACK"
+# define MEMBRANE_WARNING_LOW_GPU_HEADROOM		"LOW_GPU_HEADROOM"
+# define MEMBRANE_WARNING_METADATA_ESTIMATE_ONLY	"METADATA_ESTIMATE_ONLY"
+# define MEMBRANE_WARNING_HOST_MEMORY_PRESSURE	"HOST_MEMORY_PRESSURE"
+# define MEMBRANE_WARNING_EXPLICIT_OVERRIDE		"EXPLICIT_OVERRIDE"
+/* Review fix (CodeRabbit, PR #23): EXPLICIT_OVERRIDE is the only code
+ * above emitted with a runtime suffix -- build_plan_warnings() (main.cpp)
+ * appends ":gpu_layers", ":kv", or ":kv_placement" to name which
+ * --auto-managed field the user explicitly overrode, one warning entry
+ * per overridden field. Every other code above is always emitted
+ * verbatim (never suffixed) -- a consumer comparing warning strings for
+ * exact equality must account for this one exception. */
+
 typedef enum e_membrane_run_prompt_mode
 {
 	MEMBRANE_RUN_PROMPT_NONE = 0,
@@ -112,6 +132,16 @@ typedef struct s_membrane_run_opts
 	int			compare_kv;		/* Section 6: explicit benchmark/compare
 								 * mode, reuses the Phase 7 3-pass
 								 * machinery -- never the default */
+	int			plan_only;		/* Phase 13.2, Section 11: --plan-only --
+								 * resolve the exact same policy
+								 * pipeline as a normal run (model load,
+								 * shape read, GPU/adaptive/placement
+								 * resolution) and print the resulting
+								 * plan, but never call run_kv_store_
+								 * pass() -- no generation, no decode.
+								 * Mutually exclusive with --compare-kv/
+								 * --gpu-bench (neither has a "plan"
+								 * concept of its own). */
 
 	int32_t		gpu_layers;		/* Phase 9B/9B.1: --gpu-layers. 0 =
 								 * CPU-only (default, also settable

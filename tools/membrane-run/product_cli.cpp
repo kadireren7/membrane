@@ -178,18 +178,22 @@ void	membrane_run_usage(FILE *out)
 		"AUTOMATIC POLICY\n"
 		"  --auto             MEMBRANE-managed convenience preset --\n"
 		"                     equivalent to --gpu-layers auto --kv\n"
-		"                     adaptive --kv-placement auto, applied\n"
-		"                     ONLY to whichever of those three you do\n"
-		"                     NOT also pass explicitly (explicit flags\n"
-		"                     always win, e.g. \"--auto --kv q8\" lets\n"
-		"                     --auto manage GPU layers and placement\n"
-		"                     while precision stays explicitly q8).\n"
-		"                     Not a second/parallel planner: resolves\n"
+		"                     adaptive and, for a normal run, --kv-\n"
+		"                     placement auto, applied ONLY to whichever\n"
+		"                     of those you do NOT also pass explicitly\n"
+		"                     (explicit flags always win, e.g. \"--auto\n"
+		"                     --kv q8\" lets --auto manage GPU layers\n"
+		"                     and placement while precision stays\n"
+		"                     explicitly q8). With --compare-kv or\n"
+		"                     --gpu-bench, --auto leaves --kv-placement\n"
+		"                     at default instead (those modes do not\n"
+		"                     accept --kv-placement at all -- Phase 12H\n"
+		"                     scope). Not a second/parallel planner: resolves\n"
 		"                     into the exact same policy pipeline the\n"
 		"                     equivalent explicit flags already use --\n"
-		"                     see PLAN OUTPUT below and --json's\n"
-		"                     \"reason\" fields for what it actually\n"
-		"                     chose and why. Still requires an\n"
+		"                     see the runtime MEMBRANE plan block and\n"
+		"                     --json's \"reason\" fields for what it\n"
+		"                     actually chose and why. Still requires an\n"
 		"                     explicit --ctx (same reason as\n"
 		"                     --gpu-layers auto above). Gracefully\n"
 		"                     behaves as CPU-only (never requires a\n"
@@ -210,7 +214,24 @@ void	membrane_run_usage(FILE *out)
 		"                     (omitted by default)\n"
 		"  --quiet            suppress the startup summary and stats\n"
 		"                     (generated text still prints)\n"
-		"  --verbose          print internal per-step diagnostics\n"
+		"  --verbose          print internal per-step diagnostics, plus\n"
+		"                     a detailed requested/resolved/memory/\n"
+		"                     policy breakdown of the plan and llama.cpp's\n"
+		"                     own INFO-level logs (both always go to\n"
+		"                     stderr, never stdout, so --json is\n"
+		"                     unaffected)\n"
+		"  --plan-only        resolve the full plan (model load, shape,\n"
+		"                     GPU/adaptive/placement policy) and print\n"
+		"                     it, but do not generate -- reuses the\n"
+		"                     exact same planner a normal run uses, no\n"
+		"                     separate/lighter-weight estimate. Exits\n"
+		"                     0 once the plan is printed, or the usual\n"
+		"                     nonzero code if the plan itself fails to\n"
+		"                     resolve (e.g. unsupported KV, GPU memory\n"
+		"                     insufficient). Combine with --json for a\n"
+		"                     machine-readable plan (mode: \"plan\").\n"
+		"                     Mutually exclusive with --compare-kv/\n"
+		"                     --gpu-bench.\n"
 		"  --compare-kv       ADVANCED: run native AND a compressed mode\n"
 		"                     (plus an aligned quality comparison\n"
 		"                     pass) and report memory/quality/\n"
@@ -305,6 +326,7 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 	o->verbose = 0;
 	o->include_text = 0;
 	o->compare_kv = 0;
+	o->plan_only = 0;
 	o->gpu_layers = 0;
 	o->device.clear();
 	o->want_device = 0;
@@ -416,6 +438,8 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 			o->verbose = 1;
 		else if (strcmp(argv[i], "--compare-kv") == 0)
 			o->compare_kv = 1;
+		else if (strcmp(argv[i], "--plan-only") == 0)
+			o->plan_only = 1;
 		else if (strcmp(argv[i], "--gpu-layers") == 0 && i + 1 < argc)
 		{
 			++i;
@@ -534,6 +558,13 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 		return (fprintf(stderr,
 				"membrane-run: --gpu-bench and --compare-kv are both "
 				"explicit benchmark modes -- mutually exclusive\n"),
+			MEMBRANE_EXIT_CLI_ERROR);
+	if (o->plan_only && (o->gpu_bench || o->compare_kv))
+		return (fprintf(stderr,
+				"membrane-run: --plan-only is not supported together "
+				"with --compare-kv/--gpu-bench -- those modes have no "
+				"single \"plan\" of their own (they compare two "
+				"resolved configurations, not report one)\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
 	if (o->gpu_bench && o->gpu_layers == 0)
 		return (fprintf(stderr,

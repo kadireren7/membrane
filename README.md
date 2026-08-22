@@ -279,6 +279,42 @@ Vulkan was tested on exactly one host, one GPU (NVIDIA GeForce GTX
 1650 Mobile). There is no universal CUDA or AMD support claim yet —
 this is a Vulkan-only, single-host validation.
 
+### Diagnostics: `--verbose`, `--plan-only`, plan JSON (Phase 13.2)
+
+Normal output stays a short "MEMBRANE plan" block (device, layers, KV
+precision/placement, one reason code). Two ways to see more:
+
+- **`--verbose`** additionally prints a `MEMBRANE verbose plan` block:
+  the requested vs *resolved* config side by side, memory figures
+  explicitly labelled `ESTIMATED`/`SNAPSHOT` (never claimed as
+  measured peak VRAM or a safety guarantee), the ordered `reason
+  trace` behind the final decision (e.g. `AUTO_REQUESTED ->
+  GPU_DEVICE_FOUND -> GPU_FULL_FIT`), and any plan `warnings`
+  (`CPU_FALLBACK`, `LOW_GPU_HEADROOM`, `EXPLICIT_OVERRIDE`, ...). Also
+  unmutes llama.cpp's own INFO-level logs. All of this goes to
+  stderr — `--verbose --json` still emits exactly one JSON object on
+  stdout.
+- **`--plan-only`** resolves model load, shape, and the full GPU/
+  adaptive/placement policy — the exact same planner a real run
+  uses — and prints the result without generating. `--plan-only
+  --json` emits one `"mode":"plan"` object: `requested`/`resolved`,
+  `memory_plan` (GPU fields present only when a GPU policy estimate
+  ran), `reason_codes` (`{"primary":..., "trace":[...]}`), and
+  `warnings`. A normal run's `--json` object gained the
+  *corresponding* fields additively, in its own pre-existing shape —
+  `requested`/`resolved`/`host_memory` match, but `reason_code`
+  (singular, Phase 13.1) and `reason_trace` stay separate top-level
+  fields rather than nesting under a `reason_codes` object (Phase
+  13.1's fields are unchanged, `schema_version` stays `1`). Not
+  supported together with `--compare-kv`/`--gpu-bench` (neither has
+  one "plan").
+
+`--auto` also fills in `--kv-placement` for a normal run, but
+**leaves it at `default` under `--compare-kv`/`--gpu-bench`** — those
+two modes never accept `--kv-placement` at all (Phase 12H scope), so
+`--auto --compare-kv`/`--auto --gpu-bench` compose cleanly instead of
+erroring on a flag you never typed.
+
 ## Q5 KV compression (development branch, not yet in stable)
 
 `feature/q5-kv-runtime` adds a second compressed KV mode, `--kv q5`,
