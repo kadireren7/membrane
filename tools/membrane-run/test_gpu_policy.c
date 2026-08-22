@@ -218,6 +218,81 @@ static void	test_null_out_pointer_is_safe(void)
 		"a NULL out pointer returns failure rather than crashing");
 }
 
+/* Phase 13.1, Section 5: stable reason_code coverage -- one case per
+ * code, checked with strcmp (not just strlen(reason) > 0 as the
+ * pre-existing tests above already do for the free-text reason). */
+static void	test_reason_code_gpu_full_fit(void)
+{
+	membrane_gpu_policy_result_t	r;
+
+	membrane_gpu_policy_resolve(MEMBRANE_GPU_LAYERS_ALL, 30,
+		(uint64_t)(3.9 * GIB), 4 * GIB, 9 * MIB, 6 * MIB, &r);
+	TEST_ASSERT(strcmp(r.reason_code, MEMBRANE_GPU_POLICY_REASON_GPU_FULL_FIT)
+		== 0, "explicit all, fully satisfied, is GPU_FULL_FIT");
+}
+
+static void	test_reason_code_gpu_layers_clamped(void)
+{
+	membrane_gpu_policy_result_t	r;
+
+	membrane_gpu_policy_resolve(99, 30, (uint64_t)(3.9 * GIB), 4 * GIB,
+		9 * MIB, 6 * MIB, &r);
+	TEST_ASSERT(strcmp(r.reason_code,
+			MEMBRANE_GPU_POLICY_REASON_GPU_LAYERS_CLAMPED) == 0,
+		"an over-large explicit N, clamped to the model's real count, "
+		"is GPU_LAYERS_CLAMPED");
+}
+
+static void	test_reason_code_cpu_only_requested(void)
+{
+	membrane_gpu_policy_result_t	r;
+
+	membrane_gpu_policy_resolve(0, 30, 4 * GIB, 4 * GIB, 9 * MIB, 0, &r);
+	TEST_ASSERT(strcmp(r.reason_code,
+			MEMBRANE_GPU_POLICY_REASON_CPU_ONLY_REQUESTED) == 0,
+		"requested_layers == 0 is CPU_ONLY_REQUESTED");
+}
+
+static void	test_reason_code_memory_insufficient(void)
+{
+	membrane_gpu_policy_result_t	r;
+
+	membrane_gpu_policy_resolve(MEMBRANE_GPU_LAYERS_ALL, 30, 100 * MIB,
+		512 * MIB, 9 * MIB, 0, &r);
+	TEST_ASSERT(strcmp(r.reason_code,
+			MEMBRANE_GPU_POLICY_REASON_MEMORY_INSUFFICIENT) == 0,
+		"an explicit request that doesn't fit is GPU_MEMORY_INSUFFICIENT");
+	TEST_ASSERT(strncmp(r.reason, r.reason_code, strlen(r.reason_code)) == 0,
+		"the free-text reason is prefixed with the same stable code");
+}
+
+static void	test_reason_code_metadata_unavailable(void)
+{
+	membrane_gpu_policy_result_t	r;
+
+	membrane_gpu_policy_resolve(MEMBRANE_GPU_LAYERS_AUTO, 30, 4 * GIB,
+		4 * GIB, 0 /* no per-layer estimate */, 0, &r);
+	TEST_ASSERT(strcmp(r.reason_code,
+			MEMBRANE_GPU_POLICY_REASON_METADATA_UNAVAILABLE) == 0,
+		"auto with no per-layer estimate is MODEL_METADATA_UNAVAILABLE");
+}
+
+/* Review fix (CodeRabbit, PR #22): test_invalid_layer_count_rejected()
+ * above already exercises this same n_layer_all<=0 path and checks the
+ * ok==0 return, but never asserted which reason_code it fails with --
+ * this is the missing case in this block's "one case per code"
+ * coverage. */
+static void	test_reason_code_invalid_config(void)
+{
+	membrane_gpu_policy_result_t	r;
+
+	membrane_gpu_policy_resolve(MEMBRANE_GPU_LAYERS_AUTO,
+		0 /* model reports no layers */, 4 * GIB, 4 * GIB, 9 * MIB, 0, &r);
+	TEST_ASSERT(strcmp(r.reason_code,
+			MEMBRANE_GPU_POLICY_REASON_INVALID_CONFIG) == 0,
+		"a non-positive model layer count is GPU_POLICY_INVALID_CONFIG");
+}
+
 int	main(void)
 {
 	test_auto_sufficient_memory_selects_all_layers();
@@ -235,6 +310,12 @@ int	main(void)
 	test_invalid_layer_count_rejected();
 	test_unsupported_negative_layers_rejected();
 	test_null_out_pointer_is_safe();
+	test_reason_code_gpu_full_fit();
+	test_reason_code_gpu_layers_clamped();
+	test_reason_code_cpu_only_requested();
+	test_reason_code_memory_insufficient();
+	test_reason_code_metadata_unavailable();
+	test_reason_code_invalid_config();
 	printf("test_gpu_policy: all tests passed\n");
 	return (0);
 }

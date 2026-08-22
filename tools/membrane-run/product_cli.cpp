@@ -35,14 +35,24 @@ void	membrane_run_usage(FILE *out)
 		"  membrane-run --model model.gguf --prompt \"Hello\" \\\n"
 		"      --ctx 4096 --kv q8\n"
 		"\n"
+		"MODEL\n"
 		"  --model FILE       .gguf model path (required)\n"
 		"  --prompt TEXT      prompt text\n"
 		"  --prompt-file FILE prompt text file\n"
 		"  --prompt -         read the prompt from stdin\n"
 		"                     (--prompt/--prompt-file/--prompt - are\n"
 		"                     mutually exclusive; exactly one required)\n"
+		"\n"
+		"GENERATION\n"
 		"  --ctx N            KV cache context size (default: prompt\n"
 		"                     length + --gen-tokens + 8)\n"
+		"  --gen-tokens N     tokens to generate (default 128)\n"
+		"  --threads N        decode thread count (default: let\n"
+		"                     llama.cpp choose)\n"
+		"\n"
+		"KV PRECISION -- controls KV cache storage TYPE (memory/quality),\n"
+		"a SEPARATE dimension from KV PLACEMENT below (which controls\n"
+		"DEVICE residency only -- see that section).\n"
 		"  --kv native|q8|q5|adaptive\n"
 		"                     KV cache storage (default: native).\n"
 		"                     native: unmodified llama.cpp behavior.\n"
@@ -99,31 +109,40 @@ void	membrane_run_usage(FILE *out)
 		"                     exceed this is treated as not fitting.\n"
 		"                     Requires --kv adaptive; never alters an\n"
 		"                     explicit native/q8/q5 choice.\n"
-		"  --gen-tokens N     tokens to generate (default 128)\n"
-		"  --threads N        decode thread count (default: let\n"
-		"                     llama.cpp choose)\n"
-		"  --json             machine-readable output on stdout\n"
-		"                     instead of human-readable text\n"
-		"  --include-text     JSON only: include the generated text\n"
-		"                     (omitted by default)\n"
-		"  --quiet            suppress the startup summary and stats\n"
-		"                     (generated text still prints)\n"
-		"  --verbose          print internal per-step diagnostics\n"
-		"  --compare-kv       ADVANCED: run native AND a compressed mode\n"
-		"                     (plus an aligned quality comparison\n"
-		"                     pass) and report memory/quality/\n"
-		"                     performance side by side. The compressed\n"
-		"                     mode compared is q5 if --kv q5 was also\n"
-		"                     given, q8 (the default, for backward\n"
-		"                     compatibility) otherwise -- unless --kv\n"
-		"                     adaptive was given, in which case\n"
-		"                     adaptive resolves ONCE and that same\n"
-		"                     resolved mode (q8 or q5) is what native\n"
-		"                     is compared against. Never a 4-way\n"
-		"                     comparison, always native vs exactly one\n"
-		"                     selected compressed mode. Slower and\n"
-		"                     more memory-hungry than a normal run by\n"
-		"                     design -- never implied by --kv alone.\n"
+		"\n"
+		"GPU OFFLOAD\n"
+		"  --gpu-layers all|auto|N\n"
+		"                     GPU layer offload (default: 0, i.e. CPU-\n"
+		"                     only -- explicit CPU-forcing option too;\n"
+		"                     never implied by a GPU-capable build).\n"
+		"                     \"all\" offloads every layer; \"auto\"\n"
+		"                     (Phase 9B.1) picks a safe layer count\n"
+		"                     from real device-free-memory and model-\n"
+		"                     size information, leaving an explicit\n"
+		"                     safety margin (NOT an OOM guarantee); N\n"
+		"                     offloads N layers, clamped to the\n"
+		"                     model's real layer count if N exceeds it\n"
+		"                     (the common -ngl 99-style idiom for\n"
+		"                     \"everything\"). all/auto/N alike require\n"
+		"                     an explicit --ctx (the KV budget can't\n"
+		"                     be estimated before context size is\n"
+		"                     known) and, on a build with a GPU\n"
+		"                     backend compiled in (e.g.\n"
+		"                     -DGGML_VULKAN=ON), fail clearly (never\n"
+		"                     silently smaller, never silently CPU) if\n"
+		"                     the estimated requirement exceeds a safe\n"
+		"                     budget.\n"
+		"  --device NAME      select a specific GPU device by a\n"
+		"                     case-insensitive substring of its name or\n"
+		"                     description (shown if --device matches\n"
+		"                     zero or more than one device). Requires\n"
+		"                     --gpu-layers all|auto|N. Fails clearly if\n"
+		"                     no device matches, or if more than one\n"
+		"                     does.\n"
+		"\n"
+		"KV PLACEMENT -- controls KV cache DEVICE residency, a SEPARATE\n"
+		"dimension from KV PRECISION above (which controls storage TYPE\n"
+		"only -- see that section).\n"
 		"  --kv-placement default|gpu|cpu|auto\n"
 		"                     STATIC KV cache device residency (default:\n"
 		"                     default -- unmodified behavior, KV follows\n"
@@ -155,34 +174,58 @@ void	membrane_run_usage(FILE *out)
 		"                     (there is no GPU device to place KV on\n"
 		"                     otherwise); cpu and default are always\n"
 		"                     valid, including CPU-only builds.\n"
-		"  --gpu-layers all|auto|N\n"
-		"                     GPU layer offload (default: 0, i.e. CPU-\n"
-		"                     only -- explicit CPU-forcing option too;\n"
-		"                     never implied by a GPU-capable build).\n"
-		"                     \"all\" offloads every layer; \"auto\"\n"
-		"                     (Phase 9B.1) picks a safe layer count\n"
-		"                     from real device-free-memory and model-\n"
-		"                     size information, leaving an explicit\n"
-		"                     safety margin (NOT an OOM guarantee); N\n"
-		"                     offloads N layers, clamped to the\n"
-		"                     model's real layer count if N exceeds it\n"
-		"                     (the common -ngl 99-style idiom for\n"
-		"                     \"everything\"). all/auto/N alike require\n"
-		"                     an explicit --ctx (the KV budget can't\n"
-		"                     be estimated before context size is\n"
-		"                     known) and, on a build with a GPU\n"
-		"                     backend compiled in (e.g.\n"
-		"                     -DGGML_VULKAN=ON), fail clearly (never\n"
-		"                     silently smaller, never silently CPU) if\n"
-		"                     the estimated requirement exceeds a safe\n"
-		"                     budget.\n"
-		"  --device NAME      select a specific GPU device by a\n"
-		"                     case-insensitive substring of its name or\n"
-		"                     description (shown if --device matches\n"
-		"                     zero or more than one device). Requires\n"
-		"                     --gpu-layers all|auto|N. Fails clearly if\n"
-		"                     no device matches, or if more than one\n"
-		"                     does.\n"
+		"\n"
+		"AUTOMATIC POLICY\n"
+		"  --auto             MEMBRANE-managed convenience preset --\n"
+		"                     equivalent to --gpu-layers auto --kv\n"
+		"                     adaptive --kv-placement auto, applied\n"
+		"                     ONLY to whichever of those three you do\n"
+		"                     NOT also pass explicitly (explicit flags\n"
+		"                     always win, e.g. \"--auto --kv q8\" lets\n"
+		"                     --auto manage GPU layers and placement\n"
+		"                     while precision stays explicitly q8).\n"
+		"                     Not a second/parallel planner: resolves\n"
+		"                     into the exact same policy pipeline the\n"
+		"                     equivalent explicit flags already use --\n"
+		"                     see PLAN OUTPUT below and --json's\n"
+		"                     \"reason\" fields for what it actually\n"
+		"                     chose and why. Still requires an\n"
+		"                     explicit --ctx (same reason as\n"
+		"                     --gpu-layers auto above). Gracefully\n"
+		"                     behaves as CPU-only (never requires a\n"
+		"                     GPU backend or device) when none is\n"
+		"                     available -- unlike an explicit\n"
+		"                     --gpu-layers auto/all/N, which still\n"
+		"                     fails closed if a GPU was truly asked\n"
+		"                     for and isn't there. Without --auto,\n"
+		"                     nothing changes: the default remains\n"
+		"                     --gpu-layers 0 --kv native --kv-placement\n"
+		"                     default, exactly as before this flag\n"
+		"                     existed.\n"
+		"\n"
+		"OUTPUT / DIAGNOSTICS\n"
+		"  --json             machine-readable output on stdout\n"
+		"                     instead of human-readable text\n"
+		"  --include-text     JSON only: include the generated text\n"
+		"                     (omitted by default)\n"
+		"  --quiet            suppress the startup summary and stats\n"
+		"                     (generated text still prints)\n"
+		"  --verbose          print internal per-step diagnostics\n"
+		"  --compare-kv       ADVANCED: run native AND a compressed mode\n"
+		"                     (plus an aligned quality comparison\n"
+		"                     pass) and report memory/quality/\n"
+		"                     performance side by side. The compressed\n"
+		"                     mode compared is q5 if --kv q5 was also\n"
+		"                     given, q8 (the default, for backward\n"
+		"                     compatibility) otherwise -- unless --kv\n"
+		"                     adaptive was given, in which case\n"
+		"                     adaptive resolves ONCE and that same\n"
+		"                     resolved mode (q8 or q5) is what native\n"
+		"                     is compared against. Never a 4-way\n"
+		"                     comparison, always native vs exactly one\n"
+		"                     selected compressed mode. Slower and\n"
+		"                     more memory-hungry than a normal run by\n"
+		"                     design -- never implied by --kv alone.\n"
 		"  --gpu-bench        explicit native-vs-compressed comparison\n"
 		"                     under a GPU configuration (selected\n"
 		"                     device, KV bytes, throughput, quality\n"
@@ -267,6 +310,10 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 	o->want_device = 0;
 	o->gpu_bench = 0;
 	o->kv_placement = MEMBRANE_KV_PLACEMENT_DEFAULT;
+	o->auto_mode = 0;
+	o->want_gpu_layers = 0;
+	o->want_kv_mode = 0;
+	o->want_kv_placement = 0;
 	o->want_version = 0;
 	o->want_help = 0;
 	i = 1;
@@ -312,6 +359,7 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 		else if (strcmp(argv[i], "--kv") == 0 && i + 1 < argc)
 		{
 			++i;
+			o->want_kv_mode = 1;
 			if (strcmp(argv[i], "native") == 0)
 				o->kv_mode = MEMBRANE_KV_STORE_NATIVE;
 			else if (strcmp(argv[i], "q8") == 0)
@@ -371,6 +419,7 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 		else if (strcmp(argv[i], "--gpu-layers") == 0 && i + 1 < argc)
 		{
 			++i;
+			o->want_gpu_layers = 1;
 			if (!parse_gpu_layers(argv[i], &o->gpu_layers))
 				return (MEMBRANE_EXIT_CLI_ERROR);
 		}
@@ -386,9 +435,12 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 		}
 		else if (strcmp(argv[i], "--gpu-bench") == 0)
 			o->gpu_bench = 1;
+		else if (strcmp(argv[i], "--auto") == 0)
+			o->auto_mode = 1;
 		else if (strcmp(argv[i], "--kv-placement") == 0 && i + 1 < argc)
 		{
 			++i;
+			o->want_kv_placement = 1;
 			if (strcmp(argv[i], "default") == 0)
 				o->kv_placement = MEMBRANE_KV_PLACEMENT_DEFAULT;
 			else if (strcmp(argv[i], "gpu") == 0)
@@ -406,6 +458,45 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 			return (fprintf(stderr, "membrane-run: unknown option: %s\n",
 					argv[i]), MEMBRANE_EXIT_CLI_ERROR);
 		i++;
+	}
+	/* Phase 13.1, Section 7-9: --auto fills in ONLY the fields the user
+	 * did not also explicitly pass, then falls straight through into
+	 * every validation check below exactly as if the user had typed
+	 * the equivalent explicit flags -- this is a preset applied once,
+	 * before validation, never a separate decision path (Section 7:
+	 * "Internally it should resolve into the same existing policy
+	 * pipeline"). Placed here (not earlier, inline in the parse loop)
+	 * so it runs after every explicit flag has been seen, regardless
+	 * of argv order -- `--kv q8 --auto` and `--auto --kv q8` behave
+	 * identically. */
+	if (o->auto_mode)
+	{
+		if (!o->want_gpu_layers)
+			o->gpu_layers = MEMBRANE_GPU_LAYERS_AUTO;
+		if (!o->want_kv_mode)
+			o->kv_mode = MEMBRANE_KV_STORE_ADAPTIVE;
+		/* gpu_layers is already fully resolved (explicit override or
+		 * the auto-fill two lines above) by the time this runs --
+		 * Section 9/15: an explicit `--auto --gpu-layers 0` must not
+		 * be rejected by the gpu|auto-requires-nonzero-gpu_layers check
+		 * a few lines below just because --auto's OWN default would
+		 * otherwise have picked "auto" placement; default (not auto)
+		 * is the correct, sensible CPU-only outcome instead.
+		 *
+		 * Review fix (CodeRabbit, PR #22): --compare-kv/--gpu-bench
+		 * reject any non-DEFAULT kv_placement outright (a few lines
+		 * below) -- Phase 12H scope, unrelated to --auto. Before this
+		 * fix, --auto's own default silently picked AUTO placement
+		 * even in that mode, so `--auto --compare-kv` failed with an
+		 * error naming --kv-placement, a flag the user never typed.
+		 * --auto must not inject a placement value the current mode
+		 * cannot accept -- stay DEFAULT (a real, valid, unsurprising
+		 * outcome: --compare-kv/--gpu-bench never had KV placement
+		 * control to begin with) whenever either mode is requested. */
+		if (!o->want_kv_placement)
+			o->kv_placement = (o->gpu_layers != 0 && !o->compare_kv
+					&& !o->gpu_bench)
+				? MEMBRANE_KV_PLACEMENT_AUTO : MEMBRANE_KV_PLACEMENT_DEFAULT;
 	}
 	if (o->model_path == NULL)
 		return (fprintf(stderr, "membrane-run: --model is required\n"),

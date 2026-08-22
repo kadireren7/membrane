@@ -49,6 +49,22 @@
 											 * satisfy, fail closed"
 											 * semantic as Q8 KV. */
 
+/* Phase 13.1, Section 4/5: stable, machine-readable top-level reason
+ * codes for runtime failures that don't belong to any one pure policy
+ * module (gpu_policy.h/kv_residency_policy.h/adaptive_kv_policy.h each
+ * own their own set already) -- never change the MEANING of an
+ * already-shipped code, only add new ones. */
+# define MEMBRANE_REASON_MODEL_LOAD_FAILED		"MODEL_LOAD_FAILED"
+# define MEMBRANE_REASON_TOKENIZATION_FAILED	"TOKENIZATION_FAILED"
+# define MEMBRANE_REASON_CTX_TOO_SMALL			"CTX_TOO_SMALL_FOR_PROMPT"
+# define MEMBRANE_REASON_GENERATION_FAILED		"GENERATION_FAILED"
+# define MEMBRANE_REASON_KV_COMPAT_UNSUPPORTED	"KV_COMPAT_UNSUPPORTED"
+/* Review fix (CodeRabbit, PR #22): was an inline literal in main.cpp's
+ * plan_primary_reason() -- every other stable code in this cohort
+ * lives behind a macro; an inline literal can't be referenced by tests
+ * and is easy to change by accident. */
+# define MEMBRANE_REASON_DEFAULT_BEHAVIOR_PRESERVED	"DEFAULT_BEHAVIOR_PRESERVED"
+
 typedef enum e_membrane_run_prompt_mode
 {
 	MEMBRANE_RUN_PROMPT_NONE = 0,
@@ -136,6 +152,26 @@ typedef struct s_membrane_run_opts
 								 * require gpu_layers != 0 (no GPU
 								 * device to place KV on otherwise);
 								 * cpu/default are always valid. */
+
+	/* Phase 13.1: --auto is a PRESET applied once, after the parse
+	 * loop, to whichever of gpu_layers/kv_mode/kv_placement the user
+	 * did NOT also explicitly pass -- it resolves into the exact same
+	 * MEMBRANE_GPU_LAYERS_AUTO/MEMBRANE_KV_STORE_ADAPTIVE/MEMBRANE_KV_
+	 * PLACEMENT_AUTO values --gpu-layers auto/--kv adaptive/--kv-
+	 * placement auto already produce, never a second/parallel decision
+	 * path. want_gpu_layers/want_kv_mode/want_kv_placement (same
+	 * "was this explicitly given" convention as want_device/
+	 * want_kv_budget above) exist ONLY so --auto knows which fields it
+	 * may fill in -- explicit user flags always win (Section 8). Not
+	 * reset once auto_mode fills a field in: e.g. after `--auto --kv
+	 * q8`, want_kv_mode is still 1 (as parsed) and kv_mode is q8 (the
+	 * explicit value); auto_mode being 1 only means gpu_layers/
+	 * kv_placement (not explicitly given here) were auto-filled. */
+	int			auto_mode;			/* --auto was given */
+	int			want_gpu_layers;	/* --gpu-layers was explicitly given */
+	int			want_kv_mode;		/* --kv was explicitly given */
+	int			want_kv_placement;	/* --kv-placement was explicitly
+									 * given */
 
 	int			want_version;
 	int			want_help;

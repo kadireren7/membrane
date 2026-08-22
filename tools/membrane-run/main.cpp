@@ -231,6 +231,19 @@ typedef struct s_membrane_gpu_state
 	 * anything downstream unless kv_placement_resolved is true. */
 	bool		kv_placement_resolved;
 	membrane_kv_residency_result_t	kv_placement;
+
+	/* Phase 13.1: the single overall "why did the plan end up this way"
+	 * reason code (Section 5/10) -- distinct from gpu_policy's own
+	 * per-layer-selection reason_code (pr.reason_code, not stored here)
+	 * and kv_placement.reason: this one summarizes the TOP-LEVEL
+	 * outcome for the plan-summary/JSON output, always set by the time
+	 * resolve_gpu_config() returns true. auto_cpu_fallback records
+	 * specifically whether --auto's own implicit gpu request gracefully
+	 * degraded to CPU-only (Section 1) -- distinct from an ordinary,
+	 * always-been-CPU-only run (gpu_layers_requested == 0), which never
+	 * sets it. */
+	std::string	plan_reason_code;
+	bool		auto_cpu_fallback;
 }	membrane_gpu_state_t;
 
 static std::string	gpu_layers_label(int32_t gpu_layers)
@@ -261,6 +274,36 @@ static std::string	gpu_layers_label(int32_t gpu_layers)
  * (MEMBRANE_EXIT_UNSUPPORTED_KV), never silently fall back to CPU or
  * silently proceed with fewer layers than an EXPLICIT (non-auto)
  * request asked for. */
+
+/* Phase 13.1, Section 3/13: forward-declared so the failure sites
+ * inside resolve_gpu_config() below (defined ahead of the rest of this
+ * file's print_*_json() helpers) can emit a structured JSON error
+ * object on stdout -- defined further down, next to print_json_
+ * escaped() which it reuses. Every important runtime failure path
+ * (Section 4 of the Phase 13.1 task) calls this exactly once, only
+ * when o.want_json is set; --json's stdout otherwise never carries
+ * anything but the one success object print_run_json() prints, and
+ * plain stderr text is unaffected either way (it is not JSON, so it
+ * stays available for humans/log-scraping regardless of --json). */
+static void	print_error_json(const membrane_run_opts_t &o, int exit_code,
+				const char *reason_code, const std::string &message);
+
+/* Review fix (CodeRabbit, PR #22): the two --auto-implied CPU fallback
+ * sites inside resolve_gpu_config() below assigned these same six
+ * fields, in the same order, verbatim -- a future change to the
+ * fallback contract had to be applied twice or silently drift. Always
+ * returns true (there is no failure case for falling back to CPU). */
+static bool	fall_back_to_cpu(llama_model_params *mp, membrane_gpu_state_t *gs)
+{
+	mp->n_gpu_layers = 0;
+	mp->main_gpu = -1;
+	gs->gpu_layers_selected = 0;
+	gs->requested = false;
+	gs->auto_cpu_fallback = true;
+	gs->plan_reason_code = MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE;
+	return (true);
+}
+
 static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 				uint32_t ctx_size,
 				std::vector<ggml_backend_dev_t> *device_storage,
@@ -294,6 +337,8 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	gs->adaptive_q5_valid = 0;
 	gs->kv_placement_resolved = false;
 	memset(&gs->kv_placement, 0, sizeof(gs->kv_placement));
+	gs->plan_reason_code.clear();
+	gs->auto_cpu_fallback = false;
 	gs->requested = (o.gpu_layers != 0);
 	gs->backend_gpu_capable = membrane_gpu_backend_available() != 0;
 	gs->gpu_layers_requested = o.gpu_layers;
@@ -313,14 +358,34 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		 * why CPU is used. */
 		mp->n_gpu_layers = 0;
 		mp->main_gpu = -1;
+		gs->plan_reason_code = MEMBRANE_GPU_POLICY_REASON_CPU_ONLY_REQUESTED;
 		return (true);
 	}
 	label = gpu_layers_label(o.gpu_layers);
+	/* Phase 13.1, Section 1/15/16: --auto's OWN implicit gpu_layers=auto
+	 * request (o.auto_mode && !o.want_gpu_layers -- never an explicit
+	 * --gpu-layers auto/all/N, which keeps the pre-existing fail-closed
+	 * behavior below unchanged) must not require a GPU backend or
+	 * device at all -- gracefully resolve to CPU-only instead of
+	 * failing. gs->requested is explicitly reset to false here (not
+	 * left true) so main()'s own `!gs->requested` check still routes
+	 * --kv adaptive through resolve_cpu_adaptive_kv() below, exactly
+	 * as an ordinary --gpu-layers 0 run would. */
+	bool	auto_implied_gpu = o.auto_mode && !o.want_gpu_layers;
+
 	if (!gs->backend_gpu_capable)
-		return (fprintf(stderr, "membrane-run: --gpu-layers %s requested "
-				"but this build has no GPU backend compiled in "
-				"(rebuild with e.g. -DGGML_VULKAN=ON)\n", label.c_str()),
-			false);
+	{
+		if (auto_implied_gpu)
+			return (fall_back_to_cpu(mp, gs));
+		fprintf(stderr, "membrane-run: --gpu-layers %s requested but this "
+			"build has no GPU backend compiled in (rebuild with e.g. "
+			"-DGGML_VULKAN=ON)\n", label.c_str());
+		print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
+			MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE,
+			"--gpu-layers " + label + " requested but this build has no "
+			"GPU backend compiled in");
+		return (false);
+	}
 
 	membrane_gpu_device_info_t	devices[MEMBRANE_GPU_MAX_DEVICES];
 
@@ -331,10 +396,18 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 			|| devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
 			gpu_count++;
 	if (gpu_count == 0)
-		return (fprintf(stderr, "membrane-run: --gpu-layers %s requested "
-				"but no GPU device was found on this host at runtime "
-				"(driver/hardware not detected)\n", label.c_str()),
-			false);
+	{
+		if (auto_implied_gpu)
+			return (fall_back_to_cpu(mp, gs));
+		fprintf(stderr, "membrane-run: --gpu-layers %s requested but no "
+			"GPU device was found on this host at runtime (driver/"
+			"hardware not detected)\n", label.c_str());
+		print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
+			MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE,
+			"--gpu-layers " + label + " requested but no GPU device was "
+			"found on this host at runtime");
+		return (false);
+	}
 
 	size_t	chosen_idx;
 
@@ -357,6 +430,11 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 					|| devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
 					fprintf(stderr, "  %s (%s)\n", devices[i].name,
 						devices[i].description);
+			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
+				MEMBRANE_GPU_POLICY_REASON_DEVICE_NOT_FOUND,
+				"--device \"" + o.device + "\" matched "
+				+ std::to_string(matches) + " available GPU device(s), "
+				"expected exactly one");
 			return (false);
 		}
 		chosen_idx = idx;
@@ -480,18 +558,31 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	}
 	if (adaptive_requested && !(have_est && est.hparams_available
 			&& est.n_layer > 0))
-		return (fprintf(stderr, "membrane-run: --kv adaptive requires "
-				"the model's real hparams and layer structure to "
-				"choose safely between q8 and q5, but they could not "
-				"be read from '%s'\n", o.model_path),
-			false);
+	{
+		fprintf(stderr, "membrane-run: --kv adaptive requires the "
+			"model's real hparams and layer structure to choose safely "
+			"between q8 and q5, but they could not be read from '%s'\n",
+			o.model_path);
+		print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
+			MEMBRANE_GPU_POLICY_REASON_METADATA_UNAVAILABLE,
+			std::string("--kv adaptive requires the model's real "
+				"hparams and layer structure, but they could not be "
+				"read from '") + o.model_path + "'");
+		return (false);
+	}
 	if (o.gpu_layers == MEMBRANE_GPU_LAYERS_AUTO && !(have_est
 			&& est.n_layer > 0))
-		return (fprintf(stderr, "membrane-run: --gpu-layers auto "
-				"requested but the model's layer structure could not "
-				"be read from '%s' -- cannot resolve safely\n",
-				o.model_path),
-			false);
+	{
+		fprintf(stderr, "membrane-run: --gpu-layers auto requested but "
+			"the model's layer structure could not be read from '%s' "
+			"-- cannot resolve safely\n", o.model_path);
+		print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
+			MEMBRANE_GPU_POLICY_REASON_METADATA_UNAVAILABLE,
+			std::string("--gpu-layers auto requested but the model's "
+				"layer structure could not be read from '")
+				+ o.model_path + "'");
+		return (false);
+	}
 	if (adaptive_requested)
 	{
 		/* have_est && est.hparams_available && est.n_layer > 0 already
@@ -505,12 +596,20 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		membrane_adaptive_kv_candidate_t	cand_q8;
 		membrane_adaptive_kv_candidate_t	cand_q5;
 		membrane_adaptive_kv_result_t		ar;
+		/* Phase 13.1: the weight-layer preflight must not reserve GPU
+		 * budget for KV that --kv-placement cpu/auto will never (cpu)
+		 * or isn't guaranteed to (auto) actually put on the GPU -- see
+		 * kv_residency_policy.h's own doc comment on this function. */
 		int		ok_q8 = membrane_gpu_policy_resolve(o.gpu_layers,
 				est.n_layer, dev.memory_free, dev.memory_total,
-				est.bytes_per_layer, kv_bytes_estimate, &pr_q8);
+				est.bytes_per_layer,
+				membrane_kv_policy_preflight_reservation(o.kv_placement,
+					kv_bytes_estimate), &pr_q8);
 		int		ok_q5 = membrane_gpu_policy_resolve(o.gpu_layers,
 				est.n_layer, dev.memory_free, dev.memory_total,
-				est.bytes_per_layer, kv_bytes_estimate_q5, &pr_q5);
+				est.bytes_per_layer,
+				membrane_kv_policy_preflight_reservation(o.kv_placement,
+					kv_bytes_estimate_q5), &pr_q5);
 
 		gs->policy_used = true;
 		gs->safety_reserve_bytes = pr_q8.safety_reserve_bytes;
@@ -534,10 +633,13 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		gs->adaptive_q5_valid = cand_q5.valid;
 		membrane_adaptive_kv_resolve(&cand_q8, &cand_q5, 1, &ar);
 		if (!ar.ok)
-			return (fprintf(stderr, "membrane-run: --kv adaptive found "
-					"no KV storage mode that fits safely: %s\n",
-					ar.reason),
-				false);
+		{
+			fprintf(stderr, "membrane-run: --kv adaptive found no KV "
+				"storage mode that fits safely: %s\n", ar.reason);
+			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV, ar.reason,
+				"--kv adaptive found no KV storage mode that fits safely");
+			return (false);
+		}
 		gs->adaptive_used = true;
 		gs->adaptive_selected_mode = ar.selected_mode;
 		gs->adaptive_reason = ar.reason;
@@ -545,21 +647,43 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 			? pr_q8.estimated_model_bytes : pr_q5.estimated_model_bytes;
 		gs->estimated_kv_bytes = ar.selected_kv_bytes;
 		gs->gpu_layers_selected = ar.selected_layers;
+		gs->plan_reason_code = ar.selected_mode == MEMBRANE_ADAPTIVE_KV_MODE_Q8
+			? pr_q8.reason_code : pr_q5.reason_code;
 	}
 	else if (have_est && est.n_layer > 0)
 	{
 		membrane_gpu_policy_result_t	pr;
+		/* Phase 13.1: see the adaptive branch's identical comment above
+		 * -- same fix, non-adaptive path. */
 		int		ok = membrane_gpu_policy_resolve(o.gpu_layers, est.n_layer,
 				dev.memory_free, dev.memory_total, est.bytes_per_layer,
-				kv_bytes_estimate, &pr);
+				membrane_kv_policy_preflight_reservation(o.kv_placement,
+					kv_bytes_estimate), &pr);
 
 		gs->policy_used = true;
 		gs->safety_reserve_bytes = pr.safety_reserve_bytes;
 		gs->estimated_model_bytes = pr.estimated_model_bytes;
-		gs->estimated_kv_bytes = pr.estimated_kv_bytes;
+		/* Review fix (CodeRabbit, PR #22): report the real KV estimate,
+		 * not pr.estimated_kv_bytes -- that field only echoes back
+		 * whatever membrane_kv_policy_preflight_reservation() passed
+		 * IN to the preflight guard (0 for cpu/auto placement), which
+		 * is a guard input, not the real KV allocation. Reporting 0
+		 * here for --kv-placement cpu (which allocates real, nonzero
+		 * KV bytes, just not on the GPU) understated telemetry/JSON/
+		 * the plan summary and overstated the headroom_bytes
+		 * computation below. The adaptive branch above already used
+		 * the real, never-folded kv_bytes_real_q8/q5 value for this
+		 * same reason -- this branch now matches it. */
+		gs->estimated_kv_bytes = kv_bytes_estimate;
 		if (!ok)
-			return (fprintf(stderr, "membrane-run: %s\n", pr.reason), false);
+		{
+			fprintf(stderr, "membrane-run: %s\n", pr.reason);
+			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
+				pr.reason_code, pr.reason);
+			return (false);
+		}
 		gs->gpu_layers_selected = pr.selected_layers;
+		gs->plan_reason_code = pr.reason_code;
 	}
 	else
 	{
@@ -571,6 +695,7 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		 * on a missing measurement. */
 		gs->gpu_layers_selected = o.gpu_layers == MEMBRANE_GPU_LAYERS_ALL
 			? -1 : o.gpu_layers;
+		gs->plan_reason_code = MEMBRANE_GPU_POLICY_REASON_METADATA_UNAVAILABLE;
 	}
 	device_storage->clear();
 	device_storage->push_back((ggml_backend_dev_t)dev.native_handle);
@@ -651,6 +776,38 @@ static bool	resolve_kv_placement(const membrane_run_opts_t &o,
 
 	if (o.kv_placement == MEMBRANE_KV_PLACEMENT_DEFAULT)
 		return (true);
+	/* Phase 13.1 review fix (Section 6): gs->auto_cpu_fallback is true
+	 * ONLY when --auto's own implicit gpu_layers=auto request (never an
+	 * explicit --gpu-layers) gracefully degraded to CPU-only inside
+	 * resolve_gpu_config() because no GPU backend/device existed at
+	 * runtime -- there is no GPU weight estimate to plan KV placement
+	 * against, and there never will be on this host.
+	 *
+	 * --kv-placement auto's OWN documented contract (product_cli.cpp's
+	 * --help text, unchanged by this phase) is unconditional: "Never
+	 * fails: an all-CPU-KV plan is a valid auto outcome." That promise
+	 * is not scoped to "only when auto was chosen by --auto's own
+	 * default" -- an EXPLICIT `--kv-placement auto` makes the identical
+	 * promise. So this bypass checks o.kv_placement itself (not
+	 * o.want_kv_placement) -- it applies whether AUTO placement came
+	 * from --auto's own default OR was typed explicitly, as long as
+	 * the underlying reason is the same verified fact (no GPU exists at
+	 * all on this host, not "an unverified estimate" -- see the
+	 * distinct GGUF-metadata-unreadable case below, which this flag is
+	 * never set for and must keep failing closed).
+	 *
+	 * --kv-placement gpu deliberately does NOT get this bypass, even
+	 * though it is reachable with auto_cpu_fallback set too (--auto's
+	 * own implicit gpu_layers=auto can still gracefully degrade under
+	 * an explicit --kv-placement gpu, since gpu_layers itself was never
+	 * explicit) -- gpu's own documented contract is the opposite of
+	 * auto's: "every KV layer on the same GPU device ... or fail closed
+	 * if it does not safely fit." An explicit request for guaranteed
+	 * GPU residency must still fail honestly when there is no GPU,
+	 * exactly as it already does for an explicit --gpu-layers request
+	 * in the same situation (resolve_gpu_config() above). */
+	if (o.kv_placement == MEMBRANE_KV_PLACEMENT_AUTO && gs->auto_cpu_fallback)
+		return (true);
 	/* Review fix: resolve_gpu_config()'s documented "GGUF metadata
 	 * unreadable, explicit numeric --gpu-layers N, proceed unguarded"
 	 * fallback (gs->policy_used stays false; see its own comment above)
@@ -663,11 +820,17 @@ static bool	resolve_kv_placement(const membrane_run_opts_t &o,
 	if ((o.kv_placement == MEMBRANE_KV_PLACEMENT_GPU
 			|| o.kv_placement == MEMBRANE_KV_PLACEMENT_AUTO)
 		&& !gs->policy_used)
-		return (fprintf(stderr, "membrane-run: --kv-placement gpu|auto "
-				"requires a verified GPU weight-memory estimate, but "
-				"none is available for this model/--gpu-layers "
-				"combination -- try --kv-placement cpu or --gpu-layers "
-				"all/auto\n"), false);
+	{
+		fprintf(stderr, "membrane-run: --kv-placement gpu|auto requires "
+			"a verified GPU weight-memory estimate, but none is "
+			"available for this model/--gpu-layers combination -- try "
+			"--kv-placement cpu or --gpu-layers all/auto\n");
+		print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
+			MEMBRANE_KV_PLACEMENT_REASON_INVALID_CONFIG,
+			"--kv-placement gpu|auto requires a verified GPU "
+			"weight-memory estimate, but none is available");
+		return (false);
+	}
 	total_kv_bytes = kv_bytes_for_mode(shape, ctx_size, effective_kv_mode);
 	kv_bytes_per_layer = shape.n_layer > 0
 		? total_kv_bytes / (uint64_t)shape.n_layer : 0;
@@ -675,15 +838,102 @@ static bool	resolve_kv_placement(const membrane_run_opts_t &o,
 			kv_bytes_per_layer, gs->device_free_bytes,
 			gs->device_total_bytes, gs->estimated_model_bytes,
 			/* compute_buffer_estimate_bytes: */ 0, &gs->kv_placement))
-		return (fprintf(stderr, "membrane-run: %s\n",
-				gs->kv_placement.reason), false);
+	{
+		fprintf(stderr, "membrane-run: %s\n", gs->kv_placement.reason);
+		/* gs->kv_placement.reason is already "CODE: detail" (kv_
+		 * residency_policy.c's own convention) -- extract just the
+		 * code, same rule plan_primary_reason() above uses. */
+		std::string	reason(gs->kv_placement.reason);
+		size_t		colon = reason.find(": ");
+
+		print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
+			(colon == std::string::npos ? reason
+				: reason.substr(0, colon)).c_str(), gs->kv_placement.reason);
+		return (false);
+	}
 	gs->kv_placement_resolved = true;
 	return (true);
 }
 
+/* Phase 13.1, Section 5/10: the single overall "why did the plan end
+ * up this way" code for the plan-summary/JSON output -- gs.plan_reason_
+ * code (gpu_policy's own layer-selection reason) when a GPU was
+ * requested at all, else gs.kv_placement.reason's own stable-code
+ * prefix (already "CODE" or "CODE: detail" -- see kv_residency_
+ * policy.h) when placement resolved something, else the fixed
+ * default-behavior code for a plain, nothing-automatic run. Never
+ * empty. */
+static std::string	plan_primary_reason(const membrane_run_opts_t &o,
+						const membrane_gpu_state_t &gs)
+{
+	if (!gs.plan_reason_code.empty())
+		return (gs.plan_reason_code);
+	if (gs.kv_placement_resolved)
+	{
+		std::string	reason(gs.kv_placement.reason);
+		size_t		colon = reason.find(": ");
+
+		return (colon == std::string::npos ? reason : reason.substr(0, colon));
+	}
+	if (o.kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT)
+		return (MEMBRANE_KV_PLACEMENT_REASON_DEFAULT_UNCHANGED);
+	return (MEMBRANE_REASON_DEFAULT_BEHAVIOR_PRESERVED);
+}
+
+/* Phase 13.1, Section 10: one short, product-facing block summarizing
+ * the FINAL resolved plan at a glance -- gated on "was any MEMBRANE
+ * policy actually active" (--auto, --gpu-layers, --kv-placement, --kv
+ * adaptive) so a plain, nothing-requested run prints nothing extra
+ * here, matching this file's existing "no behavior change means no
+ * new noise" convention. The more detailed lines print_startup_
+ * summary() already prints above remain the full record; this block
+ * is the one meant to be read at a glance, and is also exactly what
+ * print_run_json()'s "plan" object below mirrors for --json. */
+static void	print_plan_summary(const membrane_run_opts_t &o,
+				int32_t n_layer_total, const membrane_gpu_state_t &gs)
+{
+	bool	policy_active = o.auto_mode || gs.requested
+		|| o.kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT || gs.adaptive_used;
+
+	if (!policy_active)
+		return ;
+	fprintf(stderr, "MEMBRANE plan\n");
+	fprintf(stderr, "  device: %s\n",
+		gs.requested && !gs.device_selected.empty()
+			? gs.device_selected.c_str() : "CPU");
+	/* Review fix (CodeRabbit, PR #22): print_run_json() already reports
+	 * this via "auto":{"cpu_fallback":...} -- the human summary had no
+	 * equivalent, so a fallback run printed identically to an ordinary
+	 * CPU-only run with only the reason code (NO_GPU_DEVICE) as a clue. */
+	if (gs.auto_cpu_fallback)
+		fprintf(stderr, "  auto: no GPU available, resolved to CPU-only\n");
+	if (gs.requested)
+		fprintf(stderr, "  gpu layers: %d/%d\n", gs.gpu_layers_selected,
+			n_layer_total);
+	fprintf(stderr, "  kv precision: %s\n", kv_type_label(o.kv_mode));
+	fprintf(stderr, "  kv placement: %s\n",
+		membrane_kv_placement_mode_name(o.kv_placement));
+	if (gs.kv_placement_resolved)
+		fprintf(stderr, "  kv layers: %d GPU / %d CPU\n",
+			gs.kv_placement.gpu_kv_layers, gs.kv_placement.cpu_kv_layers);
+	if (gs.policy_used)
+		fprintf(stderr, "  estimated weight bytes: %.1f MiB\n",
+			(double)gs.estimated_model_bytes / (1024.0 * 1024.0));
+	if (gs.kv_placement_resolved)
+		fprintf(stderr, "  estimated GPU KV: %.1f MiB, estimated CPU KV: "
+			"%.1f MiB\n",
+			(double)gs.kv_placement.gpu_kv_bytes / (1024.0 * 1024.0),
+			(double)gs.kv_placement.cpu_kv_bytes / (1024.0 * 1024.0));
+	else if (gs.policy_used)
+		fprintf(stderr, "  estimated KV bytes: %.1f MiB\n",
+			(double)gs.estimated_kv_bytes / (1024.0 * 1024.0));
+	fprintf(stderr, "  reason: %s\n", plan_primary_reason(o, gs).c_str());
+}
+
 static void	print_startup_summary(const membrane_run_opts_t &o,
 				const char *model_label, uint32_t ctx_size,
-				uint64_t kv_bytes, const membrane_gpu_state_t &gs)
+				uint64_t kv_bytes, int32_t n_layer_total,
+				const membrane_gpu_state_t &gs)
 {
 	fprintf(stderr, "MEMBRANE %s\n", MEMBRANE_VERSION);
 	fprintf(stderr, "model      %s\n", model_label);
@@ -718,43 +968,16 @@ static void	print_startup_summary(const membrane_run_opts_t &o,
 		fprintf(stderr, "backend    CPU (default -- pass --gpu-layers "
 			"to use a GPU)\n");
 	else
-	{
 		fprintf(stderr, "backend    %s, device selected: %s "
 			"(gpu-layers=%s, selected=%d)\n", gs.backend_selected.c_str(),
 			gs.device_selected.c_str(),
 			gpu_layers_label(gs.gpu_layers_requested).c_str(),
 			gs.gpu_layers_selected);
-		if (gs.policy_used)
-			fprintf(stderr, "gpu policy device_free=%.1f MiB "
-				"reserve=%.1f MiB est_weights=%.1f MiB est_kv=%.1f MiB "
-				"(estimates, not measured)\n",
-				(double)gs.device_free_bytes / (1024.0 * 1024.0),
-				(double)gs.safety_reserve_bytes / (1024.0 * 1024.0),
-				(double)gs.estimated_model_bytes / (1024.0 * 1024.0),
-				(double)gs.estimated_kv_bytes / (1024.0 * 1024.0));
-	}
-	/* Phase 12H, Section 16: one compact block when placement is
-	 * explicit (default mode prints nothing extra -- no behavior
-	 * change means no new noise in the common case). */
-	if (o.kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT)
-	{
-		fprintf(stderr, "KV placement\n");
-		fprintf(stderr, "  mode: %s\n",
-			membrane_kv_placement_mode_name(o.kv_placement));
-		if (gs.kv_placement_resolved)
-		{
-			fprintf(stderr, "  GPU KV layers: %d/%d\n",
-				gs.kv_placement.gpu_kv_layers, gs.kv_placement.n_layer);
-			fprintf(stderr, "  CPU KV layers: %d/%d\n",
-				gs.kv_placement.cpu_kv_layers, gs.kv_placement.n_layer);
-			fprintf(stderr, "  KV precision: %s\n", kv_type_label(o.kv_mode));
-			fprintf(stderr, "  estimated GPU KV: %.2f MiB\n",
-				(double)gs.kv_placement.gpu_kv_bytes / (1024.0 * 1024.0));
-			fprintf(stderr, "  estimated CPU KV: %.2f MiB\n",
-				(double)gs.kv_placement.cpu_kv_bytes / (1024.0 * 1024.0));
-			fprintf(stderr, "  reason: %s\n", gs.kv_placement.reason);
-		}
-	}
+	/* Phase 13.1, Section 10: replaces the old separate "gpu policy
+	 * ..."/"KV placement" blocks (Phase 9B.1/12H) with one consolidated
+	 * plan summary -- same information, one place, always ending in a
+	 * single stable reason code. */
+	print_plan_summary(o, n_layer_total, gs);
 }
 
 typedef struct s_token_print_ud
@@ -797,6 +1020,42 @@ static void	print_json_escaped(const std::string &text)
 		else
 			putchar(c);
 	}
+}
+
+/* Phase 13.1, Section 3/13: the structured JSON error object --
+ * forward-declared above resolve_gpu_config(). Only ever called when
+ * o.want_json is set (checked by the caller, not here, so a plain
+ * stderr-text run never pays for or risks a stray stdout write); emits
+ * exactly one JSON object to stdout and nothing else, matching
+ * print_run_json()'s own "stdout is JSON only" contract (Section 3:
+ * "In JSON mode: stdout must contain valid JSON only; diagnostic logs
+ * must go to stderr" -- the human-readable message the caller ALSO
+ * printed to stderr via fprintf is unaffected, unrelated stream). Not
+ * every failure path in this file calls this yet (Section 4 scopes
+ * this to the important, listed error paths) -- an --json run that
+ * fails on an uncovered path still exits with the correct nonzero
+ * code and a stderr message, just without a matching stdout object;
+ * covered paths are the ones a --json caller is most likely to need
+ * to distinguish programmatically (model/metadata/GPU/device
+ * failures), not every CLI-parse-time misuse. */
+static void	print_error_json(const membrane_run_opts_t &o, int exit_code,
+				const char *reason_code, const std::string &message)
+{
+	if (!o.want_json)
+		return ;
+	/* Review fix (CodeRabbit, PR #22): reason_code is escaped too, not
+	 * just message -- every current caller passes a bare stable-code
+	 * constant (safe by construction: no quotes/backslashes/control
+	 * chars), but this function's own JSON-validity contract must not
+	 * silently depend on that always staying true for every future
+	 * caller. */
+	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
+		"\"mode\":\"run\",\"ok\":false,\"exit_code\":%d,\"error\":{"
+		"\"reason_code\":\"", MEMBRANE_VERSION, exit_code);
+	print_json_escaped(reason_code);
+	printf("\",\"message\":\"");
+	print_json_escaped(message);
+	printf("\"}}\n");
 }
 
 /* Phase 11A: every print_*() site below receives `o` already resolved
@@ -907,7 +1166,8 @@ static void	print_run_json(const membrane_run_opts_t &o,
 				const std::string &text, const membrane_gpu_state_t &gs)
 {
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
-		"\"mode\":\"run\",\"model_label\":\"%s\",\"kv_store\":\"%s\","
+		"\"mode\":\"run\",\"ok\":true,\"model_label\":\"%s\","
+		"\"kv_store\":\"%s\","
 		"\"kv_type\":\"%s\",\"requested_kv\":\"%s\",\"selected_kv\":\"%s\","
 		"\"adaptive_reason\":\"%s\","
 		"\"ctx_size\":%u,\"generated_tokens\":%llu,",
@@ -916,6 +1176,15 @@ static void	print_run_json(const membrane_run_opts_t &o,
 		kv_mode_name(o.kv_mode),
 		gs.adaptive_used ? gs.adaptive_reason.c_str() : "",
 		t.ctx_size, (unsigned long long)t.generated_tokens);
+	/* Phase 13.1, Section 3/5: --auto's own resolution state, plus the
+	 * single overall plan reason code (same value print_plan_summary()
+	 * prints as its own "reason:" line) -- additive-only, existing
+	 * fields/order above are untouched. */
+	printf("\"auto\":{\"requested\":%s,\"cpu_fallback\":%s},"
+		"\"reason_code\":\"", o.auto_mode ? "true" : "false",
+		gs.auto_cpu_fallback ? "true" : "false");
+	print_json_escaped(plan_primary_reason(o, gs));
+	printf("\",");
 	printf("\"storage\":{\"kv_allocated_bytes\":%llu},",
 		(unsigned long long)t.compressed_kv_allocated_bytes);
 	print_gpu_json(gs);
@@ -985,7 +1254,8 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 	kv_bytes = kv_bytes_for_mode(shape, ctx_size, o.kv_mode);
 	membrane_kv_store_read_rss(&tel.rss_after_model_load);
 	if (!o.quiet)
-		print_startup_summary(o, model_label, ctx_size, kv_bytes, gs);
+		print_startup_summary(o, model_label, ctx_size, kv_bytes,
+			shape.n_layer, gs);
 	stream = !o.want_json && !o.quiet;
 	cb = stream ? stream_token : NULL;
 	/* Phase 12H: gs.kv_placement_resolved is only true when
@@ -1006,6 +1276,8 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 			NULL, placement_arg))
 	{
 		fprintf(stderr, "membrane-run: generation failed\n");
+		print_error_json(o, MEMBRANE_EXIT_RUNTIME_ERROR,
+			MEMBRANE_REASON_GENERATION_FAILED, "generation failed");
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);
 	}
 	tel.generated_tokens = result.tokens.size();
@@ -1487,6 +1759,9 @@ int	main(int argc, char **argv)
 	{
 		fprintf(stderr, "membrane-run: failed to load model '%s'\n",
 			o.model_path);
+		print_error_json(o, MEMBRANE_EXIT_MODEL_ERROR,
+			MEMBRANE_REASON_MODEL_LOAD_FAILED,
+			std::string("failed to load model '") + o.model_path + "'");
 		return (llama_backend_free(), MEMBRANE_EXIT_MODEL_ERROR);
 	}
 	model_label = membrane_runtime_safe_basename(o.model_path);
@@ -1498,6 +1773,8 @@ int	main(int argc, char **argv)
 	if (rc < 0)
 	{
 		fprintf(stderr, "membrane-run: tokenization failed\n");
+		print_error_json(o, MEMBRANE_EXIT_RUNTIME_ERROR,
+			MEMBRANE_REASON_TOKENIZATION_FAILED, "tokenization failed");
 		llama_model_free(model);
 		return (llama_backend_free(), MEMBRANE_EXIT_RUNTIME_ERROR);
 	}
@@ -1515,6 +1792,10 @@ int	main(int argc, char **argv)
 		fprintf(stderr, "membrane-run: --ctx %u is too small for this "
 			"prompt (%zu tokens) -- need at least %zu\n", o.ctx,
 			prompt_tokens.size(), prompt_tokens.size() + 1);
+		print_error_json(o, MEMBRANE_EXIT_CLI_ERROR,
+			MEMBRANE_REASON_CTX_TOO_SMALL,
+			"--ctx " + std::to_string(o.ctx) + " is too small for this "
+			"prompt (" + std::to_string(prompt_tokens.size()) + " tokens)");
 		llama_model_free(model);
 		return (llama_backend_free(), MEMBRANE_EXIT_CLI_ERROR);
 	}
@@ -1556,6 +1837,8 @@ int	main(int argc, char **argv)
 		{
 			fprintf(stderr, "MEMBRANE: KV storage unsupported for "
 				"this model: %s.\n", compat.reason);
+			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
+				MEMBRANE_REASON_KV_COMPAT_UNSUPPORTED, compat.reason);
 			llama_model_free(model);
 			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
 		}
@@ -1568,6 +1851,8 @@ int	main(int argc, char **argv)
 		{
 			fprintf(stderr, "MEMBRANE: KV storage unsupported for "
 				"this model: %s.\n", compat.reason);
+			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
+				MEMBRANE_REASON_KV_COMPAT_UNSUPPORTED, compat.reason);
 			llama_model_free(model);
 			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
 		}

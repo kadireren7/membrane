@@ -45,6 +45,35 @@ extern "C" {
 # define MEMBRANE_GPU_RESERVE_FIXED_BYTES	((uint64_t)512 * 1024 * 1024)
 # define MEMBRANE_GPU_RESERVE_PCT			15
 
+/* Phase 13.1, Section 5: stable, machine-readable reason codes -- never
+ * change the MEANING of an already-shipped code, only add new ones.
+ * Same convention as kv_residency_policy.h's MEMBRANE_KV_PLACEMENT_
+ * REASON_ set and adaptive_kv_policy.h's MEMBRANE_ADAPTIVE_REASON_
+ * set: reason below is always at least the bare code on success; on
+ * failure it is the code followed by ": " and a free-text detail
+ * (never the reverse, so a strncmp(reason, CODE, strlen(CODE)) call
+ * reliably extracts the code either way). */
+# define MEMBRANE_GPU_POLICY_REASON_GPU_FULL_FIT		"GPU_FULL_FIT"
+# define MEMBRANE_GPU_POLICY_REASON_GPU_LAYERS_CLAMPED	"GPU_LAYERS_CLAMPED"
+# define MEMBRANE_GPU_POLICY_REASON_CPU_ONLY_REQUESTED	"CPU_ONLY_REQUESTED"
+# define MEMBRANE_GPU_POLICY_REASON_MEMORY_INSUFFICIENT	"GPU_MEMORY_INSUFFICIENT"
+# define MEMBRANE_GPU_POLICY_REASON_INVALID_CONFIG		"GPU_POLICY_INVALID_CONFIG"
+# define MEMBRANE_GPU_POLICY_REASON_METADATA_UNAVAILABLE	"MODEL_METADATA_UNAVAILABLE"
+/* Phase 13.1, Section 15/16: emitted ONLY when --auto's own implicit
+ * gpu_layers=auto request (never an explicit --gpu-layers auto/all/N)
+ * gracefully resolves to CPU-only because no GPU backend is compiled
+ * in, or none was found at runtime -- main.cpp's resolve_gpu_config(),
+ * not this module (this module has no concept of "was this implicit"
+ * -- it only ever sees a resolved kv_bytes_estimate/layer count). An
+ * explicit GPU request in the same situation still fails closed with
+ * the pre-existing free-text error, unchanged. */
+# define MEMBRANE_GPU_POLICY_REASON_NO_GPU_DEVICE			"NO_GPU_DEVICE"
+/* Phase 13.1, Section 4/13: --device NAME matched zero or more than
+ * one device -- always an explicit user request, never something
+ * --auto's own graceful degradation applies to (--auto does not pass
+ * --device). */
+# define MEMBRANE_GPU_POLICY_REASON_DEVICE_NOT_FOUND		"GPU_DEVICE_NOT_FOUND"
+
 typedef struct s_membrane_gpu_policy_result
 {
 	int			ok;
@@ -55,7 +84,26 @@ typedef struct s_membrane_gpu_policy_result
 	uint64_t	estimated_model_bytes;	/* for selected_layers (or the
 										 * rejected request, if !ok) */
 	uint64_t	estimated_kv_bytes;		/* echoed input, for telemetry */
-	char		reason[256];			/* only meaningful if !ok */
+	char		reason_code[40];		/* one of the MEMBRANE_GPU_POLICY_
+										 * REASON_* strings above, always
+										 * set (both on success and
+										 * failure) -- Section 5 */
+	char		reason[384];			/* code, or "CODE: details" when
+										 * !ok -- see reason_code's own
+										 * comment. Review fix (CodeRabbit,
+										 * PR #22): grown from 256 --
+										 * the insufficient-memory
+										 * message's fixed text plus 5
+										 * uint64 byte counts plus the
+										 * code prefix this phase added
+										 * can exceed 256, silently
+										 * truncating the remediation
+										 * hint via snprintf (still
+										 * NUL-terminated, never unsafe --
+										 * just loses the actionable
+										 * tail). 384 covers the
+										 * worst-case (max-width uint64
+										 * values) with room to spare. */
 }	membrane_gpu_policy_result_t;
 
 /*
