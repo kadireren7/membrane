@@ -6,10 +6,10 @@
 
 MEMBRANE is a llama.cpp runtime layer for planning KV-cache precision
 and CPU/GPU residency under constrained memory. It sits in front of an
-unmodified `ggml`/llama.cpp inference path and decides, before a model
-loads, how many layers to offload to GPU, what precision the KV cache
-should be stored in, and which device should hold it — then runs a
-normal llama.cpp decode on top of that plan.
+unmodified `ggml`/llama.cpp inference path and decides how many layers
+to offload to GPU (from a pre-load memory estimate), then resolves KV
+precision and KV residency before the KV cache/context is constructed
+— then runs a normal llama.cpp decode on top of that plan.
 
 ## Why MEMBRANE
 
@@ -146,7 +146,7 @@ model metadata (layer count, tensor shapes, hparams)
     v
 MEMBRANE planner
     |-- GPU layer policy       (--gpu-layers auto|all|N|0)
-    |-- adaptive KV precision  (--kv native|q8|q5|adaptive)
+    |-- KV precision policy    (--kv native|q8|q5|adaptive)
     `-- KV residency policy    (--kv-placement default|gpu|cpu|auto)
     |
     v
@@ -194,13 +194,18 @@ re-verified by `scripts/verify-results.py`):
 | `cpu` (0/28 GPU KV layers) | — | — | succeeds |
 
 At this tested configuration, the default path's working ceiling sits
-between ctx 26500 and ctx 26800; `--kv-placement auto` reached ctx
-28500 in the same test — roughly a 6.4% narrow context uplift at this
-specific boundary, reproduced 2/2 (default failure) and 3/3 (`auto`
-success). GPU weight-layer selection and pre-load estimated weight
-bytes were identical across all three placement modes at every row
-(`est_weights=2499.5 MiB`, `gpu_layers_selected=28`) — this is a
-pre-load estimate/selection match, not a post-load VRAM measurement.
+between ctx 26500 (succeeds) and ctx 26800 (confirmed fails);
+`--kv-placement auto` reached ctx 28500 in the same test, reproduced
+2/2 (default failure) and 3/3 (`auto` success). Using the confirmed
+failure point as the conservative baseline (`(28500 - 26800) / 26500`,
+not the optimistic `(28500 - 26500) / 26500`), that is an uplift of
+**at least** roughly 6.4% at this specific boundary — the true ceiling
+between 26500 and 26800 wasn't narrowed further, so this is a lower
+bound, not a precise figure. GPU weight-layer selection and pre-load
+estimated weight bytes were identical across all three placement modes
+at every row (`est_weights=2499.5 MiB`, `gpu_layers_selected=28`) —
+this is a pre-load estimate/selection match, not a post-load VRAM
+measurement.
 
 This is a single measured configuration on one model, one GPU, one
 host — not a general "run bigger contexts" claim. MEMBRANE's current
@@ -218,18 +223,22 @@ cost: q8 generation speed measured roughly 7-18% lower than native
 across the same sweep. One model family, one GPU, one host — not a
 general VRAM or throughput claim.
 
-At the same tested configuration, 5 generated outputs across
-`q8`-gpu/`q8`-cpu/`q8`-default/`q5`-cpu/native-cpu placements were
-byte-identical (`quality.json`, independently re-hashed by the
-verifier). This shows precision/placement choices didn't change output
-at this tested point — it is not a universal token-identity or
-zero-quantization-error claim.
+Separately, in the same Phase 12H residency work as the Qwen2.5 table
+above (not the Phase 9A/9B sweep just above), 5 generated-text outputs
+on SmolLM2-135M at one fixed prompt/`ctx=4096` — across
+`q8`-gpu/`q8`-cpu/`q8`-default/`q5`-cpu/native-cpu placements — were
+byte-identical (`quality.json`'s md5 over the captured detokenized
+text, independently re-hashed by the verifier; no token-ID sequence
+was separately captured or compared). This shows precision/placement
+choices didn't change the generated *text* at this one tested point —
+it is not a token-ID-identity claim and not a zero-quantization-error
+measurement.
 
 ## CLI reference
 
 | Flag | Purpose |
 |---|---|
-| `--auto` | Preset: GPU layers + adaptive KV + KV placement, all auto-managed |
+| `--auto` | Preset: auto-manages GPU layers, KV precision, and KV placement; explicit flags override individual fields |
 | `--gpu-layers all\|auto\|N\|0` | GPU layer offload (default: `0`, CPU-only) |
 | `--kv native\|q8\|q5\|adaptive` | KV cache precision |
 | `--kv-placement default\|gpu\|cpu\|auto` | KV cache device residency |
@@ -244,8 +253,14 @@ Full flag reference, exit codes, and every option's exact semantics:
 
 `--json` emits exactly one JSON object on stdout (`schema_version: 1`);
 all diagnostics go to stderr, so stdout stays pure JSON either way.
-Structure (a `--plan-only --json` run shown; a normal run's object adds
-generation fields in the same shape):
+`--plan-only --json` (`"mode": "plan"`) shown below — a normal run
+(`"mode": "run"`) shares the same `requested`/`resolved`/`warnings`
+shape but reports memory and reasoning differently: a top-level
+`gpu_policy` block and a `kv_placement` block instead of `plan-only`'s
+single `memory_plan`, and separate top-level `reason_code` (one
+string) plus `reason_trace` (the array) instead of `plan-only`'s
+nested `reason_codes: {primary, trace}` — plus the generation-result
+fields a plan never has (`generated_tokens`, `performance`, ...).
 
 ```json
 {
@@ -293,9 +308,13 @@ generation fields in the same shape):
 - Adaptive KV selection is whole-cache (`q8` or `q5` for the entire
   context) — there is no per-layer or per-block mixed-precision product
   policy.
-- Hardware and model coverage is limited: validation so far covers
-  `LLM_ARCH_LLAMA`/`qwen2`-family models on CPU and one GTX 1650 Vulkan
-  host.
+- Hardware and model coverage is limited. `q8`/`q5`/`adaptive` KV
+  precision is checked for compatibility before use and only
+  validated for `LLM_ARCH_LLAMA` models — a `qwen2`-architecture model
+  was validated for `--kv-placement`/`native`-precision capacity only
+  (see "Measured results"), not for KV precision compression, which
+  this architecture check rejects. All GPU testing is one GTX 1650
+  Vulkan host.
 
 ## Build
 
@@ -339,8 +358,9 @@ adaptive KV precision, static KV residency planning, and the `--auto`/
 
 This repository intentionally does not keep experiment branches or a
 phase-by-phase research history. Full experiment records, negative
-results, benchmark evidence, FPGA/CXL research, and promotion
-provenance live in
+results, benchmark evidence, FPGA/CXL research (simulation and
+synthesis-tool proxies only — no physical FPGA or CXL hardware), and
+promotion provenance live in
 **[kadireren7/membrane-research](https://github.com/kadireren7/membrane-research)**,
 with SHA256-verified provenance back to this repository.
 
