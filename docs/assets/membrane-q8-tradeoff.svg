@@ -1,0 +1,43 @@
+<svg width="760" height="500" viewBox="0 0 760 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Bar chart across six tested contexts (512 to 16384) on SmolLM2-135M, GTX 1650, Vulkan: q8 KV VRAM reduction ranges from about 2 percent at small contexts to about 25 percent at context 16384, while generation throughput is about 7 to 18 percent lower than native across the same sweep.">
+  <title>MEMBRANE q8 KV VRAM/throughput tradeoff</title>
+  <rect width="760" height="500" fill="#0d1117"/>
+<text x="30" y="30" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#8b949e" letter-spacing="1.5">MEASURED — SmolLM2-135M · GTX 1650 · Vulkan · tested contexts only</text>
+<text x="30" y="54" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#e6edf3" font-weight="700">q8 KV vs. native: VRAM and throughput tradeoff</text>
+<text x="30" y="84" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11.5" fill="#5ee6c8">VRAM reduction (%)</text>
+<line x1="60" y1="196" x2="720" y2="196" stroke="#30363d" stroke-width="1"/>
+<rect x="87.5" y="189.6" width="55.0" height="6.4" rx="3" fill="#5ee6c8" fill-opacity="0.85"/>
+<text x="115.0" y="183.6" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">1.8%</text>
+<rect x="197.5" y="185.8" width="55.0" height="10.2" rx="3" fill="#5ee6c8" fill-opacity="0.85"/>
+<text x="225.0" y="179.8" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">3.0%</text>
+<rect x="307.5" y="175.7" width="55.0" height="20.3" rx="3" fill="#5ee6c8" fill-opacity="0.85"/>
+<text x="335.0" y="169.7" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">5.8%</text>
+<rect x="417.5" y="159.9" width="55.0" height="36.1" rx="3" fill="#5ee6c8" fill-opacity="0.85"/>
+<text x="445.0" y="153.9" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">10.4%</text>
+<rect x="527.5" y="137.1" width="55.0" height="58.9" rx="3" fill="#5ee6c8" fill-opacity="0.85"/>
+<text x="555.0" y="131.1" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">17.0%</text>
+<rect x="637.5" y="109.6" width="55.0" height="86.4" rx="3" fill="#5ee6c8" fill-opacity="0.85"/>
+<text x="665.0" y="103.6" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">24.9%</text>
+<text x="30" y="260" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11.5" fill="#f85149">generation throughput vs. native (%)</text>
+<line x1="60" y1="268" x2="720" y2="268" stroke="#30363d" stroke-width="1"/>
+<rect x="87.5" y="268.0" width="55.0" height="36.0" rx="3" fill="#f85149" fill-opacity="0.85"/>
+<text x="115.0" y="320.0" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">-6.9%</text>
+<rect x="197.5" y="268.0" width="55.0" height="57.9" rx="3" fill="#f85149" fill-opacity="0.85"/>
+<text x="225.0" y="341.9" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">-11.1%</text>
+<rect x="307.5" y="268.0" width="55.0" height="91.1" rx="3" fill="#f85149" fill-opacity="0.85"/>
+<text x="335.0" y="375.1" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">-17.5%</text>
+<rect x="417.5" y="268.0" width="55.0" height="63.3" rx="3" fill="#f85149" fill-opacity="0.85"/>
+<text x="445.0" y="347.3" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">-12.2%</text>
+<rect x="527.5" y="268.0" width="55.0" height="67.0" rx="3" fill="#f85149" fill-opacity="0.85"/>
+<text x="555.0" y="351.0" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">-12.9%</text>
+<rect x="637.5" y="268.0" width="55.0" height="55.0" rx="3" fill="#f85149" fill-opacity="0.85"/>
+<text x="665.0" y="339.0" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11" fill="#e6edf3">-10.6%</text>
+<text x="115.0" y="406" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11.5" fill="#8b949e">ctx 512</text>
+<text x="225.0" y="406" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11.5" fill="#8b949e">ctx 1024</text>
+<text x="335.0" y="406" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11.5" fill="#8b949e">ctx 2048</text>
+<text x="445.0" y="406" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11.5" fill="#8b949e">ctx 4096</text>
+<text x="555.0" y="406" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11.5" fill="#8b949e">ctx 8192</text>
+<text x="665.0" y="406" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11.5" fill="#8b949e">ctx 16384</text>
+<text x="30" y="430" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">One model family, one GPU, one host — not a general VRAM or</text>
+<text x="30" y="450" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">throughput claim. q8 reduces VRAM at every tested context; the</text>
+<text x="30" y="470" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">reduction and the throughput cost both vary by context.</text>
+</svg>

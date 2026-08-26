@@ -1,320 +1,110 @@
 # MEMBRANE
 
+Adaptive KV-cache planning for llama.cpp under constrained memory.
+
+MEMBRANE resolves GPU offload, KV precision, and CPU/GPU KV residency before
+generation starts — with an inspectable plan and machine-readable
+diagnostics, on top of an unmodified `ggml`/llama.cpp inference path.
+
 [![CI](https://github.com/kadireren7/membrane/actions/workflows/ci.yml/badge.svg)](https://github.com/kadireren7/membrane/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/kadireren7/membrane/actions/workflows/codeql.yml/badge.svg)](https://github.com/kadireren7/membrane/actions/workflows/codeql.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-MEMBRANE is a llama.cpp runtime layer for planning KV-cache precision
-and CPU/GPU residency under constrained memory. It sits in front of an
-unmodified `ggml`/llama.cpp inference path and decides how many layers
-to offload to GPU (from a pre-load memory estimate), then resolves KV
-precision and KV residency before the KV cache/context is constructed
-— then runs a normal llama.cpp decode on top of that plan.
+![MEMBRANE resolves a GGUF model and context into GPU layer count, KV precision, and KV placement, then hands the plan to llama.cpp for generation](docs/assets/membrane-hero.svg)
 
-## Why MEMBRANE
-
-KV-cache memory grows with context length, and on a memory-constrained
-GPU it is often the thing that runs out before compute does. MEMBRANE's
-planner looks at real device memory and real model metadata before
-load, and picks a GPU-layer count, KV precision, and KV residency that
-fit — instead of a fixed `-ngl` guess that either wastes headroom or
-fails with an out-of-memory error partway through a run.
+KV-cache memory grows with context length, and on a memory-constrained GPU
+it's often what runs out before compute does. MEMBRANE looks at real device
+memory and model shape before committing to a plan, instead of a fixed
+`-ngl` guess that either wastes headroom or fails mid-run.
 
 ## Quick Start
 
 ```bash
-git clone --recursive https://github.com/kadireren7/membrane
-cd membrane
-cmake -S . -B build-llama -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-llama -j --target membrane-run
-
-./build-llama/tools/membrane-run/membrane-run \
+./build-vulkan/tools/membrane-run/membrane-run \
   --model model.gguf \
   --prompt "Hello" \
   --ctx 32768 \
   --auto
 ```
 
-`--auto` manages three things through the same planner a manual run
-uses:
+![--auto fans out into GPU layers, KV type, and KV residency, all automatically managed; an explicit --kv q8 override fixes only KV type, leaving the other two on auto](docs/assets/membrane-auto.svg)
 
-- GPU layer selection (`--gpu-layers auto`)
-- adaptive KV precision (`--kv adaptive`, resolves to `q8` or `q5`)
-- KV placement (`--kv-placement auto`)
+Explicit flags override only the field they name — `--auto --kv q8` keeps
+GPU layers and KV placement on auto while pinning precision to `q8`.
 
-Any explicit flag overrides the corresponding auto-managed field —
-`--auto` fills in the rest:
+## See the plan before you run it
 
-```bash
-./build-llama/tools/membrane-run/membrane-run \
-  --model model.gguf \
-  --prompt "Hello" \
-  --ctx 32768 \
-  --auto \
-  --kv q8 \
-  --kv-placement cpu
-```
-
-This keeps GPU layer selection on auto-pilot while pinning KV precision
-to `q8` and forcing the KV cache onto CPU RAM regardless of what the
-planner would otherwise pick.
-
-## Inspecting a plan before you run it
-
-`--plan-only` resolves the exact same planner a real run uses — model
-load, shape, GPU/adaptive/placement policy — and prints the result
-without generating any tokens:
+`--plan-only` resolves the exact same planner a real run uses and prints the
+result without generating a token:
 
 ```bash
-./build-llama/tools/membrane-run/membrane-run \
-  --model model.gguf \
-  --prompt "Hello" \
-  --ctx 32768 \
-  --auto \
-  --plan-only
+./build-vulkan/tools/membrane-run/membrane-run \
+  --model model.gguf --prompt "Hello" --ctx 32768 --auto --plan-only
 ```
 
-Real output, captured on the tested GTX 1650 host (Vulkan build,
-SmolLM2-135M, `--ctx 4096 --auto --plan-only`; `Vulkan1` is the backend
-device id llama.cpp assigned to the GPU on that host):
+![Terminal transcript of membrane-run --auto --plan-only showing the real MEMBRANE plan block: device Vulkan1, gpu layers 30 of 30, kv precision Q8_0, kv placement auto, reason GPU_FULL_FIT](docs/assets/membrane-terminal.svg)
 
-```text
-MEMBRANE plan
-  device: Vulkan1
-  gpu layers: 30/30
-  kv precision: Q8_0
-  kv placement: auto
-  kv layers: 30 GPU / 0 CPU
-  estimated weight bytes: 202.6 MiB
-  estimated GPU KV: 47.8 MiB, estimated CPU KV: 0.0 MiB
-  reason: GPU_FULL_FIT
-```
+Real output — captured verbatim, transcript and command in
+[`docs/assets/source/plan-example.txt`](docs/assets/source/plan-example.txt).
+Add `--json` for the same plan as one machine-readable object
+(`schema_version: 1`) instead of this text block; add `--verbose` for the
+full requested/resolved breakdown and reason trace. Both go to stderr, so
+`--json` on stdout stays pure JSON either way.
 
-Add `--json` for a machine-readable plan (`"mode": "plan"`) instead of
-the text block above — intended for tooling and future UI integration:
+## How MEMBRANE works
 
-```bash
-./build-llama/tools/membrane-run/membrane-run \
-  --model model.gguf \
-  --prompt "Hello" \
-  --ctx 32768 \
-  --auto \
-  --plan-only \
-  --json
-```
+![GGUF model and context flow into model metadata, then into the MEMBRANE planner, which branches into GPU layers, KV type, and KV placement, converging into one resolved plan handed to llama.cpp for generation](docs/assets/membrane-flow.svg)
 
-`--verbose` adds a second block (requested vs. resolved config side by
-side, the full reason trace, and any warnings) on top of the concise
-plan — always on stderr, so `--json` output on stdout is unaffected
-either way.
+One logical planning pipeline, not three independent tools. GPU layer count
+comes from a pre-load memory estimate; KV precision and KV placement finish
+resolving once real model shape is available, before the KV cache/context
+itself is constructed. There is no runtime KV migration and no per-layer
+mixed precision — see "Current scope" below.
 
-## Precision vs. placement
+## Precision and placement are separate
 
-These are two separate dimensions. Mixing them up is the most common
-way to misread a plan.
+![KV cache has two independent axes: representation (native, q8, q5, adaptive) and residency (default, gpu, cpu, auto); changing one never changes the other](docs/assets/membrane-precision-placement.svg)
 
-**Precision** — `--kv` — controls how each KV value is *represented*:
-
-| Value | Meaning |
-|---|---|
-| `native` | Unmodified llama.cpp KV cache (default) |
-| `q8` | Genuinely `Q8_0`-typed KV tensors, ~50% of native's memory |
-| `q5` | Genuinely `Q5_1`-typed KV tensors, ~37.5% of native's memory |
-| `adaptive` | Planner picks `q8` or `q5` for the whole cache based on memory pressure |
-
-**Placement** — `--kv-placement` — controls which device *holds* the KV
-cache, independent of precision:
-
-| Value | Meaning |
-|---|---|
-| `default` | No-op — same device the model weights use (unchanged behavior) |
-| `gpu` | Force KV cache onto GPU |
-| `cpu` | Force KV cache onto CPU RAM |
-| `auto` | Planner splits GPU/CPU KV layers to fit a safe memory budget |
-
-`--kv` never changes where the cache lives; `--kv-placement` never
-changes how it's encoded.
-
-## How it works
-
-```text
-GGUF model
-    |
-    v
-model metadata (layer count, tensor shapes, hparams)
-    |
-    v
-MEMBRANE planner
-    |-- GPU layer policy       (--gpu-layers auto|all|N|0)
-    |-- KV precision policy    (--kv native|q8|q5|adaptive)
-    `-- KV residency policy    (--kv-placement default|gpu|cpu|auto)
-    |
-    v
-resolved llama.cpp runtime configuration
-    |
-    v
-generation (unmodified ggml/llama.cpp decode)
-```
-
-The plan is resolved once, before context construction. There is no
-runtime KV migration, no promotion/demotion, and no per-layer mixed
-precision — see "Limitations."
-
-## `--auto` semantics
-
-`--auto` is a preset that feeds the same planner explicit flags use —
-not a second planner. A few worked examples:
-
-- `--auto --kv q8` — auto manages GPU layers and placement; KV
-  precision is pinned to `q8`.
-- `--auto --gpu-layers 0` — GPU offload is explicitly disabled; auto
-  still manages KV precision on CPU (defaults to `q8` unless a budget
-  rules it out).
-- `--auto --kv-placement cpu` — auto manages layer count and
-  precision; KV residency is forced to CPU.
-
-Bare `--auto` on a build/host with no GPU backend or device resolves to
-CPU-only automatically (`auto fallback: no GPU available, resolved to
-CPU-only`, reason `NO_GPU_DEVICE`) — this is the one case where `--auto`
-behaves differently from an explicit `--gpu-layers auto`, which still
-fails closed (exit 5) if a GPU was explicitly requested and isn't
-there.
+`--kv` never changes where the cache lives. `--kv-placement` never changes
+how it's encoded.
 
 ## Measured results
 
-**Qwen2.5-1.5B-Instruct, GTX 1650 (Vulkan), 28/28 GPU weight layers,
-native KV precision** — the central Phase 12H capacity experiment
-(`results/v0.3/kv-residency-productization/capacity_uplift.json`,
-re-verified by `scripts/verify-results.py`):
+MEMBRANE plans against whatever memory is actually available on the machine
+it runs on. The numbers below are two specific tested configurations, not a
+general hardware claim — a different GPU or model will measure differently.
 
-| `--kv-placement` | ctx 26500 | ctx 26800 | ctx 28500 |
-|---|---|---|---|
-| default (all-GPU KV) | succeeds | **fails** — real `ggml_vulkan` out-of-device-memory error | fails (same error) |
-| `auto` (26/28 GPU KV layers) | — | — | succeeds |
-| `cpu` (0/28 GPU KV layers) | — | — | succeeds |
+![Bar chart: default all-GPU KV placement succeeds at context 26,500 and fails at context 26,800 with a real Vulkan out-of-device-memory error; MEMBRANE auto and cpu KV placement both succeed at context 28,500 in the same tested configuration](docs/assets/membrane-capacity.svg)
 
-At this tested configuration, the default path's working ceiling sits
-between ctx 26500 (succeeds) and ctx 26800 (confirmed fails);
-`--kv-placement auto` reached ctx 28500 in the same test, reproduced
-2/2 (default failure) and 3/3 (`auto` success). Using the confirmed
-failure point as the conservative baseline (`(28500 - 26800) / 26500`,
-not the optimistic `(28500 - 26500) / 26500`), that is an uplift of
-**at least** roughly 6.4% at this specific boundary — the true ceiling
-between 26500 and 26800 wasn't narrowed further, so this is a lower
-bound, not a precise figure. GPU weight-layer selection and pre-load
-estimated weight bytes were identical across all three placement modes
-at every row (`est_weights=2499.5 MiB`, `gpu_layers_selected=28`) —
-this is a pre-load estimate/selection match, not a post-load VRAM
-measurement.
+Source: `results/v0.3/kv-residency-productization/capacity_uplift.json`,
+re-verified by `scripts/verify-results.py`. This Qwen2.5 result validates KV
+**placement** at **native** precision — the current `qwen2` architecture
+compatibility check does not validate `q8`/`q5`/adaptive KV **compression**
+for that model family (only `LLM_ARCH_LLAMA` models are validated for
+compressed KV).
 
-This is a single measured configuration on one model, one GPU, one
-host — not a general "run bigger contexts" claim. MEMBRANE's current
-static residency planner is a **capacity** feature: it closes the gap
-between what the pre-load memory estimate says should fit and what the
-real allocator can actually deliver. It is not marketed as a speed
-optimization.
+![Bar chart across six tested contexts on SmolLM2-135M: q8 KV VRAM reduction ranges from about 2 percent at small contexts to about 25 percent at context 16384, while generation throughput is about 7 to 18 percent lower than native across the same sweep](docs/assets/membrane-q8-tradeoff.svg)
 
-**SmolLM2-135M, same GTX 1650, Vulkan `--gpu-bench`** (Phase 9A/9B,
-`results/v0.3/gpu-vulkan-validation.json`): across the tested context
-sweep, `q8` KV genuinely allocated in GPU VRAM measured lower than
-native F16 KV at every tested context — from roughly 2% at small
-contexts up to roughly 25% at `ctx=16384` — with a real throughput
-cost: q8 generation speed measured roughly 7-18% lower than native
-across the same sweep. One model family, one GPU, one host — not a
-general VRAM or throughput claim.
+Source: `results/v0.3/gpu-vulkan-validation.json`, SmolLM2-135M on the
+tested GTX 1650: VRAM reduction ran from roughly 2% at small contexts up to
+roughly 25% at `ctx=16384`, while generation speed measured roughly 7-18%
+lower than native across the same sweep. This is a tradeoff, not a speedup —
+`q8` reduces VRAM at every tested context at a real throughput cost. At the
+same tested point, 5 generated-text outputs across every `q8`/`q5`/placement
+combination were byte-identical (md5-verified, `quality.json`) — generated
+text only, not a token-ID or numeric quantization-error claim.
 
-Separately, in the same Phase 12H residency work as the Qwen2.5 table
-above (not the Phase 9A/9B sweep just above), 5 generated-text outputs
-on SmolLM2-135M at one fixed prompt/`ctx=4096` — across
-`q8`-gpu/`q8`-cpu/`q8`-default/`q5`-cpu/native-cpu placements — were
-byte-identical (`quality.json`'s md5 over the captured detokenized
-text, independently re-hashed by the verifier; no token-ID sequence
-was separately captured or compared). This shows precision/placement
-choices didn't change the generated *text* at this one tested point —
-it is not a token-ID-identity claim and not a zero-quantization-error
-measurement.
+## Current capabilities
 
-## CLI reference
-
-| Flag | Purpose |
-|---|---|
-| `--auto` | Preset: auto-manages GPU layers, KV precision, and KV placement; explicit flags override individual fields |
-| `--gpu-layers all\|auto\|N\|0` | GPU layer offload (default: `0`, CPU-only) |
-| `--kv native\|q8\|q5\|adaptive` | KV cache precision |
-| `--kv-placement default\|gpu\|cpu\|auto` | KV cache device residency |
-| `--plan-only` | Resolve and print the plan; no generation |
-| `--verbose` | Detailed requested/resolved/memory/reason-trace breakdown (stderr) |
-| `--json` | Machine-readable output on stdout |
-
-Full flag reference, exit codes, and every option's exact semantics:
-`membrane-run --help`.
-
-## JSON output
-
-`--json` emits exactly one JSON object on stdout (`schema_version: 1`);
-all diagnostics go to stderr, so stdout stays pure JSON either way.
-`--plan-only --json` (`"mode": "plan"`) shown below — a normal run
-(`"mode": "run"`) shares the same `requested`/`resolved`/`warnings`
-shape but reports memory and reasoning differently: a top-level
-`gpu_policy` block and a `kv_placement` block instead of `plan-only`'s
-single `memory_plan`, and separate top-level `reason_code` (one
-string) plus `reason_trace` (the array) instead of `plan-only`'s
-nested `reason_codes: {primary, trace}` — plus the generation-result
-fields a plan never has (`generated_tokens`, `performance`, ...).
-
-```json
-{
-  "schema_version": 1,
-  "mode": "plan",
-  "requested": { "auto": true, "gpu_layers": "auto", "kv": "adaptive", "kv_placement": "auto" },
-  "resolved": { "backend": "Vulkan", "device": "Vulkan1", "gpu_layers": 30, "kv": "q8", "kv_placement": "auto" },
-  "memory_plan": { "estimated_kv_bytes": 50135040, "kv_gpu_layers": 30, "kv_cpu_layers": 0 },
-  "reason_codes": { "primary": "GPU_FULL_FIT", "trace": ["AUTO_REQUESTED", "GPU_DEVICE_FOUND", "GPU_FULL_FIT"] },
-  "warnings": []
-}
-```
-
-## Capability status
-
-| Capability | Status |
-|---|---|
-| CPU inference | Supported |
-| Vulkan GPU offload | Supported |
-| KV precision: `q8` (`Q8_0`) | Supported |
-| KV precision: `q5` (`Q5_1`) | Supported |
-| Adaptive whole-cache `q8`/`q5` selection | Supported |
-| Static CPU/GPU KV residency (`--kv-placement`) | Supported |
-| `--auto` planning | Supported |
-| `--plan-only` / `--verbose` diagnostics | Supported |
-| JSON diagnostics (`schema_version: 1`) | Supported |
-| CUDA | Not a supported product path |
-| Dynamic/runtime KV migration | Research only |
-| Per-layer mixed `q8`/`q5` precision | Research only |
-
-## Limitations
-
-- Development and testing are Linux-focused; other platforms are
-  untested.
-- Vulkan is the only product GPU backend; CUDA is not currently
-  supported as a product path.
-- KV placement is decided once, before context construction — there is
-  no runtime migration, promotion, or demotion.
-- Memory figures in a plan are pre-load **estimates**, not measured
-  peak VRAM or an OOM guarantee — actual `ggml` allocator overhead and
-  other processes claiming memory after the plan resolves aren't
-  visible to it.
-- Device free-memory values are point-in-time snapshots and can go
-  stale before a run finishes loading.
-- Adaptive KV selection is whole-cache (`q8` or `q5` for the entire
-  context) — there is no per-layer or per-block mixed-precision product
-  policy.
-- Hardware and model coverage is limited. `q8`/`q5`/`adaptive` KV
-  precision is checked for compatibility before use and only
-  validated for `LLM_ARCH_LLAMA` models — a `qwen2`-architecture model
-  was validated for `--kv-placement`/`native`-precision capacity only
-  (see "Measured results"), not for KV precision compression, which
-  this architecture check rejects. All GPU testing is one GTX 1650
-  Vulkan host.
+| Supported | Not a product path | Research only |
+|---|---|---|
+| CPU inference | CUDA | Dynamic/runtime KV migration |
+| Vulkan GPU offload | | Per-layer mixed `q8`/`q5` precision |
+| KV precision: `q8`, `q5`, adaptive | | FPGA/CXL (simulation/synthesis-tool evidence only) |
+| Static CPU/GPU KV residency | | |
+| `--auto` planning | | |
+| `--plan-only` / `--verbose` diagnostics | | |
+| JSON diagnostics (`schema_version: 1`) | | |
 
 ## Build
 
@@ -325,60 +115,53 @@ cmake -S . -B build-llama -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-llama -j --target membrane-run
 ```
 
-Vulkan (adds `--gpu-layers`/`--kv-placement gpu`/`auto` support; needs
-Vulkan development headers, `glslc`, and SPIR-V headers already on the
-system — MEMBRANE never installs system packages automatically):
+Vulkan (needs Vulkan development headers, `glslc`, and SPIR-V headers
+already on the system):
 
 ```bash
-cmake -S . -B build-vulkan \
-  -DMEMBRANE_ENABLE_LLAMA=ON \
-  -DGGML_VULKAN=ON \
-  -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build-vulkan -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-vulkan -j --target membrane-run
 ```
 
-Building the llama-free core library and test suite (no model, no
-`third_party/llama.cpp` submodule needed):
+Full flag reference and exit codes: `membrane-run --help`. Reproduction
+guide (llama-free core library, sanitizers, CI): `docs/reproduction.md`.
 
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-ctest --test-dir build --output-on-failure
-```
+## Current scope
 
-## Release status
+- Linux-focused development and testing.
+- Vulkan is the only product GPU backend; CUDA is not currently supported.
+- KV placement is decided once, before context construction — no runtime
+  migration, promotion, or demotion.
+- Adaptive KV selection is whole-cache (`q8` or `q5` for the entire
+  context), never per-layer or per-block.
+- Memory figures in a plan are pre-load estimates and point-in-time
+  snapshots, not measured peak VRAM or an OOM guarantee.
+- `q8`/`q5`/adaptive KV precision is validated only for `LLM_ARCH_LLAMA`
+  models — checked and rejected for other architectures before use.
 
-Latest stable tag: `v0.2.0`. Release candidate: `v0.3.0-rc1`. Current
-`main` contains product hardening completed after `v0.3.0-rc1` — Q5 KV,
-adaptive KV precision, static KV residency planning, and the `--auto`/
-`--plan-only`/`--verbose`/JSON diagnostics described above are all on
-`main` but not yet part of a tagged release.
+Mechanism detail: `docs/live-runtime.md` (KV precision) and
+`docs/kv-residency.md` (KV placement).
 
 ## Research & provenance
 
-This repository intentionally does not keep experiment branches or a
-phase-by-phase research history. Full experiment records, negative
-results, benchmark evidence, FPGA/CXL research (simulation and
-synthesis-tool proxies only — no physical FPGA or CXL hardware), and
-promotion provenance live in
+This repository intentionally keeps no experiment branches or phase-by-phase
+research history. Full experiment records, negative results, and FPGA/CXL
+research (simulation and synthesis-tool proxies only, no physical hardware)
+live in
 **[kadireren7/membrane-research](https://github.com/kadireren7/membrane-research)**,
 with SHA256-verified provenance back to this repository.
 
-Deeper docs: [`docs/live-runtime.md`](docs/live-runtime.md) (KV
-precision mechanism), [`docs/kv-residency.md`](docs/kv-residency.md)
-(KV placement design and limitations),
-[`docs/reproduction.md`](docs/reproduction.md) (full build/test/CI
-reproduction guide), [`docs/licensing.md`](docs/licensing.md) (license
-boundaries).
+**Release status**: latest stable tag `v0.2.0`, release candidate
+`v0.3.0-rc1`. Current `main` contains product hardening completed after
+`v0.3.0-rc1` (Q5 KV, adaptive KV, static residency, `--auto`/`--plan-only`
+diagnostics) not yet in a tagged release.
 
 ## AI-assisted development
 
 Kadir Eren Altıntaş leads project architecture, experiment selection,
-validation criteria, release decisions, and repository direction. AI
-coding agents have assisted implementation, analysis automation,
-documentation, and review. Results promoted by the project are
-validated through tests, CI, reproducible experiments, or explicitly
-classified as estimates/simulation. Full disclosure:
+validation criteria, and release decisions. AI coding agents have assisted
+implementation, analysis automation, documentation, and review. Full
+disclosure:
 [kadireren7/membrane-research](https://github.com/kadireren7/membrane-research)'s
 `outreach/ai-assistance-disclosure.md`.
 

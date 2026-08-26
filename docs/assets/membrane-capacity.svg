@@ -1,0 +1,29 @@
+<svg width="760" height="496" viewBox="0 0 760 496" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Bar chart: default all-GPU KV placement succeeds at context 26,500 and fails at context 26,800 with a real Vulkan out-of-device-memory error; MEMBRANE auto and cpu KV placement both succeed at context 28,500 in the same tested configuration on Qwen2.5-1.5B, GTX 1650, Vulkan, native KV precision, 28 of 28 GPU weight layers.">
+  <title>MEMBRANE KV-placement capacity result</title>
+  <rect width="760" height="496" fill="#0d1117"/>
+<text x="30" y="34" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" fill="#8b949e" letter-spacing="1.5">MEASURED — Qwen2.5-1.5B · GTX 1650 · Vulkan · native KV · 28/28 GPU weight layers</text>
+<text x="30" y="58" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#e6edf3" font-weight="700">KV placement, context capacity at fixed weight offload</text>
+<text x="30" y="92" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11.5" fill="#8b949e">DEFAULT (all-GPU KV)</text>
+<text x="30" y="246" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11.5" fill="#8b949e">MEMBRANE PLACEMENT (auto / cpu)</text>
+<text x="184" y="138" text-anchor="end" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">default</text>
+<rect x="200" y="116" width="353.3" height="26" rx="4" fill="#5ee6c8" fill-opacity="0.85"/>
+<text x="583.3" y="135" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#5ee6c8">ctx 26,500</text>
+<path d="M561.3333333333333,129 L565.8333333333333,134 L573.8333333333333,123" fill="none" stroke="#5ee6c8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="184" y="192" text-anchor="end" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">default</text>
+<rect x="200" y="170" width="357.3" height="26" rx="4" fill="#f85149" fill-opacity="0.85"/>
+<text x="587.3" y="189" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#f85149">ctx 26,800</text>
+<path d="M565.8333333333334,177.5 L576.8333333333334,188.5 M576.8333333333334,177.5 L565.8333333333334,188.5" fill="none" stroke="#f85149" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="184" y="290" text-anchor="end" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">auto</text>
+<rect x="200" y="268" width="380.0" height="26" rx="4" fill="#5ee6c8" fill-opacity="0.85"/>
+<text x="610.0" y="287" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#5ee6c8">ctx 28,500</text>
+<path d="M588.0,281 L592.5,286 L600.5,275" fill="none" stroke="#5ee6c8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="184" y="344" text-anchor="end" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#e6edf3">cpu</text>
+<rect x="200" y="322" width="380.0" height="26" rx="4" fill="#5ee6c8" fill-opacity="0.85"/>
+<text x="610.0" y="341" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#5ee6c8">ctx 28,500</text>
+<path d="M588.0,335 L592.5,340 L600.5,329" fill="none" stroke="#5ee6c8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="30" y1="362" x2="730" y2="362" stroke="#30363d" stroke-width="1"/>
+<text x="30" y="388" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">Default fails between ctx 26,500 and 26,800 with a real Vulkan</text>
+<text x="30" y="408" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">out-of-device-memory error. --kv-placement auto/cpu succeed at ctx</text>
+<text x="30" y="428" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">28,500 in the same test — one tested configuration; see README</text>
+<text x="30" y="448" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">for the exact conservative-lower-bound uplift figure.</text>
+</svg>

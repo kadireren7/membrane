@@ -1,0 +1,35 @@
+$ ./build-vulkan/tools/membrane-run/membrane-run \
+    --model SmolLM2-135M-Instruct-f16.gguf \
+    --prompt "Hello" \
+    --ctx 4096 \
+    --auto \
+    --plan-only
+
+MEMBRANE 0.3.0-rc1
+model      SmolLM2-135M-Instruct-f16.gguf
+context    4096
+kv         Q8_0
+kv adaptive requested=adaptive selected=q8 reason=Q8_FULL_RESIDENCY
+flash attn enabled
+kv bytes   47.81 MiB (Q8_0, from real model hparams -- not measured until context creation)
+backend    Vulkan, device selected: Vulkan1 (gpu-layers=auto, selected=30)
+MEMBRANE plan
+  device: Vulkan1
+  gpu layers: 30/30
+  kv precision: Q8_0
+  kv placement: auto
+  kv layers: 30 GPU / 0 CPU
+  estimated weight bytes: 202.6 MiB
+  estimated GPU KV: 47.8 MiB, estimated CPU KV: 0.0 MiB
+  reason: GPU_FULL_FIT
+membrane-run: plan resolved (no generation performed)
+
+--- capture context ---
+host: Vulkan build, real NVIDIA GeForce GTX 1650 (device id "Vulkan1"
+assigned by ggml_backend_dev_* enumeration on this host)
+main commit: 635d191eeef4775325ead805ea55ceb769f3bf51
+captured: Phase 15 (docs/visual-readme-phase15), by running the exact
+command above against a freshly built `build-vulkan` target — not
+reconstructed or approximated. The "MEMBRANE plan" block (from
+"MEMBRANE plan" through "reason: GPU_FULL_FIT") is what
+docs/assets/membrane-terminal.svg renders verbatim.

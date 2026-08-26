@@ -1,0 +1,57 @@
+<svg width="700" height="336" viewBox="0 0 700 336" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="--auto fans out into three automatically managed decisions: GPU layers, KV type, and KV residency. An explicit --kv q8 override fixes only KV type to q8, leaving GPU layers and KV residency on auto.">
+  <title>--auto override semantics</title>
+  <defs>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5ee6c8"/>
+    </marker>
+  </defs>
+  <rect width="700" height="336" fill="#0d1117"/>
+
+  <rect x="286" y="14" width="128" height="38" rx="8" fill="#131a20" stroke="#5ee6c8" stroke-width="1.5"/>
+  <text x="350" y="38" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="14" fill="#5ee6c8" font-weight="700">--auto</text>
+
+  <path d="M350,52 L350,68 M350,68 L128,68 M350,68 L350,68 M350,68 L572,68" fill="none" stroke="#30363d" stroke-width="1.5"/>
+  <line x1="128" y1="68" x2="128" y2="86" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow2)"/>
+  <line x1="350" y1="68" x2="350" y2="86" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow2)"/>
+  <line x1="572" y1="68" x2="572" y2="86" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow2)"/>
+
+  <!-- three managed-decision cards -->
+  <g>
+    <rect x="48" y="90" width="160" height="72" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+    <text x="128" y="116" text-anchor="middle" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">GPU layers</text>
+    <text x="128" y="140" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="15" fill="#e6edf3" font-weight="700">auto</text>
+  </g>
+  <g>
+    <rect x="270" y="90" width="160" height="72" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+    <text x="350" y="116" text-anchor="middle" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">KV type</text>
+    <text x="350" y="140" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="15" fill="#e6edf3" font-weight="700">adaptive</text>
+  </g>
+  <g>
+    <rect x="492" y="90" width="160" height="72" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+    <text x="572" y="116" text-anchor="middle" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">KV residency</text>
+    <text x="572" y="140" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="15" fill="#e6edf3" font-weight="700">auto</text>
+  </g>
+
+  <line x1="60" y1="192" x2="640" y2="192" stroke="#21282e" stroke-width="1"/>
+
+  <!-- override example -->
+  <text x="60" y="222" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13.5" fill="#e6edf3">--auto <tspan fill="#5ee6c8" font-weight="700">--kv q8</tspan></text>
+  <text x="60" y="244" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">explicit flag overrides only the field it names</text>
+
+  <line x1="128" y1="256" x2="128" y2="272" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow2)"/>
+  <line x1="350" y1="256" x2="350" y2="272" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow2)"/>
+  <line x1="572" y1="256" x2="572" y2="272" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow2)"/>
+
+  <g>
+    <rect x="48" y="276" width="160" height="48" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+    <text x="128" y="305" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="14" fill="#8b949e">auto</text>
+  </g>
+  <g>
+    <rect x="270" y="276" width="160" height="48" rx="8" fill="#16241f" stroke="#3fb950" stroke-width="1.5"/>
+    <text x="350" y="305" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="14" fill="#3fb950" font-weight="700">q8 (explicit)</text>
+  </g>
+  <g>
+    <rect x="492" y="276" width="160" height="48" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+    <text x="572" y="305" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="14" fill="#8b949e">auto</text>
+  </g>
+</svg>
