@@ -1,6 +1,26 @@
 cmake_minimum_required(VERSION 3.16)
 project(membrane C)
 
+# Phase 17: standard, distro-correct install destinations (bin/, lib/ or
+# lib64/, share/, ...) -- used by tools/membrane-run/CMakeLists.txt's
+# install() rules instead of hardcoded "bin"/"lib" strings.
+include(GNUInstallDirs)
+
+# Phase 17: CMake has no built-in "uninstall" target. This one removes
+# exactly the files install_manifest.txt recorded for *this* build
+# directory's own install run -- never a directory, never a guess.
+# Registered unconditionally (not only under MEMBRANE_ENABLE_LLAMA) so
+# `cmake --build <dir> --target uninstall` gives the same clear,
+# manifest-driven error either way if nothing was installed yet.
+if(NOT TARGET uninstall)
+  configure_file(
+    ${CMAKE_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in
+    ${CMAKE_BINARY_DIR}/cmake_uninstall.cmake
+    IMMEDIATE @ONLY)
+  add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_BINARY_DIR}/cmake_uninstall.cmake)
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -290,6 +310,29 @@ if(MEMBRANE_ENABLE_LLAMA)
         "-- see docs/kv-residency.md")
     endif()
     message(STATUS "applied MEMBRANE kv_dev_override patch to llama.cpp")
+  endif()
+
+  # Phase 17: fail clearly, at configure time, before descending into
+  # third_party/llama.cpp's own CMake -- which itself does
+  # find_package(Vulkan COMPONENTS glslc REQUIRED) deep inside
+  # ggml/src/ggml-vulkan/CMakeLists.txt and would otherwise be the first
+  # place a missing Vulkan SDK surfaces, with a message that never
+  # mentions MEMBRANE or points back to the README's documented
+  # packages. GGML_VULKAN is llama.cpp's own option name (not defined
+  # by this file), read here only to decide whether to run this
+  # MEMBRANE-level pre-check -- it does not change llama.cpp's own
+  # handling of the flag.
+  if(GGML_VULKAN)
+    find_package(Vulkan QUIET)
+    if(NOT Vulkan_FOUND)
+      message(FATAL_ERROR
+        "Vulkan backend requested (-DGGML_VULKAN=ON) but Vulkan "
+        "development files were not found. Install the Vulkan SDK "
+        "development headers, the glslc shader compiler, and SPIR-V "
+        "headers for your distribution (see README.md's Vulkan build "
+        "section for the packages confirmed necessary on Ubuntu/"
+        "Pop!_OS), then re-run cmake.")
+    endif()
   endif()
 
   set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
