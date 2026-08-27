@@ -1,0 +1,465 @@
+{
+  "schema_version": 1,
+  "status_values": ["SUPPORTED", "UNSUPPORTED", "NOT_YET_VALIDATED"],
+  "hardware_scope_values": ["tested", "backend-level", "not-hardware-specific"],
+  "notes": "Compatibility, not performance: this matrix answers works / intentionally rejected / not yet validated. It does not carry tok/s, latency, or VRAM numbers -- see README's 'Measured results' and the cited evidence files for those. SUPPORTED requires direct product-path evidence (a test, a real-model smoke, or committed evidence already in the repo); it is never inferred from 'llama.cpp supports it' or 'compilation succeeds'. See docs/compatibility.md for the human-readable summary and scripts/verify-compatibility.py for the schema/evidence validator.",
+  "rows": [
+    {
+      "id": "MC-01",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "cpu",
+      "kv_precision": "native",
+      "kv_placement": "default",
+      "gpu_layers_mode": "0",
+      "context_class": "small (256-2048)",
+      "hardware_scope": "not-hardware-specific",
+      "status": "SUPPORTED",
+      "reason_code": "CPU_ONLY_REQUESTED",
+      "evidence": [
+        "results/v0.3/kv-residency-productization/cpu_behavior.json",
+        "results/phase18-compatibility-smoke.json#A"
+      ],
+      "notes": "Unmodified llama.cpp behavior; compat_check.c runs no checks at all for native mode."
+    },
+    {
+      "id": "MC-02",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "cpu",
+      "kv_precision": "q8",
+      "kv_placement": "default",
+      "gpu_layers_mode": "0",
+      "context_class": "small-medium (2048-16384)",
+      "hardware_scope": "not-hardware-specific",
+      "status": "SUPPORTED",
+      "reason_code": "CPU_ONLY_REQUESTED",
+      "evidence": [
+        "results/v0.4/adaptive-kv-validation.json#cpu_validation_matrix",
+        "results/phase18-compatibility-smoke.json#B"
+      ],
+      "notes": "Real Q8_0-typed KV tensors on CPU, not a shadow copy."
+    },
+    {
+      "id": "MC-03",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "cpu",
+      "kv_precision": "q5",
+      "kv_placement": "default",
+      "gpu_layers_mode": "0",
+      "context_class": "small-medium (2048-16384)",
+      "hardware_scope": "not-hardware-specific",
+      "status": "SUPPORTED",
+      "reason_code": "CPU_ONLY_REQUESTED",
+      "evidence": [
+        "results/v0.4/adaptive-kv-validation.json#cpu_validation_matrix"
+      ],
+      "notes": "Real Q5_1-typed KV tensors on CPU."
+    },
+    {
+      "id": "MC-04",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "cpu",
+      "kv_precision": "adaptive",
+      "kv_placement": "default",
+      "gpu_layers_mode": "0",
+      "context_class": "small-medium (2048-16384)",
+      "hardware_scope": "not-hardware-specific",
+      "status": "SUPPORTED",
+      "reason_code": "CPU_ADAPTIVE_Q8_DEFAULT",
+      "evidence": [
+        "results/v0.4/adaptive-kv-validation.json#cpu_validation_matrix"
+      ],
+      "notes": "Adaptive resolves to q8 under normal CPU conditions at every tested context, matching explicit --kv q8's real KV bytes exactly. Never falls back to native silently."
+    },
+    {
+      "id": "MC-05",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "kv_precision": "native",
+      "kv_placement": "default",
+      "gpu_layers_mode": "all",
+      "context_class": "small-medium (512-16384)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "",
+      "evidence": [
+        "results/v0.3/gpu-vulkan-validation.json"
+      ],
+      "notes": "Tested hardware: real GTX 1650. Backend-level Vulkan support beyond this device is not separately claimed -- see hardware_scope."
+    },
+    {
+      "id": "MC-06",
+      "model_family": "SmolLM2-135M-Instruct, SmolLM2-360M-Instruct",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "kv_precision": "q8",
+      "kv_placement": "default",
+      "gpu_layers_mode": "all",
+      "context_class": "small to very-large-tested (512-220000)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "",
+      "evidence": [
+        "results/v0.3/gpu-vulkan-validation.json",
+        "results/v0.3/kv-residency-productization/precision_matrix.json",
+        "results/v0.4/q5-validation.json#capacity_reconfirm_360m_vulkan"
+      ],
+      "notes": "135M tested 512-16384; 360M tested up to ctx=220000 on a 4GB-class GPU (tested GTX 1650). At that same host, q8 hits a real VRAM capacity boundary between ctx=131072 (succeeds, partial residency) and ctx=180000 (exit_code 5, real Vulkan OOM) while q5 still succeeds at ctx=220000 -- a measured CAPACITY limit at this specific hardware, not a compatibility rejection (see 'compatibility != performance/capacity' in compatibility.md)."
+    },
+    {
+      "id": "MC-07",
+      "model_family": "SmolLM2-135M-Instruct, SmolLM2-360M-Instruct",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "kv_precision": "q5",
+      "kv_placement": "default",
+      "gpu_layers_mode": "all",
+      "context_class": "small to very-large-tested (512-220000)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "",
+      "evidence": [
+        "results/v0.3/kv-residency-productization/precision_matrix.json",
+        "results/v0.4/q5-validation.json#capacity_reconfirm_360m_vulkan"
+      ],
+      "notes": "360M q5 succeeds through ctx=220000 (tested GTX 1650) -- no OOM observed at any tested q5 context, unlike q8 (see MC-06)."
+    },
+    {
+      "id": "MC-08",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "kv_precision": "adaptive",
+      "kv_placement": "default",
+      "gpu_layers_mode": "auto",
+      "context_class": "small-medium (2048-16384)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "CPU_ADAPTIVE_Q8_DEFAULT (analogous GPU reasoning; see file)",
+      "evidence": [
+        "results/v0.4/adaptive-kv-validation.json#vulkan_validation_matrix"
+      ],
+      "notes": "Full 30/30-layer GPU residency confirmed at every tested context; adaptive's selected KV bytes match explicit --kv q8 exactly."
+    },
+    {
+      "id": "MC-09",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "kv_precision": "q8",
+      "kv_placement": "gpu",
+      "gpu_layers_mode": "all",
+      "context_class": "medium (4096)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "",
+      "evidence": [
+        "results/v0.3/kv-residency-productization/precision_matrix.json"
+      ],
+      "notes": "Precision and placement are independently tested axes -- this row is q8 with explicit gpu placement, distinct from MC-06's default placement."
+    },
+    {
+      "id": "MC-10",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "kv_precision": "q8",
+      "kv_placement": "cpu",
+      "gpu_layers_mode": "all",
+      "context_class": "medium (4096)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "",
+      "evidence": [
+        "results/v0.3/kv-residency-productization/precision_matrix.json"
+      ],
+      "notes": "Weights GPU-resident, KV cache forced to system RAM. Generation succeeded."
+    },
+    {
+      "id": "MC-11",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "kv_precision": "q5",
+      "kv_placement": "cpu",
+      "gpu_layers_mode": "all",
+      "context_class": "medium (4096)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "",
+      "evidence": [
+        "results/v0.3/kv-residency-productization/precision_matrix.json"
+      ],
+      "notes": "Same shape as MC-10 with q5 instead of q8."
+    },
+    {
+      "id": "MC-12",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "kv_precision": "native",
+      "kv_placement": "auto",
+      "gpu_layers_mode": "all",
+      "context_class": "small (2048)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "PLACEMENT_GPU_FULL",
+      "evidence": [
+        "results/v0.3/kv-residency-productization/control_points.json#A_plenty_of_vram"
+      ],
+      "notes": "auto placement chose full GPU residency (30/30 KV layers) when VRAM headroom was plentiful."
+    },
+    {
+      "id": "MC-13",
+      "model_family": "Qwen2.5-1.5B-Instruct",
+      "model_arch": "qwen2",
+      "backend": "vulkan",
+      "kv_precision": "native",
+      "kv_placement": "default",
+      "gpu_layers_mode": "all",
+      "context_class": "large-tested (24000-26500)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "",
+      "evidence": [
+        "results/v0.3/kv-residency-productization/capacity_uplift.json"
+      ],
+      "notes": "Default all-GPU-KV path succeeds at ctx=26500 and fails (real Vulkan OOM) at ctx=26800 on the tested GTX 1650 -- a capacity boundary, not a compatibility rejection."
+    },
+    {
+      "id": "MC-14",
+      "model_family": "Qwen2.5-1.5B-Instruct",
+      "model_arch": "qwen2",
+      "backend": "vulkan",
+      "kv_precision": "native",
+      "kv_placement": "auto",
+      "gpu_layers_mode": "all",
+      "context_class": "large-tested (28500)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "PLACEMENT_AUTO_SPLIT",
+      "evidence": [
+        "results/v0.3/kv-residency-productization/capacity_uplift.json",
+        "results/v0.3/kv-residency-productization/control_points.json#B_constrained_split"
+      ],
+      "notes": "auto succeeds at ctx=28500 (26/28 GPU-resident KV layers, 2 in system RAM) where default fails. See README's 'important_qualification' in summary.json for the narrow, non-generalized scope of this uplift."
+    },
+    {
+      "id": "MC-15",
+      "model_family": "Qwen2.5-1.5B-Instruct",
+      "model_arch": "qwen2",
+      "backend": "vulkan",
+      "kv_precision": "native",
+      "kv_placement": "cpu",
+      "gpu_layers_mode": "all",
+      "context_class": "large-tested (28500)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "PLACEMENT_CPU_FULL",
+      "evidence": [
+        "results/v0.3/kv-residency-productization/capacity_uplift.json",
+        "results/v0.3/kv-residency-productization/control_points.json#C_strongly_constrained"
+      ],
+      "notes": "All 28 KV layers forced to system RAM, weights stay GPU-resident. Generation succeeded."
+    },
+    {
+      "id": "MC-16",
+      "model_family": "Qwen2.5-1.5B-Instruct",
+      "model_arch": "qwen2",
+      "backend": "cpu",
+      "kv_precision": "native",
+      "kv_placement": "default",
+      "gpu_layers_mode": "0",
+      "context_class": "small (256)",
+      "hardware_scope": "not-hardware-specific",
+      "status": "SUPPORTED",
+      "reason_code": "CPU_ONLY_REQUESTED",
+      "evidence": [
+        "results/phase18-compatibility-smoke.json#D"
+      ],
+      "notes": "Native mode has no architecture gate and no prior CPU-backend evidence existed for this model family before this Phase 18 smoke."
+    },
+    {
+      "id": "MC-17",
+      "model_family": "Qwen2.5-1.5B-Instruct",
+      "model_arch": "qwen2",
+      "backend": "cpu, vulkan",
+      "kv_precision": "q8",
+      "kv_placement": "any",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "UNSUPPORTED",
+      "reason_code": "KV_COMPAT_UNSUPPORTED",
+      "evidence": [
+        "tools/membrane-run/compat_check.c",
+        "tools/membrane-run/test_compat_check.c",
+        "results/phase18-compatibility-smoke.json#C"
+      ],
+      "notes": "Intentional: compat_check.c's architecture gate accepts only arch_name==\"llama\" for compressed KV. The gate takes no backend parameter, so this rejection is identical on CPU and Vulkan builds. This is a placement/precision-independent finding, distinct from MC-13..MC-16's native+placement evidence for this same model family."
+    },
+    {
+      "id": "MC-18",
+      "model_family": "Qwen2.5-1.5B-Instruct",
+      "model_arch": "qwen2",
+      "backend": "cpu, vulkan",
+      "kv_precision": "q5",
+      "kv_placement": "any",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "UNSUPPORTED",
+      "reason_code": "KV_COMPAT_UNSUPPORTED",
+      "evidence": [
+        "tools/membrane-run/compat_check.c",
+        "tools/membrane-run/test_compat_check.c"
+      ],
+      "notes": "Same architecture gate as MC-17, Q5_1 variant."
+    },
+    {
+      "id": "MC-19",
+      "model_family": "Qwen2.5-1.5B-Instruct",
+      "model_arch": "qwen2",
+      "backend": "cpu",
+      "kv_precision": "adaptive",
+      "kv_placement": "default",
+      "gpu_layers_mode": "0",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "UNSUPPORTED",
+      "reason_code": "KV_COMPAT_UNSUPPORTED",
+      "evidence": [
+        "results/phase18-compatibility-smoke.json#E"
+      ],
+      "notes": "Adaptive resolves to a q8 candidate first, then hits the same MC-17 gate -- fails closed with the identical reason code, never a silent fallback to native."
+    },
+    {
+      "id": "MC-20",
+      "model_family": "any",
+      "model_arch": "any",
+      "backend": "any",
+      "kv_precision": "any",
+      "kv_placement": "gpu or auto without --gpu-layers",
+      "gpu_layers_mode": "0 (default)",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "UNSUPPORTED",
+      "reason_code": "CLI_ERROR",
+      "evidence": [
+        "tools/membrane-run/test_product_cli.cpp#test_kv_placement_gpu_requires_gpu_layers",
+        "results/phase18-compatibility-smoke.json#F"
+      ],
+      "notes": "Intentional CLI-level rejection at parse time, before any model load. Exit code 2."
+    },
+    {
+      "id": "MC-21",
+      "model_family": "any",
+      "model_arch": "any",
+      "backend": "cpu-only build (no GPU backend compiled in)",
+      "kv_precision": "any",
+      "kv_placement": "any",
+      "gpu_layers_mode": "all or auto",
+      "context_class": "n/a",
+      "hardware_scope": "backend-level",
+      "status": "UNSUPPORTED",
+      "reason_code": "NO_GPU_DEVICE",
+      "evidence": [
+        "results/v0.3/kv-residency-productization/cpu_behavior.json",
+        "results/phase18-compatibility-smoke.json#G"
+      ],
+      "notes": "Fails closed before model load, exit code 5. --kv-placement cpu/default remain valid on a CPU-only build regardless of this."
+    },
+    {
+      "id": "MC-22",
+      "model_family": "any",
+      "model_arch": "any",
+      "backend": "any",
+      "kv_precision": "any",
+      "kv_placement": "non-default, together with --compare-kv or --gpu-bench",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "UNSUPPORTED",
+      "reason_code": "CLI_ERROR",
+      "evidence": [
+        "tools/membrane-run/test_product_cli.cpp#test_kv_placement_rejects_compare_and_bench_modes",
+        "tools/membrane-run/test_product_cli.cpp#test_gpu_bench_compare_kv_mutually_exclusive"
+      ],
+      "notes": "Intentional Phase 12H scope limit: --compare-kv/--gpu-bench only support the default placement."
+    },
+    {
+      "id": "MC-23",
+      "model_family": "any",
+      "model_arch": "any",
+      "backend": "cuda",
+      "kv_precision": "any",
+      "kv_placement": "any",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "backend-level",
+      "status": "UNSUPPORTED",
+      "reason_code": "NOT_A_PRODUCT_BACKEND",
+      "evidence": [
+        "README.md#current-scope",
+        "CMakeLists.txt"
+      ],
+      "notes": "CUDA is not a build option anywhere in this repository's CMake -- there is no CUDA code path to fail closed from, it simply is not compiled. Vulkan is the only product GPU backend."
+    },
+    {
+      "id": "MC-24",
+      "model_family": "any",
+      "model_arch": "any",
+      "backend": "any",
+      "kv_precision": "any",
+      "kv_placement": "runtime migration/relocation/retirement",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "UNSUPPORTED",
+      "reason_code": "NOT_A_PRODUCT_CAPABILITY",
+      "evidence": [
+        "README.md#current-scope",
+        "docs/kv-residency.md"
+      ],
+      "notes": "KV placement is decided once, before context construction. Dynamic/runtime KV migration exists only as research-only prior-phase evidence (simulation), never as a membrane-run product path -- see prior-phase memory, not this matrix."
+    },
+    {
+      "id": "MC-25",
+      "model_family": "any",
+      "model_arch": "any",
+      "backend": "any",
+      "kv_precision": "per-layer mixed q8/q5",
+      "kv_placement": "any",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "UNSUPPORTED",
+      "reason_code": "NOT_A_PRODUCT_CAPABILITY",
+      "evidence": [
+        "README.md#current-capabilities"
+      ],
+      "notes": "Adaptive selection is whole-cache (one mode for the entire context), never per-layer or per-block."
+    },
+    {
+      "id": "MC-26",
+      "model_family": "other llama.cpp architectures (e.g. gemma3, mistral, phi3, gemma2)",
+      "model_arch": "not llama or qwen2",
+      "backend": "cpu, vulkan",
+      "kv_precision": "native",
+      "kv_placement": "default",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "NOT_YET_VALIDATED",
+      "reason_code": "",
+      "evidence": [
+        "tools/membrane-run/test_compat_check.c#test_native_always_ok"
+      ],
+      "notes": "compat_check.c runs zero checks for native mode regardless of architecture (confirmed with an intentionally nonsense arch string in test_native_always_ok), and llama.cpp itself implements many more architectures than llama/qwen2. Neither fact is evidence of MEMBRANE product support: no MEMBRANE evidence file or smoke has ever exercised any architecture besides llama and qwen2. Do not read compat_check.c's permissiveness as a support claim."
+    }
+  ]
+}

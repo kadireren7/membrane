@@ -159,7 +159,8 @@ troubleshooting, and the CPU-vs-Vulkan dependency footprint:
   models — checked and rejected for other architectures before use.
 
 Mechanism detail: `docs/live-runtime.md` (KV precision) and
-`docs/kv-residency.md` (KV placement).
+`docs/kv-residency.md` (KV placement). Full architecture/backend/
+precision/placement compatibility matrix: `docs/compatibility.md`.
 
 ## Research & provenance
 

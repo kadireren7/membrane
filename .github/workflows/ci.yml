@@ -3,6 +3,18 @@ name: CI
 on: [push, pull_request]
 
 jobs:
+  # Phase 18: validates docs/compatibility.json's schema, evidence-file
+  # existence, and status-integrity invariants (no unsupported evidence
+  # claims, no over-claiming NOT_YET_VALIDATED as proven). Deliberately
+  # its own job, not folded into build-and-test: it needs only python3
+  # and a checkout, no GPU, no model download, no C/C++ build at all.
+  compatibility-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify compatibility matrix
+        run: python3 scripts/verify-compatibility.py
+
   build-and-test:
     runs-on: ubuntu-latest
     strategy:
