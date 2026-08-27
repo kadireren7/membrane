@@ -73,6 +73,24 @@ if(BUILD_SHARED_LIBS)
   foreach(_membrane_run_dep IN ITEMS llama ggml ggml-base ggml-cpu
       ggml-blas ggml-vulkan membrane_core)
     if(TARGET ${_membrane_run_dep})
+      # membrane_core's own SHARED/STATIC-ness follows BUILD_SHARED_LIBS
+      # at the point its add_library() call is evaluated, at the top of
+      # the root CMakeLists.txt -- BEFORE this MEMBRANE_ENABLE_LLAMA
+      # block (and thus before llama.cpp's own CMake sets
+      # BUILD_SHARED_LIBS=ON) ever runs. On a from-scratch configure it
+      # is therefore STATIC even though this whole block only runs when
+      # BUILD_SHARED_LIBS is ON by the time *this* file is processed --
+      # confirmed directly: a fresh-clone build installed a stray,
+      # unnecessary libmembrane_core.a here with no runtime purpose
+      # (statically linked straight into membrane-run) before this
+      # TYPE check was added. Skip anything that isn't actually a
+      # shared library rather than assuming every name in the list
+      # above is one.
+      get_target_property(_membrane_run_dep_type ${_membrane_run_dep}
+        TYPE)
+      if(NOT _membrane_run_dep_type STREQUAL "SHARED_LIBRARY")
+        continue()
+      endif()
       # libllama.so/libggml*.so ship with no RPATH of their own (not
       # this project's target -- llama.cpp's own CMake sets none), so
       # libllama.so can locate its sibling libggml*.so only via
