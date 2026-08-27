@@ -77,7 +77,10 @@ general hardware claim — a different GPU or model will measure differently.
 ![Bar chart: default all-GPU KV placement succeeds at context 26,500 and fails at context 26,800 with a real Vulkan out-of-device-memory error; MEMBRANE auto and cpu KV placement both succeed at context 28,500 in the same tested configuration](docs/assets/membrane-capacity.svg)
 
 Source: `results/v0.3/kv-residency-productization/capacity_uplift.json`,
-re-verified by `scripts/verify-results.py`. This Qwen2.5 result validates KV
+re-verified by `scripts/verify-results.py`: the default all-GPU-KV path
+succeeds at `ctx=26500` and fails at `ctx=26800` with a real Vulkan
+out-of-device-memory error; `--kv-placement auto`/`cpu` both succeed at
+`ctx=28500` in the same test. This Qwen2.5 result validates KV
 **placement** at **native** precision — the current `qwen2` architecture
 compatibility check does not validate `q8`/`q5`/adaptive KV **compression**
 for that model family (only `LLM_ARCH_LLAMA` models are validated for
