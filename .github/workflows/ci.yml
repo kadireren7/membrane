@@ -78,8 +78,9 @@ jobs:
             spirv-headers
 
       - name: CPU configure
-        run: cmake -S . -B build-cpu-install \
-          -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake -S . -B build-cpu-install \
+            -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
 
       - name: CPU build
         run: cmake --build build-cpu-install -j --target membrane-run
@@ -94,9 +95,10 @@ jobs:
           /tmp/membrane-install-cpu/bin/membrane-run --help
 
       - name: Vulkan configure
-        run: cmake -S . -B build-vulkan-install \
-          -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON \
-          -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake -S . -B build-vulkan-install \
+            -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON \
+            -DCMAKE_BUILD_TYPE=Release
 
       - name: Vulkan build
         run: cmake --build build-vulkan-install -j --target membrane-run
