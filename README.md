@@ -135,11 +135,13 @@ guide (llama-free core library, sanitizers, CI): `docs/reproduction.md`.
 cmake --install build-vulkan --prefix "$HOME/.local"
 ```
 
-Installs `membrane-run` plus the shared libraries it links against
-(`llama`, `ggml*`, `membrane_core`) with an `$ORIGIN`-relative RPATH,
-so the installed binary runs standalone — no build tree, no
-`LD_LIBRARY_PATH`. `cmake --build build-vulkan --target uninstall`
-removes exactly what that install run recorded. Full walkthrough,
+Installs `membrane-run` plus whichever of its dependencies (`llama`,
+`ggml*`, and `membrane_core` if it happens to be built shared rather
+than statically linked in) are actually shared libraries in your
+configuration, each with an `$ORIGIN`-relative RPATH, so the installed
+binary runs standalone — no build tree, no `LD_LIBRARY_PATH`.
+`cmake --build build-vulkan --target uninstall` removes exactly what
+that install run recorded. Full walkthrough,
 troubleshooting, and the CPU-vs-Vulkan dependency footprint:
 [`docs/install.md`](docs/install.md).
 

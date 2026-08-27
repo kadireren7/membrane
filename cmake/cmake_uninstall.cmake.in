@@ -20,14 +20,31 @@ endif()
 
 file(STRINGS "${MANIFEST}" MEMBRANE_INSTALLED_FILES)
 set(MEMBRANE_UNINSTALL_MISSING "")
+set(MEMBRANE_UNINSTALL_FAILED "")
 foreach(_file IN LISTS MEMBRANE_INSTALLED_FILES)
   if(EXISTS "${_file}" OR IS_SYMLINK "${_file}")
     message(STATUS "Removing: ${_file}")
     file(REMOVE "${_file}")
+    # file(REMOVE) does not fail or report an error if the OS-level
+    # removal itself fails (e.g. a read-only file/directory) -- it
+    # would otherwise be possible for this loop to print "Removing:"
+    # for every entry and then "Uninstall complete" below while a file
+    # is still actually there. Check explicitly rather than trust
+    # file(REMOVE)'s silence.
+    if(EXISTS "${_file}" OR IS_SYMLINK "${_file}")
+      list(APPEND MEMBRANE_UNINSTALL_FAILED "${_file}")
+    endif()
   else()
     list(APPEND MEMBRANE_UNINSTALL_MISSING "${_file}")
   endif()
 endforeach()
+
+if(MEMBRANE_UNINSTALL_FAILED)
+  message(FATAL_ERROR
+    "Failed to remove the following installed file(s) (permission "
+    "denied, or some other OS-level removal failure): "
+    "${MEMBRANE_UNINSTALL_FAILED}")
+endif()
 
 if(MEMBRANE_UNINSTALL_MISSING)
   list(LENGTH MEMBRANE_UNINSTALL_MISSING MEMBRANE_UNINSTALL_MISSING_COUNT)

@@ -324,7 +324,18 @@ if(MEMBRANE_ENABLE_LLAMA)
   # handling of the flag.
   if(GGML_VULKAN)
     find_package(Vulkan QUIET)
-    if(NOT Vulkan_FOUND)
+    # Vulkan_glslc_FOUND/Vulkan::glslc need CMake 3.24/3.19 respectively
+    # (this project requires only 3.16 -- see cmake_minimum_required
+    # above), so find_package(Vulkan) alone can't tell us whether glslc
+    # is actually present; a Vulkan SDK install missing only the shader
+    # compiler would otherwise pass this pre-check and still fail
+    # inside third_party/llama.cpp's own find_package(Vulkan COMPONENTS
+    # glslc REQUIRED) -- exactly the generic, MEMBRANE-unaware error
+    # this whole pre-check exists to avoid. find_program() works the
+    # same on every supported CMake version.
+    find_program(MEMBRANE_GLSLC_EXECUTABLE NAMES glslc
+      HINTS "$ENV{VULKAN_SDK}/bin" "$ENV{VULKAN_SDK}/Bin")
+    if(NOT Vulkan_FOUND OR NOT MEMBRANE_GLSLC_EXECUTABLE)
       message(FATAL_ERROR
         "Vulkan backend requested (-DGGML_VULKAN=ON) but Vulkan "
         "development files were not found. Install the Vulkan SDK "

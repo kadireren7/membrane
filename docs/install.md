@@ -7,6 +7,12 @@ binary, and removing it again. For CLI flag semantics see `membrane-run
 
 Linux only — this has not been verified on macOS or Windows.
 
+Every step below (CPU and Vulkan configure/build/install/run-outside-
+the-build-tree/uninstall) is exercised on every push and PR by
+`.github/workflows/ci.yml`'s `packaging-smoke` job — a continuously
+re-verified check, rather than a point-in-time log that could go stale
+as the codebase changes.
+
 ## Prerequisites
 
 - A C11/C++17 compiler (GCC or Clang) and CMake ≥ 3.16.
@@ -97,9 +103,13 @@ sudo cmake --install build-vulkan
 installs:
 
 - `<prefix>/bin/membrane-run`
-- `<prefix>/lib/libllama.so*`, `libggml*.so*`, `libmembrane_core.so`
-  (membrane-run links these dynamically — see "Why install shared
-  libraries" below)
+- `<prefix>/<libdir>/libllama.so*`, `libggml*.so*` (`<libdir>` is
+  `lib` on most distributions, but GNUInstallDirs can resolve it to
+  `lib64` on some — check `install_manifest.txt`, described below, for
+  the exact paths on your system). `membrane_core` joins this list
+  only if your build happens to produce it as a shared library rather
+  than linking it statically into `membrane-run` — see "Why install
+  shared libraries" below.
 - `<prefix>/share/membrane/LICENSE.txt`
 
 If you used `--prefix "$HOME/.local"`, make sure `~/.local/bin` is on
