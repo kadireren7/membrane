@@ -99,7 +99,7 @@
       "kv_precision": "q8",
       "kv_placement": "default",
       "gpu_layers_mode": "all",
-      "context_class": "small to very-large-tested (512-220000)",
+      "context_class": "small to large-tested (512-131072)",
       "hardware_scope": "tested",
       "status": "SUPPORTED",
       "reason_code": "",
@@ -108,7 +108,7 @@
         "results/v0.3/kv-residency-productization/precision_matrix.json",
         "results/v0.4/q5-validation.json#capacity_reconfirm_360m_vulkan"
       ],
-      "notes": "135M tested 512-16384; 360M tested up to ctx=220000 on a 4GB-class GPU (tested GTX 1650). At that same host, q8 hits a real VRAM capacity boundary between ctx=131072 (succeeds, partial residency) and ctx=180000 (exit_code 5, real Vulkan OOM) while q5 still succeeds at ctx=220000 -- a measured CAPACITY limit at this specific hardware, not a compatibility rejection (see 'compatibility != performance/capacity' in compatibility.md)."
+      "notes": "135M tested 512-16384; 360M's largest SUCCESSFUL tested q8 context is 131072 (partial residency, 31/32 layers) on a 4GB-class GPU (tested GTX 1650). Beyond that, q8 hits a real VRAM capacity boundary: ctx=180000 and ctx=220000 both fail (exit_code 5, real Vulkan OOM) -- context_class's upper bound reflects only the largest context q8 actually succeeded at, not the largest context tested at all (q5 was tested further, at ctx=220000, and succeeded -- see MC-07). This is a measured CAPACITY limit at this specific hardware, not a compatibility rejection (see 'compatibility != performance/capacity' in compatibility.md)."
     },
     {
       "id": "MC-07",
@@ -422,10 +422,11 @@
       "status": "UNSUPPORTED",
       "reason_code": "NOT_A_PRODUCT_CAPABILITY",
       "evidence": [
-        "README.md#current-scope",
-        "docs/kv-residency.md"
+        "tools/membrane-run/main.cpp#resolve_kv_placement",
+        "tools/membrane-run/kv_residency_policy.c",
+        "README.md#current-scope"
       ],
-      "notes": "KV placement is decided once, before context construction. Dynamic/runtime KV migration exists only as research-only prior-phase evidence (simulation), never as a membrane-run product path -- see prior-phase memory, not this matrix."
+      "notes": "resolve_kv_placement() in main.cpp runs exactly once, before the KV cache/context is constructed, and its output feeds directly into context construction with no later call site that could move a KV layer afterward. Independently: grepping tools/membrane-run/*.c, *.cpp, *.h for 'relocat', 'retire', or 'migrat' returns zero matches -- there is no relocation/retirement/migration code in the product path at all, structurally, not just by policy. Dynamic/runtime KV migration exists only as research-only prior-phase evidence (simulation), never as a membrane-run product path."
     },
     {
       "id": "MC-25",
@@ -440,9 +441,10 @@
       "status": "UNSUPPORTED",
       "reason_code": "NOT_A_PRODUCT_CAPABILITY",
       "evidence": [
+        "tools/membrane-run/adaptive_kv_policy.h#s_membrane_adaptive_kv_result",
         "README.md#current-capabilities"
       ],
-      "notes": "Adaptive selection is whole-cache (one mode for the entire context), never per-layer or per-block."
+      "notes": "s_membrane_adaptive_kv_result's selected_mode is a single int field (MEMBRANE_ADAPTIVE_KV_MODE_Q8/Q5), not a per-layer array or map -- adaptive selection is structurally whole-cache (one mode for the entire context), never per-layer or per-block."
     },
     {
       "id": "MC-26",

@@ -74,8 +74,11 @@ itself fails closed before model load (MC-21) — `--kv-placement cpu` and
 
 ## Backend compatibility
 
-- **CPU** — always supported, every combination not otherwise gated by the
-  architecture/precision check above.
+- **CPU** — supported as a backend; individual combinations remain
+  subject to the same CLI, device, placement, and architecture/precision
+  gates as any other backend (e.g. MC-20's CLI-level placement rejection
+  applies regardless of backend, and MC-21 is specifically a CPU-only
+  build rejecting a GPU placement request).
 - **Vulkan** — the only product GPU backend. Precision/placement rows
   tested so far were run on one real device (a GTX 1650) — see "Hardware
   scope" below.
@@ -88,8 +91,12 @@ itself fails closed before model load (MC-21) — `--kv-placement cpu` and
 Each row in `docs/compatibility.json` carries a `hardware_scope`:
 
 - `tested` — validated on one specific, named device (currently: a real
-  GTX 1650 for every Vulkan row in this matrix). This is a claim about
-  that exact device, not "all Vulkan GPUs" or "all NVIDIA GPUs."
+  GTX 1650 for every row in this matrix with `hardware_scope: "tested"`).
+  This is a claim about that exact device, not "all Vulkan GPUs" or "all
+  NVIDIA GPUs." Not every row whose `backend` includes `vulkan` carries
+  this scope — MC-17/MC-18 name `vulkan` in `backend` (the architecture
+  gate applies there too) but their evidence is source/test-based, not a
+  hardware run, so their `hardware_scope` is `not-hardware-specific`.
 - `backend-level` — the claim is about the backend/build configuration
   itself (e.g. "no GPU backend compiled in" fails closed), not tied to
   specific hardware.
@@ -133,6 +140,13 @@ device, not a compatibility rejection — it is recorded as a note on an
 otherwise-`SUPPORTED` row, not as its own `UNSUPPORTED` row.
 
 ## How compatibility is verified
+
+`python3 scripts/verify-results.py` runs `scripts/verify-compatibility.py`
+as an unnumbered final step, so every claim in this file is checkable by
+the same one command CONTRIBUTING.md points to for every other `docs/`
+claim — the two scripts stay separate files with separate concerns
+(research-evidence integrity vs. product-compatibility-claim integrity),
+neither one's checks counted into the other's total.
 
 - `scripts/verify-compatibility.py` — schema/required-field validation,
   unique row IDs, valid status/hardware_scope enums, every evidence path
