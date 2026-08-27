@@ -1,42 +1,34 @@
 cff-version: 1.2.0
 message: >-
-  If you use MEMBRANE in your research, please cite it using the
-  metadata below. No official GitHub release/tag has been published
-  yet -- `version` below is a pre-release research-candidate label,
-  and `commit` names the exact commit this metadata reflects, not a
-  tagged release. See docs/v0.1.0-research-release-plan.md for the
-  proposed first tagged release and docs/research-release-freeze.md
-  for this repository's current release status.
+  If you use MEMBRANE in academic or technical work, please cite this
+  software using the metadata in this file.
 title: >-
-  MEMBRANE: A Research Prototype for Mixed-Precision, Exact-Retrieval
-  LLM KV-Cache Memory
+  MEMBRANE: Adaptive KV-Cache Planning for llama.cpp
 type: software
 authors:
   - family-names: Altıntaş
     given-names: Kadir Eren
 repository-code: "https://github.com/kadireren7/membrane"
-version: "0.1.0-research-candidate"
-commit: 58ec90b
+version: "0.2.0"
+date-released: "2026-08-13"
 license: Apache-2.0
 abstract: >-
-  MEMBRANE is a research codebase exploring mixed-precision KV-cache
-  tiering, exact (non-approximate) sparse KV retrieval, near-memory/CXL
-  appliance simulation, bit-exact CPU quantization verified against
-  ggml's own reference implementation, and a synthesizable FPGA
-  quant/dequant datapath cosimulated in Verilator. All results are
-  measured against real captured attention/KV traces from actual
-  llama.cpp inference on two open SmolLM2 checkpoints, or explicitly
-  labeled as simulated/assumed where no physical hardware exists. See
-  the repository's README.md and docs/results-summary.md for the full,
-  sourced set of findings, including negative results.
-preferred-citation:
-  type: software
-  title: >-
-    MEMBRANE: A Research Prototype for Mixed-Precision, Exact-Retrieval
-    LLM KV-Cache Memory
-  authors:
-    - family-names: Altıntaş
-      given-names: Kadir Eren
-  repository-code: "https://github.com/kadireren7/membrane"
-  version: "0.1.0-research-candidate"
-  commit: 58ec90b
+  MEMBRANE is an open-source llama.cpp runtime layer for KV-cache
+  precision and CPU/GPU residency planning under constrained memory. It
+  plans GPU layer offload, whole-cache Q8/Q5/adaptive KV precision, and
+  static CPU/GPU KV residency before generation, with plan-only
+  diagnostics and machine-readable JSON output, on CPU and Vulkan
+  backends. This citation targets the latest stable release, v0.2.0;
+  the repository's main branch may contain development changes beyond
+  it. Archived experiments, negative results, and benchmark/FPGA/CXL
+  simulation provenance live in the companion repository
+  kadireren7/membrane-research.
+keywords:
+  - llama.cpp
+  - LLM
+  - KV cache
+  - inference
+  - memory management
+  - Vulkan
+  - quantization
+  - GPU offload
