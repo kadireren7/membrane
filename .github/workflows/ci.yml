@@ -82,8 +82,16 @@ jobs:
           cmake -S . -B build-cpu-install \
             -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
 
+      # -j2, not unbounded -j: GitHub-hosted standard runners have 2
+      # vCPUs / ~7 GiB RAM, and llama.cpp's largest translation units
+      # are memory-hungry enough that unbounded parallelism here was
+      # confirmed directly to OOM-kill the build (SIGTERM, exit 143,
+      # ~98% through -- the existing build-and-test/thread-sanitizer
+      # jobs' own unbounded -j is unaffected: they never set
+      # MEMBRANE_ENABLE_LLAMA, so they never compile llama.cpp/ggml at
+      # all).
       - name: CPU build
-        run: cmake --build build-cpu-install -j --target membrane-run
+        run: cmake --build build-cpu-install -j2 --target membrane-run
 
       - name: CPU install to temp prefix
         run: |
@@ -101,7 +109,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Vulkan build
-        run: cmake --build build-vulkan-install -j --target membrane-run
+        run: cmake --build build-vulkan-install -j2 --target membrane-run
 
       - name: Vulkan install to temp prefix
         run: |
