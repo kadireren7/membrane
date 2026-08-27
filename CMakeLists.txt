@@ -97,7 +97,27 @@ find_package(Threads REQUIRED)
 # root rather than trading away capture resolution again.
 find_package(ZLIB REQUIRED)
 
-add_library(membrane_core
+# Phase 17: explicit STATIC, not BUILD_SHARED_LIBS-controlled like
+# llama/ggml further down. Investigated directly rather than left
+# implicit: this add_library() call runs before third_party/llama.cpp's
+# own CMake ever sets BUILD_SHARED_LIBS=ON (that only happens inside
+# the MEMBRANE_ENABLE_LLAMA block, much later in this file), so on the
+# exact documented fresh-build-directory workflow membrane_core was
+# ALREADY deterministically static -- confirmed via the real generated
+# link command (ar, not cc -shared) on a from-scratch configure. But an
+# explicit -DBUILD_SHARED_LIBS=ON on the command line, or reconfiguring
+# an existing build directory whose cache already has it ON from some
+# earlier configure, bypasses that ordering and makes it genuinely
+# shared instead -- also confirmed directly. No dlopen/dlsym or export
+# config anywhere in this repository depends on membrane_core being
+# loadable as a shared object, and the product doesn't expose it as a
+# development SDK, so there's no reason for its type to depend on
+# incidental configure-order/cache-history at all. Pinning it removes
+# that footgun instead of merely tolerating it (tools/membrane-run/
+# CMakeLists.txt's install loop's TYPE check still handles a
+# hypothetical future SHARED membrane_core correctly, but should now
+# never actually see one for this target).
+add_library(membrane_core STATIC
   src/block/block.c
   src/codecs/raw.c
   src/codecs/rle.c
