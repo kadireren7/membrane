@@ -102,6 +102,16 @@ jobs:
           cd /tmp
           /tmp/membrane-install-cpu/bin/membrane-run --help
 
+      - name: CPU uninstall removes exactly the installed files
+        run: |
+          cmake --build build-cpu-install --target uninstall
+          remaining=$(find /tmp/membrane-install-cpu -type f | wc -l)
+          if [ "$remaining" -ne 0 ]; then
+            echo "uninstall left $remaining file(s) behind:"
+            find /tmp/membrane-install-cpu -type f
+            exit 1
+          fi
+
       - name: Vulkan configure
         run: |
           cmake -S . -B build-vulkan-install \

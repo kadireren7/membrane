@@ -106,10 +106,9 @@ installs:
 - `<prefix>/<libdir>/libllama.so*`, `libggml*.so*` (`<libdir>` is
   `lib` on most distributions, but GNUInstallDirs can resolve it to
   `lib64` on some — check `install_manifest.txt`, described below, for
-  the exact paths on your system). `membrane_core` joins this list
-  only if your build happens to produce it as a shared library rather
-  than linking it statically into `membrane-run` — see "Why install
-  shared libraries" below.
+  the exact paths on your system). `membrane_core` is always linked
+  statically into `membrane-run` and is never part of this list — see
+  "Why install shared libraries" below.
 - `<prefix>/share/membrane/LICENSE.txt`
 
 If you used `--prefix "$HOME/.local"`, make sure `~/.local/bin` is on
