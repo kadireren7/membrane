@@ -51,3 +51,92 @@ jobs:
             echo "Retrying TSan tests with ASLR disabled (setarch -R)"
             setarch "$(uname -m)" -R ctest --test-dir build-tsan --output-on-failure
           fi
+
+  # Phase 17: catches install regressions like a backend shared library
+  # (e.g. ggml-vulkan) missing from tools/membrane-run/CMakeLists.txt's
+  # install rules -- the installed binary would build and link fine in
+  # the build tree but fail with "cannot open shared object file" the
+  # moment it's run from an install prefix. No real GPU is available or
+  # required here: --help never touches a device, so the Vulkan leg
+  # validates configure/build/install/RPATH correctness, not runtime
+  # GPU behavior (see README's "Limitations" -- real Vulkan runtime
+  # evidence stays local/manual).
+  packaging-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libvulkan-dev glslc vulkan-tools \
+            spirv-headers
+
+      - name: CPU configure
+        run: |
+          cmake -S . -B build-cpu-install \
+            -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
+
+      # -j2, not unbounded -j: GitHub-hosted standard runners have 2
+      # vCPUs / ~7 GiB RAM, and llama.cpp's largest translation units
+      # are memory-hungry enough that unbounded parallelism here was
+      # confirmed directly to OOM-kill the build (SIGTERM, exit 143,
+      # ~98% through -- the existing build-and-test/thread-sanitizer
+      # jobs' own unbounded -j is unaffected: they never set
+      # MEMBRANE_ENABLE_LLAMA, so they never compile llama.cpp/ggml at
+      # all).
+      - name: CPU build
+        run: cmake --build build-cpu-install -j2 --target membrane-run
+
+      - name: CPU install to temp prefix
+        run: |
+          cmake --install build-cpu-install --prefix /tmp/membrane-install-cpu
+
+      - name: CPU installed binary runs outside the build tree
+        run: |
+          cd /tmp
+          /tmp/membrane-install-cpu/bin/membrane-run --help
+
+      - name: CPU uninstall removes exactly the installed files
+        run: |
+          cmake --build build-cpu-install --target uninstall
+          remaining=$(find /tmp/membrane-install-cpu -type f | wc -l)
+          if [ "$remaining" -ne 0 ]; then
+            echo "uninstall left $remaining file(s) behind:"
+            find /tmp/membrane-install-cpu -type f
+            exit 1
+          fi
+
+      - name: Vulkan configure
+        run: |
+          cmake -S . -B build-vulkan-install \
+            -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Vulkan build
+        run: cmake --build build-vulkan-install -j2 --target membrane-run
+
+      - name: Vulkan install to temp prefix
+        run: |
+          cmake --install build-vulkan-install \
+            --prefix /tmp/membrane-install-vulkan
+
+      - name: Vulkan installed binary runs outside the build tree
+        run: |
+          cd /tmp
+          /tmp/membrane-install-vulkan/bin/membrane-run --help
+
+      - name: Uninstall removes exactly the installed files
+        run: |
+          cmake --build build-vulkan-install --target uninstall
+          remaining=$(find /tmp/membrane-install-vulkan -type f | wc -l)
+          if [ "$remaining" -ne 0 ]; then
+            echo "uninstall left $remaining file(s) behind:"
+            find /tmp/membrane-install-vulkan -type f
+            exit 1
+          fi

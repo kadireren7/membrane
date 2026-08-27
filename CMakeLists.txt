@@ -1,6 +1,26 @@
 cmake_minimum_required(VERSION 3.16)
 project(membrane C)
 
+# Phase 17: standard, distro-correct install destinations (bin/, lib/ or
+# lib64/, share/, ...) -- used by tools/membrane-run/CMakeLists.txt's
+# install() rules instead of hardcoded "bin"/"lib" strings.
+include(GNUInstallDirs)
+
+# Phase 17: CMake has no built-in "uninstall" target. This one removes
+# exactly the files install_manifest.txt recorded for *this* build
+# directory's own install run -- never a directory, never a guess.
+# Registered unconditionally (not only under MEMBRANE_ENABLE_LLAMA) so
+# `cmake --build <dir> --target uninstall` gives the same clear,
+# manifest-driven error either way if nothing was installed yet.
+if(NOT TARGET uninstall)
+  configure_file(
+    ${CMAKE_SOURCE_DIR}/cmake/cmake_uninstall.cmake.in
+    ${CMAKE_BINARY_DIR}/cmake_uninstall.cmake
+    IMMEDIATE @ONLY)
+  add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_BINARY_DIR}/cmake_uninstall.cmake)
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -77,7 +97,27 @@ find_package(Threads REQUIRED)
 # root rather than trading away capture resolution again.
 find_package(ZLIB REQUIRED)
 
-add_library(membrane_core
+# Phase 17: explicit STATIC, not BUILD_SHARED_LIBS-controlled like
+# llama/ggml further down. Investigated directly rather than left
+# implicit: this add_library() call runs before third_party/llama.cpp's
+# own CMake ever sets BUILD_SHARED_LIBS=ON (that only happens inside
+# the MEMBRANE_ENABLE_LLAMA block, much later in this file), so on the
+# exact documented fresh-build-directory workflow membrane_core was
+# ALREADY deterministically static -- confirmed via the real generated
+# link command (ar, not cc -shared) on a from-scratch configure. But an
+# explicit -DBUILD_SHARED_LIBS=ON on the command line, or reconfiguring
+# an existing build directory whose cache already has it ON from some
+# earlier configure, bypasses that ordering and makes it genuinely
+# shared instead -- also confirmed directly. No dlopen/dlsym or export
+# config anywhere in this repository depends on membrane_core being
+# loadable as a shared object, and the product doesn't expose it as a
+# development SDK, so there's no reason for its type to depend on
+# incidental configure-order/cache-history at all. Pinning it removes
+# that footgun instead of merely tolerating it (tools/membrane-run/
+# CMakeLists.txt's install loop's TYPE check still handles a
+# hypothetical future SHARED membrane_core correctly, but should now
+# never actually see one for this target).
+add_library(membrane_core STATIC
   src/block/block.c
   src/codecs/raw.c
   src/codecs/rle.c
@@ -290,6 +330,40 @@ if(MEMBRANE_ENABLE_LLAMA)
         "-- see docs/kv-residency.md")
     endif()
     message(STATUS "applied MEMBRANE kv_dev_override patch to llama.cpp")
+  endif()
+
+  # Phase 17: fail clearly, at configure time, before descending into
+  # third_party/llama.cpp's own CMake -- which itself does
+  # find_package(Vulkan COMPONENTS glslc REQUIRED) deep inside
+  # ggml/src/ggml-vulkan/CMakeLists.txt and would otherwise be the first
+  # place a missing Vulkan SDK surfaces, with a message that never
+  # mentions MEMBRANE or points back to the README's documented
+  # packages. GGML_VULKAN is llama.cpp's own option name (not defined
+  # by this file), read here only to decide whether to run this
+  # MEMBRANE-level pre-check -- it does not change llama.cpp's own
+  # handling of the flag.
+  if(GGML_VULKAN)
+    find_package(Vulkan QUIET)
+    # Vulkan_glslc_FOUND/Vulkan::glslc need CMake 3.24/3.19 respectively
+    # (this project requires only 3.16 -- see cmake_minimum_required
+    # above), so find_package(Vulkan) alone can't tell us whether glslc
+    # is actually present; a Vulkan SDK install missing only the shader
+    # compiler would otherwise pass this pre-check and still fail
+    # inside third_party/llama.cpp's own find_package(Vulkan COMPONENTS
+    # glslc REQUIRED) -- exactly the generic, MEMBRANE-unaware error
+    # this whole pre-check exists to avoid. find_program() works the
+    # same on every supported CMake version.
+    find_program(MEMBRANE_GLSLC_EXECUTABLE NAMES glslc
+      HINTS "$ENV{VULKAN_SDK}/bin" "$ENV{VULKAN_SDK}/Bin")
+    if(NOT Vulkan_FOUND OR NOT MEMBRANE_GLSLC_EXECUTABLE)
+      message(FATAL_ERROR
+        "Vulkan backend requested (-DGGML_VULKAN=ON) but Vulkan "
+        "development files were not found. Install the Vulkan SDK "
+        "development headers, the glslc shader compiler, and SPIR-V "
+        "headers for your distribution (see README.md's Vulkan build "
+        "section for the packages confirmed necessary on Ubuntu/"
+        "Pop!_OS), then re-run cmake.")
+    endif()
   endif()
 
   set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)

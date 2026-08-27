@@ -129,6 +129,22 @@ cmake --build build-vulkan -j --target membrane-run
 Full flag reference and exit codes: `membrane-run --help`. Reproduction
 guide (llama-free core library, sanitizers, CI): `docs/reproduction.md`.
 
+### Install
+
+```bash
+cmake --install build-vulkan --prefix "$HOME/.local"
+```
+
+Installs `membrane-run` plus its shared-library dependencies (`llama`,
+`ggml*`, and `ggml-vulkan` when built with Vulkan enabled), each with
+an `$ORIGIN`-relative RPATH, so the installed binary runs standalone —
+no build tree, no `LD_LIBRARY_PATH`. `membrane_core` is always linked
+statically into `membrane-run` and is never installed on its own.
+`cmake --build build-vulkan --target uninstall` removes exactly what
+that install run recorded. Full walkthrough,
+troubleshooting, and the CPU-vs-Vulkan dependency footprint:
+[`docs/install.md`](docs/install.md).
+
 ## Current scope
 
 - Linux-focused development and testing.
