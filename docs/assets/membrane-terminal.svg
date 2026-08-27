@@ -1,0 +1,29 @@
+<svg width="700" height="360" viewBox="0 0 700 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Terminal transcript of membrane-run --model SmolLM2-135M-Instruct-f16.gguf --prompt Hello --ctx 4096 --auto --plan-only, showing the real MEMBRANE plan block: device Vulkan1, gpu layers 30 of 30, kv precision Q8_0, kv placement auto with 30 GPU and 0 CPU KV layers, estimated weight bytes 202.6 MiB, estimated GPU KV 47.8 MiB, estimated CPU KV 0.0 MiB, reason GPU_FULL_FIT.">
+  <title>membrane-run --auto --plan-only (real captured output)</title>
+  <rect width="700" height="360" rx="10" fill="#0d1117" stroke="#30363d" stroke-width="1.5"/>
+
+  <!-- title bar -->
+  <rect x="0" y="0" width="700" height="34" rx="10" fill="#161b22"/>
+  <rect x="0" y="20" width="700" height="14" fill="#161b22"/>
+  <circle cx="22" cy="17" r="5.5" fill="#3a3f45"/>
+  <circle cx="42" cy="17" r="5.5" fill="#3a3f45"/>
+  <circle cx="62" cy="17" r="5.5" fill="#3a3f45"/>
+  <text x="350" y="21.5" text-anchor="middle" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11.5" fill="#8b949e">membrane-run</text>
+
+  <g font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13.5">
+    <text x="24" y="62" fill="#5ee6c8">$ membrane-run --model SmolLM2-135M-Instruct-f16.gguf \</text>
+    <text x="40" y="82" fill="#5ee6c8">--prompt "Hello" --ctx 4096 --auto --plan-only</text>
+
+    <text x="24" y="116" fill="#e6edf3" font-weight="700">MEMBRANE plan</text>
+    <text x="24" y="138" fill="#8b949e">  device: <tspan fill="#e6edf3">Vulkan1</tspan></text>
+    <text x="24" y="160" fill="#8b949e">  gpu layers: <tspan fill="#e6edf3">30/30</tspan></text>
+    <text x="24" y="182" fill="#8b949e">  kv precision: <tspan fill="#e6edf3">Q8_0</tspan></text>
+    <text x="24" y="204" fill="#8b949e">  kv placement: <tspan fill="#e6edf3">auto</tspan></text>
+    <text x="24" y="226" fill="#8b949e">  kv layers: <tspan fill="#e6edf3">30 GPU / 0 CPU</tspan></text>
+    <text x="24" y="248" fill="#8b949e">  estimated weight bytes: <tspan fill="#e6edf3">202.6 MiB</tspan></text>
+    <text x="24" y="270" fill="#8b949e">  estimated GPU KV: <tspan fill="#e6edf3">47.8 MiB</tspan>, estimated CPU KV: <tspan fill="#e6edf3">0.0 MiB</tspan></text>
+    <text x="24" y="292" fill="#8b949e">  reason: <tspan fill="#5ee6c8" font-weight="700">GPU_FULL_FIT</tspan></text>
+
+    <text x="24" y="326" fill="#8b949e">membrane-run: plan resolved (no generation performed)</text>
+  </g>
+</svg>

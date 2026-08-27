@@ -1,0 +1,61 @@
+<svg width="760" height="520" viewBox="0 0 760 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="GGUF model and context flow into model metadata, then into the MEMBRANE planner, which branches into three decisions -- GPU layers, KV type, and KV placement -- that converge into one resolved plan handed to llama.cpp for generation.">
+  <title>How MEMBRANE works</title>
+  <defs>
+    <marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#30363d"/>
+    </marker>
+  </defs>
+  <rect width="760" height="520" fill="#0d1117"/>
+
+  <!-- GGUF + context -->
+  <rect x="290" y="14" width="180" height="46" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="380" y="42" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13.5" fill="#e6edf3">GGUF + context</text>
+  <line x1="380" y1="60" x2="380" y2="86" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow3)"/>
+
+  <!-- model metadata -->
+  <rect x="270" y="90" width="220" height="46" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="380" y="118" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13.5" fill="#e6edf3">model metadata</text>
+  <line x1="380" y1="136" x2="380" y2="162" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow3)"/>
+
+  <!-- MEMBRANE planner -->
+  <rect x="230" y="166" width="300" height="52" rx="8" fill="#131a20" stroke="#5ee6c8" stroke-width="1.5"/>
+  <text x="380" y="199" text-anchor="middle" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="15" fill="#5ee6c8" font-weight="700" letter-spacing="1">MEMBRANE planner</text>
+
+  <!-- fan out -->
+  <path d="M380,218 L380,236" fill="none" stroke="#30363d" stroke-width="1.5"/>
+  <path d="M380,236 L128,236 L128,254" fill="none" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow3)"/>
+  <path d="M380,236 L380,254" fill="none" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow3)"/>
+  <path d="M380,236 L632,236 L632,254" fill="none" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow3)"/>
+
+  <!-- three branch cards -->
+  <g>
+    <rect x="48" y="258" width="160" height="64" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+    <text x="128" y="284" text-anchor="middle" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">GPU layers</text>
+    <text x="128" y="306" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13.5" fill="#e6edf3" font-weight="600">auto / all / N / 0</text>
+  </g>
+  <g>
+    <rect x="300" y="258" width="160" height="64" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+    <text x="380" y="284" text-anchor="middle" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">KV type</text>
+    <text x="380" y="306" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13.5" fill="#e6edf3" font-weight="600">native / q8 / q5</text>
+  </g>
+  <g>
+    <rect x="552" y="258" width="160" height="64" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+    <text x="632" y="284" text-anchor="middle" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="12" fill="#8b949e">KV placement</text>
+    <text x="632" y="306" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13.5" fill="#e6edf3" font-weight="600">gpu / cpu / auto</text>
+  </g>
+
+  <!-- fan in -->
+  <path d="M128,322 L128,346 L380,346" fill="none" stroke="#30363d" stroke-width="1.5"/>
+  <path d="M380,322 L380,346" fill="none" stroke="#30363d" stroke-width="1.5"/>
+  <path d="M632,322 L632,346 L380,346" fill="none" stroke="#30363d" stroke-width="1.5"/>
+  <line x1="380" y1="346" x2="380" y2="366" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow3)"/>
+
+  <!-- resolved plan -->
+  <rect x="270" y="370" width="220" height="46" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="380" y="398" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13.5" fill="#e6edf3">resolved plan</text>
+  <line x1="380" y1="416" x2="380" y2="442" stroke="#30363d" stroke-width="1.5" marker-end="url(#arrow3)"/>
+
+  <!-- llama.cpp -->
+  <rect x="290" y="446" width="180" height="42" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1.5"/>
+  <text x="380" y="472" text-anchor="middle" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="13" fill="#8b949e">llama.cpp -&gt; generation</text>
+</svg>
