@@ -180,11 +180,20 @@ int	membrane_fallback_run(const membrane_joint_candidate_t *candidates,
 		}
 		if (!membrane_apply_failure_is_retryable(entry->failure_class))
 		{
+			/* CodeRabbit review (PR #31): this is always an IMMEDIATE
+			 * stop on a non-retryable failure class (Section 3: no
+			 * second attempt), never a "ran out of retryable
+			 * candidates" exhaustion -- regardless of how many earlier
+			 * entries were memory-refit SKIPS (out->attempted can
+			 * already be true from those). NO_RETRYABLE_FAILURE
+			 * unconditionally reports the real reason this specific
+			 * stop happened; MEMBRANE_FALLBACK_REASON_EXHAUSTED is
+			 * reserved for this function's own end-of-loop fallthrough
+			 * below, where every eligible candidate really was tried. */
 			snprintf(out->final_status, sizeof(out->final_status),
 				"exhausted");
 			snprintf(out->reason_code, sizeof(out->reason_code), "%s",
-				out->attempted ? MEMBRANE_FALLBACK_REASON_EXHAUSTED
-					: MEMBRANE_FALLBACK_REASON_NO_RETRYABLE_FAILURE);
+				MEMBRANE_FALLBACK_REASON_NO_RETRYABLE_FAILURE);
 			return (0);
 		}
 		i++;

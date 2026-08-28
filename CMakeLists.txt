@@ -250,9 +250,18 @@ target_include_directories(membrane_kv_residency_policy PUBLIC
 # placement feasibility.
 add_library(membrane_joint_planner STATIC
   tools/membrane-run/joint_planner.c)
+# CodeRabbit review (PR #31): membrane_sanitizers is the INTERFACE
+# library that actually carries the -fsanitize=... compile/link flags
+# (see its own definition above) -- without linking it here, a
+# MEMBRANE_ENABLE_SANITIZERS/MEMBRANE_ENABLE_TSAN configure builds this
+# target with no instrumentation at all, silently. PUBLIC so
+# membrane_auto_fallback (which itself only needs this header's plain-
+# data type, not this library's own object code) still gets
+# instrumented transitively wherever it links membrane_joint_planner in
+# a test binary.
 target_link_libraries(membrane_joint_planner PUBLIC membrane_compat_check
   membrane_gpu_policy membrane_adaptive_kv_policy
-  membrane_kv_residency_policy)
+  membrane_kv_residency_policy membrane_sanitizers)
 target_include_directories(membrane_joint_planner PUBLIC tools/membrane-run)
 
 # Phase 21: the bounded apply-time fallback CONTROLLER -- llama-free,
@@ -263,6 +272,7 @@ target_include_directories(membrane_joint_planner PUBLIC tools/membrane-run)
 # itself (no candidate GENERATION happens here).
 add_library(membrane_auto_fallback STATIC
   tools/membrane-run/auto_fallback.c)
+target_link_libraries(membrane_auto_fallback PUBLIC membrane_sanitizers)
 target_include_directories(membrane_auto_fallback PUBLIC tools/membrane-run)
 
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no

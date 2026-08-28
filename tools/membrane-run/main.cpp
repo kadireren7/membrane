@@ -2248,6 +2248,18 @@ static int	real_apply_fn(const membrane_joint_candidate_t *c,
 	membrane_kv_store_rss_max(&ctx->tel.rss_peak, &ctx->tel.rss_final,
 		&ctx->tel.rss_peak);
 	ctx->effective_kv_mode = kv_mode;
+	/* CodeRabbit review (PR #31): a fallback candidate may resolve to a
+	 * different KV precision than the one adaptive planning originally
+	 * picked (the adaptive path's own runner-up precision) -- keep the
+	 * adaptive telemetry (print_gpu_json()'s "adaptive" object)
+	 * describing what actually ran, never the superseded plan, so it
+	 * never contradicts the top-level selected_kv (which already comes
+	 * from effective_kv_mode above). */
+	if (ctx->gs->adaptive_used)
+	{
+		ctx->gs->adaptive_selected_mode = kv_mode;
+		ctx->gs->adaptive_reason = c->reason_code;
+	}
 	ctx->gs->kv_placement_resolved = placement_resolved;
 	if (placement_resolved)
 		ctx->gs->kv_placement = placement_result;

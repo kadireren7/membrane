@@ -26,7 +26,7 @@ CHECK_COUNT = 0
 
 MAX_AUTO_ATTEMPTS = 3
 VALID_LABELS = ("REAL", "SIMULATED")
-VALID_FINAL_STATUS = ("success", "exhausted", "cleanup_blocked")
+VALID_FINAL_STATUS = ("success", "exhausted", "cleanup_blocked", "not_applicable")
 # Section 21/2 of the Phase 21 task: these classes require proof this
 # project's real apply adapter has no API surface to obtain (llama.h
 # returns a bare NULL, never an error code) -- a REAL run must never
@@ -89,6 +89,23 @@ def check_run_shape(runs):
 		if fb.get("final_status") not in VALID_FINAL_STATUS:
 			fail(rid, f"fallback.final_status {fb.get('final_status')!r} "
 				f"not in {VALID_FINAL_STATUS}")
+
+
+@check("a not_applicable run (--plan-only) never pretends a runtime attempt happened")
+def check_not_applicable_shape(runs):
+	for r in runs:
+		fb = r.get("fallback")
+		if fb is None or fb.get("final_status") != "not_applicable":
+			continue
+		rid = r.get("id", "<no id>")
+		if fb.get("attempted") is not False:
+			fail(rid, "final_status=not_applicable but attempted is not false")
+		if fb.get("attempt_count", 0) != 0:
+			fail(rid, f"final_status=not_applicable but attempt_count is "
+				f"{fb.get('attempt_count')!r}, not 0")
+		if fb.get("attempts"):
+			fail(rid, "final_status=not_applicable but 'attempts' is "
+				"non-empty -- --plan-only never applies anything")
 
 
 @check("attempt_count never exceeds MEMBRANE_MAX_AUTO_ATTEMPTS")
@@ -203,6 +220,7 @@ def main():
 	if not isinstance(runs, list):
 		runs = []
 	check_run_shape(runs)
+	check_not_applicable_shape(runs)
 	check_max_attempts(runs)
 	check_no_duplicate_candidate(runs)
 	check_final_candidate_matches_last_success(runs)

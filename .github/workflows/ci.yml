@@ -84,8 +84,12 @@ jobs:
           persist-credentials: false
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake
-      - name: Configure
-        run: cmake -S . -B build-fallback-tests -DMEMBRANE_ENABLE_LLAMA=ON
+      # ASan/UBSan: target-scoped (see the Build step below), so
+      # llama/ggml itself is never compiled at all, sanitized or not.
+      - name: Configure (ASan/UBSan)
+        run: |
+          cmake -S . -B build-fallback-tests -DMEMBRANE_ENABLE_LLAMA=ON \
+            -DCMAKE_BUILD_TYPE=Debug -DMEMBRANE_ENABLE_SANITIZERS=ON
       - name: Build (target-scoped -- no llama/ggml compilation)
         run: cmake --build build-fallback-tests -j2 --target test_auto_fallback test_joint_planner
       - name: Test

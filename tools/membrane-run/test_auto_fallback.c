@@ -426,6 +426,42 @@ static void	test_cleanup_failure_stops_immediately(void)
 		"unsafely after a cleanup failure");
 }
 
+/* CodeRabbit review (PR #31): a memory-refit SKIP that precedes a
+ * non-retryable failure must still report NO_RETRYABLE_FAILURE, not
+ * EXHAUSTED -- the stop is an immediate one (Section 3: no second
+ * attempt after a non-retryable class), never a "ran out of retryable
+ * candidates" exhaustion, regardless of how many earlier entries were
+ * skips. */
+static void	test_skip_then_non_retryable_reports_correct_reason(void)
+{
+	membrane_joint_candidate_t	cands[2];
+	apply_script_t				s;
+	refresh_script_t			r;
+	membrane_fallback_trace_t	trace;
+
+	make_candidate(&cands[0], 10, MEMBRANE_JOINT_KV_Q8,
+		MEMBRANE_JOINT_PLACEMENT_DEFAULT, (uint64_t)3 * GIB,
+		(uint64_t)512 * MIB, 1);
+	make_candidate(&cands[1], 5, MEMBRANE_JOINT_KV_Q8,
+		MEMBRANE_JOINT_PLACEMENT_DEFAULT, 50 * MIB, 20 * MIB, 1);
+	memset(&r, 0, sizeof(r));
+	r.values[0] = 1 * GIB;	/* candidate 0: skipped, no longer fits */
+	r.values[1] = 4 * GIB;	/* candidate 1: fits, but fails non-retryably */
+	memset(&s, 0, sizeof(s));
+	s.entries[0].should_succeed = 0;
+	s.entries[0].failure_class = MEMBRANE_APPLY_COMPAT_REJECTED;
+	s.entries[0].cleanup_complete = 1;
+	TEST_ASSERT(membrane_fallback_run(cands, 2, 0, 8 * GIB, 512 * MIB,
+			scripted_apply, &s, scripted_refresh, &r, &trace) == 0,
+		"a non-retryable failure after a skip is still a failure");
+	TEST_ASSERT(trace.attempted == 1,
+		"attempted is true -- the outcome departed from candidate 0");
+	TEST_ASSERT(strcmp(trace.reason_code,
+			MEMBRANE_FALLBACK_REASON_NO_RETRYABLE_FAILURE) == 0,
+		"reports the real stop reason (non-retryable), not EXHAUSTED, "
+		"even though a skip happened first");
+}
+
 /* ------------------------------------------------------------------ */
 /* 16. No viable fallback candidate -> clear exhausted/no-alternative  */
 /* ------------------------------------------------------------------ */
@@ -747,6 +783,7 @@ int	main(void)
 	test_hard_max_attempt_limit();
 	test_deterministic_repeated_calls();
 	test_cleanup_failure_stops_immediately();
+	test_skip_then_non_retryable_reports_correct_reason();
 	test_no_alternative_candidate_exhausted();
 	test_ineligible_candidates_never_attempted();
 	test_failure_classification_retryable();

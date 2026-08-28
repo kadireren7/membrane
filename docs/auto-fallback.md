@@ -14,7 +14,7 @@ snapshot shows the primary candidate no longer fits), MEMBRANE retries
 another already-legal, already-ranked Phase-20 candidate, in a bounded,
 transparent, resource-safe way:
 
-```
+```text
 STATIC PLAN A FAILS
   -> clean up A's own resources
   -> STATIC PLAN B (the next legal ranked candidate)
@@ -94,7 +94,7 @@ legal.
 
 ## Failure classification
 
-```
+```text
 MEMBRANE_APPLY_OK
 MEMBRANE_APPLY_MODEL_LOAD_FAILED
 MEMBRANE_APPLY_CONTEXT_CREATE_FAILED
@@ -259,7 +259,7 @@ A retry is never silent (Section 15 of the Phase 21 task). Without
 nothing about fallback at all. A run that skipped or retried prints a
 concise transcript to stderr, e.g.:
 
-```
+```text
 MEMBRANE: selected plan #0
 MEMBRANE: plan #0 skipped: available GPU memory changed since planning
 MEMBRANE: plan #1 succeeded
