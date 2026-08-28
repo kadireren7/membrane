@@ -255,6 +255,16 @@ target_link_libraries(membrane_joint_planner PUBLIC membrane_compat_check
   membrane_kv_residency_policy)
 target_include_directories(membrane_joint_planner PUBLIC tools/membrane-run)
 
+# Phase 21: the bounded apply-time fallback CONTROLLER -- llama-free,
+# same pattern as membrane_joint_planner above. Consumes (never
+# duplicates or regenerates) the ranked candidate array
+# membrane_joint_plan_resolve() already produced; only depends on
+# joint_planner.h's plain-data candidate type, not the planner library
+# itself (no candidate GENERATION happens here).
+add_library(membrane_auto_fallback STATIC
+  tools/membrane-run/auto_fallback.c)
+target_include_directories(membrane_auto_fallback PUBLIC tools/membrane-run)
+
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
 # unlike tools/membrane-kv-capture etc, which need MEMBRANE_ENABLE_LLAMA.
@@ -728,6 +738,19 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_joint_planner PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_joint_planner COMMAND test_joint_planner)
+
+  # Phase 21: the bounded apply-time fallback controller's own tests --
+  # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a
+  # handful of tests that run the REAL membrane_joint_plan_resolve()
+  # (Section 20) to prove explicit-constraint preservation against real
+  # planner output, not just a hand-built candidate array.
+  add_executable(test_auto_fallback
+    tools/membrane-run/test_auto_fallback.c)
+  target_link_libraries(test_auto_fallback PRIVATE membrane_auto_fallback
+    membrane_joint_planner)
+  target_include_directories(test_auto_fallback PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_auto_fallback COMMAND test_auto_fallback)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test

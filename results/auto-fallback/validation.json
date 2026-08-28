@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "phase": "21: controlled apply-time fallback",
+  "label": "REAL",
+  "note": "Live membrane-run --json runs against this repo's real committed models and the real Vulkan device below (build-vulkan, an existing local Vulkan-enabled build reused for this phase to avoid rebuilding ggml-vulkan from scratch on a memory-constrained dev host -- see docs/auto-fallback.md's own Real smokes section). Deterministic bounded-attempt unit-test coverage for injected apply-time failures (Section 17/19/20/21/22/23 of the Phase 21 task) lives in tools/membrane-run/test_auto_fallback.c, not here -- this file is REAL runtime evidence only, never a substitute for it.",
+  "membrane_base_commit": "8be484c66b698f0ba3447ec46bc7cf70216bd499",
+  "llama_cpp_commit": "c0bc8591e8815c63cb01dd3f051a8b0df02501c9",
+  "device": {"name": "Vulkan1", "backend": "Vulkan", "note": "same real device every prior-phase Vulkan evidence in this repo uses"},
+  "runs": [
+    {
+      "id": "smollm2_135m_auto_gpu_primary_succeeds",
+      "label": "REAL",
+      "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt \"The capital of France is\" --ctx 256 --gen-tokens 8 --auto --json --quiet",
+      "purpose": "Section 27.A -- a normal --auto run whose primary Phase-20 candidate applies cleanly: fallback.attempted must be false.",
+      "exit_code": 0,
+      "ok": true,
+      "planner_used": true,
+      "planner_candidate_count": 2,
+      "fallback": {
+        "attempted": false,
+        "attempt_count": 1,
+        "initial_candidate_index": 0,
+        "final_candidate_index": 0,
+        "final_status": "success",
+        "reason_code": "AUTO_PRIMARY_SUCCEEDED",
+        "attempts": [
+          {
+            "candidate_index": 0,
+            "gpu_layers": 30,
+            "kv_precision": 1,
+            "kv_placement": 3,
+            "refreshed": true,
+            "refreshed_available_gpu_bytes": 3879141376,
+            "fit_after_refresh": true,
+            "apply_started": true,
+            "apply_ok": true,
+            "cleanup_complete": true,
+            "model_reload_required": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "qwen2.5_1.5b_native_gpu_placement_reload_recovery",
+      "label": "REAL",
+      "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt \"The capital of France is\" --ctx 256 --gen-tokens 8 --gpu-layers auto --kv native --kv-placement gpu --json --quiet",
+      "purpose": "Section 27.C's spirit, but genuinely unplanned and real (not test-only injected): on this shared, memory-constrained dev host, available GPU memory shrank between plan time and apply time. The primary candidate (28 GPU layers, GPU-resident KV) was correctly SKIPPED (SKIPPED_UPDATED_MEMORY, Section 11/22 -- not attempted, not a failure), and the fallback controller cleanly reloaded the model at the next legal already-ranked Phase-20 candidate (0 GPU layers, CPU-resident KV, still --kv native as explicitly requested -- Section 5/26: precision was never silently changed) and completed the run successfully. Reproduced twice with the same qualitative outcome (real free-byte figures below were captured from the second, final run).",
+      "exit_code": 0,
+      "ok": true,
+      "planner_used": true,
+      "planner_candidate_count": 2,
+      "fallback": {
+        "attempted": true,
+        "attempt_count": 1,
+        "initial_candidate_index": 0,
+        "final_candidate_index": 1,
+        "final_status": "success",
+        "reason_code": "AUTO_FALLBACK_SUCCEEDED",
+        "attempts": [
+          {
+            "candidate_index": 0,
+            "gpu_layers": 28,
+            "kv_precision": 0,
+            "kv_placement": 1,
+            "refreshed": true,
+            "refreshed_available_gpu_bytes": 1147011072,
+            "fit_after_refresh": false,
+            "apply_started": false
+          },
+          {
+            "candidate_index": 1,
+            "gpu_layers": 0,
+            "kv_precision": 0,
+            "kv_placement": 0,
+            "refreshed": true,
+            "refreshed_available_gpu_bytes": 1147011072,
+            "fit_after_refresh": true,
+            "apply_started": true,
+            "apply_ok": true,
+            "cleanup_complete": true,
+            "model_reload_required": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "qwen2.5_1.5b_bare_auto_still_fails_closed",
+      "label": "REAL",
+      "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt \"The capital of France is\" --ctx 256 --gen-tokens 4 --auto --json --quiet",
+      "purpose": "Section 26 regression check: bare --auto (adaptive precision) on Qwen2.5 must still fail closed at the PLANNER stage (compat_check.c's architecture gate), before Phase 21 ever engages -- the fallback controller must never get a chance to 'helpfully' turn an incompatible request into native.",
+      "exit_code": 5,
+      "ok": false,
+      "reason_code": "NO_FEASIBLE_CANDIDATE",
+      "planner_used": false,
+      "note": "resolve_gpu_config() returns false before model load; membrane_fallback_run() is never called for this request -- the empty planner_used/no fallback object is the correct, expected outcome, not a gap."
+    }
+  ],
+  "unit_test_failure_injection_coverage": {
+    "label": "SIMULATED",
+    "note": "Deterministic apply-time failure injection (Section 17: a llama-free function-pointer seam, never a production CLI flag -- Section 17 explicitly forbids a --force-oom-style knob) lives in tools/membrane-run/test_auto_fallback.c, run under ASan/UBSan as part of the normal test suite (ctest -R test_auto_fallback). It covers every scenario in Section 19 of the Phase 21 task, including two tests (test_explicit_gpu_layers_never_changes_across_real_candidates, test_all_auto_uses_next_real_ranked_candidate) that feed the REAL membrane_joint_plan_resolve() planner's own candidate output into the fallback controller (Section 20), not just a hand-built candidate array.",
+    "file": "tools/membrane-run/test_auto_fallback.c"
+  }
+}

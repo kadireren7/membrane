@@ -82,13 +82,38 @@ typedef struct s_membrane_kv_placement_map
 ggml_backend_dev_t	kv_placement_dev_override_cb(int32_t il,
 			ggml_backend_dev_t default_dev, void *user_data);
 
+/* Phase 21: which internal stage a run_kv_store_pass() failure
+ * happened at, for a caller that needs to classify the failure (the
+ * apply-time fallback controller, tools/membrane-run/auto_fallback.h)
+ * rather than just knowing pass/fail -- llama.h itself exposes no
+ * error code or reason string from llama_init_from_model() (a bare
+ * NULL is the only signal), so this is the most specific information
+ * this project can honestly report. Never set for a successful pass
+ * (left at MEMBRANE_KV_PASS_STAGE_NONE, the caller's own responsibility
+ * to pre-initialize if it cares). */
+# define MEMBRANE_KV_PASS_STAGE_NONE				0
+# define MEMBRANE_KV_PASS_STAGE_CONTEXT_CREATE		1	/* llama_init_from_
+													 * model() returned NULL
+													 * -- construction/
+													 * allocation failure,
+													 * no further detail
+													 * available */
+# define MEMBRANE_KV_PASS_STAGE_DECODE				2	/* context existed;
+													 * prompt or generation
+													 * decode itself failed
+													 * (decode_prompt()/
+													 * run_generation()) */
+
 /*
  * Product Phase 7: creates ONE llama_context whose KV cache tensors
  * are allocated at kv_store_mode's ggml type, decodes the prompt and
  * generates, and destroys the context before returning. See
  * decode_loop.cpp for the full contract (flash-attention forcing,
  * RSS-checkpoint capture, scratch-byte accounting). ctx_size must
- * already be resolved (never 0).
+ * already be resolved (never 0). out_failure_stage, iff non-NULL, is
+ * always written on return (MEMBRANE_KV_PASS_STAGE_NONE on success) --
+ * optional and additive, every pre-Phase-21 call site passes NULL and
+ * is unaffected.
  */
 bool	run_kv_store_pass(llama_model *model,
 			const std::vector<llama_token> &prompt_tokens, int gen_tokens,
@@ -97,7 +122,8 @@ bool	run_kv_store_pass(llama_model *model,
 			int32_t n_vocab_for_scratch, std::string *text_out,
 			membrane_kv_store_telemetry_t *tel, gen_run_result_t *out,
 			membrane_token_cb_t token_cb = NULL, void *token_cb_ud = NULL,
-			const membrane_kv_placement_map_t *kv_placement = NULL);
+			const membrane_kv_placement_map_t *kv_placement = NULL,
+			int *out_failure_stage = NULL);
 
 /* Phase 7 analogue of the Phase 6 aligned-behavior comparison, for the
  * kv-store telemetry struct. `a` is the native-storage reference pass,

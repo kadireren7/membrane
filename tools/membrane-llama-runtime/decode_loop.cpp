@@ -223,7 +223,8 @@ bool	run_kv_store_pass(llama_model *model,
 				bool capture_logits, int32_t n_vocab_for_scratch,
 				std::string *text_out, membrane_kv_store_telemetry_t *tel,
 				gen_run_result_t *out, membrane_token_cb_t token_cb,
-				void *token_cb_ud, const membrane_kv_placement_map_t *kv_placement)
+				void *token_cb_ud, const membrane_kv_placement_map_t *kv_placement,
+				int *out_failure_stage)
 {
 	llama_context				*ctx;
 	llama_context_params		cp;
@@ -236,6 +237,8 @@ bool	run_kv_store_pass(llama_model *model,
 	double						gen_seconds;
 	uint64_t					scratch_bytes;
 
+	if (out_failure_stage != NULL)
+		*out_failure_stage = MEMBRANE_KV_PASS_STAGE_NONE;
 	vocab = llama_model_get_vocab(model);
 	n_vocab = llama_vocab_n_tokens(vocab);
 	cp = llama_context_default_params();
@@ -295,6 +298,8 @@ bool	run_kv_store_pass(llama_model *model,
 			kv_store_mode == MEMBRANE_KV_STORE_Q8 ? "q8"
 				: kv_store_mode == MEMBRANE_KV_STORE_Q5 ? "q5" : "native");
 		membrane_runtime_collector_destroy(collector);
+		if (out_failure_stage != NULL)
+			*out_failure_stage = MEMBRANE_KV_PASS_STAGE_CONTEXT_CREATE;
 		return (out->ok = false, false);
 	}
 	membrane_kv_store_read_rss(&tel->rss_after_context);
@@ -305,6 +310,8 @@ bool	run_kv_store_pass(llama_model *model,
 	{
 		fprintf(stderr, "membrane: kv-store prompt decode failed\n");
 		membrane_runtime_collector_destroy(collector);
+		if (out_failure_stage != NULL)
+			*out_failure_stage = MEMBRANE_KV_PASS_STAGE_DECODE;
 		return (llama_free(ctx), out->ok = false, false);
 	}
 	prompt_seconds = seconds_since(&t0);
@@ -335,6 +342,8 @@ bool	run_kv_store_pass(llama_model *model,
 	}
 	membrane_runtime_collector_destroy(collector);
 	llama_free(ctx);
+	if (!out->ok && out_failure_stage != NULL)
+		*out_failure_stage = MEMBRANE_KV_PASS_STAGE_DECODE;
 	return (out->ok);
 }
 
