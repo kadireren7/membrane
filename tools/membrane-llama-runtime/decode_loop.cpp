@@ -133,7 +133,7 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 				const std::vector<int32_t> *teacher_force,
 				uint64_t *abs_pos, std::string *text_out,
 				gen_run_result_t *out, membrane_token_cb_t token_cb,
-				void *token_cb_ud)
+				void *token_cb_ud, double *out_first_token_ms)
 {
 	int			step;
 	int			limit;
@@ -142,12 +142,23 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 	char		step_label[32];
 	char		piece[256];
 	int			piece_len;
+	struct timespec	first_token_t0;
+	bool		timing_first_token;
 
+	if (out_first_token_ms != NULL)
+		*out_first_token_ms = -1.0;
 	out->ok = true;
 	limit = teacher_force != NULL ? (int)teacher_force->size() : gen_tokens;
 	step = 0;
 	while (step < limit)
 	{
+		/* Phase 24: only the free-running path (never teacher-forced --
+		 * that replays a reference sequence, not "generation") and only
+		 * step 0 (Section 25: one stage boundary, not per-step timing). */
+		timing_first_token = (out_first_token_ms != NULL
+			&& teacher_force == NULL && step == 0);
+		if (timing_first_token)
+			clock_gettime(CLOCK_MONOTONIC, &first_token_t0);
 		logits = llama_get_logits_ith(ctx, -1);
 		if (logits == NULL)
 		{
@@ -184,6 +195,8 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 			out->ok = false;
 			break ;
 		}
+		if (timing_first_token)
+			*out_first_token_ms = seconds_since(&first_token_t0) * 1000.0;
 		*abs_pos += 1;
 		step++;
 	}
@@ -284,7 +297,13 @@ bool	run_kv_store_pass(llama_model *model,
 			MEMBRANE_RUNTIME_MODE_BASELINE, MEMBRANE_RUNTIME_MAX_LAYERS);
 	if (collector == NULL)
 		return (out->ok = false, false);
+	clock_gettime(CLOCK_MONOTONIC, &t0);
 	ctx = llama_init_from_model(model, cp);
+	/* Phase 24: recorded regardless of success/failure below -- a
+	 * FAILED construction attempt's own duration is real evidence too
+	 * (e.g. Section 6/16's fallback-cost interest), never silently
+	 * dropped just because this specific attempt didn't succeed. */
+	tel->context_create_ms = seconds_since(&t0) * 1000.0;
 	if (ctx == NULL)
 	{
 		/* Review fix: this used to unconditionally say "for q8" even
@@ -320,9 +339,11 @@ bool	run_kv_store_pass(llama_model *model,
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 	run_generation(ctx, vocab, n_vocab, gen_tokens, collector, NULL, debug,
 		capture_logits, teacher_force, &abs_pos, text_out, out, token_cb,
-		token_cb_ud);
+		token_cb_ud, &tel->first_token_ms);
 	gen_seconds = seconds_since(&t0);
 	membrane_kv_store_read_rss(&tel->rss_final);
+	tel->prompt_ms = prompt_seconds * 1000.0;
+	tel->generation_ms = gen_seconds * 1000.0;
 	tel->prompt_tok_per_s = prompt_seconds > 0.0
 		? (double)prompt_tokens.size() / prompt_seconds : 0.0;
 	tel->generation_tok_per_s = (gen_seconds > 0.0 && !out->tokens.empty())

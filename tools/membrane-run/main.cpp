@@ -1,6 +1,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -342,6 +343,28 @@ typedef struct s_membrane_gpu_state
 	 * for --verbose/--json consumers. */
 	std::vector<std::string>	warnings;
 }	membrane_gpu_state_t;
+
+/* Phase 24: top-level pipeline stage timings that don't belong to any
+ * one existing struct -- planner/model-load/tokenization all happen in
+ * main() itself, around calls into modules that have no timing
+ * awareness of their own (Section 3: one clean boundary per stage,
+ * measured by the caller, not threaded into every callee). Context-
+ * create/prefill/decode/first-token timings live on
+ * membrane_kv_store_telemetry_t instead (decode_loop.cpp already owns
+ * that stage), never duplicated here -- print_run_json() reads both
+ * this struct and tel together. All fields are milliseconds via
+ * seconds_since()/CLOCK_MONOTONIC (decode_loop.h/.cpp's own existing
+ * timer, reused rather than a second implementation), left at 0.0 by
+ * an aggregate-initialized (`= {}`) instance until their own stage
+ * actually runs -- 0.0 is never ambiguous with a real measurement in
+ * practice (no real stage completes in exactly zero wall-clock time). */
+typedef struct s_membrane_timings
+{
+	double	planner_ms;
+	double	model_load_ms;
+	double	tokenization_ms;
+	double	total_ms;
+}	membrane_timings_t;
 
 static std::string	gpu_layers_label(int32_t gpu_layers)
 {
@@ -1749,9 +1772,10 @@ static void	print_fallback_json(const membrane_gpu_state_t &gs,
 				print_json_escaped(a.detail);
 				printf("\"");
 			}
-			printf(",\"cleanup_complete\":%s,\"model_reload_required\":%s",
+			printf(",\"cleanup_complete\":%s,\"model_reload_required\":%s,"
+				"\"apply_wall_ms\":%.3f",
 				a.cleanup_complete ? "true" : "false",
-				a.model_reload_required ? "true" : "false");
+				a.model_reload_required ? "true" : "false", a.apply_wall_ms);
 		}
 		printf("}");
 	}
@@ -1860,6 +1884,43 @@ static void	print_json_string_array(const std::vector<std::string> &arr)
 	printf("]");
 }
 
+/* Phase 24, Section 24: additive-only "timings" JSON object, shared by
+ * print_run_json() (tel non-NULL: every stage measured) and
+ * print_plan_only_json() (tel NULL: plan-only never creates a context
+ * or generates, so context_create_ms/prefill_ms/decode_ms/
+ * first_token_ms/throughput are genuinely inapplicable -- JSON null,
+ * not a fabricated 0, matching this project's established "null +
+ * reason" convention: the reason here is simply mode:"plan" itself,
+ * already visible one level up). first_token_ms is null (not -1) in
+ * JSON specifically when no token was generated -- distinct from a
+ * real 0.0 that could never actually happen for a real decode step. */
+static void	print_timings_json(const membrane_timings_t &timings,
+				const membrane_kv_store_telemetry_t *tel)
+{
+	printf("\"timings\":{\"total_ms\":%.3f,\"planner_ms\":%.3f,"
+		"\"model_load_ms\":%.3f,\"tokenization_ms\":%.3f,",
+		timings.total_ms, timings.planner_ms, timings.model_load_ms,
+		timings.tokenization_ms);
+	if (tel == NULL)
+	{
+		printf("\"context_create_ms\":null,\"prefill_ms\":null,"
+			"\"decode_ms\":null,\"first_token_ms\":null,"
+			"\"throughput\":{\"prefill_tokens_per_second\":null,"
+			"\"decode_tokens_per_second\":null}},");
+		return ;
+	}
+	printf("\"context_create_ms\":%.3f,\"prefill_ms\":%.3f,"
+		"\"decode_ms\":%.3f,\"first_token_ms\":",
+		tel->context_create_ms, tel->prompt_ms, tel->generation_ms);
+	if (tel->first_token_ms >= 0.0)
+		printf("%.3f", tel->first_token_ms);
+	else
+		printf("null");
+	printf(",\"throughput\":{\"prefill_tokens_per_second\":%.6f,"
+		"\"decode_tokens_per_second\":%.6f}},",
+		tel->prompt_tok_per_s, tel->generation_tok_per_s);
+}
+
 /* Phase 13.2, Section 6/9/17: additive-only JSON, same contract as
  * every other print_*_json() function in this file (Section 18: never
  * rename/remove an existing Phase 13.1 field, only add new ones) --
@@ -1871,7 +1932,8 @@ static void	print_run_json(const membrane_run_opts_t &o,
 				const std::string &text, const membrane_gpu_state_t &gs,
 				const membrane_host_meminfo_t &host, bool success,
 				int exit_code, size_t prompt_tokens_count,
-				const membrane_gpu_memory_observed_t &gpu_mem_observed)
+				const membrane_gpu_memory_observed_t &gpu_mem_observed,
+				const membrane_timings_t &timings)
 {
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"run\",\"ok\":true,\"model_label\":\"%s\","
@@ -1899,6 +1961,7 @@ static void	print_run_json(const membrane_run_opts_t &o,
 	print_gpu_memory_observed_json(gs, gpu_mem_observed);
 	print_joint_planner_json(gs);
 	print_fallback_json(gs, gs.fallback_engaged, true, success);
+	print_timings_json(timings, &t);
 	print_kv_placement_json(o, gs);
 	printf("\"memory\":{\"rss_after_model_load_kb\":%llu,"
 		"\"rss_after_context_kb\":%llu,\"rss_after_prompt_kb\":%llu,"
@@ -1998,7 +2061,8 @@ static void	print_run_human_stats(const membrane_kv_store_telemetry_t &t)
 static void	print_plan_only_json(const membrane_run_opts_t &o,
 				const char *model_label, uint32_t ctx_size,
 				int32_t n_layer_total, const membrane_gpu_state_t &gs,
-				const membrane_host_meminfo_t &host)
+				const membrane_host_meminfo_t &host,
+				const membrane_timings_t &timings)
 {
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"plan\",\"ok\":true,\"model_label\":\"",
@@ -2055,6 +2119,7 @@ static void	print_plan_only_json(const membrane_run_opts_t &o,
 	 * final_status, never "success" (which would wrongly imply a real
 	 * attempt happened). */
 	print_fallback_json(gs, false, false, false);
+	print_timings_json(timings, NULL);
 	/* Review fix (CodeRabbit, PR #23): host_memory now sits at the same
 	 * top level in both JSON schemas (print_run_json emits it
 	 * top-level too) -- previously nested inside memory_plan here only,
@@ -2388,7 +2453,8 @@ static int	run_normal_mode(const membrane_run_opts_t &o,
 				const std::vector<llama_token> &prompt_tokens,
 				const char *model_label, uint32_t ctx_size,
 				const model_shape_t &shape, membrane_gpu_state_t &gs,
-				const membrane_host_meminfo_t &host)
+				const membrane_host_meminfo_t &host,
+				membrane_timings_t timings, const struct timespec &total_t0)
 {
 	membrane_kv_store_telemetry_t	tel;
 	gen_run_result_t				result;
@@ -2497,6 +2563,7 @@ static int	run_normal_mode(const membrane_run_opts_t &o,
 		membrane_kv_store_rss_max(&tel.rss_peak, &tel.rss_final,
 			&tel.rss_peak);
 	}
+	timings.total_ms = seconds_since(&total_t0) * 1000.0;
 	if (o.want_json)
 	{
 		membrane_gpu_memory_observed_t	gpu_mem_observed;
@@ -2505,7 +2572,7 @@ static int	run_normal_mode(const membrane_run_opts_t &o,
 		print_run_json(effective_o, model_label, tel, text, gs, host,
 			result.ok, result.ok ? MEMBRANE_EXIT_SUCCESS
 				: MEMBRANE_EXIT_RUNTIME_ERROR, prompt_tokens.size(),
-			gpu_mem_observed);
+			gpu_mem_observed, timings);
 	}
 	else
 	{
@@ -2939,6 +3006,9 @@ int	main(int argc, char **argv)
 	llama_model_params				mp;
 	std::vector<ggml_backend_dev_t>	device_storage;
 	membrane_host_meminfo_t			host;
+	membrane_timings_t				timings = {};
+	struct timespec					total_t0;
+	struct timespec					stage_t0;
 
 	rc = membrane_run_parse_opts(argc, argv, &o);
 	if (o.want_help)
@@ -2954,6 +3024,12 @@ int	main(int argc, char **argv)
 	}
 	if (!o.verbose)
 		llama_log_set(quiet_log_callback, NULL);
+	/* Phase 24: total_ms's own start point -- deliberately AFTER CLI
+	 * parse/prompt resolution (negligible, and not itself one of the
+	 * named stages Section 2 of the Phase 24 task lists), not before --
+	 * process exec/dynamic-linker overhead is not this program's own
+	 * cost to measure or claim. */
+	clock_gettime(CLOCK_MONOTONIC, &total_t0);
 	/* Section 17: read once, before any of the potentially-slow model/
 	 * GPU work below -- a snapshot taken here is no less valid than one
 	 * taken later, and reading it once (not per print site) keeps every
@@ -2969,9 +3045,13 @@ int	main(int argc, char **argv)
 	 * --ctx, so o.ctx is never 0 here in the one case that would need
 	 * it to be KV-aware. */
 	mp = llama_model_default_params();
+	clock_gettime(CLOCK_MONOTONIC, &stage_t0);
 	if (!resolve_gpu_config(o, o.ctx, &device_storage, &mp, &gs))
 		return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
+	timings.planner_ms = seconds_since(&stage_t0) * 1000.0;
+	clock_gettime(CLOCK_MONOTONIC, &stage_t0);
 	model = llama_model_load_from_file(o.model_path, mp);
+	timings.model_load_ms = seconds_since(&stage_t0) * 1000.0;
 	if (model == NULL)
 	{
 		fprintf(stderr, "membrane-run: failed to load model '%s'\n",
@@ -2984,9 +3064,11 @@ int	main(int argc, char **argv)
 	model_label = membrane_runtime_safe_basename(o.model_path);
 	vocab = llama_model_get_vocab(model);
 	prompt_tokens.resize(prompt_text.size() + 8);
+	clock_gettime(CLOCK_MONOTONIC, &stage_t0);
 	rc = llama_tokenize(vocab, prompt_text.c_str(),
 			(int32_t)prompt_text.size(), prompt_tokens.data(),
 			(int32_t)prompt_tokens.size(), true, false);
+	timings.tokenization_ms = seconds_since(&stage_t0) * 1000.0;
 	if (rc < 0)
 	{
 		fprintf(stderr, "membrane-run: tokenization failed\n");
@@ -3122,9 +3204,10 @@ int	main(int argc, char **argv)
 		print_startup_summary(effective_o, model_label, ctx_size,
 			kv_bytes_for_mode(shape, ctx_size, effective_o.kv_mode),
 			shape.n_layer, gs, host);
+		timings.total_ms = seconds_since(&total_t0) * 1000.0;
 		if (o.want_json)
 			print_plan_only_json(effective_o, model_label, ctx_size,
-				shape.n_layer, gs, host);
+				shape.n_layer, gs, host, timings);
 		else
 			fprintf(stderr,
 				"membrane-run: plan resolved (no generation performed)\n");
@@ -3142,7 +3225,7 @@ int	main(int argc, char **argv)
 		build_plan_warnings(o, host, &gs);
 		rc = run_normal_mode(effective_o, &model, o.model_path, mp,
 				&device_storage, prompt_tokens, model_label, ctx_size, shape,
-				gs, host);
+				gs, host, timings, total_t0);
 	}
 	llama_model_free(model);
 	llama_backend_free();

@@ -142,6 +142,24 @@ typedef struct s_membrane_kv_store_telemetry
 								 * file-level comment above) */
 	double		decode_seconds;	/* likewise for read-side instrumentation */
 
+	/* Phase 24: raw stage durations in milliseconds, additive alongside
+	 * the throughput fields above (which are derived from the SAME
+	 * underlying prompt_seconds/gen_seconds this file's own decode_loop.cpp
+	 * already measures via clock_gettime(CLOCK_MONOTONIC) -- these just
+	 * expose the raw duration too, not a new measurement). context_create_ms
+	 * times ONLY the llama_init_from_model() call itself (context/KV
+	 * tensor allocation), never conflated with prompt_ms (prefill) or
+	 * generation_ms (decode) -- see docs/performance-profiling.md.
+	 * first_token_ms is the single decode step that produces the FIRST
+	 * generated token (a stage-boundary measurement, not per-token
+	 * logging -- Section 25 of the Phase 24 task), -1.0 if no token was
+	 * generated (e.g. immediate EOG or a failed pass) rather than a
+	 * fabricated 0. */
+	double		context_create_ms;
+	double		prompt_ms;
+	double		generation_ms;
+	double		first_token_ms;
+
 	/* quality (only meaningful when kv_store_mode == q8; zeroed/self-
 	 * identical for native, matching how Phase 6 zeroes injection
 	 * fields for BASELINE) */

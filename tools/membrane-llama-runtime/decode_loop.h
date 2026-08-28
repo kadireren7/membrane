@@ -52,13 +52,23 @@ typedef struct s_gen_run_result
 typedef void (*membrane_token_cb_t)(const char *piece, size_t piece_len,
 	int step, void *user_data);
 
+/* Phase 24: out_first_token_ms, iff non-NULL, is always written on
+ * return -- the wall-clock duration (milliseconds, CLOCK_MONOTONIC via
+ * this file's own seconds_since()) of the single decode step that
+ * produced the FIRST generated token, or -1.0 if none was (immediate
+ * EOG, a failed decode, or a teacher-forced pass -- which replays
+ * tokens rather than generating them, so "first token" has no
+ * meaning there). One stage-boundary timestamp pair, not per-token
+ * instrumentation (Section 25 of the Phase 24 task) -- every other
+ * step's own duration is not captured here. */
 void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 			int32_t n_vocab, int gen_tokens,
 			membrane_runtime_collector_t *collector,
 			membrane_llama_hook_ctx_t *hook_ctx, int debug,
 			bool capture_logits, const std::vector<int32_t> *teacher_force,
 			uint64_t *abs_pos, std::string *text_out, gen_run_result_t *out,
-			membrane_token_cb_t token_cb = NULL, void *token_cb_ud = NULL);
+			membrane_token_cb_t token_cb = NULL, void *token_cb_ud = NULL,
+			double *out_first_token_ms = NULL);
 
 /* Phase 12H: optional static per-layer KV device residency map,
  * threaded through to llama_context_params.kv_dev_override at

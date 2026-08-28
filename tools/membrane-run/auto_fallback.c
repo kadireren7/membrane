@@ -1,7 +1,27 @@
+/* clock_gettime()/CLOCK_MONOTONIC need this feature-test macro under
+ * strict -std=c11 (this project's own CMAKE_C_STANDARD, no GNU
+ * extensions) -- same fix tools/membrane-demo/demo_core.c already
+ * uses for the identical reason. Must be defined before any header is
+ * included. */
+#define _POSIX_C_SOURCE 200809L
+
 #include "auto_fallback.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+
+/* Phase 24: this module stays llama-free (clock_gettime()/CLOCK_MONOTONIC
+ * are libc, not ggml/llama) -- same "no product-specific dependency"
+ * contract every other pure module in this project already keeps. */
+static double	seconds_since_ts(const struct timespec *t0)
+{
+	struct timespec	t1;
+
+	clock_gettime(CLOCK_MONOTONIC, &t1);
+	return ((double)(t1.tv_sec - t0->tv_sec)
+		+ (double)(t1.tv_nsec - t0->tv_nsec) / 1e9);
+}
 
 const char	*membrane_apply_failure_class_name(int failure_class)
 {
@@ -145,7 +165,13 @@ int	membrane_fallback_run(const membrane_joint_candidate_t *candidates,
 		entry->apply_started = 1;
 		apply_attempts++;
 		memset(&ar, 0, sizeof(ar));
-		entry->apply_ok = apply_fn(c, order[i], apply_ctx, &ar);
+		{
+			struct timespec	apply_t0;
+
+			clock_gettime(CLOCK_MONOTONIC, &apply_t0);
+			entry->apply_ok = apply_fn(c, order[i], apply_ctx, &ar);
+			entry->apply_wall_ms = seconds_since_ts(&apply_t0) * 1000.0;
+		}
 		entry->failure_class = ar.failure_class;
 		snprintf(entry->detail, sizeof(entry->detail), "%s", ar.detail);
 		entry->cleanup_complete = ar.cleanup_complete;
