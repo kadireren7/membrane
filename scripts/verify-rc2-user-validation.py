@@ -41,8 +41,22 @@ LEAK_PATTERNS = [
 	(re.compile(r"/Users/[^/\s]+"), "a /Users/<user> path"),
 	(re.compile(r"\bC:\\Users\\[^\\\s]+", re.IGNORECASE), "a Windows user profile path"),
 	(re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "what looks like an IPv4 address"),
+	(re.compile(r"(?<![:\w])(?:[0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}(?![:\w])"),
+		"what looks like an IPv6 address"),
 	(re.compile(r"\bSerial\s*(?:Number)?\s*[:=]", re.IGNORECASE), "a serial-number field"),
+	(re.compile(r"\b(?:API[_-]?KEY|ACCESS[_-]?TOKEN|SECRET|PASSWORD|BEARER|"
+		r"AUTH[_-]?TOKEN)\s*[:=]\s*\S+", re.IGNORECASE),
+		"what looks like a secret/credential (KEY=/TOKEN=/SECRET=/... style)"),
+	(re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"), "what looks like a GitHub personal access token"),
 ]
+
+# Section 5: reporters are told to sanitize any model path down to just the
+# filename -- a "command" field should therefore never contain an absolute
+# filesystem path at all (a repo-relative path like "models/foo.gguf" is
+# fine and expected). Separate from LEAK_PATTERNS above (which only catch
+# specific known-sensitive path prefixes): this is a blanket rule for this
+# one field.
+COMMAND_ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:\w])/[\w.\-]+(?:/[\w.\-]+)+")
 
 
 def fail(name, detail):
@@ -74,24 +88,91 @@ def all_strings(obj):
 			yield from all_strings(v)
 
 
-@check("summary.json is a valid JSON array of entries with the required fields")
+INSTALL_FIELDS = ("configure", "build", "install", "outside_tree_run", "uninstall")
+RUNTIME_REQUIRED_FIELDS = ("model", "architecture", "context", "command", "outcome")
+ISSUE_REQUIRED_FIELDS = ("category", "severity", "notes")
+PRIVACY_FIELDS = ("no_username", "no_home_path", "no_hostname",
+	"no_serial_numbers", "no_ip_addresses", "no_secrets")
+ROOT_REQUIRED_FIELDS = ("schema_version", "environment_id", "provenance", "tag",
+	"commit", "os", "cpu", "ram_gb", "backend", "compiler",
+	"cmake_version", "install", "runtime", "issues", "privacy")
+
+
+@check("summary.json entries satisfy every nested requirement in schema.json "
+	"(not just root-level field presence)")
 def check_shape(entries):
 	if not isinstance(entries, list):
 		fail("shape", "summary.json must be a JSON array")
 		return
-	required = ("schema_version", "environment_id", "provenance", "tag",
-		"commit", "os", "cpu", "ram_gb", "backend", "compiler",
-		"cmake_version", "install", "runtime", "issues", "privacy")
 	for e in entries:
 		eid = e.get("environment_id", "<no id>") if isinstance(e, dict) else "<not an object>"
 		if not isinstance(e, dict):
 			fail(eid, "entry is not a JSON object")
 			continue
-		for field in required:
+		for field in ROOT_REQUIRED_FIELDS:
 			if field not in e:
 				fail(eid, f"missing required field {field!r}")
 		if e.get("schema_version") != 1:
 			fail(eid, f"schema_version is {e.get('schema_version')!r}, expected 1")
+		if not isinstance(e.get("ram_gb"), (int, float)):
+			fail(eid, f"ram_gb is {e.get('ram_gb')!r}, expected a number")
+
+		install = e.get("install")
+		if not isinstance(install, dict):
+			fail(eid, f"install must be an object, got {type(install).__name__}")
+		else:
+			for field in INSTALL_FIELDS:
+				if field not in install:
+					fail(eid, f"install missing required field {field!r}")
+				elif not isinstance(install[field], bool):
+					fail(eid, f"install.{field} must be a boolean, got "
+						f"{type(install[field]).__name__}")
+			extra = set(install) - set(INSTALL_FIELDS)
+			if extra:
+				fail(eid, f"install has unexpected field(s): {sorted(extra)!r}")
+
+		runtime = e.get("runtime")
+		if not isinstance(runtime, list):
+			fail(eid, f"runtime must be an array, got {type(runtime).__name__}")
+		else:
+			for i, r in enumerate(runtime):
+				rid = f"{eid}.runtime[{i}]"
+				if not isinstance(r, dict):
+					fail(rid, "runtime entry is not a JSON object")
+					continue
+				for field in RUNTIME_REQUIRED_FIELDS:
+					if field not in r:
+						fail(rid, f"missing required field {field!r}")
+				if "context" in r and not isinstance(r["context"], int):
+					fail(rid, f"context must be an integer, got "
+						f"{type(r['context']).__name__}")
+				if "fallback_attempted" in r and not isinstance(
+						r["fallback_attempted"], bool):
+					fail(rid, "fallback_attempted must be a boolean when present")
+
+		issues = e.get("issues")
+		if not isinstance(issues, list):
+			fail(eid, f"issues must be an array, got {type(issues).__name__}")
+		else:
+			for i, iss in enumerate(issues):
+				iid = f"{eid}.issues[{i}]"
+				if not isinstance(iss, dict):
+					fail(iid, "issue entry is not a JSON object")
+					continue
+				for field in ISSUE_REQUIRED_FIELDS:
+					if field not in iss:
+						fail(iid, f"missing required field {field!r}")
+
+		privacy = e.get("privacy")
+		if not isinstance(privacy, dict):
+			fail(eid, f"privacy must be an object, got {type(privacy).__name__}")
+		else:
+			for field in PRIVACY_FIELDS:
+				if field not in privacy:
+					fail(eid, f"privacy missing required field {field!r}")
+			extra = set(privacy) - set(PRIVACY_FIELDS)
+			if extra:
+				fail(eid, f"privacy has unexpected field(s): {sorted(extra)!r}")
 
 
 @check("every entry targets the exact v0.3.0-rc2 tag and commit")
@@ -159,9 +240,22 @@ def check_privacy_attestation(entries):
 	for e in entries:
 		eid = e.get("environment_id", "<no id>")
 		privacy = e.get("privacy") or {}
-		for field in ("no_username", "no_home_path", "no_hostname", "no_serial_numbers"):
+		for field in PRIVACY_FIELDS:
 			if privacy.get(field) is not True:
 				fail(eid, f"privacy.{field} is not true")
+
+
+@check("no 'command' field contains an absolute filesystem path")
+def check_command_no_absolute_path(entries):
+	for e in entries:
+		eid = e.get("environment_id", "<no id>")
+		for r in e.get("runtime", []) if isinstance(e.get("runtime"), list) else []:
+			if not isinstance(r, dict):
+				continue
+			cmd = r.get("command")
+			if isinstance(cmd, str) and COMMAND_ABSOLUTE_PATH_PATTERN.search(cmd):
+				fail(eid, f"command field contains an absolute path (model "
+					f"paths must be sanitized to just the filename): {cmd!r}")
 
 
 @check("no entry claims SUCCESS while its own install/runtime fields disagree")
@@ -185,6 +279,35 @@ def check_no_fake_success(entries):
 				pass
 
 
+DOC_PATH = REPO_ROOT / "docs" / "rc2-user-validation.md"
+DOC_TABLE_ROW_PATTERN = re.compile(
+	r"^\|\s*(\S+)\s*\|.*\|\s*(VALIDATED|NOT_YET_VALIDATED)\b")
+
+
+@check("docs/rc2-user-validation.md's status table matches summary.json (no drift)")
+def check_doc_matches_summary(entries):
+	if not DOC_PATH.exists():
+		fail("doc table", f"{DOC_PATH} does not exist")
+		return
+	summary_ids = {e.get("environment_id") for e in entries if isinstance(e, dict)}
+	doc_validated_ids = set()
+	for line in DOC_PATH.read_text().splitlines():
+		m = DOC_TABLE_ROW_PATTERN.match(line.strip())
+		if not m:
+			continue
+		row_id, status = m.group(1), m.group(2)
+		if status == "VALIDATED":
+			doc_validated_ids.add(row_id)
+			if row_id not in summary_ids:
+				fail("doc table", f"row {row_id!r} is marked VALIDATED in "
+					f"{DOC_PATH.name} but has no matching entry in "
+					f"summary.json")
+	missing_from_doc = summary_ids - doc_validated_ids
+	if missing_from_doc:
+		fail("doc table", f"summary.json has entries not reflected as "
+			f"VALIDATED in {DOC_PATH.name}: {sorted(missing_from_doc)!r}")
+
+
 def main():
 	if not DATA_PATH.exists():
 		print(f"FATAL: {DATA_PATH} does not exist", file=sys.stderr)
@@ -196,8 +319,10 @@ def main():
 		check_unique_ids(entries)
 		check_enums(entries)
 		check_no_leakage(entries)
+		check_command_no_absolute_path(entries)
 		check_privacy_attestation(entries)
 		check_no_fake_success(entries)
+		check_doc_matches_summary(entries)
 
 	print()
 	if FAILURES:

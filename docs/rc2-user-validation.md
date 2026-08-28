@@ -124,8 +124,8 @@ validate the path.
 
 ```bash
 cd /path/to/membrane
-xargs rm -f < build/install_manifest.txt
-xargs rm -f < build-vulkan/install_manifest.txt   # if you built Vulkan
+while IFS= read -r path; do rm -f -- "$path"; done < build/install_manifest.txt
+while IFS= read -r path; do rm -f -- "$path"; done < build-vulkan/install_manifest.txt   # if you built Vulkan
 ```
 
 Confirm nothing is left under your `install-cpu`/`install-vulkan`

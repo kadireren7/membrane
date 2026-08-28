@@ -90,14 +90,17 @@
     },
     "privacy": {
       "type": "object",
-      "required": ["no_username", "no_home_path", "no_hostname", "no_serial_numbers"],
+      "required": ["no_username", "no_home_path", "no_hostname",
+        "no_serial_numbers", "no_ip_addresses", "no_secrets"],
       "additionalProperties": false,
       "description": "Self-attestation the reporter sanitized their own report before submitting -- see docs/rc2-user-validation.md's privacy checklist.",
       "properties": {
         "no_username": {"const": true},
         "no_home_path": {"const": true},
         "no_hostname": {"const": true},
-        "no_serial_numbers": {"const": true}
+        "no_serial_numbers": {"const": true},
+        "no_ip_addresses": {"const": true},
+        "no_secrets": {"const": true}
       }
     }
   }

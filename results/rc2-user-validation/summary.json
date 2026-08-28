@@ -49,7 +49,9 @@
       "no_username": true,
       "no_home_path": true,
       "no_hostname": true,
-      "no_serial_numbers": true
+      "no_serial_numbers": true,
+      "no_ip_addresses": true,
+      "no_secrets": true
     }
   },
   {
@@ -113,7 +115,9 @@
       "no_username": true,
       "no_home_path": true,
       "no_hostname": true,
-      "no_serial_numbers": true
+      "no_serial_numbers": true,
+      "no_ip_addresses": true,
+      "no_secrets": true
     }
   },
   {
@@ -163,7 +167,9 @@
       "no_username": true,
       "no_home_path": true,
       "no_hostname": true,
-      "no_serial_numbers": true
+      "no_serial_numbers": true,
+      "no_ip_addresses": true,
+      "no_secrets": true
     }
   }
 ]
