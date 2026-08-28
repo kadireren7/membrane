@@ -1429,6 +1429,73 @@ static const char	*requested_kv_name(const membrane_run_opts_t &o,
 	return (kv_mode_name(o.kv_mode));
 }
 
+/* Phase 19: a SECOND, post-run query of the exact same GPU device
+ * gpu_policy's pre-load estimate was checked against -- reusing
+ * membrane_gpu_list_devices() (never a new/different API), so this is
+ * the same driver-reported free-heap-bytes figure as gs.device_free_
+ * bytes, just re-read after model load + context + generation are all
+ * done. This lets a consumer compute a real observed GPU-memory delta
+ * to compare against the pre-load estimate (estimated_model_bytes +
+ * estimated_kv_bytes) -- see docs/planner-accuracy.md. Deliberately
+ * NOT a peak (nothing here samples memory continuously during decode)
+ * and deliberately NOT claimed to be exact -- the same driver-reported-
+ * budget caveats that apply to the pre-load figure apply here too, and
+ * this single post-run read can be diluted by any other process on the
+ * same device between the two reads. */
+typedef struct s_membrane_gpu_memory_observed
+{
+	bool		available;
+	uint64_t	device_free_bytes_after;
+}	membrane_gpu_memory_observed_t;
+
+static void	observe_gpu_memory_after_run(const membrane_gpu_state_t &gs,
+				membrane_gpu_memory_observed_t *out)
+{
+	membrane_gpu_device_info_t	devices[MEMBRANE_GPU_MAX_DEVICES];
+	size_t						n;
+	size_t						i;
+
+	out->available = false;
+	out->device_free_bytes_after = 0;
+	if (!gs.requested || gs.device_selected.empty())
+		return ;
+	n = membrane_gpu_list_devices(devices, MEMBRANE_GPU_MAX_DEVICES);
+	for (i = 0; i < n; ++i)
+	{
+		if (gs.device_selected == devices[i].name)
+		{
+			out->available = true;
+			out->device_free_bytes_after = devices[i].memory_free;
+			return ;
+		}
+	}
+}
+
+static void	print_gpu_memory_observed_json(const membrane_gpu_state_t &gs,
+				const membrane_gpu_memory_observed_t &obs)
+{
+	printf("\"gpu_memory_observed\":{\"available\":%s",
+		obs.available ? "true" : "false");
+	if (obs.available)
+	{
+		int64_t	delta = (int64_t)gs.device_free_bytes
+			- (int64_t)obs.device_free_bytes_after;
+
+		printf(",\"measurement_method\":\"driver-reported free heap "
+			"bytes via ggml_backend_dev_get_props(), re-queried after "
+			"model load + context + generation -- not a peak, not a "
+			"guaranteed live figure, same caveats as the pre-load "
+			"estimate this is compared against\","
+			"\"device_free_bytes_before\":%llu,"
+			"\"device_free_bytes_after\":%llu,"
+			"\"observed_delta_bytes\":%lld",
+			(unsigned long long)gs.device_free_bytes,
+			(unsigned long long)obs.device_free_bytes_after,
+			(long long)delta);
+	}
+	printf("},");
+}
+
 static void	print_gpu_json(const membrane_gpu_state_t &gs)
 {
 	printf("\"gpu\":{\"requested\":%s,\"backend_gpu_capable\":%s,",
@@ -1541,7 +1608,8 @@ static void	print_run_json(const membrane_run_opts_t &o,
 				const char *model_label, const membrane_kv_store_telemetry_t &t,
 				const std::string &text, const membrane_gpu_state_t &gs,
 				const membrane_host_meminfo_t &host, bool success,
-				int exit_code, size_t prompt_tokens_count)
+				int exit_code, size_t prompt_tokens_count,
+				const membrane_gpu_memory_observed_t &gpu_mem_observed)
 {
 	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
 		"\"mode\":\"run\",\"ok\":true,\"model_label\":\"%s\","
@@ -1566,6 +1634,7 @@ static void	print_run_json(const membrane_run_opts_t &o,
 	printf("\"storage\":{\"kv_allocated_bytes\":%llu},",
 		(unsigned long long)t.compressed_kv_allocated_bytes);
 	print_gpu_json(gs);
+	print_gpu_memory_observed_json(gs, gpu_mem_observed);
 	print_kv_placement_json(o, gs);
 	printf("\"memory\":{\"rss_after_model_load_kb\":%llu,"
 		"\"rss_after_context_kb\":%llu,\"rss_after_prompt_kb\":%llu,"
@@ -1811,9 +1880,14 @@ static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
 		&tel.rss_peak);
 	membrane_kv_store_rss_max(&tel.rss_peak, &tel.rss_final, &tel.rss_peak);
 	if (o.want_json)
+	{
+		membrane_gpu_memory_observed_t	gpu_mem_observed;
+
+		observe_gpu_memory_after_run(gs, &gpu_mem_observed);
 		print_run_json(o, model_label, tel, text, gs, host, result.ok,
 			result.ok ? MEMBRANE_EXIT_SUCCESS : MEMBRANE_EXIT_RUNTIME_ERROR,
-			prompt_tokens.size());
+			prompt_tokens.size(), gpu_mem_observed);
+	}
 	else
 	{
 		if (!stream)

@@ -1,0 +1,411 @@
+{
+  "schema_version": 1,
+  "note": "Phase 19: planner memory-estimate-vs-observation measurements at a small, fixed set of controlled points. See docs/planner-accuracy.md.",
+  "membrane_commit": "4e2dda2c0323f2e3036a7db942970a261b658322",
+  "generated_at": "2026-08-28T01:49:50Z",
+  "host": {
+    "note": "generated on the developer machine that ran scripts/measure-planner-accuracy.py -- see gpu_policy's own device_total_bytes per measurement for the exact tested GPU's reported VRAM"
+  },
+  "measurements": [
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_vulkan_native_default",
+      "timestamp": "2026-08-28T01:49:50Z",
+      "commit": "4e2dda2c0323f2e3036a7db942970a261b658322",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "context": 2048,
+      "gpu_layers_requested": "all",
+      "gpu_layers_resolved": 30,
+      "kv_precision_requested": "native",
+      "kv_precision_resolved": "native",
+      "kv_placement_requested": "default",
+      "kv_placement_resolved": "default",
+      "planner": {
+        "available_gpu_bytes": 4148756480,
+        "reserved_gpu_bytes": 682937535,
+        "estimated_weight_gpu_bytes": 212474880,
+        "estimated_kv_gpu_bytes": 47185920,
+        "estimated_total_gpu_bytes": 259660800,
+        "estimated_total_gpu_bytes_basis": "weights_plus_kv",
+        "estimated_host_kv_bytes": 47185920
+      },
+      "observed": {
+        "gpu_free_before_bytes": 4148756480,
+        "gpu_free_after_bytes": 3878682624,
+        "gpu_observed_delta_bytes": 270073856,
+        "host_rss_after_model_load_kb": 271452,
+        "host_rss_after_context_kb": 273624,
+        "host_rss_after_context_delta_kb": 2172,
+        "host_rss_peak_kb": 472884
+      },
+      "outcome": {
+        "classification": "FIT",
+        "exit_code": 0,
+        "wall_seconds": 2.84
+      },
+      "errors": {
+        "gpu_estimate_error_bytes": 10413056,
+        "gpu_estimate_error_percent": 3.856,
+        "host_kv_estimate_error_kb": null,
+        "host_kv_estimate_error_percent": null
+      },
+      "provenance": {
+        "command": "/tmp/claude-1000/-home-kadirerenaltintas-membrane/5237d358-f7ca-42f1-8b44-4e05d2ef377a/scratchpad/p19vk/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 8 --json --gpu-layers all --kv native",
+        "measurement_method": "gpu: driver-reported free heap bytes via ggml_backend_dev_get_props(), read once before model load and once after generation (membrane-run's own gpu_policy/gpu_memory_observed JSON fields); host: /proc/self/status VmRSS via membrane-run's own memory.* JSON checkpoints. Neither is a true continuous peak sample."
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_vulkan_q8_default",
+      "timestamp": "2026-08-28T01:49:50Z",
+      "commit": "4e2dda2c0323f2e3036a7db942970a261b658322",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "context": 2048,
+      "gpu_layers_requested": "all",
+      "gpu_layers_resolved": 30,
+      "kv_precision_requested": "q8",
+      "kv_precision_resolved": "q8",
+      "kv_placement_requested": "default",
+      "kv_placement_resolved": "default",
+      "planner": {
+        "available_gpu_bytes": 4148756480,
+        "reserved_gpu_bytes": 682937535,
+        "estimated_weight_gpu_bytes": 212474880,
+        "estimated_kv_gpu_bytes": 25067520,
+        "estimated_total_gpu_bytes": 237542400,
+        "estimated_total_gpu_bytes_basis": "weights_plus_kv",
+        "estimated_host_kv_bytes": 25067520
+      },
+      "observed": {
+        "gpu_free_before_bytes": 4148756480,
+        "gpu_free_after_bytes": 3878682624,
+        "gpu_observed_delta_bytes": 270073856,
+        "host_rss_after_model_load_kb": 274880,
+        "host_rss_after_context_kb": 275116,
+        "host_rss_after_context_delta_kb": 236,
+        "host_rss_peak_kb": 476160
+      },
+      "outcome": {
+        "classification": "FIT",
+        "exit_code": 0,
+        "wall_seconds": 0.9
+      },
+      "errors": {
+        "gpu_estimate_error_bytes": 32531456,
+        "gpu_estimate_error_percent": 12.045,
+        "host_kv_estimate_error_kb": null,
+        "host_kv_estimate_error_percent": null
+      },
+      "provenance": {
+        "command": "/tmp/claude-1000/-home-kadirerenaltintas-membrane/5237d358-f7ca-42f1-8b44-4e05d2ef377a/scratchpad/p19vk/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 8 --json --gpu-layers all --kv q8",
+        "measurement_method": "gpu: driver-reported free heap bytes via ggml_backend_dev_get_props(), read once before model load and once after generation (membrane-run's own gpu_policy/gpu_memory_observed JSON fields); host: /proc/self/status VmRSS via membrane-run's own memory.* JSON checkpoints. Neither is a true continuous peak sample."
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_vulkan_q5_default",
+      "timestamp": "2026-08-28T01:49:50Z",
+      "commit": "4e2dda2c0323f2e3036a7db942970a261b658322",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "context": 2048,
+      "gpu_layers_requested": "all",
+      "gpu_layers_resolved": 30,
+      "kv_precision_requested": "q5",
+      "kv_precision_resolved": "q5",
+      "kv_placement_requested": "default",
+      "kv_placement_resolved": "default",
+      "planner": {
+        "available_gpu_bytes": 4148756480,
+        "reserved_gpu_bytes": 682937535,
+        "estimated_weight_gpu_bytes": 212474880,
+        "estimated_kv_gpu_bytes": 17694720,
+        "estimated_total_gpu_bytes": 230169600,
+        "estimated_total_gpu_bytes_basis": "weights_plus_kv",
+        "estimated_host_kv_bytes": 17694720
+      },
+      "observed": {
+        "gpu_free_before_bytes": 4148756480,
+        "gpu_free_after_bytes": 3878682624,
+        "gpu_observed_delta_bytes": 270073856,
+        "host_rss_after_model_load_kb": 274864,
+        "host_rss_after_context_kb": 276084,
+        "host_rss_after_context_delta_kb": 1220,
+        "host_rss_peak_kb": 476160
+      },
+      "outcome": {
+        "classification": "FIT",
+        "exit_code": 0,
+        "wall_seconds": 0.776
+      },
+      "errors": {
+        "gpu_estimate_error_bytes": 39904256,
+        "gpu_estimate_error_percent": 14.775,
+        "host_kv_estimate_error_kb": null,
+        "host_kv_estimate_error_percent": null
+      },
+      "provenance": {
+        "command": "/tmp/claude-1000/-home-kadirerenaltintas-membrane/5237d358-f7ca-42f1-8b44-4e05d2ef377a/scratchpad/p19vk/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 8 --json --gpu-layers all --kv q5",
+        "measurement_method": "gpu: driver-reported free heap bytes via ggml_backend_dev_get_props(), read once before model load and once after generation (membrane-run's own gpu_policy/gpu_memory_observed JSON fields); host: /proc/self/status VmRSS via membrane-run's own memory.* JSON checkpoints. Neither is a true continuous peak sample."
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_vulkan_adaptive_default",
+      "timestamp": "2026-08-28T01:49:50Z",
+      "commit": "4e2dda2c0323f2e3036a7db942970a261b658322",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "context": 2048,
+      "gpu_layers_requested": "all",
+      "gpu_layers_resolved": 30,
+      "kv_precision_requested": "adaptive",
+      "kv_precision_resolved": "q8",
+      "kv_placement_requested": "default",
+      "kv_placement_resolved": "default",
+      "planner": {
+        "available_gpu_bytes": 4148756480,
+        "reserved_gpu_bytes": 682937535,
+        "estimated_weight_gpu_bytes": 212474880,
+        "estimated_kv_gpu_bytes": 25067520,
+        "estimated_total_gpu_bytes": 237542400,
+        "estimated_total_gpu_bytes_basis": "weights_plus_kv",
+        "estimated_host_kv_bytes": 25067520
+      },
+      "observed": {
+        "gpu_free_before_bytes": 4148756480,
+        "gpu_free_after_bytes": 3878682624,
+        "gpu_observed_delta_bytes": 270073856,
+        "host_rss_after_model_load_kb": 274936,
+        "host_rss_after_context_kb": 276212,
+        "host_rss_after_context_delta_kb": 1276,
+        "host_rss_peak_kb": 476128
+      },
+      "outcome": {
+        "classification": "FIT",
+        "exit_code": 0,
+        "wall_seconds": 0.702
+      },
+      "errors": {
+        "gpu_estimate_error_bytes": 32531456,
+        "gpu_estimate_error_percent": 12.045,
+        "host_kv_estimate_error_kb": null,
+        "host_kv_estimate_error_percent": null
+      },
+      "provenance": {
+        "command": "/tmp/claude-1000/-home-kadirerenaltintas-membrane/5237d358-f7ca-42f1-8b44-4e05d2ef377a/scratchpad/p19vk/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 8 --json --gpu-layers all --kv adaptive",
+        "measurement_method": "gpu: driver-reported free heap bytes via ggml_backend_dev_get_props(), read once before model load and once after generation (membrane-run's own gpu_policy/gpu_memory_observed JSON fields); host: /proc/self/status VmRSS via membrane-run's own memory.* JSON checkpoints. Neither is a true continuous peak sample."
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_cpu_native",
+      "timestamp": "2026-08-28T01:49:50Z",
+      "commit": "4e2dda2c0323f2e3036a7db942970a261b658322",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "backend": "cpu",
+      "device": null,
+      "context": 2048,
+      "gpu_layers_requested": "0",
+      "gpu_layers_resolved": 0,
+      "kv_precision_requested": "native",
+      "kv_precision_resolved": "native",
+      "kv_placement_requested": "default",
+      "kv_placement_resolved": "default",
+      "planner": {
+        "available_gpu_bytes": null,
+        "reserved_gpu_bytes": null,
+        "estimated_weight_gpu_bytes": null,
+        "estimated_kv_gpu_bytes": null,
+        "estimated_total_gpu_bytes": null,
+        "estimated_total_gpu_bytes_basis": null,
+        "estimated_host_kv_bytes": 47185920
+      },
+      "observed": {
+        "gpu_free_before_bytes": null,
+        "gpu_free_after_bytes": null,
+        "gpu_observed_delta_bytes": null,
+        "host_rss_after_model_load_kb": 418868,
+        "host_rss_after_context_kb": 466812,
+        "host_rss_after_context_delta_kb": 47944,
+        "host_rss_peak_kb": 467368
+      },
+      "outcome": {
+        "classification": "FIT",
+        "exit_code": 0,
+        "wall_seconds": 0.766
+      },
+      "errors": {
+        "gpu_estimate_error_bytes": null,
+        "gpu_estimate_error_percent": null,
+        "host_kv_estimate_error_kb": 1864.0,
+        "host_kv_estimate_error_percent": 3.888
+      },
+      "provenance": {
+        "command": "/tmp/claude-1000/-home-kadirerenaltintas-membrane/5237d358-f7ca-42f1-8b44-4e05d2ef377a/scratchpad/p19vk/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 8 --json --gpu-layers 0 --kv native",
+        "measurement_method": "gpu: driver-reported free heap bytes via ggml_backend_dev_get_props(), read once before model load and once after generation (membrane-run's own gpu_policy/gpu_memory_observed JSON fields); host: /proc/self/status VmRSS via membrane-run's own memory.* JSON checkpoints. Neither is a true continuous peak sample."
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_cpu_q8",
+      "timestamp": "2026-08-28T01:49:50Z",
+      "commit": "4e2dda2c0323f2e3036a7db942970a261b658322",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "backend": "cpu",
+      "device": null,
+      "context": 2048,
+      "gpu_layers_requested": "0",
+      "gpu_layers_resolved": 0,
+      "kv_precision_requested": "q8",
+      "kv_precision_resolved": "q8",
+      "kv_placement_requested": "default",
+      "kv_placement_resolved": "default",
+      "planner": {
+        "available_gpu_bytes": null,
+        "reserved_gpu_bytes": null,
+        "estimated_weight_gpu_bytes": null,
+        "estimated_kv_gpu_bytes": null,
+        "estimated_total_gpu_bytes": null,
+        "estimated_total_gpu_bytes_basis": null,
+        "estimated_host_kv_bytes": 25067520
+      },
+      "observed": {
+        "gpu_free_before_bytes": null,
+        "gpu_free_after_bytes": null,
+        "gpu_observed_delta_bytes": null,
+        "host_rss_after_model_load_kb": 418712,
+        "host_rss_after_context_kb": 445056,
+        "host_rss_after_context_delta_kb": 26344,
+        "host_rss_peak_kb": 445776
+      },
+      "outcome": {
+        "classification": "FIT",
+        "exit_code": 0,
+        "wall_seconds": 0.835
+      },
+      "errors": {
+        "gpu_estimate_error_bytes": null,
+        "gpu_estimate_error_percent": null,
+        "host_kv_estimate_error_kb": 1864.0,
+        "host_kv_estimate_error_percent": 7.076
+      },
+      "provenance": {
+        "command": "/tmp/claude-1000/-home-kadirerenaltintas-membrane/5237d358-f7ca-42f1-8b44-4e05d2ef377a/scratchpad/p19vk/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 8 --json --gpu-layers 0 --kv q8",
+        "measurement_method": "gpu: driver-reported free heap bytes via ggml_backend_dev_get_props(), read once before model load and once after generation (membrane-run's own gpu_policy/gpu_memory_observed JSON fields); host: /proc/self/status VmRSS via membrane-run's own memory.* JSON checkpoints. Neither is a true continuous peak sample."
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-360m_vulkan_native_default",
+      "timestamp": "2026-08-28T01:49:50Z",
+      "commit": "4e2dda2c0323f2e3036a7db942970a261b658322",
+      "model": "SmolLM2-360M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "context": 2048,
+      "gpu_layers_requested": "all",
+      "gpu_layers_resolved": 32,
+      "kv_precision_requested": "native",
+      "kv_precision_resolved": "native",
+      "kv_placement_requested": "default",
+      "kv_placement_resolved": "default",
+      "planner": {
+        "available_gpu_bytes": 4148756480,
+        "reserved_gpu_bytes": 682937535,
+        "estimated_weight_gpu_bytes": 629391360,
+        "estimated_kv_gpu_bytes": 83886080,
+        "estimated_total_gpu_bytes": 713277440,
+        "estimated_total_gpu_bytes_basis": "weights_plus_kv",
+        "estimated_host_kv_bytes": 83886080
+      },
+      "observed": {
+        "gpu_free_before_bytes": 4148756480,
+        "gpu_free_after_bytes": 3436576768,
+        "gpu_observed_delta_bytes": 712179712,
+        "host_rss_after_model_load_kb": 324400,
+        "host_rss_after_context_kb": 327672,
+        "host_rss_after_context_delta_kb": 3272,
+        "host_rss_peak_kb": 917880
+      },
+      "outcome": {
+        "classification": "FIT",
+        "exit_code": 0,
+        "wall_seconds": 5.76
+      },
+      "errors": {
+        "gpu_estimate_error_bytes": -1097728,
+        "gpu_estimate_error_percent": -0.154,
+        "host_kv_estimate_error_kb": null,
+        "host_kv_estimate_error_percent": null
+      },
+      "provenance": {
+        "command": "/tmp/claude-1000/-home-kadirerenaltintas-membrane/5237d358-f7ca-42f1-8b44-4e05d2ef377a/scratchpad/p19vk/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-360M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 8 --json --gpu-layers all --kv native",
+        "measurement_method": "gpu: driver-reported free heap bytes via ggml_backend_dev_get_props(), read once before model load and once after generation (membrane-run's own gpu_policy/gpu_memory_observed JSON fields); host: /proc/self/status VmRSS via membrane-run's own memory.* JSON checkpoints. Neither is a true continuous peak sample."
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "qwen2.5-1.5b_vulkan_native_cpu_placement",
+      "timestamp": "2026-08-28T01:49:50Z",
+      "commit": "4e2dda2c0323f2e3036a7db942970a261b658322",
+      "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "model_arch": "qwen2",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "context": 2048,
+      "gpu_layers_requested": "all",
+      "gpu_layers_resolved": 28,
+      "kv_precision_requested": "native",
+      "kv_precision_resolved": "native",
+      "kv_placement_requested": "cpu",
+      "kv_placement_resolved": "cpu",
+      "planner": {
+        "available_gpu_bytes": 4148756480,
+        "reserved_gpu_bytes": 682937535,
+        "estimated_weight_gpu_bytes": 2620964864,
+        "estimated_kv_gpu_bytes": 58720256,
+        "estimated_total_gpu_bytes": 2620964864,
+        "estimated_total_gpu_bytes_basis": "weights_only (kv_placement=cpu)",
+        "estimated_host_kv_bytes": 58720256
+      },
+      "observed": {
+        "gpu_free_before_bytes": 4148756480,
+        "gpu_free_after_bytes": 1147797504,
+        "gpu_observed_delta_bytes": 3000958976,
+        "host_rss_after_model_load_kb": 549188,
+        "host_rss_after_context_kb": 610440,
+        "host_rss_after_context_delta_kb": 61252,
+        "host_rss_peak_kb": 2549116
+      },
+      "outcome": {
+        "classification": "FIT",
+        "exit_code": 0,
+        "wall_seconds": 22.628
+      },
+      "errors": {
+        "gpu_estimate_error_bytes": 379994112,
+        "gpu_estimate_error_percent": 12.662,
+        "host_kv_estimate_error_kb": 3908.0,
+        "host_kv_estimate_error_percent": 6.38
+      },
+      "provenance": {
+        "command": "/tmp/claude-1000/-home-kadirerenaltintas-membrane/5237d358-f7ca-42f1-8b44-4e05d2ef377a/scratchpad/p19vk/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/qwen2.5-1.5b-instruct-fp16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 8 --json --gpu-layers all --kv native --kv-placement cpu",
+        "measurement_method": "gpu: driver-reported free heap bytes via ggml_backend_dev_get_props(), read once before model load and once after generation (membrane-run's own gpu_policy/gpu_memory_observed JSON fields); host: /proc/self/status VmRSS via membrane-run's own memory.* JSON checkpoints. Neither is a true continuous peak sample."
+      }
+    }
+  ]
+}

@@ -1698,6 +1698,22 @@ def main() -> int:
 			print("\nFAILED: scripts/verify-compatibility.py reported failures "
 				"(see output above)")
 			return 1
+
+	# Same reasoning as the compatibility chain above (Phase 18) --
+	# results/planner-accuracy/measurements.json's claims (Phase 19) get
+	# their own dedicated validator/invariants, kept as a genuinely
+	# separate script/file, chained here as another unnumbered step.
+	planner_script = REPO_ROOT / "scripts" / "verify-planner-accuracy.py"
+	if planner_script.exists():
+		print()
+		print("Also verifying results/planner-accuracy/measurements.json "
+			"(scripts/verify-planner-accuracy.py):")
+		sys.stdout.flush()
+		result = subprocess.run([sys.executable, str(planner_script)])
+		if result.returncode != 0:
+			print("\nFAILED: scripts/verify-planner-accuracy.py reported "
+				"failures (see output above)")
+			return 1
 	return 0
 
 

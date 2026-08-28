@@ -19,6 +19,24 @@ jobs:
       - name: Verify compatibility matrix
         run: python3 scripts/verify-compatibility.py
 
+  # Phase 19: validates results/planner-accuracy/measurements.json's
+  # schema and error-field integrity (no fabricated error from a
+  # missing real input, no GPU field on a CPU-backend measurement, no
+  # claimed GPU peak this measurement method can't provide). Same
+  # reasoning as compatibility-check above: python3 + checkout only, no
+  # GPU, no model download, no C/C++ build -- this validates the
+  # committed evidence file, it does not regenerate it.
+  planner-accuracy-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify planner accuracy measurements
+        run: python3 scripts/verify-planner-accuracy.py
+
   build-and-test:
     runs-on: ubuntu-latest
     strategy:
