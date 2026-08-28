@@ -129,11 +129,14 @@ enough for other processes on this shared machine to visibly compete):
 a prior measurement session (still available in this PR's own commit
 history, not restated here as a second contradicting "fact") recorded
 decode as high as ~46% of total for the same point. Both sessions agree
-decode share grows with model size and generation length relative to
-the small-model point above; neither session's exact percentage is
-claimed to be the stable, reproducible value — 3 repeats is enough to
-see spread, not enough to pin down a precise share for a 14+ second
-point on a noisy host. Decode throughput itself: **3.7 tokens/second**
+decode share grows with model size relative to the small-model point
+above (this point also requests fewer generated tokens, 16 vs 32, so
+generation length is a confounded variable here, not cleanly isolated
+from model size — the claim above is scoped to model size only);
+neither session's exact percentage is claimed to be the stable,
+reproducible value — 3 repeats is enough to see spread, not enough to
+pin down a precise share for a 14+ second point on a noisy host.
+Decode throughput itself: **3.7 tokens/second**
 in this session (2.2 in the prior one) on this host's CPU for a 1.5B
 model — slow in absolute terms either way, a real, disclosed, and
 visibly noisy data point, not a claim about CPU inference generally.
@@ -358,9 +361,12 @@ via a driver-level shader cache — not verified this phase).
 Prioritized by measured cost share, **not implemented here**:
 
 **OPT-01: model load time**
-measured cost: 50.1% of total (small model, short generation) / 34.7%
-(large model, longer generation) — the single largest cost in every
-point measured except the longest-generation one.
+measured cost: 53.7% of total (`smollm2-135m_vulkan_native`) / 38.8%
+(`qwen2.5-1.5b_cpu_native`) — see "Top measured bottlenecks" above for
+the current, real, `measurements.json`-checked figures (never restated
+as a separate, potentially-stale number here). The single largest cost
+on the small-model point; comparable to decode on the large-model
+point.
 possible approach: investigate whether llama.cpp's own model-loading
 path (mmap usage, tensor validation, weight-copy overhead) has
 MEMBRANE-controllable knobs, or whether this is fixed llama.cpp cost

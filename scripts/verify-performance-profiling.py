@@ -225,8 +225,6 @@ def check_raw_cardinality_and_throughput_authenticity(measurements):
 	for m in measurements:
 		label = m.get("label", "<no label>")
 		ok_count = m.get("ok_count", 0)
-		if ok_count == 0:
-			continue
 		for field in TIMING_FIELDS + THROUGHPUT_FIELDS:
 			block = stat_block(m, field)
 			raw = (block or {}).get("raw") or []
@@ -292,9 +290,11 @@ def check_docs_match_measurements(measurements):
 	if f"{ok_points}/{len(measurements)} points succeeded" not in text:
 		fail("doc claims", f"doc does not state the real "
 			f"'{ok_points}/{len(measurements)} points succeeded' figure")
-	if failed_points > 0 and str(failed_points) not in text:
+	if failed_points > 0 and f"{failed_points} points" not in text:
 		fail("doc claims", f"doc does not appear to mention the real "
-			f"failed-point count ({failed_points})")
+			f"failed-point count as the phrase '{failed_points} points' "
+			f"-- a bare digit match is too weak (e.g. 'qwen2.5' also "
+			f"contains a '2')")
 
 	# Every named-in-doc label must actually exist in the evidence file
 	# (catches a stale/renamed label reference).
