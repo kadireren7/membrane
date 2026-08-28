@@ -1,5 +1,6 @@
 #include "joint_planner.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -8,12 +9,32 @@
 #include "adaptive_kv_policy.h"
 #include "kv_residency_policy.h"
 
+/* Checked/saturating uint64 arithmetic (Section 25): a real device's
+ * byte counts never come close to these limits, but a corrupted/
+ * adversarial bytes_per_layer or n_layer_all must still never wrap
+ * into a small value that lets an oversized candidate pass a budget
+ * check -- saturate to UINT64_MAX instead. */
+static uint64_t	sat_mul_u64(uint64_t a, uint64_t b)
+{
+	if (a != 0 && b > UINT64_MAX / a)
+		return (UINT64_MAX);
+	return (a * b);
+}
+
+static uint64_t	sat_add_u64(uint64_t a, uint64_t b)
+{
+	if (a > UINT64_MAX - b)
+		return (UINT64_MAX);
+	return (a + b);
+}
+
 uint64_t	membrane_joint_estimate_gpu_weight_bytes(int32_t v,
 				uint64_t bytes_per_layer, uint64_t output_role_bytes)
 {
 	if (v <= 0)
 		return (0);
-	return ((uint64_t)(v - 1) * bytes_per_layer + output_role_bytes);
+	return (sat_add_u64(sat_mul_u64((uint64_t)(v - 1), bytes_per_layer),
+			output_role_bytes));
 }
 
 /* Inverse of membrane_joint_estimate_gpu_weight_bytes(): largest V in
@@ -24,16 +45,21 @@ uint64_t	membrane_joint_estimate_gpu_weight_bytes(int32_t v,
  * main.cpp's own pre-Phase-20 callers already fail closed before
  * calling this module at all when the pre-load estimate has no usable
  * bytes_per_layer, so this is a defensive fallback, not the expected
- * path. */
+ * path. The "+1" is saturating and the result is clamped to
+ * n_layer_all (itself always <= INT32_MAX, guaranteed by
+ * membrane_joint_plan_resolve()'s own n_layer_all > 0 int32_t input)
+ * BEFORE the int32_t conversion, so that cast is always safe. */
 static int32_t	corrected_max_fit(uint64_t budget_bytes,
 				uint64_t bytes_per_layer, uint64_t output_role_bytes,
 				int32_t n_layer_all)
 {
+	uint64_t	quotient;
 	uint64_t	v;
 
 	if (budget_bytes < output_role_bytes || bytes_per_layer == 0)
 		return (0);
-	v = 1 + (budget_bytes - output_role_bytes) / bytes_per_layer;
+	quotient = (budget_bytes - output_role_bytes) / bytes_per_layer;
+	v = sat_add_u64(quotient, 1);
 	if (v > (uint64_t)n_layer_all)
 		v = (uint64_t)n_layer_all;
 	return ((int32_t)v);
@@ -152,6 +178,20 @@ static void	build_candidate(const membrane_joint_plan_request_t *req,
 	c->safety_reserve_bytes = reserve_bytes;
 	if (gpu_layers <= 0)
 		c->fits_gpu = 1;
+	else if (req->output_role_bytes == 0)
+	{
+		/* gpu_device.h's own contract: output_role_bytes == 0 means the
+		 * output-role tensor(s) could not be identified (nonstandard/
+		 * unrecognized tensor naming), NOT "the real output-role
+		 * footprint happens to be zero bytes" -- llama.cpp always
+		 * offloads *something* for the output role once gpu_layers >=
+		 * 1 (see this file's own top comment). Treating an unavailable
+		 * estimate as a real zero would let a 1-layer candidate pass
+		 * the budget check while silently missing that allocation --
+		 * exactly the kind of under-count Phase 20 exists to fix, not
+		 * reintroduce. Fail conservatively instead of guessing. */
+		c->fits_gpu = 0;
+	}
 	else
 		c->fits_gpu = (weight_bytes + kv_preflight_bytes(req, precision)
 			<= budget_bytes);
@@ -228,7 +268,8 @@ static void	resolve_single_precision(const membrane_joint_plan_request_t *req,
 			build_candidate(req, req->precision_request, v_max,
 				reserve_bytes, budget_bytes, &out->candidates[n]);
 			out->candidates[n].compatible = 1;
-			out->candidates[n].eligible = out->candidates[n].fits_host;
+			out->candidates[n].eligible = out->candidates[n].fits_gpu
+				&& out->candidates[n].fits_host;
 			snprintf(out->candidates[n].reason_code,
 				sizeof(out->candidates[n].reason_code), "%s",
 				out->candidates[n].eligible
@@ -239,7 +280,8 @@ static void	resolve_single_precision(const membrane_joint_plan_request_t *req,
 		build_candidate(req, req->precision_request, 0, reserve_bytes,
 			budget_bytes, &out->candidates[n]);
 		out->candidates[n].compatible = 1;
-		out->candidates[n].eligible = out->candidates[n].fits_host;
+		out->candidates[n].eligible = out->candidates[n].fits_gpu
+			&& out->candidates[n].fits_host;
 		snprintf(out->candidates[n].reason_code,
 			sizeof(out->candidates[n].reason_code), "%s",
 			out->candidates[n].eligible ? MEMBRANE_JOINT_REASON_SELECTED
@@ -350,25 +392,82 @@ static void	resolve_adaptive_precision(const membrane_joint_plan_request_t *req,
 		out->candidate_count = 1;
 		return ;
 	}
-	build_candidate(req, ar.selected_mode, ar.selected_layers, reserve_bytes,
-		budget_bytes, &out->candidates[n]);
-	out->candidates[n].compatible = 1;
-	out->candidates[n].eligible = out->candidates[n].fits_gpu
-		&& out->candidates[n].fits_host;
-	snprintf(out->candidates[n].reason_code,
-		sizeof(out->candidates[n].reason_code), "%s", ar.reason);
-	n++;
+	/* CodeRabbit review (PR #30): membrane_adaptive_kv_resolve() ranks
+	 * Q8 vs Q5 using GPU-fit alone (cand_q8/cand_q5.valid above) -- it
+	 * has no visibility into PLACEMENT feasibility (kv_residency_
+	 * resolve()'s own runtime margin can reject a candidate GPU-fit
+	 * alone would have accepted). Build and evaluate placement for
+	 * BOTH the winning precision's full candidate and the runner-up's,
+	 * so a placement-only rejection of the winner doesn't discard a
+	 * runner-up that would have been fully eligible -- never
+	 * overriding adaptive_kv_policy.h's own precision preference when
+	 * the winner IS eligible, only falling back when it is not. */
+	{
+		int			winner_mode = ar.selected_mode;
+		int32_t		winner_layers = ar.selected_layers;
+		int			runner_up_mode = (winner_mode == MEMBRANE_JOINT_KV_Q8)
+				? MEMBRANE_JOINT_KV_Q5 : MEMBRANE_JOINT_KV_Q8;
+		int32_t		runner_up_layers = (runner_up_mode == MEMBRANE_JOINT_KV_Q8)
+				? v_q8 : v_q5;
+		int			runner_up_gpu_fit_valid = (runner_up_mode
+				== MEMBRANE_JOINT_KV_Q8) ? cand_q8.valid : cand_q5.valid;
+		membrane_joint_candidate_t	winner_full;
+		membrane_joint_candidate_t	runner_up_full;
+		int			have_runner_up = 0;
+
+		build_candidate(req, winner_mode, winner_layers, reserve_bytes,
+			budget_bytes, &winner_full);
+		winner_full.compatible = 1;
+		winner_full.eligible = winner_full.fits_gpu && winner_full.fits_host;
+		snprintf(winner_full.reason_code, sizeof(winner_full.reason_code),
+			"%s", ar.reason);
+		if (runner_up_gpu_fit_valid)
+		{
+			build_candidate(req, runner_up_mode, runner_up_layers,
+				reserve_bytes, budget_bytes, &runner_up_full);
+			runner_up_full.compatible = 1;
+			runner_up_full.eligible = runner_up_full.fits_gpu
+				&& runner_up_full.fits_host;
+			snprintf(runner_up_full.reason_code,
+				sizeof(runner_up_full.reason_code), "%s",
+				runner_up_full.eligible
+					? MEMBRANE_JOINT_REASON_SELECTED
+					: MEMBRANE_JOINT_REASON_GPU_MEMORY_INSUFFICIENT);
+			have_runner_up = 1;
+		}
+		if (winner_full.eligible || !have_runner_up
+			|| !runner_up_full.eligible)
+		{
+			out->candidates[n] = winner_full;
+			n++;
+			if (have_runner_up)
+				out->candidates[n++] = runner_up_full;
+		}
+		else
+		{
+			/* Winner's placement failed but the runner-up's did not --
+			 * the runner-up becomes THIS plan's primary candidate. */
+			out->candidates[n] = runner_up_full;
+			n++;
+			out->candidates[n++] = winner_full;
+		}
+	}
 	if (!explicit_layers && !(out->candidates[0].eligible))
 	{
 		/* Section 14: the fallback that lets a constrained-VRAM case
 		 * (e.g. Qwen2.5 at capacity) still produce a legal plan within
 		 * the SAME precision rather than failing outright, when the
 		 * placement step (not the GPU-fit step, which build_candidate
-		 * already checked) is what rejected the primary candidate. */
+		 * already checked) is what rejected every full-layer candidate
+		 * above. Stays tied to adaptive_kv_resolve()'s own preferred
+		 * mode (ar.selected_mode), matching this function's existing,
+		 * deliberately-bounded scope -- see this function's own top
+		 * comment. */
 		build_candidate(req, ar.selected_mode, 0, reserve_bytes,
 			budget_bytes, &out->candidates[n]);
 		out->candidates[n].compatible = 1;
-		out->candidates[n].eligible = out->candidates[n].fits_host;
+		out->candidates[n].eligible = out->candidates[n].fits_gpu
+			&& out->candidates[n].fits_host;
 		snprintf(out->candidates[n].reason_code,
 			sizeof(out->candidates[n].reason_code), "%s",
 			out->candidates[n].eligible ? MEMBRANE_JOINT_REASON_SELECTED

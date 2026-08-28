@@ -23,11 +23,15 @@ way for the earlier decision to reconsider.
 
 ## GPU weight-byte estimate: a real, measured, source-verified bug
 
-Phase 19 measured the pre-Phase-20 estimate (`selected_layers *
-bytes_per_layer`) under-counting real GPU weight residency by **+21.3% /
-+11.6% / +12.7%** (SmolLM2-135M / SmolLM2-360M / Qwen2.5-1.5B). Phase 20's
-own investigation (source inspection, not model/context sweeps) found the
-exact mechanism in `third_party/llama.cpp/src/llama-model.cpp` and
+Phase 19 measured (`results/planner-accuracy/measurements.json`, **REAL**)
+the pre-Phase-20 estimate (`selected_layers * bytes_per_layer`)
+under-counting real GPU weight residency by **+21.3% / +11.6% / +12.7%**
+(SmolLM2-135M / SmolLM2-360M / Qwen2.5-1.5B —
+`results/joint-planner/estimate-correction.json`'s own
+`pre_phase20_error_percent` field recomputes these three figures directly
+from that same committed `observed_delta_bytes`, not a separate claim).
+Phase 20's own investigation (source inspection, not model/context sweeps)
+found the exact mechanism in `third_party/llama.cpp/src/llama-model.cpp` and
 `llama-model-loader.cpp`:
 
 - `llama_model::n_gpu_layers()`'s own comment: `n_gpu_layers` counts the
@@ -54,10 +58,14 @@ that already existed) is `output.weight`'s real bytes if present, else
 `token_embd.weight`'s real bytes (the tied-duplicate stand-in), plus
 `output_norm.weight`'s real bytes.
 
-Verified against the real Phase 19 measurements (recomputed by hand and
-cross-checked against a live `membrane-run --json` run on this repo's real
-Vulkan device): the correction brings the residual error down to
-**roughly +3.0% / +1.1% / +0.2%** for the same three models. `total_bytes`
+Verified against the real Phase 19 measurements and a live `membrane-run
+--json` run on this repo's real Vulkan device, both captured in
+`results/joint-planner/estimate-correction.json` (**REAL**, `corrections`
+array — every `corrected_estimate_bytes`/`phase20_error_percent` field
+there is a plain arithmetic recomputation from the real
+`bytes_per_layer`/`output_role_bytes`/`observed_delta_bytes` values it also
+lists, re-checkable by hand): the correction brings the residual error down
+to **roughly +3.0% / +1.1% / +0.2%** for the same three models. `total_bytes`
 (every tensor, including the always-CPU-resident input embedding) is
 deliberately **not** used directly — Phase 20's own instruction was explicit
 that this would overstate GPU residency for anything less than full offload.
@@ -82,8 +90,16 @@ that this would overstate GPU residency for anything less than full offload.
   can't have its KV placed as requested is ineligible, *before* ranking, not
   discovered afterward.
 
-At most 4 raw candidates (2 precisions × 2 layer counts), well within the
-8-slot bound `MEMBRANE_JOINT_MAX_CANDIDATES` allows.
+At most 2 raw candidates per call (the resolved precision's own best
+full-layer candidate, plus — only when GPU layers are themselves `auto` and
+that full candidate is ineligible — a `0`-layer same-precision fallback);
+`resolve_adaptive_precision()` calls `build_candidate()` up to 3 times (the
+GPU-fit winner, its runner-up when the winner's own placement needs
+checking, and the fallback), all well within the 8-slot bound
+`MEMBRANE_JOINT_MAX_CANDIDATES` allows. Each call to
+`membrane_joint_plan_resolve()` only ever ranks candidates within a single
+precision family — see the ranking policy below for why a native-vs-Q8-vs-Q5
+cross-product is not what actually happens today.
 
 ## Ranking policy (`joint-auto-v1`)
 
@@ -91,22 +107,34 @@ At most 4 raw candidates (2 precisions × 2 layer counts), well within the
 2. Must pass `compat_check.h`'s real architecture gate (native always does;
    q8/q5 require it).
 3. Must conservatively fit (GPU memory **and** the placement step, both).
-4. Prefer native over Q8 over Q5 — quality-first, **never** a performance
-   claim (Phase 12G found no general GPU-KV/CPU-KV throughput advantage in
-   the tested regime; this policy makes no speed assumption at all).
+4. **For an explicit precision** (native, or `--kv q8`/`--kv q5` fixed): no
+   precision ordering applies at all — there is only one precision candidate.
+   **For `--kv adaptive`/bare `--auto`** (Q8 vs Q5 only — adaptive never
+   proposes native, matching `adaptive_kv_policy.h`'s own already-shipped
+   contract): the precision choice is `adaptive_kv_policy.h`'s own
+   documented, more-nuanced order — full GPU residency beats precision
+   (Q5-at-full-residency beats Q8-at-partial-residency), Q8 wins only when
+   the two are otherwise tied. Phase 20 does **not** override or duplicate
+   that order; it only adds a placement-eligibility check on top (see next
+   paragraph). Neither case is ever a performance claim (Phase 12G found no
+   general GPU-KV/CPU-KV throughput advantage in the tested regime; this
+   policy makes no speed assumption at all).
 5. Within the same precision, prefer more GPU-resident weight layers.
 6. Deterministic tie-break: candidate generation order is itself
    deterministic; no further randomness/instability is ever consulted.
 
-Step 4's precision ordering is delegated to `adaptive_kv_policy.h`'s own,
-already-shipped, already-tested `membrane_adaptive_kv_resolve()` for the
-adaptive case — its documented order (prefer Q8 unless it loses full
-residency or fails a guard Q5 would pass) is **more nuanced** than a naive
-"precision always wins over layer count" rule, and Phase 20 does not
-override or duplicate it. Given the current CLI contract (adaptive never
-proposes native; an explicit precision is always a single fixed value),
-native never actually competes against Q8/Q5 in the same real invocation
-today — the ranking function itself is written generally regardless (and
+For the adaptive case, `adaptive_kv_policy.h`'s own GPU-fit-based winner can
+still fail the SEPARATE placement step (`kv_residency_policy.h`'s own runtime
+margin can reject a candidate GPU-fit alone would have accepted) while the
+runner-up precision's placement succeeds — the joint planner evaluates
+placement for **both** the winner and the runner-up before finalizing, and
+promotes the runner-up when the winner is placement-ineligible but the
+runner-up is not (`test_joint_planner.c`'s
+`test_adaptive_placement_promotes_runner_up_precision`). Given the current
+CLI contract (adaptive never proposes native; an explicit precision is
+always a single fixed value), native never actually competes against Q8/Q5
+in the same real invocation today — the ranking function itself is written
+generally regardless (and
 exercised that way by `test_joint_planner.c`'s synthetic scenarios), should
 that contract ever change.
 
@@ -124,8 +152,11 @@ candidate — see `test_joint_planner.c`'s
 ## Qwen2.5 regression (Section 14)
 
 Qwen2.5 is `qwen2`-architecture — `compat_check.c` rejects q8/q5 for it
-unconditionally. Live-verified on this repo's real Vulkan device: `--kv
-q8`/`--kv adaptive` both fail closed with `NO_FEASIBLE_CANDIDATE` (adaptive
+unconditionally. Live-verified on this repo's real Vulkan device and
+captured in `results/joint-planner/estimate-correction.json`'s
+`qwen2_regression_smokes` (**REAL**, real commands/exit codes/`--json`
+fields, not paraphrased): `--kv q8`/`--kv adaptive` both fail closed with
+`NO_FEASIBLE_CANDIDATE` (adaptive
 never falls back to native — matching its own contract), while `--kv native
 --gpu-layers all --kv-placement cpu` at `ctx=28500` (a real constrained-VRAM
 point from prior evidence) still succeeds with all 28 layers, KV correctly

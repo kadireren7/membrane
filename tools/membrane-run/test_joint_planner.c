@@ -160,6 +160,44 @@ static void	test_constrained_q5_required_for_full_residency(void)
 		"q5 reaches full residency where q8 could not");
 }
 
+/* CodeRabbit review (PR #30): membrane_adaptive_kv_resolve() ranks Q8
+ * vs Q5 using GPU-FIT alone -- it has no visibility into PLACEMENT
+ * feasibility. Constructed so BOTH q8 and q5 reach full GPU-fit
+ * residency (v=10/10), so adaptive_kv_resolve's own rule 1 picks Q8
+ * ("Q8 fits AND reaches full residency -> Q8") -- but with
+ * kv_placement_mode=GPU forced, Q8's real 2000 MiB KV fails
+ * kv_residency_resolve()'s own runtime margin (5% of 2000 MiB = 100
+ * MiB, on top of the same weight bytes both precisions share) while
+ * Q5's smaller 1400 MiB KV (margin 70 MiB) still fits. The joint
+ * planner must promote Q5 to the selected candidate instead of
+ * reporting NO_FEASIBLE_CANDIDATE or silently keeping the
+ * placement-ineligible Q8 "winner". Hand-derived and cross-checked
+ * against kv_residency_policy.c's exact arithmetic. */
+static void	test_adaptive_placement_promotes_runner_up_precision(void)
+{
+	membrane_joint_plan_request_t	req;
+	membrane_joint_plan_result_t	res;
+
+	fill_base_request(&req);
+	req.bytes_per_layer = 100 * MIB;
+	req.output_role_bytes = 200 * MIB;
+	req.kv_bytes_q8 = 2000 * MIB;
+	req.kv_bytes_q5 = 1400 * MIB;
+	req.device_free_bytes = 4400 * MIB;
+	req.device_total_bytes = 8 * GIB;
+	req.kv_placement_mode = MEMBRANE_JOINT_PLACEMENT_GPU;
+	TEST_ASSERT(membrane_joint_plan_resolve(&req, &res) == 1,
+		"resolves via the placement-eligible runner-up, not a hard failure");
+	TEST_ASSERT(res.candidates[res.selected_index].kv_precision
+			== MEMBRANE_JOINT_KV_Q5,
+		"q5 promoted: q8 (adaptive's own GPU-fit winner) failed placement");
+	TEST_ASSERT(res.candidates[res.selected_index].gpu_layers == 10,
+		"full residency preserved for the promoted candidate");
+	TEST_ASSERT(res.candidates[res.selected_index].kv_placement
+			== MEMBRANE_JOINT_PLACEMENT_GPU,
+		"placement genuinely resolved to gpu, not silently left default");
+}
+
 /* 4. Neither q8 nor q5 reaches full residency, but q5 fits MORE
  * layers -- MEMBRANE_ADAPTIVE_REASON_Q5_REQUIRED_FOR_MEMORY_GUARD. */
 static void	test_constrained_q5_required_for_memory_guard(void)
@@ -284,6 +322,35 @@ static void	test_explicit_gpu_layers_impossible_fails_closed(void)
 		"the (ineligible) candidate still reports the real requested N");
 }
 
+/* CodeRabbit review (PR #30): gpu_device.h's output_role_bytes == 0
+ * means "the output-role tensor(s) could not be identified" (an
+ * unavailable estimate), NOT "the real output-role footprint is zero
+ * bytes" -- llama.cpp always offloads *something* for the output role
+ * once gpu_layers >= 1. A GPU candidate must never be accepted on the
+ * strength of a silently-zero fixed cost; only the 0-layer (CPU-only
+ * weights) candidate remains legitimate in that case. */
+static void	test_unavailable_output_role_bytes_rejects_gpu_candidates(void)
+{
+	membrane_joint_plan_request_t	req;
+	membrane_joint_plan_result_t	res;
+
+	fill_base_request(&req);
+	req.output_role_bytes = 0;
+	req.precision_request = MEMBRANE_JOINT_KV_NATIVE;
+	req.device_free_bytes = (uint64_t)(3.9 * (double)GIB);
+	req.device_total_bytes = 4 * GIB;
+	TEST_ASSERT(membrane_joint_plan_resolve(&req, &res) == 1,
+		"still resolves, via the 0-layer fallback only");
+	TEST_ASSERT(res.candidates[res.selected_index].gpu_layers == 0,
+		"no GPU-layer candidate is accepted when output_role_bytes is "
+		"unavailable, even with ample memory");
+	for (int i = 0; i < res.candidate_count; ++i)
+		if (res.candidates[i].gpu_layers > 0)
+			TEST_ASSERT(res.candidates[i].eligible == 0,
+				"every generated GPU-layer candidate is ineligible "
+				"when output_role_bytes == 0");
+}
+
 /* 10. Degenerate near-zero GPU budget with AUTO layers: the 0-layer
  * CPU-fallback candidate is the only eligible one -- exercises the
  * same "graceful CPU landing" this module must provide when a GPU
@@ -387,12 +454,14 @@ int	main(void)
 	test_ample_memory_selects_q8_full_residency();
 	test_explicit_native_partial_vs_q8_full();
 	test_constrained_q5_required_for_full_residency();
+	test_adaptive_placement_promotes_runner_up_precision();
 	test_constrained_q5_required_for_memory_guard();
 	test_incompatible_architecture_adaptive_fails_closed();
 	test_explicit_q8_incompatible_architecture();
 	test_explicit_cpu_placement_never_gpu();
 	test_explicit_gpu_layers_never_changed();
 	test_explicit_gpu_layers_impossible_fails_closed();
+	test_unavailable_output_role_bytes_rejects_gpu_candidates();
 	test_near_zero_budget_falls_back_to_cpu_layers();
 	test_deterministic_repeated_calls();
 	test_all_candidates_infeasible_is_deterministic();
