@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/kadireren7/membrane/results/rc2-user-validation/schema.json",
+  "title": "MEMBRANE v0.3.0-rc2 user-validation report",
+  "description": "One entry per (environment, backend) combination someone actually validated v0.3.0-rc2 against. See docs/rc2-user-validation.md for how to fill this in by hand -- there is no automatic telemetry collection; every entry is a deliberate, manually-authored, manually-submitted report.",
+  "type": "object",
+  "required": ["schema_version", "environment_id", "provenance", "tag", "commit", "os", "cpu", "ram_gb", "backend", "compiler", "cmake_version", "install", "runtime", "issues", "privacy"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "environment_id": {
+      "type": "string",
+      "pattern": "^ENV-[0-9]{2}(-[a-z0-9]+)?$",
+      "description": "e.g. ENV-01, ENV-01-cpu, ENV-02-vulkan -- must be unique across summary.json. A suffix distinguishes multiple backend reports from the SAME physical/virtual host (same OS/kernel/CPU/RAM), never a different host under the same number."
+    },
+    "provenance": {
+      "const": "REAL",
+      "description": "Always REAL -- this schema has no SIMULATED case. A report that isn't a real run on real hardware does not belong in summary.json at all."
+    },
+    "tag": {"const": "v0.3.0-rc2"},
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Must be the exact commit v0.3.0-rc2 points to (7b94217702cb6b5d170c496660cb3208e01fd714)."
+    },
+    "os": {"type": "string", "description": "Distro + version, e.g. \"Pop!_OS 24.04 LTS\". Never a hostname."},
+    "kernel": {"type": "string", "description": "Optional, e.g. \"6.18.7-generic x86_64\"."},
+    "cpu": {"type": "string", "description": "CPU model string only, e.g. \"AMD Ryzen 5 5600H\"."},
+    "ram_gb": {"type": "number", "minimum": 0},
+    "gpu": {"type": "string", "description": "GPU model/vendor string, e.g. \"NVIDIA GeForce GTX 1650\". Omit or empty for a CPU-only report."},
+    "vram_gb": {"type": "number", "minimum": 0},
+    "backend": {"type": "string", "enum": ["cpu", "vulkan"]},
+    "compiler": {"type": "string", "description": "e.g. \"gcc 13.3.0\"."},
+    "cmake_version": {"type": "string"},
+    "install": {
+      "type": "object",
+      "required": ["configure", "build", "install", "outside_tree_run", "uninstall"],
+      "additionalProperties": false,
+      "properties": {
+        "configure": {"type": "boolean"},
+        "build": {"type": "boolean"},
+        "install": {"type": "boolean"},
+        "outside_tree_run": {"type": "boolean"},
+        "uninstall": {"type": "boolean"}
+      }
+    },
+    "runtime": {
+      "type": "array",
+      "description": "One entry per command actually run (--plan-only, a small real generation, etc.).",
+      "items": {
+        "type": "object",
+        "required": ["model", "architecture", "context", "command", "outcome"],
+        "additionalProperties": false,
+        "properties": {
+          "model": {"type": "string", "description": "Model file NAME only, never a private/local path."},
+          "architecture": {"type": "string", "description": "e.g. \"llama\", \"qwen2\"."},
+          "context": {"type": "integer", "minimum": 1},
+          "command": {"type": "string", "description": "The exact CLI invocation, with the model path sanitized to just the filename."},
+          "planner_reason": {"type": "string"},
+          "selected_gpu_layers": {"type": "integer"},
+          "selected_kv_precision": {"type": "string", "enum": ["native", "q8", "q5"]},
+          "selected_kv_placement": {"type": "string", "enum": ["default", "gpu", "cpu", "auto"]},
+          "fallback_attempted": {"type": "boolean"},
+          "outcome": {
+            "type": "string",
+            "enum": ["SUCCESS", "EXPECTED_REJECTION", "UNEXPECTED_FAILURE"],
+            "description": "EXPECTED_REJECTION covers a documented fail-closed case (e.g. a known-incompatible architecture with compressed KV) -- not a bug."
+          }
+        }
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["category", "severity", "notes"],
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": ["INSTALL_BLOCKER", "BUILD_BLOCKER", "RUNTIME_BLOCKER",
+              "PLANNER_BLOCKER", "FALLBACK_BLOCKER", "COMPATIBILITY_DOC_BUG",
+              "JSON_CONTRACT_BUG", "DOC_FRICTION", "NONBLOCKING_USABILITY",
+              "ENVIRONMENT_SPECIFIC", "FALSE_POSITIVE"]
+          },
+          "severity": {"type": "string", "enum": ["blocker", "nonblocking"]},
+          "notes": {"type": "string"}
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "required": ["no_username", "no_home_path", "no_hostname",
+        "no_serial_numbers", "no_ip_addresses", "no_secrets"],
+      "additionalProperties": false,
+      "description": "Self-attestation the reporter sanitized their own report before submitting -- see docs/rc2-user-validation.md's privacy checklist.",
+      "properties": {
+        "no_username": {"const": true},
+        "no_home_path": {"const": true},
+        "no_hostname": {"const": true},
+        "no_serial_numbers": {"const": true},
+        "no_ip_addresses": {"const": true},
+        "no_secrets": {"const": true}
+      }
+    }
+  }
+}

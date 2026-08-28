@@ -1,0 +1,175 @@
+[
+  {
+    "schema_version": 1,
+    "environment_id": "ENV-01-cpu",
+    "provenance": "REAL",
+    "tag": "v0.3.0-rc2",
+    "commit": "7b94217702cb6b5d170c496660cb3208e01fd714",
+    "os": "Pop!_OS 24.04 LTS",
+    "kernel": "6.18.7-generic x86_64",
+    "cpu": "AMD Ryzen 5 5600H with Radeon Graphics",
+    "ram_gb": 5.64,
+    "backend": "cpu",
+    "compiler": "gcc 13.3.0",
+    "cmake_version": "3.28.3",
+    "install": {
+      "configure": true,
+      "build": true,
+      "install": true,
+      "outside_tree_run": true,
+      "uninstall": true
+    },
+    "runtime": [
+      {
+        "model": "SmolLM2-135M-Instruct-f16.gguf",
+        "architecture": "llama",
+        "context": 128,
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt Hi --ctx 128 --auto --plan-only --json",
+        "planner_reason": "CPU_ADAPTIVE_Q8_DEFAULT",
+        "selected_gpu_layers": 0,
+        "selected_kv_precision": "q8",
+        "selected_kv_placement": "auto",
+        "fallback_attempted": false,
+        "outcome": "SUCCESS"
+      },
+      {
+        "model": "SmolLM2-135M-Instruct-f16.gguf",
+        "architecture": "llama",
+        "context": 128,
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt \"The capital of France is\" --ctx 128 --gen-tokens 6 --json --quiet",
+        "selected_gpu_layers": 0,
+        "selected_kv_precision": "native",
+        "selected_kv_placement": "default",
+        "fallback_attempted": false,
+        "outcome": "SUCCESS"
+      }
+    ],
+    "issues": [],
+    "privacy": {
+      "no_username": true,
+      "no_home_path": true,
+      "no_hostname": true,
+      "no_serial_numbers": true,
+      "no_ip_addresses": true,
+      "no_secrets": true
+    }
+  },
+  {
+    "schema_version": 1,
+    "environment_id": "ENV-01-vulkan-nvidia",
+    "provenance": "REAL",
+    "tag": "v0.3.0-rc2",
+    "commit": "7b94217702cb6b5d170c496660cb3208e01fd714",
+    "os": "Pop!_OS 24.04 LTS",
+    "kernel": "6.18.7-generic x86_64",
+    "cpu": "AMD Ryzen 5 5600H with Radeon Graphics",
+    "ram_gb": 5.64,
+    "gpu": "NVIDIA GeForce GTX 1650 (driver 580.159.03, DRIVER_ID_NVIDIA_PROPRIETARY)",
+    "vram_gb": 4.24,
+    "backend": "vulkan",
+    "compiler": "gcc 13.3.0",
+    "cmake_version": "3.28.3",
+    "install": {
+      "configure": true,
+      "build": true,
+      "install": true,
+      "outside_tree_run": true,
+      "uninstall": true
+    },
+    "runtime": [
+      {
+        "model": "SmolLM2-135M-Instruct-f16.gguf",
+        "architecture": "llama",
+        "context": 128,
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt Hi --ctx 128 --auto --plan-only --json",
+        "planner_reason": "GPU_FULL_FIT",
+        "selected_kv_precision": "q8",
+        "selected_kv_placement": "auto",
+        "fallback_attempted": false,
+        "outcome": "SUCCESS"
+      },
+      {
+        "model": "SmolLM2-135M-Instruct-f16.gguf",
+        "architecture": "llama",
+        "context": 256,
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt \"The capital of France is\" --ctx 256 --gen-tokens 6 --auto --json --quiet",
+        "planner_reason": "Q8_FULL_RESIDENCY",
+        "selected_gpu_layers": 30,
+        "selected_kv_precision": "q8",
+        "selected_kv_placement": "auto",
+        "fallback_attempted": false,
+        "outcome": "SUCCESS"
+      },
+      {
+        "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+        "architecture": "qwen2",
+        "context": 128,
+        "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt Hi --ctx 128 --auto --json --quiet",
+        "planner_reason": "NO_FEASIBLE_CANDIDATE",
+        "fallback_attempted": false,
+        "outcome": "EXPECTED_REJECTION"
+      }
+    ],
+    "issues": [],
+    "privacy": {
+      "no_username": true,
+      "no_home_path": true,
+      "no_hostname": true,
+      "no_serial_numbers": true,
+      "no_ip_addresses": true,
+      "no_secrets": true
+    }
+  },
+  {
+    "schema_version": 1,
+    "environment_id": "ENV-01-vulkan-amd",
+    "provenance": "REAL",
+    "tag": "v0.3.0-rc2",
+    "commit": "7b94217702cb6b5d170c496660cb3208e01fd714",
+    "os": "Pop!_OS 24.04 LTS",
+    "kernel": "6.18.7-generic x86_64",
+    "cpu": "AMD Ryzen 5 5600H with Radeon Graphics",
+    "ram_gb": 5.64,
+    "gpu": "AMD Radeon Graphics (RADV RENOIR, integrated, Mesa 25.2.8)",
+    "vram_gb": 4.82,
+    "backend": "vulkan",
+    "compiler": "gcc 13.3.0",
+    "cmake_version": "3.28.3",
+    "install": {
+      "configure": true,
+      "build": true,
+      "install": true,
+      "outside_tree_run": true,
+      "uninstall": true
+    },
+    "runtime": [
+      {
+        "model": "SmolLM2-135M-Instruct-f16.gguf",
+        "architecture": "llama",
+        "context": 256,
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt \"The capital of France is\" --ctx 256 --gen-tokens 6 --device AMD --auto --json --quiet",
+        "planner_reason": "Q8_FULL_RESIDENCY",
+        "selected_gpu_layers": 30,
+        "selected_kv_precision": "q8",
+        "selected_kv_placement": "auto",
+        "fallback_attempted": false,
+        "outcome": "SUCCESS"
+      }
+    ],
+    "issues": [
+      {
+        "category": "ENVIRONMENT_SPECIFIC",
+        "severity": "nonblocking",
+        "notes": "First real successful AMD (RADV/integrated) Vulkan generation captured for this project -- prior release docs only ever exercised an AMD iGPU as the non-selected device during --device matching validation. Not enough to upgrade any AMD support claim (one device, one model, one host) -- recorded here as a positive data point for future validation, not a compatibility.md change."
+      }
+    ],
+    "privacy": {
+      "no_username": true,
+      "no_home_path": true,
+      "no_hostname": true,
+      "no_serial_numbers": true,
+      "no_ip_addresses": true,
+      "no_secrets": true
+    }
+  }
+]
