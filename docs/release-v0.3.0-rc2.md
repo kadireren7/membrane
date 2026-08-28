@@ -21,9 +21,11 @@ addition documenting Phase 21's already-shipped fallback behavior (see
   and KV placement resolved together as one bounded, deterministic,
   ranked candidate list — not three independent, sequential decisions.
 - Corrected GPU weight-byte estimate (Phase 20): fixes a measured
-  +11–21% under-count from treating `n_gpu_layers` as a flat
-  `layers × bytes_per_layer` product; residual error is now ~0.2–3.0%
-  on tested models (`docs/joint-planner.md`).
+  +11.6–21.3% under-count from treating `n_gpu_layers` as a flat
+  `layers × bytes_per_layer` product; residual error is now
+  0.2–3.0% on tested models — real, committed figures in
+  `results/joint-planner/estimate-correction.json`, discussed in
+  `docs/joint-planner.md`.
 - Bounded, transparent apply-time fallback (Phase 21): if the primary
   auto-managed plan can't actually be instantiated at runtime (model
   load fails, context construction fails, or GPU memory changed since
@@ -153,28 +155,38 @@ regression check) — unchanged, not re-measured this phase.
 
 ## Measured evidence / verification
 
-All figures below are from this phase's own re-run against the
-release-prep branch head (see the final PR/report for exact commit and
-CI run IDs):
+Committed, `scripts/verify-release-readiness.py`-checked evidence:
+`results/release-v0.3.0-rc2/readiness.json` — captured against
+`membrane_commit` `9f1d3f96493883ef2cf4c69b4792b30bd7657110`
+(`release/v0.3.0-rc2-prep`, [PR
+#32](https://github.com/kadireren7/membrane/pull/32)). Summary (see
+that file for the full detail, including the real Vulkan smoke's exact
+JSON fields and the CI run IDs it cites):
 
 - `scripts/verify-results.py`: **73/73**, chaining compatibility
   (13/13), planner-accuracy (6/6), and auto-fallback (9/9) — **91
   total checks**, all passing.
 - Full `ctest --output-on-failure`: **70/70** tests passing, Debug
-  build.
-- ASan/UBSan (`-DMEMBRANE_ENABLE_SANITIZERS=ON`): **70/70** tests
-  passing, no sanitizer report.
+  build; **70/70** again under ASan/UBSan
+  (`-DMEMBRANE_ENABLE_SANITIZERS=ON`), no sanitizer report.
 - CPU install: fresh configure → build → install → run `--help`/
   `--version` outside the build tree → uninstall via
   `install_manifest.txt` — every installed file removed cleanly.
-- Vulkan install: same contract, real Vulkan1 device, plus a real
-  `--auto` generation run (SmolLM2-135M) confirming
+- Vulkan install/uninstall: same contract, real Vulkan1 device, plus a
+  real `--auto` generation run (SmolLM2-135M) confirming
   `membrane_version`/`planner`/`fallback` JSON fields are all correct
-  and self-consistent end to end.
+  and self-consistent end to end. The install step itself reused an
+  existing local Vulkan build tree (reconfigured/rebuilt
+  incrementally) rather than a from-scratch clone, to avoid an
+  unnecessary heavy rebuild on this memory-constrained host — the
+  fresh-clone Vulkan install contract is still exercised every push/PR
+  by the `packaging-smoke` CI job, which the readiness evidence's
+  `ci_runs` cites.
 - GitHub CI (`build-and-test` Debug/ASan, `thread-sanitizer`,
   `packaging-smoke`, `compatibility-check`, `planner-accuracy-check`,
-  `auto-fallback-check`, `fallback-controller-tests`) and CodeQL: see
-  the release-prep PR for exact run IDs and results.
+  `auto-fallback-check`, `fallback-controller-tests`) and CodeQL: all
+  SUCCESS — exact run IDs in `results/release-v0.3.0-rc2/readiness.json`'s
+  `ci_runs` field.
 
 ## Known limitations
 
@@ -216,7 +228,11 @@ field added since RC1 (`adaptive`, `kv_placement`, `planner`,
 
 ## Validation status
 
-This is a release-CANDIDATE tag — pre-release, not the stable release
-line. `v0.2.0` remains the latest stable tag; this document does not
-change that. See the release-prep PR for exact CI run IDs and the
-final merge/tag/release verification report.
+This is a release-CANDIDATE preparation document only — `v0.3.0-rc2`
+is not yet a tag or a GitHub release at the time this document is
+written; both are created only after this PR merges and its own
+post-merge gate passes (see the PR for exact status). Pre-release, not
+the stable release line either way — `v0.2.0` remains the latest
+stable tag, and this document does not change that. See the
+release-prep PR for exact CI run IDs and the final merge/tag/release
+verification report.

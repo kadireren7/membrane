@@ -133,7 +133,7 @@ def check_no_overclaim_phrases():
 				# docs/github-presentation.md).
 				window = text[max(0, m.start() - 40):m.start()].lower()
 				if not re.search(r"\bnot\b|\bnever\b|\bno[t]?\b|"
-						r"does not|n['’]t\b|\"", window):
+						r"does not|n['’]t\b", window):
 					fail("overclaim scan", f"{rel} contains "
 						f"{m.group(0)!r} without an apparent negation "
 						f"nearby")
@@ -151,10 +151,68 @@ def check_compat_counts():
 	from collections import Counter
 	counts = Counter(r.get("status") for r in rows)
 	expected = {"SUPPORTED": 16, "UNSUPPORTED": 9, "NOT_YET_VALIDATED": 1}
+	unexpected = [status for status in counts if status not in expected]
+	if unexpected:
+		fail("compatibility counts", f"unexpected statuses: {unexpected!r}")
+	if len(rows) != sum(expected.values()):
+		fail("compatibility counts", f"row count is {len(rows)}, expected "
+			f"{sum(expected.values())}")
 	for status, n in expected.items():
 		if counts.get(status, 0) != n:
 			fail("compatibility counts", f"{status} count is "
 				f"{counts.get(status, 0)}, expected {n}")
+
+
+READINESS_EVIDENCE_PATH = REPO_ROOT / "results" / "release-v0.3.0-rc2" / "readiness.json"
+
+
+@check("readiness.json is valid JSON with the expected top-level shape")
+def check_readiness_evidence_shape():
+	if not READINESS_EVIDENCE_PATH.exists():
+		fail("readiness evidence", f"{READINESS_EVIDENCE_PATH} does not exist")
+		return
+	import json
+	data = json.loads(READINESS_EVIDENCE_PATH.read_text())
+	for field in ("schema_version", "label", "membrane_commit",
+			"membrane_version", "test_results"):
+		if field not in data:
+			fail("readiness evidence", f"missing required field {field!r}")
+	if data.get("label") not in ("REAL", "SIMULATED"):
+		fail("readiness evidence", f"label {data.get('label')!r} not in "
+			f"('REAL', 'SIMULATED')")
+	if not re.fullmatch(r"[0-9a-f]{40}", data.get("membrane_commit", "")):
+		fail("readiness evidence", f"membrane_commit "
+			f"{data.get('membrane_commit')!r} is not a 40-hex SHA")
+
+
+@check("readiness evidence's membrane_version matches the product's own MEMBRANE_VERSION")
+def check_readiness_evidence_version_matches():
+	if not READINESS_EVIDENCE_PATH.exists():
+		return
+	import json
+	data = json.loads(READINESS_EVIDENCE_PATH.read_text())
+	path = REPO_ROOT / "tools" / "membrane-run" / "product_cli.h"
+	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', path.read_text())
+	product_version = m.group(1) if m else None
+	if data.get("membrane_version") != product_version:
+		fail("readiness evidence", f"evidence membrane_version "
+			f"{data.get('membrane_version')!r} does not match the product's "
+			f"own MEMBRANE_VERSION {product_version!r}")
+
+
+@check("readiness evidence never reports a partial pass as release-ready")
+def check_readiness_evidence_no_partial_pass():
+	if not READINESS_EVIDENCE_PATH.exists():
+		return
+	import json
+	data = json.loads(READINESS_EVIDENCE_PATH.read_text())
+	for name, result in (data.get("test_results") or {}).items():
+		if not isinstance(result, dict) or "passed" not in result:
+			continue
+		if result["passed"] != result.get("total"):
+			fail("readiness evidence", f"test_results.{name} reports "
+				f"{result['passed']}/{result.get('total')} -- a partial "
+				f"pass must never be committed as release-readiness evidence")
 
 
 def main():
@@ -165,6 +223,9 @@ def main():
 	check_citation_still_v020()
 	check_no_overclaim_phrases()
 	check_compat_counts()
+	check_readiness_evidence_shape()
+	check_readiness_evidence_version_matches()
+	check_readiness_evidence_no_partial_pass()
 
 	print()
 	if FAILURES:
