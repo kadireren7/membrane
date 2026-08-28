@@ -242,6 +242,19 @@ add_library(membrane_kv_residency_policy STATIC
 target_include_directories(membrane_kv_residency_policy PUBLIC
   tools/membrane-run)
 
+# Phase 20: the joint GPU-layers x KV-precision planner -- llama-free,
+# same testable-without-a-GPU pattern as the four modules above, whose
+# pure logic it calls (never duplicates): compat_check for
+# architecture gating, gpu_policy for the safety-reserve formula,
+# adaptive_kv_policy for the Q8-vs-Q5 decision, kv_residency_policy for
+# placement feasibility.
+add_library(membrane_joint_planner STATIC
+  tools/membrane-run/joint_planner.c)
+target_link_libraries(membrane_joint_planner PUBLIC membrane_compat_check
+  membrane_gpu_policy membrane_adaptive_kv_policy
+  membrane_kv_residency_policy)
+target_include_directories(membrane_joint_planner PUBLIC tools/membrane-run)
+
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
 # unlike tools/membrane-kv-capture etc, which need MEMBRANE_ENABLE_LLAMA.
@@ -708,6 +721,13 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_adaptive_kv_policy PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_adaptive_kv_policy COMMAND test_adaptive_kv_policy)
+
+  add_executable(test_joint_planner
+    tools/membrane-run/test_joint_planner.c)
+  target_link_libraries(test_joint_planner PRIVATE membrane_joint_planner)
+  target_include_directories(test_joint_planner PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_joint_planner COMMAND test_joint_planner)
 
   # Phase 6.2: hot-cache/prefetch and working-set-policy correctness
   # tests, plus an engine determinism check -- llama-free (they test

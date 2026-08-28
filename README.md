@@ -161,6 +161,8 @@ troubleshooting, and the CPU-vs-Vulkan dependency footprint:
 Mechanism detail: `docs/live-runtime.md` (KV precision) and
 `docs/kv-residency.md` (KV placement). Full architecture/backend/
 precision/placement compatibility matrix: `docs/compatibility.md`.
+`--auto`'s joint GPU-layers/precision/placement planner:
+`docs/joint-planner.md`.
 
 ## Research & provenance
 

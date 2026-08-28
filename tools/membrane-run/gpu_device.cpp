@@ -166,6 +166,7 @@ static void	read_hparams(struct gguf_context *ctx,
 	if (!read_u32_key(ctx, arch + ".attention.head_count_kv",
 			&out->n_head_kv))
 		return;
+	copy_bounded(out->arch_name, sizeof(out->arch_name), arch.c_str());
 	out->hparams_available = 1;
 }
 
@@ -193,6 +194,12 @@ int	membrane_gpu_estimate_model(const char *model_path,
 	n_tensors = gguf_get_n_tensors(ctx);
 	total_bytes = 0;
 	layer_bytes = 0;
+
+	uint64_t	token_embd_bytes = 0;
+	uint64_t	output_bytes = 0;
+	uint64_t	output_norm_bytes = 0;
+	bool		have_output = false;
+
 	for (i = 0; i < n_tensors; ++i)
 	{
 		const char	*name = gguf_get_tensor_name(ctx, i);
@@ -209,12 +216,38 @@ int	membrane_gpu_estimate_model(const char *model_path,
 				layer_indices_seen[layer_idx] = true;
 			}
 		}
+		/* Phase 20: exact-name match against llama.cpp's own canonical
+		 * tensor names (llama-arch.cpp's TENSOR_NAMES: "token_embd",
+		 * "output", "output_norm", each with a ".weight" suffix here --
+		 * this project's other tensors, like KV cache tensors, are
+		 * never present in a GGUF file at all, only created at context
+		 * construction, so there is no ambiguity). See
+		 * output_role_bytes' doc comment in gpu_device.h for why only
+		 * these three names matter. */
+		else if (name != NULL && strcmp(name, "token_embd.weight") == 0)
+			token_embd_bytes = sz;
+		else if (name != NULL && strcmp(name, "output.weight") == 0)
+		{
+			output_bytes = sz;
+			have_output = true;
+		}
+		else if (name != NULL && strcmp(name, "output_norm.weight") == 0)
+			output_norm_bytes = sz;
 	}
 	if (layer_indices_seen.empty())
 		return (gguf_free(ctx), 0);
 	out->total_bytes = total_bytes;
 	out->n_layer = (int32_t)layer_indices_seen.size();
 	out->bytes_per_layer = layer_bytes / layer_indices_seen.size();
+	/* Untied: real "output.weight" is what's GPU-eligible. Tied (no
+	 * separate output.weight in this GGUF): llama.cpp duplicates
+	 * token_embd.weight's bytes into a separately-allocated,
+	 * GPU-eligible "output" tensor instead (see this field's doc
+	 * comment in gpu_device.h) -- token_embd_bytes is the right
+	 * stand-in for that duplicate's size, NOT a claim that the real
+	 * (always-CPU) input tensor itself becomes GPU-resident. */
+	out->output_role_bytes = (have_output ? output_bytes : token_embd_bytes)
+		+ output_norm_bytes;
 	read_hparams(ctx, out);
 	gguf_free(ctx);
 	return (1);

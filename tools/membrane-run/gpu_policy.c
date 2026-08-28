@@ -12,6 +12,11 @@ static uint64_t	reserve_for(uint64_t device_total_bytes)
 		? pct_reserve : MEMBRANE_GPU_RESERVE_FIXED_BYTES);
 }
 
+uint64_t	membrane_gpu_reserve_bytes(uint64_t device_total_bytes)
+{
+	return (reserve_for(device_total_bytes));
+}
+
 int	membrane_gpu_policy_resolve(int32_t requested_layers,
 		int32_t n_layer_all, uint64_t device_free_bytes,
 		uint64_t device_total_bytes, uint64_t bytes_per_layer_estimate,

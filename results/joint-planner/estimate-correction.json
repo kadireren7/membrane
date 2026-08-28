@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "phase": "20: joint auto planner -- corrected GPU weight-byte estimate",
+  "label": "REAL",
+  "note": "Verifies the corrected weight-byte formula (membrane_joint_estimate_gpu_weight_bytes(), see docs/joint-planner.md) against the SAME real observed_delta_bytes values already committed in results/planner-accuracy/measurements.json (Phase 19) -- this file adds the new corrected_estimate_bytes/output_role_bytes inputs (Phase 20's own gpu_device.h fields, which did not exist when measurements.json was generated) and recomputes the residual error; it does not re-measure or alter any Phase 19 number.",
+  "membrane_commit": "11462e572ae6cd5e4bd03935ce6823821b127983",
+  "llama_cpp_commit": "c0bc8591e8815c63cb01dd3f051a8b0df02501c9",
+  "device": {"name": "GTX 1650", "backend": "Vulkan", "note": "same real device every prior-phase Vulkan evidence in this repo uses"},
+  "corrections": [
+    {
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "architecture": "llama",
+      "n_layer_all": 30,
+      "bytes_per_layer": 7082496,
+      "output_role_bytes": 56625408,
+      "output_role_basis": "tied embeddings (no separate output.weight tensor in this GGUF) -- output_role_bytes is token_embd.weight's own real bytes plus output_norm.weight's",
+      "corrected_estimate_bytes": 262017792,
+      "corrected_estimate_formula": "(30-1)*7082496 + 56625408",
+      "observed_delta_bytes": 270073856,
+      "observed_delta_bytes_source": "results/planner-accuracy/measurements.json#smollm2-135m_vulkan_native_default (observed.gpu_observed_delta_bytes -- identical across native/q8/q5/adaptive since gpu_memory_observed is weights-only, see that file's own provenance)",
+      "pre_phase20_estimate_bytes": 212474880,
+      "pre_phase20_estimate_formula": "30*7082496",
+      "pre_phase20_error_percent": 21.327,
+      "phase20_error_percent": 2.983
+    },
+    {
+      "model": "SmolLM2-360M-Instruct-f16.gguf",
+      "architecture": "llama",
+      "n_layer_all": 32,
+      "bytes_per_layer": 19668480,
+      "output_role_bytes": 94375680,
+      "output_role_basis": "tied embeddings (no separate output.weight tensor in this GGUF)",
+      "corrected_estimate_bytes": 704098560,
+      "corrected_estimate_formula": "(32-1)*19668480 + 94375680",
+      "observed_delta_bytes": 712114176,
+      "observed_delta_bytes_source": "results/planner-accuracy/measurements.json#smollm2-360m_vulkan_native_default",
+      "pre_phase20_estimate_bytes": 629391360,
+      "pre_phase20_estimate_formula": "32*19668480",
+      "pre_phase20_error_percent": 11.617,
+      "phase20_error_percent": 1.126
+    },
+    {
+      "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "architecture": "qwen2",
+      "n_layer_all": 28,
+      "bytes_per_layer": 93605888,
+      "output_role_bytes": 466753536,
+      "output_role_basis": "untied embeddings -- output_role_bytes is the real, separately-stored output.weight tensor's bytes plus output_norm.weight's",
+      "corrected_estimate_bytes": 2994112512,
+      "corrected_estimate_formula": "(28-1)*93605888 + 466753536",
+      "observed_delta_bytes": 3000893440,
+      "observed_delta_bytes_source": "results/planner-accuracy/measurements.json#qwen2.5-1.5b_vulkan_native_cpu_placement",
+      "pre_phase20_estimate_bytes": 2620964864,
+      "pre_phase20_estimate_formula": "28*93605888",
+      "pre_phase20_error_percent": 12.661,
+      "phase20_error_percent": 0.226
+    }
+  ],
+  "qwen2_regression_smokes": {
+    "label": "REAL",
+    "note": "Live membrane-run --json runs against this repo's real committed models/qwen2.5-1.5b-instruct-fp16.gguf and the real Vulkan device above, captured during Phase 20 development -- verifies Section 14's regression requirement: compression is never attempted merely to make a compression-incompatible architecture fit, and native+placement remains a legal fallback at the exact constrained-VRAM context prior evidence (results/v0.3/kv-residency-productization/capacity_uplift.json) already used.",
+    "runs": [
+      {
+        "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt \"Hi\" --ctx 2048 --gen-tokens 4 --gpu-layers all --kv q8 --json",
+        "exit_code": 5,
+        "reason_code": "NO_FEASIBLE_CANDIDATE",
+        "note": "compat_check.c's architecture gate rejects qwen2 for q8 -- no candidate is generated at all"
+      },
+      {
+        "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt \"Hi\" --ctx 2048 --gen-tokens 4 --gpu-layers all --kv adaptive --json",
+        "exit_code": 5,
+        "reason_code": "NO_FEASIBLE_CANDIDATE",
+        "note": "adaptive (q8/q5 only) has the same zero eligible candidates -- never falls back to native"
+      },
+      {
+        "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt \"Hi\" --ctx 28500 --gen-tokens 4 --gpu-layers all --kv native --kv-placement cpu --json",
+        "exit_code": 0,
+        "ok": true,
+        "resolved_gpu_layers": 28,
+        "resolved_kv_placement": "cpu",
+        "reason_code": "CANDIDATE_SELECTED",
+        "note": "matches prior capacity_uplift.json evidence: native+cpu-placement succeeds with full layer residency at this exact real constrained-VRAM context"
+      },
+      {
+        "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt \"Hi\" --ctx 28500 --gen-tokens 4 --gpu-layers auto --kv native --json",
+        "exit_code": 0,
+        "ok": true,
+        "resolved_gpu_layers": 24,
+        "estimated_model_bytes": 2619688960,
+        "estimated_model_bytes_formula": "(24-1)*93605888 + 466753536",
+        "observed_delta_bytes": 2628190208,
+        "error_percent": 0.323,
+        "resolved_kv_placement": "default",
+        "reason_code": "CANDIDATE_SELECTED",
+        "note": "default-placement auto correctly degrades to partial (24/28) offload at this context, given the now-more-accurate weight cost -- a real, expected behavior difference from the pre-Phase-20 estimate, not a regression"
+      }
+    ]
+  }
+}
