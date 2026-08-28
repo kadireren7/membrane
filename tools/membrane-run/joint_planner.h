@@ -302,8 +302,17 @@ uint64_t	membrane_joint_estimate_gpu_weight_bytes(int32_t v,
  *      require the real architecture gate to pass).
  *   3. Must conservatively fit (gpu_policy.h's own budget check, AND
  *      this candidate's own kv_residency_resolve() call, both pass).
- *   4. Prefer NATIVE precision over Q8 over Q5 (quality-first) --
- *      Section 13: NEVER a performance-based preference (no product
+ *   4. For an EXPLICIT precision (native, or --kv q8/q5 fixed): no
+ *      ordering question arises -- there is only one precision
+ *      candidate. For --kv adaptive/bare --auto (Q8 vs Q5 only --
+ *      adaptive never proposes native, matching adaptive_kv_policy.h's
+ *      own contract): the choice is DELEGATED to adaptive_kv_policy.h's
+ *      own, more nuanced, already-shipped order -- full GPU residency
+ *      beats precision (Q5-at-full-residency beats Q8-at-partial-
+ *      residency), Q8 wins only when otherwise tied. This function does
+ *      NOT override or duplicate that order; see resolve_adaptive_
+ *      precision()'s own doc comment in joint_planner.c. Neither case
+ *      is ever a performance-based preference (Section 13: no product
  *      evidence supports GPU-KV/more-GPU-layers/any precision being
  *      generally faster; Phase 12G found no such advantage).
  *   5. Within the same precision, prefer MORE GPU-resident weight
