@@ -185,6 +185,52 @@ def check_errors_recompute_correctly(measurements):
 					f"does not match recomputed value {expected_host_pct!r}")
 
 
+DOC_PATH = REPO_ROOT / "docs" / "planner-accuracy.md"
+
+# label -> which error-percent field docs/planner-accuracy.md's Findings
+# tables cite for it. Hardcoded rather than generically parsed out of the
+# markdown tables (fragile against reformatting) -- this pins the exact
+# claim docs/planner-accuracy.md makes for each of the 8 fixed points to
+# the field that actually backs it, so an edit to either file that makes
+# them disagree fails loudly instead of silently.
+DOC_TABLE_CLAIMS = {
+	"smollm2-135m_vulkan_native_default": ("gpu_estimate_error_percent", "%"),
+	"smollm2-360m_vulkan_native_default": ("gpu_estimate_error_percent", "%"),
+	"qwen2.5-1.5b_vulkan_native_cpu_placement": ("gpu_estimate_error_percent", "%"),
+	"smollm2-135m_cpu_native": ("host_kv_estimate_error_percent", "%"),
+	"smollm2-135m_cpu_q8": ("host_kv_estimate_error_percent", "%"),
+}
+
+
+@check("docs/planner-accuracy.md's Findings tables cite the actual computed error percentages")
+def check_docs_match_measurements(measurements):
+	if not DOC_PATH.exists():
+		fail("docs cross-check", f"{DOC_PATH} does not exist")
+		return
+	doc_text = DOC_PATH.read_text()
+	by_label = {m.get("label"): m for m in measurements}
+	for label, (field, suffix) in DOC_TABLE_CLAIMS.items():
+		m = by_label.get(label)
+		if m is None:
+			fail(label, "cited in DOC_TABLE_CLAIMS but no such measurement "
+				"exists in measurements.json")
+			continue
+		pct = (m.get("errors") or {}).get(field)
+		if pct is None:
+			fail(label, f"DOC_TABLE_CLAIMS expects errors.{field} to be "
+				f"populated for this point, but it is null")
+			continue
+		# docs/planner-accuracy.md's tables render at 1 decimal place with
+		# an explicit sign, e.g. "+21.3%" -- same convention as the harness
+		# script's own README-style output.
+		expected_text = f"{pct:+.1f}{suffix}"
+		if expected_text not in doc_text:
+			fail(label, f"expected to find {expected_text!r} (from "
+				f"errors.{field}={pct}) somewhere in {DOC_PATH.name}, but "
+				f"did not -- the doc's claim is stale relative to the "
+				f"committed measurement")
+
+
 @check("no field or provenance string claims a continuous GPU peak sample")
 def check_no_fabricated_gpu_peak_claim(data, measurements):
 	# This schema deliberately has no gpu-peak field at all (see
@@ -232,6 +278,7 @@ def main():
 	check_measurement_shape(measurements)
 	check_cpu_has_no_gpu_fields(measurements)
 	check_errors_recompute_correctly(measurements)
+	check_docs_match_measurements(measurements)
 	check_no_fabricated_gpu_peak_claim(data, measurements)
 
 	print()

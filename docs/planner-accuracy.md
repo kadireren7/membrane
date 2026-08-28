@@ -189,8 +189,11 @@ checking explicitly rather than assuming the margin always absorbs it.
 `scripts/verify-planner-accuracy.py` checks `results/planner-accuracy/
 measurements.json`'s schema; that every populated `errors.*` field is
 **recomputed from its `planner`/`observed` inputs and matches exactly** (not
-merely "inputs present"); that no byte/percent field is a
-nonsensical-negative-impossible value; that non-finite JSON constants
+merely "inputs present"); that the specific error percentages this very
+document's Findings tables cite **actually appear, formatted the same way,
+in the committed `measurements.json`** (a mismatch here means this file has
+drifted from the data it claims to summarize); that no byte/percent field is
+a nonsensical-negative-impossible value; that non-finite JSON constants
 (`NaN`/`Infinity`) are rejected outright rather than silently parsed; and
 that `gpu_memory_observed`-derived fields are never present when
 `backend: "cpu"` (no GPU device to observe). Run via
