@@ -175,9 +175,12 @@ live in
 with SHA256-verified provenance back to this repository.
 
 **Release status**: latest stable tag `v0.2.0`, release candidate
-`v0.3.0-rc1`. Current `main` contains product hardening completed after
-`v0.3.0-rc1` (Q5 KV, adaptive KV, static residency, `--auto`/`--plan-only`
-diagnostics) not yet in a tagged release.
+`v0.3.0-rc2` (supersedes the now-stale `v0.3.0-rc1`, which predates
+Q5/adaptive KV, static KV residency, the compatibility matrix, the
+joint `--auto` planner, and apply-time fallback — see
+[docs/release-v0.3.0-rc2.md](docs/release-v0.3.0-rc2.md) for the full
+RC1→RC2 delta). `v0.2.0` stable's CPU-only default behavior is
+unchanged by any of this.
 
 ## AI-assisted development
 

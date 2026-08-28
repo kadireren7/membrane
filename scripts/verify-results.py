@@ -1729,6 +1729,23 @@ def main() -> int:
 			print("\nFAILED: scripts/verify-auto-fallback.py reported "
 				"failures (see output above)")
 			return 1
+
+	# Same reasoning as the three chains above -- v0.3.0-rc2's own
+	# release-readiness claims (Phase 22) get their own dedicated
+	# validator, chained here as another unnumbered step. Deliberately
+	# NOT renumbered into this file's own 73 checks -- same reasoning as
+	# every other chained validator above.
+	release_script = REPO_ROOT / "scripts" / "verify-release-readiness.py"
+	if release_script.exists():
+		print()
+		print("Also verifying release readiness "
+			"(scripts/verify-release-readiness.py):")
+		sys.stdout.flush()
+		result = subprocess.run([sys.executable, str(release_script)])
+		if result.returncode != 0:
+			print("\nFAILED: scripts/verify-release-readiness.py reported "
+				"failures (see output above)")
+			return 1
 	return 0
 
 

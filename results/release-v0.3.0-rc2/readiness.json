@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "label": "REAL",
+  "note": "Committed release-readiness evidence for v0.3.0-rc2 (Phase 22) -- checkable by scripts/verify-release-readiness.py. Local build/test/install numbers below were captured against release/v0.3.0-rc2-prep at membrane_commit; CI run IDs are the actual GitHub Actions runs for this PR (kadireren7/membrane#32). This file is additive-only evidence, not a replacement for results/joint-planner/estimate-correction.json (Phase 20) or results/auto-fallback/validation.json (Phase 21), both cited here by reference, not restated.",
+  "membrane_commit": "9f1d3f96493883ef2cf4c69b4792b30bd7657110",
+  "membrane_version": "0.3.0-rc2",
+  "pull_request": "https://github.com/kadireren7/membrane/pull/32",
+  "test_results": {
+    "ctest_debug": {"passed": 70, "total": 70},
+    "ctest_asan_ubsan": {"passed": 70, "total": 70, "cmake_flag": "MEMBRANE_ENABLE_SANITIZERS=ON"},
+    "verify_results": {"passed": 73, "total": 73},
+    "verify_compatibility": {"passed": 13, "total": 13, "rows": 26, "supported": 16, "unsupported": 9, "not_yet_validated": 1},
+    "verify_planner_accuracy": {"passed": 6, "total": 6, "note": "immutable Phase 19 evidence, not re-measured this phase"},
+    "verify_auto_fallback": {"passed": 9, "total": 9, "note": "unchanged Phase 21 evidence, not re-measured this phase"}
+  },
+  "gpu_weight_estimate_correction": {
+    "source": "results/joint-planner/estimate-correction.json",
+    "pre_phase20_error_percent_range": [11.617, 21.327],
+    "phase20_error_percent_range": [0.226, 2.983],
+    "note": "cited here, not restated as a new measurement -- Phase 19/20 evidence is immutable"
+  },
+  "install_verification": {
+    "cpu": {
+      "fresh_configure_build_install": true,
+      "outside_tree_help_and_version": true,
+      "uninstall_removes_all_files": true
+    },
+    "vulkan": {
+      "install_reused_existing_local_build": true,
+      "note": "an existing local Vulkan-enabled build tree was reconfigured/rebuilt incrementally rather than a from-scratch clone, to avoid an unnecessary heavy/risky rebuild on this memory-constrained host -- the Vulkan install/uninstall CONTRACT itself is still exercised fresh every push/PR by the packaging-smoke CI job (see ci_runs below), which does perform a full fresh configure",
+      "outside_tree_help_and_version": true,
+      "uninstall_removes_all_files": true,
+      "real_generation_smoke": {
+        "model": "SmolLM2-135M-Instruct-f16.gguf",
+        "device": "Vulkan1",
+        "membrane_version_in_json": "0.3.0-rc2",
+        "planner_used": true,
+        "fallback_final_status": "success"
+      }
+    }
+  },
+  "json_contract_checks": {
+    "normal_success_stdout_single_object": true,
+    "plan_only_stdout_single_object": true,
+    "plan_only_fallback_final_status": "not_applicable",
+    "qwen2_rejection_stdout_single_object": true,
+    "qwen2_rejection_exit_code": 5,
+    "qwen2_rejection_reason_code": "NO_FEASIBLE_CANDIDATE",
+    "schema_version_consistent": 1
+  },
+  "ci_runs": {
+    "note": "GitHub Actions run IDs for kadireren7/membrane#32 (release/v0.3.0-rc2-prep), all SUCCESS at time of writing",
+    "workflow_runs": [33156455264, 33156476277, 33156476281],
+    "jobs_all_passing": [
+      "build-and-test (Debug)", "build-and-test (ASan)", "thread-sanitizer",
+      "packaging-smoke", "compatibility-check", "planner-accuracy-check",
+      "auto-fallback-check", "fallback-controller-tests", "CodeQL analysis (c-cpp)"
+    ]
+  }
+}
