@@ -1764,6 +1764,21 @@ def main() -> int:
 			print("\nFAILED: scripts/verify-rc2-user-validation.py reported "
 				"failures (see output above)")
 			return 1
+
+	# Same reasoning as the five chains above -- Phase 24's real
+	# performance-profiling measurements get their own dedicated
+	# validator, chained here as another unnumbered step.
+	perf_script = REPO_ROOT / "scripts" / "verify-performance-profiling.py"
+	if perf_script.exists():
+		print()
+		print("Also verifying performance-profiling measurements "
+			"(scripts/verify-performance-profiling.py):")
+		sys.stdout.flush()
+		result = subprocess.run([sys.executable, str(perf_script)])
+		if result.returncode != 0:
+			print("\nFAILED: scripts/verify-performance-profiling.py "
+				"reported failures (see output above)")
+			return 1
 	return 0
 
 

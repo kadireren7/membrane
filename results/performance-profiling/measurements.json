@@ -1,0 +1,1657 @@
+{
+  "schema_version": 1,
+  "note": "Phase 24: inference performance profiling at a small, fixed set of controlled points, 3 repeats each. Profiling only -- no optimization was performed in this phase. See docs/performance-profiling.md.",
+  "membrane_commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+  "generated_at": "2026-08-28T18:45:41Z",
+  "host": {
+    "note": "generated on the developer machine that ran scripts/measure-performance-profile.py -- see each measurement's own device/backend field for the exact tested hardware; never generalize a device-scoped number."
+  },
+  "measurements": [
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_vulkan_native",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": "all",
+        "kv_precision": "native",
+        "kv_placement": "default",
+        "auto": false
+      },
+      "resolved": {
+        "gpu_layers": 30,
+        "kv_precision": "native",
+        "kv_placement": "default",
+        "fallback_attempted": false
+      },
+      "repeats": 3,
+      "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
+      "note": null,
+      "timings_ms": {
+        "total_ms": {
+          "median": 475.054,
+          "min": 467.385,
+          "max": 1362.66,
+          "raw": [
+            1362.66,
+            475.054,
+            467.385
+          ]
+        },
+        "planner_ms": {
+          "median": 8.855,
+          "min": 8.69,
+          "max": 12.192,
+          "raw": [
+            12.192,
+            8.69,
+            8.855
+          ]
+        },
+        "model_load_ms": {
+          "median": 255.205,
+          "min": 250.488,
+          "max": 624.993,
+          "raw": [
+            624.993,
+            255.205,
+            250.488
+          ]
+        },
+        "tokenization_ms": {
+          "median": 0.108,
+          "min": 0.083,
+          "max": 0.111,
+          "raw": [
+            0.108,
+            0.083,
+            0.111
+          ]
+        },
+        "context_create_ms": {
+          "median": 11.223,
+          "min": 10.212,
+          "max": 40.444,
+          "raw": [
+            40.444,
+            10.212,
+            11.223
+          ]
+        },
+        "prefill_ms": {
+          "median": 14.287,
+          "min": 13.047,
+          "max": 30.606,
+          "raw": [
+            30.606,
+            13.047,
+            14.287
+          ]
+        },
+        "decode_ms": {
+          "median": 107.263,
+          "min": 102.342,
+          "max": 112.814,
+          "raw": [
+            112.814,
+            107.263,
+            102.342
+          ]
+        },
+        "first_token_ms": {
+          "median": 5.28,
+          "min": 4.995,
+          "max": 6.541,
+          "raw": [
+            6.541,
+            5.28,
+            4.995
+          ]
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": 349.976,
+          "min": 163.367,
+          "max": 383.243,
+          "raw": [
+            163.367,
+            383.243,
+            349.976
+          ]
+        },
+        "decode_tokens_per_second": {
+          "median": 298.332,
+          "min": 283.653,
+          "max": 312.678,
+          "raw": [
+            283.653,
+            298.332,
+            312.678
+          ]
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --gpu-layers all --kv native",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_vulkan_q8",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": "all",
+        "kv_precision": "q8",
+        "kv_placement": "default",
+        "auto": false
+      },
+      "resolved": {
+        "gpu_layers": 30,
+        "kv_precision": "q8",
+        "kv_placement": "default",
+        "fallback_attempted": false
+      },
+      "repeats": 3,
+      "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
+      "note": null,
+      "timings_ms": {
+        "total_ms": {
+          "median": 479.827,
+          "min": 474.53,
+          "max": 486.235,
+          "raw": [
+            479.827,
+            474.53,
+            486.235
+          ]
+        },
+        "planner_ms": {
+          "median": 8.591,
+          "min": 8.577,
+          "max": 8.73,
+          "raw": [
+            8.577,
+            8.73,
+            8.591
+          ]
+        },
+        "model_load_ms": {
+          "median": 248.82,
+          "min": 245.577,
+          "max": 251.898,
+          "raw": [
+            245.577,
+            248.82,
+            251.898
+          ]
+        },
+        "tokenization_ms": {
+          "median": 0.108,
+          "min": 0.091,
+          "max": 0.123,
+          "raw": [
+            0.123,
+            0.091,
+            0.108
+          ]
+        },
+        "context_create_ms": {
+          "median": 11.612,
+          "min": 10.844,
+          "max": 12.131,
+          "raw": [
+            12.131,
+            10.844,
+            11.612
+          ]
+        },
+        "prefill_ms": {
+          "median": 15.015,
+          "min": 14.878,
+          "max": 16.381,
+          "raw": [
+            16.381,
+            15.015,
+            14.878
+          ]
+        },
+        "decode_ms": {
+          "median": 119.723,
+          "min": 116.274,
+          "max": 121.407,
+          "raw": [
+            119.723,
+            116.274,
+            121.407
+          ]
+        },
+        "first_token_ms": {
+          "median": 5.821,
+          "min": 5.776,
+          "max": 6.448,
+          "raw": [
+            5.821,
+            5.776,
+            6.448
+          ]
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": 332.989,
+          "min": 305.236,
+          "max": 336.073,
+          "raw": [
+            305.236,
+            332.989,
+            336.073
+          ]
+        },
+        "decode_tokens_per_second": {
+          "median": 267.283,
+          "min": 263.576,
+          "max": 275.211,
+          "raw": [
+            267.283,
+            275.211,
+            263.576
+          ]
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --gpu-layers all --kv q8",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_vulkan_q5",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": "all",
+        "kv_precision": "q5",
+        "kv_placement": "default",
+        "auto": false
+      },
+      "resolved": {
+        "gpu_layers": 30,
+        "kv_precision": "q5",
+        "kv_placement": "default",
+        "fallback_attempted": false
+      },
+      "repeats": 3,
+      "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
+      "note": null,
+      "timings_ms": {
+        "total_ms": {
+          "median": 478.471,
+          "min": 476.477,
+          "max": 480.682,
+          "raw": [
+            478.471,
+            476.477,
+            480.682
+          ]
+        },
+        "planner_ms": {
+          "median": 8.684,
+          "min": 8.526,
+          "max": 8.833,
+          "raw": [
+            8.833,
+            8.526,
+            8.684
+          ]
+        },
+        "model_load_ms": {
+          "median": 248.51,
+          "min": 244.648,
+          "max": 252.593,
+          "raw": [
+            244.648,
+            248.51,
+            252.593
+          ]
+        },
+        "tokenization_ms": {
+          "median": 0.106,
+          "min": 0.104,
+          "max": 0.109,
+          "raw": [
+            0.109,
+            0.104,
+            0.106
+          ]
+        },
+        "context_create_ms": {
+          "median": 11.965,
+          "min": 10.517,
+          "max": 12.757,
+          "raw": [
+            12.757,
+            10.517,
+            11.965
+          ]
+        },
+        "prefill_ms": {
+          "median": 13.269,
+          "min": 13.182,
+          "max": 16.754,
+          "raw": [
+            16.754,
+            13.269,
+            13.182
+          ]
+        },
+        "decode_ms": {
+          "median": 119.715,
+          "min": 119.103,
+          "max": 120.549,
+          "raw": [
+            120.549,
+            119.715,
+            119.103
+          ]
+        },
+        "first_token_ms": {
+          "median": 5.904,
+          "min": 5.808,
+          "max": 6.645,
+          "raw": [
+            6.645,
+            5.808,
+            5.904
+          ]
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": 376.821,
+          "min": 298.439,
+          "max": 379.295,
+          "raw": [
+            298.439,
+            376.821,
+            379.295
+          ]
+        },
+        "decode_tokens_per_second": {
+          "median": 267.301,
+          "min": 265.451,
+          "max": 268.675,
+          "raw": [
+            265.451,
+            267.301,
+            268.675
+          ]
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --gpu-layers all --kv q5",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_vulkan_adaptive",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": "all",
+        "kv_precision": "adaptive",
+        "kv_placement": "default",
+        "auto": false
+      },
+      "resolved": {
+        "gpu_layers": 30,
+        "kv_precision": "q8",
+        "kv_placement": "default",
+        "fallback_attempted": false
+      },
+      "repeats": 3,
+      "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
+      "note": null,
+      "timings_ms": {
+        "total_ms": {
+          "median": 479.789,
+          "min": 473.674,
+          "max": 485.869,
+          "raw": [
+            479.789,
+            473.674,
+            485.869
+          ]
+        },
+        "planner_ms": {
+          "median": 8.626,
+          "min": 8.574,
+          "max": 8.901,
+          "raw": [
+            8.626,
+            8.901,
+            8.574
+          ]
+        },
+        "model_load_ms": {
+          "median": 252.245,
+          "min": 246.956,
+          "max": 252.261,
+          "raw": [
+            252.245,
+            246.956,
+            252.261
+          ]
+        },
+        "tokenization_ms": {
+          "median": 0.111,
+          "min": 0.105,
+          "max": 0.135,
+          "raw": [
+            0.135,
+            0.111,
+            0.105
+          ]
+        },
+        "context_create_ms": {
+          "median": 11.334,
+          "min": 11.025,
+          "max": 11.766,
+          "raw": [
+            11.025,
+            11.766,
+            11.334
+          ]
+        },
+        "prefill_ms": {
+          "median": 14.165,
+          "min": 13.365,
+          "max": 15.081,
+          "raw": [
+            14.165,
+            13.365,
+            15.081
+          ]
+        },
+        "decode_ms": {
+          "median": 117.965,
+          "min": 116.957,
+          "max": 120.869,
+          "raw": [
+            117.965,
+            116.957,
+            120.869
+          ]
+        },
+        "first_token_ms": {
+          "median": 5.604,
+          "min": 5.578,
+          "max": 6.21,
+          "raw": [
+            5.604,
+            5.578,
+            6.21
+          ]
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": 352.991,
+          "min": 331.542,
+          "max": 374.101,
+          "raw": [
+            352.991,
+            374.101,
+            331.542
+          ]
+        },
+        "decode_tokens_per_second": {
+          "median": 271.266,
+          "min": 264.749,
+          "max": 273.606,
+          "raw": [
+            271.266,
+            273.606,
+            264.749
+          ]
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --gpu-layers all --kv adaptive",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_cpu_native",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "cpu",
+      "device": null,
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": "0",
+        "kv_precision": "native",
+        "kv_placement": "default",
+        "auto": false
+      },
+      "resolved": {
+        "gpu_layers": 0,
+        "kv_precision": "native",
+        "kv_placement": "default",
+        "fallback_attempted": false
+      },
+      "repeats": 3,
+      "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
+      "note": null,
+      "timings_ms": {
+        "total_ms": {
+          "median": 737.263,
+          "min": 724.765,
+          "max": 746.386,
+          "raw": [
+            737.263,
+            724.765,
+            746.386
+          ]
+        },
+        "planner_ms": {
+          "median": 0.006,
+          "min": 0.006,
+          "max": 0.007,
+          "raw": [
+            0.007,
+            0.006,
+            0.006
+          ]
+        },
+        "model_load_ms": {
+          "median": 146.148,
+          "min": 145.747,
+          "max": 146.783,
+          "raw": [
+            146.148,
+            146.783,
+            145.747
+          ]
+        },
+        "tokenization_ms": {
+          "median": 0.088,
+          "min": 0.087,
+          "max": 0.088,
+          "raw": [
+            0.087,
+            0.088,
+            0.088
+          ]
+        },
+        "context_create_ms": {
+          "median": 26.858,
+          "min": 26.804,
+          "max": 27.169,
+          "raw": [
+            27.169,
+            26.858,
+            26.804
+          ]
+        },
+        "prefill_ms": {
+          "median": 16.945,
+          "min": 16.334,
+          "max": 18.287,
+          "raw": [
+            16.945,
+            18.287,
+            16.334
+          ]
+        },
+        "decode_ms": {
+          "median": 469.055,
+          "min": 454.147,
+          "max": 470.573,
+          "raw": [
+            469.055,
+            454.147,
+            470.573
+          ]
+        },
+        "first_token_ms": {
+          "median": 15.504,
+          "min": 14.451,
+          "max": 15.982,
+          "raw": [
+            15.504,
+            15.982,
+            14.451
+          ]
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": 295.069,
+          "min": 273.423,
+          "max": 306.103,
+          "raw": [
+            295.069,
+            273.423,
+            306.103
+          ]
+        },
+        "decode_tokens_per_second": {
+          "median": 68.222,
+          "min": 68.002,
+          "max": 70.462,
+          "raw": [
+            68.222,
+            70.462,
+            68.002
+          ]
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --gpu-layers 0 --kv native",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_cpu_q8",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "cpu",
+      "device": null,
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": "0",
+        "kv_precision": "q8",
+        "kv_placement": "default",
+        "auto": false
+      },
+      "resolved": {
+        "gpu_layers": 0,
+        "kv_precision": "q8",
+        "kv_placement": "default",
+        "fallback_attempted": false
+      },
+      "repeats": 3,
+      "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
+      "note": null,
+      "timings_ms": {
+        "total_ms": {
+          "median": 740.293,
+          "min": 727.976,
+          "max": 752.826,
+          "raw": [
+            740.293,
+            752.826,
+            727.976
+          ]
+        },
+        "planner_ms": {
+          "median": 0.006,
+          "min": 0.006,
+          "max": 0.006,
+          "raw": [
+            0.006,
+            0.006,
+            0.006
+          ]
+        },
+        "model_load_ms": {
+          "median": 156.439,
+          "min": 155.698,
+          "max": 171.012,
+          "raw": [
+            156.439,
+            171.012,
+            155.698
+          ]
+        },
+        "tokenization_ms": {
+          "median": 0.089,
+          "min": 0.086,
+          "max": 0.101,
+          "raw": [
+            0.101,
+            0.089,
+            0.086
+          ]
+        },
+        "context_create_ms": {
+          "median": 18.428,
+          "min": 18.062,
+          "max": 18.557,
+          "raw": [
+            18.062,
+            18.557,
+            18.428
+          ]
+        },
+        "prefill_ms": {
+          "median": 17.807,
+          "min": 17.189,
+          "max": 17.916,
+          "raw": [
+            17.189,
+            17.916,
+            17.807
+          ]
+        },
+        "decode_ms": {
+          "median": 466.524,
+          "min": 454.986,
+          "max": 469.409,
+          "raw": [
+            469.409,
+            466.524,
+            454.986
+          ]
+        },
+        "first_token_ms": {
+          "median": 14.64,
+          "min": 14.135,
+          "max": 16.121,
+          "raw": [
+            16.121,
+            14.64,
+            14.135
+          ]
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": 280.793,
+          "min": 279.081,
+          "max": 290.876,
+          "raw": [
+            290.876,
+            279.081,
+            280.793
+          ]
+        },
+        "decode_tokens_per_second": {
+          "median": 68.592,
+          "min": 68.171,
+          "max": 70.332,
+          "raw": [
+            68.171,
+            68.592,
+            70.332
+          ]
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --gpu-layers 0 --kv q8",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-360m_vulkan_native",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "model": "SmolLM2-360M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": "all",
+        "kv_precision": "native",
+        "kv_placement": "default",
+        "auto": false
+      },
+      "resolved": {
+        "gpu_layers": 32,
+        "kv_precision": "native",
+        "kv_placement": "default",
+        "fallback_attempted": false
+      },
+      "repeats": 3,
+      "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
+      "note": null,
+      "timings_ms": {
+        "total_ms": {
+          "median": 931.816,
+          "min": 802.215,
+          "max": 2663.737,
+          "raw": [
+            2663.737,
+            931.816,
+            802.215
+          ]
+        },
+        "planner_ms": {
+          "median": 12.033,
+          "min": 9.212,
+          "max": 14.7,
+          "raw": [
+            12.033,
+            14.7,
+            9.212
+          ]
+        },
+        "model_load_ms": {
+          "median": 477.49,
+          "min": 448.917,
+          "max": 2299.185,
+          "raw": [
+            2299.185,
+            477.49,
+            448.917
+          ]
+        },
+        "tokenization_ms": {
+          "median": 0.121,
+          "min": 0.118,
+          "max": 0.123,
+          "raw": [
+            0.123,
+            0.118,
+            0.121
+          ]
+        },
+        "context_create_ms": {
+          "median": 19.416,
+          "min": 19.025,
+          "max": 60.389,
+          "raw": [
+            19.416,
+            60.389,
+            19.025
+          ]
+        },
+        "prefill_ms": {
+          "median": 20.196,
+          "min": 19.919,
+          "max": 20.963,
+          "raw": [
+            20.963,
+            19.919,
+            20.196
+          ]
+        },
+        "decode_ms": {
+          "median": 233.479,
+          "min": 225.528,
+          "max": 239.533,
+          "raw": [
+            233.479,
+            239.533,
+            225.528
+          ]
+        },
+        "first_token_ms": {
+          "median": 9.769,
+          "min": 9.651,
+          "max": 9.795,
+          "raw": [
+            9.769,
+            9.651,
+            9.795
+          ]
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": 247.572,
+          "min": 238.516,
+          "max": 251.012,
+          "raw": [
+            238.516,
+            251.012,
+            247.572
+          ]
+        },
+        "decode_tokens_per_second": {
+          "median": 137.057,
+          "min": 133.593,
+          "max": 141.889,
+          "raw": [
+            137.057,
+            133.593,
+            141.889
+          ]
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/SmolLM2-360M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --gpu-layers all --kv native",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "qwen2.5-1.5b_vulkan_native_gpu_placement",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "vulkan",
+      "device": null,
+      "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "model_arch": "qwen2",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": "all",
+        "kv_precision": "native",
+        "kv_placement": "gpu",
+        "auto": false
+      },
+      "resolved": {},
+      "repeats": 3,
+      "ok_count": 0,
+      "token_counts": {
+        "prompt_tokens": [],
+        "generated_tokens": []
+      },
+      "note": "0/3 repeats succeeded -- last observed failure reason_code='AUTO_FALLBACK_EXHAUSTED'. See docs/performance-profiling.md for this specific point's own real, disclosed root-cause discussion (never silently omitted, never a fabricated measurement).",
+      "timings_ms": {
+        "total_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "planner_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "model_load_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "tokenization_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "context_create_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "prefill_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "decode_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "first_token_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "decode_tokens_per_second": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --gpu-layers all --kv native --kv-placement gpu",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "qwen2.5-1.5b_vulkan_native_cpu_placement",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "vulkan",
+      "device": null,
+      "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "model_arch": "qwen2",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": "all",
+        "kv_precision": "native",
+        "kv_placement": "cpu",
+        "auto": false
+      },
+      "resolved": {},
+      "repeats": 3,
+      "ok_count": 0,
+      "token_counts": {
+        "prompt_tokens": [],
+        "generated_tokens": []
+      },
+      "note": "0/3 repeats succeeded -- last observed failure reason_code='AUTO_FALLBACK_EXHAUSTED'. See docs/performance-profiling.md for this specific point's own real, disclosed root-cause discussion (never silently omitted, never a fabricated measurement).",
+      "timings_ms": {
+        "total_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "planner_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "model_load_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "tokenization_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "context_create_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "prefill_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "decode_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "first_token_ms": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        },
+        "decode_tokens_per_second": {
+          "median": null,
+          "min": null,
+          "max": null,
+          "raw": []
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --gpu-layers all --kv native --kv-placement cpu",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "qwen2.5-1.5b_cpu_native",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "cpu",
+      "device": null,
+      "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "model_arch": "qwen2",
+      "context": 2048,
+      "gen_tokens_requested": 16,
+      "request": {
+        "gpu_layers": "0",
+        "kv_precision": "native",
+        "kv_placement": "default",
+        "auto": false
+      },
+      "resolved": {
+        "gpu_layers": 0,
+        "kv_precision": "native",
+        "kv_placement": "default",
+        "fallback_attempted": false
+      },
+      "repeats": 3,
+      "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          16,
+          16,
+          16
+        ]
+      },
+      "note": null,
+      "timings_ms": {
+        "total_ms": {
+          "median": 14191.0,
+          "min": 12640.876,
+          "max": 16952.248,
+          "raw": [
+            12640.876,
+            16952.248,
+            14191.0
+          ]
+        },
+        "planner_ms": {
+          "median": 0.007,
+          "min": 0.006,
+          "max": 0.007,
+          "raw": [
+            0.007,
+            0.006,
+            0.007
+          ]
+        },
+        "model_load_ms": {
+          "median": 5505.918,
+          "min": 4945.68,
+          "max": 5699.914,
+          "raw": [
+            5505.918,
+            5699.914,
+            4945.68
+          ]
+        },
+        "tokenization_ms": {
+          "median": 3.963,
+          "min": 3.683,
+          "max": 4.122,
+          "raw": [
+            3.963,
+            4.122,
+            3.683
+          ]
+        },
+        "context_create_ms": {
+          "median": 80.777,
+          "min": 73.831,
+          "max": 82.574,
+          "raw": [
+            80.777,
+            73.831,
+            82.574
+          ]
+        },
+        "prefill_ms": {
+          "median": 2254.047,
+          "min": 1829.664,
+          "max": 6445.389,
+          "raw": [
+            2254.047,
+            6445.389,
+            1829.664
+          ]
+        },
+        "decode_ms": {
+          "median": 4309.718,
+          "min": 4206.021,
+          "max": 6768.918,
+          "raw": [
+            4309.718,
+            4206.021,
+            6768.918
+          ]
+        },
+        "first_token_ms": {
+          "median": 1307.488,
+          "min": 585.757,
+          "max": 1311.519,
+          "raw": [
+            1307.488,
+            585.757,
+            1311.519
+          ]
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": 2.218,
+          "min": 0.776,
+          "max": 2.733,
+          "raw": [
+            2.218,
+            0.776,
+            2.733
+          ]
+        },
+        "decode_tokens_per_second": {
+          "median": 3.713,
+          "min": 2.364,
+          "max": 3.804,
+          "raw": [
+            3.713,
+            3.804,
+            2.364
+          ]
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 16 --json --quiet --gpu-layers 0 --kv native",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_vulkan_partial_half_15",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": "15",
+        "kv_precision": "native",
+        "kv_placement": "default",
+        "auto": false
+      },
+      "resolved": {
+        "gpu_layers": 15,
+        "kv_precision": "native",
+        "kv_placement": "default",
+        "fallback_attempted": false
+      },
+      "repeats": 3,
+      "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
+      "note": null,
+      "timings_ms": {
+        "total_ms": {
+          "median": 617.74,
+          "min": 570.433,
+          "max": 1285.605,
+          "raw": [
+            1285.605,
+            617.74,
+            570.433
+          ]
+        },
+        "planner_ms": {
+          "median": 8.577,
+          "min": 8.573,
+          "max": 11.607,
+          "raw": [
+            11.607,
+            8.573,
+            8.577
+          ]
+        },
+        "model_load_ms": {
+          "median": 195.438,
+          "min": 184.215,
+          "max": 493.355,
+          "raw": [
+            493.355,
+            195.438,
+            184.215
+          ]
+        },
+        "tokenization_ms": {
+          "median": 0.087,
+          "min": 0.086,
+          "max": 0.161,
+          "raw": [
+            0.086,
+            0.161,
+            0.087
+          ]
+        },
+        "context_create_ms": {
+          "median": 22.916,
+          "min": 19.733,
+          "max": 29.814,
+          "raw": [
+            22.916,
+            29.814,
+            19.733
+          ]
+        },
+        "prefill_ms": {
+          "median": 22.25,
+          "min": 20.059,
+          "max": 39.635,
+          "raw": [
+            39.635,
+            22.25,
+            20.059
+          ]
+        },
+        "decode_ms": {
+          "median": 262.649,
+          "min": 251.725,
+          "max": 278.408,
+          "raw": [
+            262.649,
+            278.408,
+            251.725
+          ]
+        },
+        "first_token_ms": {
+          "median": 10.825,
+          "min": 9.595,
+          "max": 13.263,
+          "raw": [
+            13.263,
+            10.825,
+            9.595
+          ]
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": 224.721,
+          "min": 126.151,
+          "max": 249.27,
+          "raw": [
+            126.151,
+            224.721,
+            249.27
+          ]
+        },
+        "decode_tokens_per_second": {
+          "median": 121.836,
+          "min": 114.939,
+          "max": 127.123,
+          "raw": [
+            121.836,
+            114.939,
+            127.123
+          ]
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --gpu-layers 15 --kv native",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    },
+    {
+      "schema_version": 1,
+      "label": "smollm2-135m_vulkan_auto",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+      "backend": "vulkan",
+      "device": "Vulkan1",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "model_arch": "llama",
+      "context": 2048,
+      "gen_tokens_requested": 32,
+      "request": {
+        "gpu_layers": null,
+        "kv_precision": null,
+        "kv_placement": "default",
+        "auto": true
+      },
+      "resolved": {
+        "gpu_layers": 30,
+        "kv_precision": "q8",
+        "kv_placement": "auto",
+        "fallback_attempted": false
+      },
+      "repeats": 3,
+      "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
+      "note": null,
+      "timings_ms": {
+        "total_ms": {
+          "median": 489.798,
+          "min": 475.682,
+          "max": 513.635,
+          "raw": [
+            513.635,
+            475.682,
+            489.798
+          ]
+        },
+        "planner_ms": {
+          "median": 8.721,
+          "min": 8.134,
+          "max": 8.83,
+          "raw": [
+            8.721,
+            8.83,
+            8.134
+          ]
+        },
+        "model_load_ms": {
+          "median": 251.886,
+          "min": 245.83,
+          "max": 257.13,
+          "raw": [
+            257.13,
+            245.83,
+            251.886
+          ]
+        },
+        "tokenization_ms": {
+          "median": 0.105,
+          "min": 0.085,
+          "max": 0.12,
+          "raw": [
+            0.105,
+            0.12,
+            0.085
+          ]
+        },
+        "context_create_ms": {
+          "median": 12.155,
+          "min": 11.554,
+          "max": 15.09,
+          "raw": [
+            15.09,
+            11.554,
+            12.155
+          ]
+        },
+        "prefill_ms": {
+          "median": 14.835,
+          "min": 13.719,
+          "max": 17.988,
+          "raw": [
+            17.988,
+            14.835,
+            13.719
+          ]
+        },
+        "decode_ms": {
+          "median": 118.382,
+          "min": 117.806,
+          "max": 130.831,
+          "raw": [
+            130.831,
+            118.382,
+            117.806
+          ]
+        },
+        "first_token_ms": {
+          "median": 6.023,
+          "min": 5.685,
+          "max": 6.065,
+          "raw": [
+            6.023,
+            6.065,
+            5.685
+          ]
+        }
+      },
+      "throughput": {
+        "prefill_tokens_per_second": {
+          "median": 337.041,
+          "min": 277.958,
+          "max": 364.468,
+          "raw": [
+            277.958,
+            337.041,
+            364.468
+          ]
+        },
+        "decode_tokens_per_second": {
+          "median": 270.312,
+          "min": 244.59,
+          "max": 271.633,
+          "raw": [
+            244.59,
+            270.312,
+            271.633
+          ]
+        }
+      },
+      "provenance": {
+        "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gen-tokens 32 --json --quiet --auto",
+        "measurement_method": "membrane-run --json's own \"timings\" object (Phase 24 instrumentation, CLOCK_MONOTONIC via decode_loop.cpp's seconds_since()), median/min/max over 3 repeats"
+      }
+    }
+  ]
+}

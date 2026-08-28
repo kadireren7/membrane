@@ -161,6 +161,23 @@ typedef struct s_membrane_fallback_attempt
 	char		detail[256];
 	int			cleanup_complete;
 	int			model_reload_required;
+	double		apply_wall_ms;					/* Phase 24: wall-clock
+												 * duration of THIS one
+												 * apply_fn() call (whatever
+												 * it did internally -- model
+												 * reload, compat/placement
+												 * checks, context creation,
+												 * decode -- this module has
+												 * no visibility into that
+												 * breakdown, only the total;
+												 * see the real adapter's own
+												 * finer-grained timings on
+												 * membrane_kv_store_
+												 * telemetry_t for a
+												 * SUCCESSFUL attempt's
+												 * breakdown). 0.0 for a
+												 * skipped entry
+												 * (apply_started == 0). */
 }	membrane_fallback_attempt_t;
 
 typedef struct s_membrane_fallback_trace
