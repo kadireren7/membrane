@@ -40,6 +40,39 @@ static void	test_q8_wrong_architecture_rejected(void)
 		"the offending architecture name appears in the reason");
 }
 
+/* Phase 18: the same rejection as test_q8_wrong_architecture_rejected(),
+ * but naming the exact real architecture string ("qwen2") that
+ * results/v0.3/kv-residency-productization/capacity_uplift.json's
+ * qwen2.5-1.5b-instruct-fp16.gguf run actually reports (verified against
+ * third_party/llama.cpp/src/llama-arch.cpp's LLM_ARCH_QWEN2 name), so
+ * docs/compatibility.json can point at a test that names its real
+ * evidence model's architecture literally, not just a generic
+ * stand-in. The gate is architecture-string-only and returns before any
+ * shape check runs, so the shape arguments below are arbitrary valid
+ * values reused from the SmolLM2 tests above, not a claim about
+ * Qwen2.5-1.5B's own real n_embd/n_head. */
+static void	test_q8_qwen2_architecture_rejected(void)
+{
+	membrane_compat_result_t	r;
+
+	TEST_ASSERT(membrane_check_kv_compat("qwen2", 576, 9, 3, 2048,
+			KV_Q8, &r) == 0, "qwen2 architecture rejected for q8");
+	TEST_ASSERT(r.ok == 0, "out->ok reflects failure");
+	TEST_ASSERT(strstr(r.reason, "qwen2") != NULL,
+		"the offending architecture name appears in the reason");
+}
+
+static void	test_q5_qwen2_architecture_rejected(void)
+{
+	membrane_compat_result_t	r;
+
+	TEST_ASSERT(membrane_check_kv_compat("qwen2", 576, 9, 3, 2048,
+			KV_Q5, &r) == 0, "qwen2 architecture rejected for q5");
+	TEST_ASSERT(r.ok == 0, "out->ok reflects failure");
+	TEST_ASSERT(strstr(r.reason, "qwen2") != NULL,
+		"the offending architecture name appears in the reason");
+}
+
 static void	test_q8_unknown_architecture_rejected(void)
 {
 	membrane_compat_result_t	r;
@@ -162,6 +195,8 @@ int	main(void)
 	test_native_always_ok();
 	test_q8_llama_smollm2_shape_ok();
 	test_q8_wrong_architecture_rejected();
+	test_q8_qwen2_architecture_rejected();
+	test_q5_qwen2_architecture_rejected();
 	test_q8_unknown_architecture_rejected();
 	test_q8_head_dim_not_block_aligned_rejected();
 	test_q8_head_dim_block_aligned_accepted();

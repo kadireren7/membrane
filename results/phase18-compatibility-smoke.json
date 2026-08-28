@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "phase": "18: compatibility matrix",
+  "note": "Small, targeted --plan-only/--json and CLI-rejection smokes run to fill specific compatibility-matrix gaps not already covered by existing v0.2/v0.3/v0.4 evidence -- not a benchmark sweep. Every run used a real local GGUF already committed to models/ (no download). CPU-only build (GGML_VULKAN=OFF); Vulkan rows in docs/compatibility.json continue to rely on existing v0.3/v0.4 evidence, not this file.",
+  "membrane_commit": "add0302bd8cd9be94ead8ee7360cf677ddcb07e7",
+  "llama_cpp_commit": "c0bc8591e8815c63cb01dd3f051a8b0df02501c9",
+  "build_command": "cmake -S . -B build -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release",
+  "runs": [
+    {
+      "id": "A",
+      "purpose": "SmolLM2-135M (LLM_ARCH_LLAMA), CPU, native KV, plan-only: baseline sanity",
+      "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt \"Hi\" --plan-only --json --gpu-layers 0 --ctx 256",
+      "exit_code": 0,
+      "json_stdout": {"mode": "plan", "ok": true, "resolved": {"backend": "CPU", "gpu_layers": 0, "kv": "native", "kv_placement": "default"}, "reason_codes": {"primary": "CPU_ONLY_REQUESTED"}}
+    },
+    {
+      "id": "B",
+      "purpose": "SmolLM2-135M (LLM_ARCH_LLAMA), CPU, q8 KV, plan-only",
+      "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt \"Hi\" --plan-only --json --gpu-layers 0 --ctx 256 --kv q8",
+      "exit_code": 0,
+      "json_stdout": {"mode": "plan", "ok": true, "resolved": {"backend": "CPU", "gpu_layers": 0, "kv": "q8", "kv_placement": "default"}, "reason_codes": {"primary": "CPU_ONLY_REQUESTED"}}
+    },
+    {
+      "id": "C",
+      "purpose": "Qwen2.5-1.5B (LLM_ARCH_QWEN2), CPU, q8 KV: architecture compat gate fail-closed",
+      "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt \"Hi\" --plan-only --json --gpu-layers 0 --ctx 256 --kv q8",
+      "exit_code": 5,
+      "json_stdout": {"mode": "run", "ok": false, "exit_code": 5, "error": {"reason_code": "KV_COMPAT_UNSUPPORTED", "message": "model architecture 'qwen2' is not validated for Q8_0 KV storage (only LLM_ARCH_LLAMA is supported)"}}
+    },
+    {
+      "id": "D",
+      "purpose": "Qwen2.5-1.5B (LLM_ARCH_QWEN2), CPU, native KV, plan-only: native has no architecture gate",
+      "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt \"Hi\" --plan-only --json --gpu-layers 0 --ctx 256",
+      "exit_code": 0,
+      "json_stdout": {"mode": "plan", "ok": true, "resolved": {"backend": "CPU", "gpu_layers": 0, "kv": "native", "kv_placement": "default"}, "reason_codes": {"primary": "CPU_ONLY_REQUESTED"}}
+    },
+    {
+      "id": "E",
+      "purpose": "Qwen2.5-1.5B (LLM_ARCH_QWEN2), CPU, adaptive KV: resolves to a compressed candidate, then hits the same architecture gate as an explicit q8/q5 request -- no silent fallback to native",
+      "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt \"Hi\" --plan-only --json --gpu-layers 0 --ctx 256 --kv adaptive",
+      "exit_code": 5,
+      "json_stdout": {"mode": "run", "ok": false, "exit_code": 5, "error": {"reason_code": "KV_COMPAT_UNSUPPORTED", "message": "model architecture 'qwen2' is not validated for Q8_0 KV storage (only LLM_ARCH_LLAMA is supported)"}}
+    },
+    {
+      "id": "F",
+      "purpose": "--kv-placement gpu without --gpu-layers: CLI-level parse-time rejection (no model load)",
+      "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt \"Hi\" --ctx 256 --kv-placement gpu",
+      "exit_code": 2,
+      "stderr_first_line": "membrane-run: --kv-placement gpu|auto requires --gpu-layers all|auto|N -- there is no GPU device to place KV on with CPU-only weight placement"
+    },
+    {
+      "id": "G",
+      "purpose": "--gpu-layers all on a build with no GPU backend compiled in (GGML_VULKAN=OFF): fail-closed before model load",
+      "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt \"Hi\" --ctx 256 --gpu-layers all --plan-only --json",
+      "exit_code": 5,
+      "json_stdout": {"mode": "run", "ok": false, "exit_code": 5, "error": {"reason_code": "NO_GPU_DEVICE", "message": "--gpu-layers all requested but this build has no GPU backend compiled in"}}
+    }
+  ]
+}

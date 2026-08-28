@@ -17,6 +17,7 @@ import json
 import math
 import re
 import statistics
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1676,6 +1677,27 @@ def main() -> int:
 		for name, detail in FAILURES:
 			print(f"  - {name}: {detail}")
 		return 1
+
+	# CONTRIBUTING.md requires every docs/ claim to be "checkable by
+	# scripts/verify-results.py". docs/compatibility.json's claims are
+	# a different kind of claim (product compatibility, not research
+	# evidence) with their own dedicated validator and invariants --
+	# kept as a genuinely separate script/file on purpose (Phase 18),
+	# not folded into the 73 numbered checks above (which would silently
+	# change the "N/73" figure every doc/script referencing that number
+	# expects). Running it here, as an unnumbered final step, is what
+	# makes CONTRIBUTING.md's promise literally true without merging the
+	# two verifiers' logic together.
+	compat_script = REPO_ROOT / "scripts" / "verify-compatibility.py"
+	if compat_script.exists():
+		print()
+		print("Also verifying docs/compatibility.json (scripts/verify-compatibility.py):")
+		sys.stdout.flush()
+		result = subprocess.run([sys.executable, str(compat_script)])
+		if result.returncode != 0:
+			print("\nFAILED: scripts/verify-compatibility.py reported failures "
+				"(see output above)")
+			return 1
 	return 0
 
 
