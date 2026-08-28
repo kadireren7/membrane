@@ -68,6 +68,7 @@ static void	test_q5_qwen2_architecture_rejected(void)
 
 	TEST_ASSERT(membrane_check_kv_compat("qwen2", 576, 9, 3, 2048,
 			KV_Q5, &r) == 0, "qwen2 architecture rejected for q5");
+	TEST_ASSERT(r.ok == 0, "out->ok reflects failure");
 	TEST_ASSERT(strstr(r.reason, "qwen2") != NULL,
 		"the offending architecture name appears in the reason");
 }

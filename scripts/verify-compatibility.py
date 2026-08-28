@@ -19,7 +19,9 @@ Exit code: 0 if every check passes, 1 otherwise.
 """
 import json
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -267,23 +269,107 @@ def check_compat_check_invariant():
 			"build-and-test job on every push/PR.)")
 
 
+def list_cmake_files_under(root):
+	"""Every CMakeLists.txt/*.cmake file under root, as root-relative
+	posix path strings, found via a plain filesystem walk -- not `git
+	ls-files`, so this same function is directly testable against an
+	arbitrary temp directory (see test_cuda_scan_detects_nested_reference
+	below), not just a real git checkout."""
+	files = list(root.rglob("CMakeLists.txt")) + list(root.rglob("*.cmake"))
+	return sorted(p.relative_to(root).as_posix() for p in files)
+
+
+def exclude_third_party(rel_paths):
+	"""Pure: drops anything rooted under third_party/ (vendored code, not
+	this project's own build configuration -- MC-23's claim is scoped to
+	this repo's own CMake, not llama.cpp's)."""
+	return [p for p in rel_paths if not p.startswith("third_party/")]
+
+
+def scan_cmake_files_for_cuda(root, rel_paths):
+	"""Pure-ish (only reads files, never writes): returns the subset of
+	rel_paths whose content contains a case-insensitive 'cuda' reference.
+	Takes an explicit root + rel_paths rather than walking anything
+	itself, so a test can hand it a temp directory's file list directly."""
+	hits = []
+	for rel_path in rel_paths:
+		if re.search(r"cuda", (root / rel_path).read_text(), re.IGNORECASE):
+			hits.append(rel_path)
+	return hits
+
+
 @check("no CUDA build option exists in any tracked CMake file, matching MC-23's claim")
 def check_no_cuda_option():
-	import subprocess
 	tracked = subprocess.run(
 		["git", "-C", str(REPO_ROOT), "ls-files",
 			"*CMakeLists.txt", "*.cmake"],
 		capture_output=True, text=True, check=True,
 	).stdout.splitlines()
-	for rel_path in tracked:
-		if rel_path.startswith("third_party/"):
-			continue
-		src = (REPO_ROOT / rel_path).read_text()
-		if re.search(r"cuda", src, re.IGNORECASE):
-			fail("CUDA-absence invariant",
-				f"{rel_path} mentions CUDA -- MC-23 claims CUDA is not a "
-				f"build option anywhere in this repo's own CMake and needs "
-				f"re-review")
+	rel_paths = exclude_third_party(tracked)
+	for rel_path in scan_cmake_files_for_cuda(REPO_ROOT, rel_paths):
+		fail("CUDA-absence invariant",
+			f"{rel_path} mentions CUDA -- MC-23 claims CUDA is not a "
+			f"build option anywhere in this repo's own CMake and needs "
+			f"re-review")
+
+
+@check("CUDA scan itself detects a nested reference and excludes third_party (self-test)")
+def check_cuda_scan_self_test():
+	"""Regression test for check_no_cuda_option()'s own scanning logic --
+	proves the scan actually recurses into nested subdirectories and
+	actually excludes third_party/, using a throwaway temp directory tree
+	(never the real repository, never committed anywhere). Without this,
+	a refactor could silently make the scan non-recursive or drop the
+	third_party exclusion and every check above would keep passing simply
+	because MEMBRANE's own real CMake files happen to be clean."""
+	with tempfile.TemporaryDirectory() as tmp:
+		root = Path(tmp)
+		clean = root / "CMakeLists.txt"
+		clean.parent.mkdir(parents=True, exist_ok=True)
+		clean.write_text("project(fixture)\n")
+
+		nested = root / "some" / "subdir" / "CMakeLists.txt"
+		nested.parent.mkdir(parents=True, exist_ok=True)
+		nested.write_text('option(MEMBRANE_ENABLE_CUDA "test" OFF)\n')
+
+		vendored = root / "third_party" / "vendor" / "CMakeLists.txt"
+		vendored.parent.mkdir(parents=True, exist_ok=True)
+		vendored.write_text("find_package(CUDA REQUIRED)\n")
+
+		all_files = list_cmake_files_under(root)
+		if sorted(all_files) != sorted([
+				"CMakeLists.txt", "some/subdir/CMakeLists.txt",
+				"third_party/vendor/CMakeLists.txt"]):
+			fail("CUDA scan self-test",
+				f"list_cmake_files_under() found {all_files!r}, expected "
+				f"all three fixture files -- the filesystem walk itself "
+				f"is broken")
+			return
+
+		non_third_party = exclude_third_party(all_files)
+		if "third_party/vendor/CMakeLists.txt" in non_third_party:
+			fail("CUDA scan self-test",
+				"exclude_third_party() did not drop the third_party "
+				"fixture file")
+			return
+
+		hits = scan_cmake_files_for_cuda(root, non_third_party)
+		if "some/subdir/CMakeLists.txt" not in hits:
+			fail("CUDA scan self-test",
+				"scan_cmake_files_for_cuda() failed to detect a CUDA "
+				"reference in a NESTED (non-root) CMake file -- this is "
+				"exactly the gap the real check_no_cuda_option() must not "
+				"have")
+		if "CMakeLists.txt" in hits:
+			fail("CUDA scan self-test",
+				"scan_cmake_files_for_cuda() false-positived on the clean "
+				"fixture file")
+		if len(hits) != 1:
+			fail("CUDA scan self-test",
+				f"expected exactly one hit (the nested fixture file), got "
+				f"{hits!r} -- the third_party fixture file must never even "
+				f"be scanned, since it was excluded before scan_cmake_"
+				f"files_for_cuda() was called")
 
 
 def main():
@@ -310,6 +396,7 @@ def main():
 	check_not_yet_validated_no_overclaim(rows)
 	check_compat_check_invariant()
 	check_no_cuda_option()
+	check_cuda_scan_self_test()
 
 	print()
 	if FAILURES:
