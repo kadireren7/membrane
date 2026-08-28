@@ -1714,6 +1714,21 @@ def main() -> int:
 			print("\nFAILED: scripts/verify-planner-accuracy.py reported "
 				"failures (see output above)")
 			return 1
+
+	# Same reasoning as the two chains above -- results/auto-fallback/
+	# validation.json's claims (Phase 21) get their own dedicated
+	# validator, chained here as another unnumbered step.
+	fallback_script = REPO_ROOT / "scripts" / "verify-auto-fallback.py"
+	if fallback_script.exists():
+		print()
+		print("Also verifying results/auto-fallback/validation.json "
+			"(scripts/verify-auto-fallback.py):")
+		sys.stdout.flush()
+		result = subprocess.run([sys.executable, str(fallback_script)])
+		if result.returncode != 0:
+			print("\nFAILED: scripts/verify-auto-fallback.py reported "
+				"failures (see output above)")
+			return 1
 	return 0
 
 

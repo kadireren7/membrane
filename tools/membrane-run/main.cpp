@@ -16,6 +16,7 @@
 #include "adaptive_kv_policy.h"
 #include "kv_residency_policy.h"
 #include "joint_planner.h"
+#include "auto_fallback.h"
 
 /*
  * membrane-run: Product Phase 8, the user-facing MEMBRANE entry point.
@@ -308,6 +309,23 @@ typedef struct s_membrane_gpu_state
 	int			joint_candidate_count;
 	int			joint_selected_index;
 
+	/* Phase 21: the FULL ranked candidate array Phase 20's planner
+	 * produced (not just the counts above) -- the ONLY candidate source
+	 * the apply-time fallback controller (auto_fallback.h) is ever
+	 * allowed to use (Section 4). Meaningful only when
+	 * joint_planner_used. Populated verbatim (struct copy) from the
+	 * jres local to resolve_gpu_config()'s joint-planner branch. */
+	membrane_joint_plan_result_t	joint_result;
+
+	/* Phase 21: populated once the (possibly-retried) run actually
+	 * happened -- fallback_trace.n_entries stays 0 for any run that
+	 * never engaged the fallback controller at all (compare-kv/
+	 * gpu-bench, CPU-only, or no-estimate-available: Section 24/25 --
+	 * see print_fallback_json()'s own doc comment for what such a run
+	 * reports instead). */
+	membrane_fallback_trace_t	fallback_trace;
+	bool		fallback_engaged;
+
 	/* Phase 13.2, Section 7: the ordered sequence of semantically
 	 * meaningful policy decisions that produced plan_reason_code above
 	 * -- e.g. ["AUTO_REQUESTED", "GPU_DEVICE_FOUND", "GPU_FULL_FIT",
@@ -448,6 +466,9 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	gs->joint_planner_used = false;
 	gs->joint_candidate_count = 0;
 	gs->joint_selected_index = -1;
+	memset(&gs->joint_result, 0, sizeof(gs->joint_result));
+	memset(&gs->fallback_trace, 0, sizeof(gs->fallback_trace));
+	gs->fallback_engaged = false;
 	gs->auto_cpu_fallback = false;
 	gs->reason_trace.clear();
 	gs->warnings.clear();
@@ -918,6 +939,7 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 		gs->joint_planner_used = true;
 		gs->joint_candidate_count = jres.candidate_count;
 		gs->joint_selected_index = jres.selected_index;
+		gs->joint_result = jres;
 		if (adaptive_requested)
 		{
 			gs->adaptive_used = true;
@@ -1663,6 +1685,79 @@ static void	print_joint_planner_json(const membrane_gpu_state_t &gs)
 	printf("},");
 }
 
+/* Phase 21, Section 14: additive-only JSON for the apply-time fallback
+ * controller. Every run emits this object (never omitted -- Section
+ * 16's --plan-only rule is the one exception, handled by its own
+ * caller passing engaged=false unconditionally): a run that never
+ * engaged the controller at all (--compare-kv/--gpu-bench, a CPU-only
+ * run, or one where no Phase-20 candidate array exists to iterate --
+ * Section 24/25) reports the trivial, zero-behavior-change shape
+ * {"attempted":false,"attempt_count":1,"final_status":"success"|
+ * "error"} reflecting the ONE real outcome that already happened,
+ * never a fabricated candidate iteration. "attempts" (the detailed
+ * per-candidate array) is included only when the controller actually
+ * ran (engaged=true) -- Section 13: keep the trace bounded and never
+ * emit it for a run that has none. */
+static void	print_fallback_json(const membrane_gpu_state_t &gs,
+				bool engaged, bool ran_at_all, bool overall_ok)
+{
+	int	i;
+
+	if (!ran_at_all)
+	{
+		printf("\"fallback\":{\"attempted\":false,\"attempt_count\":0,"
+			"\"final_status\":\"not_applicable\"},");
+		return ;
+	}
+	if (!engaged)
+	{
+		printf("\"fallback\":{\"attempted\":false,\"attempt_count\":1,"
+			"\"final_status\":\"%s\"},", overall_ok ? "success" : "error");
+		return ;
+	}
+	printf("\"fallback\":{\"attempted\":%s,\"attempt_count\":%d,"
+		"\"initial_candidate_index\":%d,\"final_candidate_index\":%d,"
+		"\"final_status\":\"", gs.fallback_trace.attempted ? "true" : "false",
+		gs.fallback_trace.attempt_count,
+		gs.fallback_trace.initial_candidate_index,
+		gs.fallback_trace.final_candidate_index);
+	print_json_escaped(gs.fallback_trace.final_status);
+	printf("\",\"reason_code\":\"");
+	print_json_escaped(gs.fallback_trace.reason_code);
+	printf("\",\"attempts\":[");
+	for (i = 0; i < gs.fallback_trace.n_entries; ++i)
+	{
+		const membrane_fallback_attempt_t	&a = gs.fallback_trace.entries[i];
+
+		printf("%s{\"candidate_index\":%d,\"gpu_layers\":%d,"
+			"\"kv_precision\":%d,\"kv_placement\":%d,\"refreshed\":%s",
+			i == 0 ? "" : ",", a.candidate_index, a.gpu_layers,
+			a.kv_precision, a.kv_placement, a.refreshed ? "true" : "false");
+		if (a.refreshed)
+			printf(",\"refreshed_available_gpu_bytes\":%llu",
+				(unsigned long long)a.refreshed_available_gpu_bytes);
+		printf(",\"fit_after_refresh\":%s,\"apply_started\":%s",
+			a.fit_after_refresh ? "true" : "false",
+			a.apply_started ? "true" : "false");
+		if (a.apply_started)
+		{
+			printf(",\"apply_ok\":%s", a.apply_ok ? "true" : "false");
+			if (!a.apply_ok)
+			{
+				printf(",\"failure_class\":\"%s\",\"detail\":\"",
+					membrane_apply_failure_class_name(a.failure_class));
+				print_json_escaped(a.detail);
+				printf("\"");
+			}
+			printf(",\"cleanup_complete\":%s,\"model_reload_required\":%s",
+				a.cleanup_complete ? "true" : "false",
+				a.model_reload_required ? "true" : "false");
+		}
+		printf("}");
+	}
+	printf("]},");
+}
+
 static void	print_gpu_json(const membrane_gpu_state_t &gs)
 {
 	printf("\"gpu\":{\"requested\":%s,\"backend_gpu_capable\":%s,",
@@ -1803,6 +1898,7 @@ static void	print_run_json(const membrane_run_opts_t &o,
 	print_gpu_json(gs);
 	print_gpu_memory_observed_json(gs, gpu_mem_observed);
 	print_joint_planner_json(gs);
+	print_fallback_json(gs, gs.fallback_engaged, true, success);
 	print_kv_placement_json(o, gs);
 	printf("\"memory\":{\"rss_after_model_load_kb\":%llu,"
 		"\"rss_after_context_kb\":%llu,\"rss_after_prompt_kb\":%llu,"
@@ -1954,6 +2050,11 @@ static void	print_plan_only_json(const membrane_run_opts_t &o,
 			(unsigned long long)gs.kv_placement.cpu_kv_bytes);
 	printf("},");
 	print_joint_planner_json(gs);
+	/* Section 16: --plan-only never applies a runtime plan, so fallback
+	 * NEVER ran -- ran_at_all=false yields the distinct "not_applicable"
+	 * final_status, never "success" (which would wrongly imply a real
+	 * attempt happened). */
+	print_fallback_json(gs, false, false, false);
 	/* Review fix (CodeRabbit, PR #23): host_memory now sits at the same
 	 * top level in both JSON schemas (print_run_json emits it
 	 * top-level too) -- previously nested inside memory_plan here only,
@@ -1976,86 +2077,435 @@ static void	print_plan_only_json(const membrane_run_opts_t &o,
 	printf("}\n");
 }
 
+/* Phase 21: state threaded through membrane_fallback_run()'s apply_fn
+ * for the REAL (llama-aware) apply adapter -- the fallback CONTROLLER
+ * itself (auto_fallback.h/.c) stays llama-free; this struct/function
+ * pair is the one place Phase 21 actually touches llama.h to
+ * instantiate a candidate. cb is captured once (matches the pre-Phase-
+ * 21 stream/no-stream decision) and reused across every attempt --
+ * Section 15: a retry is never silent, and a failed attempt's own
+ * partial output (if any -- only reachable for a rare mid-generation
+ * decode failure; every context-construction failure happens before
+ * any token exists) is not hidden either, matching this project's
+ * existing "fail closed, never paper over" convention rather than
+ * buffering and discarding it. */
+typedef struct s_real_apply_ctx
+{
+	const membrane_run_opts_t			*o;
+	const char							*model_path;
+	llama_model_params					mp_template;
+	std::vector<ggml_backend_dev_t>	*device_storage;
+	llama_model							**model_ptr;
+	int32_t								loaded_gpu_layers;
+	const std::vector<llama_token>		*prompt_tokens;
+	uint32_t							ctx_size;
+	membrane_token_cb_t					cb;
+	membrane_gpu_state_t				*gs;
+
+	/* Outputs -- meaningful only after a successful call. */
+	membrane_kv_store_telemetry_t		tel;
+	std::string							text;
+	gen_run_result_t					gen_result;
+	int									effective_kv_mode;
+}	real_apply_ctx_t;
+
+/* Section 3: applies exactly ONE candidate. Reload policy (Section 10):
+ * a model reload happens iff this candidate's gpu_layers differs from
+ * whichever gpu_layers is currently loaded (attempt #1 always reuses
+ * the model main() already loaded for the originally-selected
+ * candidate -- loaded_gpu_layers is seeded to that same value). Every
+ * failure path sets cleanup_complete=1: model load failure leaves
+ * *model_ptr NULL (nothing to free); compat/placement rejection happen
+ * before any context exists; run_kv_store_pass() itself already frees
+ * its own context/collector on every one of its own failure paths
+ * (decode_loop.cpp) -- there is no partial state this function itself
+ * ever leaves behind uncleaned. */
+static int	real_apply_fn(const membrane_joint_candidate_t *c,
+				int candidate_index, void *apply_ctx_v,
+				membrane_fallback_apply_result_t *out)
+{
+	real_apply_ctx_t				*ctx = (real_apply_ctx_t *)apply_ctx_v;
+	model_shape_t					shape;
+	membrane_kv_placement_map_t	placement_map;
+	const membrane_kv_placement_map_t	*placement_arg;
+	membrane_kv_residency_result_t	placement_result;
+	bool							placement_resolved;
+	int								kv_mode;
+	uint64_t						kv_bytes;
+	int								failure_stage;
+	bool							ok;
+
+	memset(out, 0, sizeof(*out));
+	out->model_reload_required = (*ctx->model_ptr == NULL
+		|| ctx->loaded_gpu_layers != c->gpu_layers);
+	if (out->model_reload_required)
+	{
+		llama_model_params	mp = ctx->mp_template;
+
+		if (*ctx->model_ptr != NULL)
+		{
+			llama_model_free(*ctx->model_ptr);
+			*ctx->model_ptr = NULL;
+		}
+		if (c->gpu_layers > 0)
+		{
+			mp.devices = ctx->device_storage->data();
+			mp.n_gpu_layers = c->gpu_layers;
+			mp.main_gpu = 0;
+		}
+		else
+		{
+			mp.devices = NULL;
+			mp.n_gpu_layers = 0;
+			mp.main_gpu = -1;
+		}
+		*ctx->model_ptr = llama_model_load_from_file(ctx->model_path, mp);
+		if (*ctx->model_ptr == NULL)
+		{
+			ctx->loaded_gpu_layers = -1;
+			out->ok = 0;
+			out->failure_class = MEMBRANE_APPLY_MODEL_LOAD_FAILED;
+			out->cleanup_complete = 1;
+			snprintf(out->detail, sizeof(out->detail), "llama_model_load_"
+				"from_file returned NULL for gpu_layers=%d", c->gpu_layers);
+			return (0);
+		}
+		ctx->loaded_gpu_layers = c->gpu_layers;
+	}
+	read_model_shape(*ctx->model_ptr, &shape);
+	kv_mode = c->kv_precision;
+	if (kv_mode != MEMBRANE_KV_STORE_NATIVE)
+	{
+		membrane_compat_result_t	compat;
+
+		if (!membrane_check_kv_compat(shape.arch_name.c_str(), shape.n_embd,
+				shape.n_head, shape.n_head_kv, ctx->ctx_size, kv_mode,
+				&compat))
+		{
+			out->ok = 0;
+			out->failure_class = MEMBRANE_APPLY_COMPAT_REJECTED;
+			out->cleanup_complete = 1;
+			snprintf(out->detail, sizeof(out->detail), "%s", compat.reason);
+			return (0);
+		}
+	}
+	placement_resolved = false;
+	placement_arg = NULL;
+	memset(&placement_result, 0, sizeof(placement_result));
+	if (ctx->o->kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT)
+	{
+		uint64_t	total_kv_bytes = kv_bytes_for_mode(shape, ctx->ctx_size,
+				kv_mode);
+		uint64_t	kv_bytes_per_layer = shape.n_layer > 0
+				? total_kv_bytes / (uint64_t)shape.n_layer : 0;
+
+		if (!membrane_kv_residency_resolve(ctx->o->kv_placement,
+				shape.n_layer, kv_bytes_per_layer,
+				ctx->gs->device_free_bytes, ctx->gs->device_total_bytes,
+				c->estimated_weight_gpu_bytes, 0, &placement_result))
+		{
+			out->ok = 0;
+			out->failure_class = MEMBRANE_APPLY_CONTEXT_CREATE_FAILED;
+			out->cleanup_complete = 1;
+			snprintf(out->detail, sizeof(out->detail), "%s",
+				placement_result.reason);
+			return (0);
+		}
+		placement_resolved = true;
+		placement_map.n_layer = placement_result.n_layer;
+		placement_map.layer_on_gpu = placement_result.layer_on_gpu;
+		placement_arg = &placement_map;
+	}
+	memset(&ctx->tel, 0, sizeof(ctx->tel));
+	ctx->tel.kv_store_mode_name = kv_mode_name(kv_mode);
+	ctx->tel.no_fallback_occurred = 1;
+	kv_bytes = kv_bytes_for_mode(shape, ctx->ctx_size, kv_mode);
+	membrane_kv_store_read_rss(&ctx->tel.rss_after_model_load);
+	ctx->text.clear();
+	failure_stage = MEMBRANE_KV_PASS_STAGE_NONE;
+	ok = run_kv_store_pass(*ctx->model_ptr, *ctx->prompt_tokens,
+			ctx->o->gen_tokens, kv_mode, ctx->ctx_size, ctx->o->verbose,
+			NULL, false, 0, &ctx->text, &ctx->tel, &ctx->gen_result, ctx->cb,
+			NULL, placement_arg, &failure_stage);
+	if (!ok)
+	{
+		out->ok = 0;
+		out->cleanup_complete = 1;
+		out->failure_class = (failure_stage
+				== MEMBRANE_KV_PASS_STAGE_CONTEXT_CREATE)
+			? MEMBRANE_APPLY_CONTEXT_CREATE_FAILED : MEMBRANE_APPLY_UNKNOWN_FAILED;
+		snprintf(out->detail, sizeof(out->detail),
+			"run_kv_store_pass failed (stage=%d)", failure_stage);
+		return (0);
+	}
+	ctx->tel.generated_tokens = ctx->gen_result.tokens.size();
+	ctx->tel.ctx_size = ctx->ctx_size;
+	ctx->tel.compressed_kv_allocated_bytes = kv_bytes;
+	membrane_kv_store_rss_max(&ctx->tel.rss_after_model_load,
+		&ctx->tel.rss_after_context, &ctx->tel.rss_peak);
+	membrane_kv_store_rss_max(&ctx->tel.rss_peak, &ctx->tel.rss_after_prompt,
+		&ctx->tel.rss_peak);
+	membrane_kv_store_rss_max(&ctx->tel.rss_peak, &ctx->tel.rss_final,
+		&ctx->tel.rss_peak);
+	ctx->effective_kv_mode = kv_mode;
+	/* CodeRabbit review (PR #31): a fallback candidate may resolve to a
+	 * different KV precision than the one adaptive planning originally
+	 * picked (the adaptive path's own runner-up precision) -- keep the
+	 * adaptive telemetry (print_gpu_json()'s "adaptive" object)
+	 * describing what actually ran, never the superseded plan, so it
+	 * never contradicts the top-level selected_kv (which already comes
+	 * from effective_kv_mode above). */
+	if (ctx->gs->adaptive_used)
+	{
+		ctx->gs->adaptive_selected_mode = kv_mode;
+		ctx->gs->adaptive_reason = c->reason_code;
+	}
+	ctx->gs->kv_placement_resolved = placement_resolved;
+	if (placement_resolved)
+		ctx->gs->kv_placement = placement_result;
+	ctx->gs->gpu_layers_selected = c->gpu_layers;
+	ctx->gs->estimated_model_bytes = c->estimated_weight_gpu_bytes;
+	ctx->gs->estimated_kv_bytes = c->estimated_kv_gpu_bytes
+		+ c->estimated_host_kv_bytes;
+	ctx->gs->joint_selected_index = candidate_index;
+	ctx->gs->plan_reason_code = c->reason_code;
+	out->ok = 1;
+	out->cleanup_complete = 1;
+	return (1);
+}
+
+/* Section 11: re-queries the SAME device gpu_policy's pre-load estimate
+ * was checked against (gpu_device.h's membrane_gpu_list_devices(), the
+ * identical API observe_gpu_memory_after_run() already uses post-run)
+ * -- a fresh free-bytes snapshot for the fallback controller's own
+ * memory-refit check, never a second/different query mechanism. Every
+ * candidate targets the SAME physical device (Phase 20 never varies
+ * WHICH device, only gpu_layers/precision/placement on the one chosen
+ * at resolve_gpu_config() time), so gs->device_selected stays valid
+ * across every attempt. Returns 0 (no refresh) for a CPU-only run --
+ * membrane_fallback_run() then treats every candidate's fit as
+ * unchanged from planning time, which is correct: there is no GPU
+ * device to query in the first place. */
+static int	real_refresh_fn(void *refresh_ctx_v, uint64_t *out_free_bytes)
+{
+	const membrane_gpu_state_t	*gs = (const membrane_gpu_state_t *)
+			refresh_ctx_v;
+	membrane_gpu_device_info_t	devices[MEMBRANE_GPU_MAX_DEVICES];
+	size_t						n;
+	size_t						i;
+
+	if (gs->device_selected.empty())
+		return (0);
+	n = membrane_gpu_list_devices(devices, MEMBRANE_GPU_MAX_DEVICES);
+	i = 0;
+	while (i < n)
+	{
+		if (gs->device_selected == devices[i].name)
+		{
+			*out_free_bytes = devices[i].memory_free;
+			return (1);
+		}
+		i++;
+	}
+	return (0);
+}
+
+/* Phase 21, Section 15: "a retry is never silent" -- prints a concise
+ * transcript of what the fallback controller actually did, always to
+ * stderr, gated the same way print_startup_summary() already is
+ * (!o.quiet); a run whose primary candidate simply succeeded prints
+ * nothing here at all unless --verbose (Section 15: "without --verbose:
+ * do not spam"). */
+static void	print_fallback_diagnostics(const membrane_fallback_trace_t &ft,
+				bool verbose)
+{
+	int	i;
+
+	if (ft.n_entries == 0)
+		return ;
+	if (!ft.attempted && strcmp(ft.final_status, "success") == 0)
+	{
+		if (verbose)
+			fprintf(stderr, "MEMBRANE: plan #%d succeeded on the first "
+				"attempt\n", ft.initial_candidate_index);
+		return ;
+	}
+	fprintf(stderr, "MEMBRANE: selected plan #%d\n",
+		ft.initial_candidate_index);
+	i = 0;
+	while (i < ft.n_entries)
+	{
+		const membrane_fallback_attempt_t	&a = ft.entries[i];
+
+		if (!a.apply_started)
+			fprintf(stderr, "MEMBRANE: plan #%d skipped: available GPU "
+				"memory changed since planning\n", a.candidate_index);
+		else if (a.apply_ok)
+			fprintf(stderr, "MEMBRANE: plan #%d succeeded\n",
+				a.candidate_index);
+		else
+		{
+			fprintf(stderr, "MEMBRANE: plan #%d failed: %s\n",
+				a.candidate_index,
+				membrane_apply_failure_class_name(a.failure_class));
+			if (i + 1 < ft.n_entries)
+				fprintf(stderr, "MEMBRANE: retrying with plan #%d\n",
+					ft.entries[i + 1].candidate_index);
+		}
+		i++;
+	}
+	if (strcmp(ft.final_status, "exhausted") == 0)
+		fprintf(stderr, "MEMBRANE: no legal plan could be instantiated "
+			"(%s)\n", ft.reason_code);
+	else if (strcmp(ft.final_status, "cleanup_blocked") == 0)
+		fprintf(stderr, "MEMBRANE: stopped after a resource-cleanup safety "
+			"check failed (%s)\n", ft.reason_code);
+}
+
 /*
- * Normal single-pass mode. Loads the model, creates exactly ONE
- * llama_context (native or q8 per --kv), ingests the prompt, generates,
- * prints, exits. capture_logits is ALWAYS false here -- there is no
- * teacher_force pass, no second/third context, and therefore no
- * per-step logit buffer of any size, let alone a full-context one.
+ * Normal single-pass mode. Loads (or, for an auto-managed run whose
+ * primary candidate cannot be instantiated, reloads -- Phase 21)
+ * exactly the model configuration one candidate needs, creates exactly
+ * ONE llama_context (native/q8/q5 per --kv) per attempt, ingests the
+ * prompt, generates, prints, exits. capture_logits is ALWAYS false
+ * here -- there is no teacher_force pass, no second/third context, and
+ * therefore no per-step logit buffer of any size, let alone a
+ * full-context one.
+ *
+ * Phase 21: *model_ptr may be freed and reloaded by this function (via
+ * real_apply_fn) when gs.joint_planner_used and the primary candidate
+ * needs a fallback retry to a candidate with a different gpu_layers
+ * count -- callers must re-read *model_ptr after this returns rather
+ * than assuming it is still the model they passed in. Every non-auto-
+ * managed run (gs.joint_planner_used false: --compare-kv/--gpu-bench
+ * never reach this function at all, and a CPU-only or no-estimate run)
+ * takes the EXACT pre-Phase-21 single-attempt path below, unchanged.
  */
-static int	run_normal_mode(const membrane_run_opts_t &o, llama_model *model,
+static int	run_normal_mode(const membrane_run_opts_t &o,
+				llama_model **model_ptr, const char *model_path,
+				const llama_model_params &mp_template,
+				std::vector<ggml_backend_dev_t> *device_storage,
 				const std::vector<llama_token> &prompt_tokens,
 				const char *model_label, uint32_t ctx_size,
-				const model_shape_t &shape, const membrane_gpu_state_t &gs,
+				const model_shape_t &shape, membrane_gpu_state_t &gs,
 				const membrane_host_meminfo_t &host)
 {
 	membrane_kv_store_telemetry_t	tel;
 	gen_run_result_t				result;
 	std::string						text;
-	membrane_token_cb_t				cb;
 	bool							stream;
 	uint64_t						kv_bytes;
 	membrane_kv_placement_map_t	placement_map;
 	const membrane_kv_placement_map_t	*placement_arg;
+	membrane_run_opts_t				effective_o = o;
+	bool							ok_overall;
 
-	memset(&tel, 0, sizeof(tel));
-	tel.kv_store_mode_name = kv_mode_name(o.kv_mode);
-	/* This implementation never falls back: run_kv_store_pass() either
-	 * succeeds with the requested storage type or fails the whole run
-	 * (see the "generation failed" branch below) -- there is no retry-
-	 * with-native path for a failed q8/q5 context. */
-	tel.no_fallback_occurred = 1;
-	kv_bytes = kv_bytes_for_mode(shape, ctx_size, o.kv_mode);
-	membrane_kv_store_read_rss(&tel.rss_after_model_load);
-	if (!o.quiet)
-		print_startup_summary(o, model_label, ctx_size, kv_bytes,
-			shape.n_layer, gs, host);
 	stream = !o.want_json && !o.quiet;
-	cb = stream ? stream_token : NULL;
-	/* Phase 12H: gs.kv_placement_resolved is only true when
-	 * o.kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT AND
-	 * resolve_kv_placement() succeeded (main() already returned
-	 * MEMBRANE_EXIT_UNSUPPORTED_KV otherwise, before reaching here) --
-	 * placement_arg stays NULL (kv_dev_override left untouched) for
-	 * plain default-mode runs. */
-	placement_arg = NULL;
-	if (gs.kv_placement_resolved)
+	if (gs.joint_planner_used && gs.joint_result.candidate_count > 0
+		&& gs.joint_result.selected_index >= 0)
 	{
-		placement_map.n_layer = gs.kv_placement.n_layer;
-		placement_map.layer_on_gpu = gs.kv_placement.layer_on_gpu;
-		placement_arg = &placement_map;
+		real_apply_ctx_t	actx = {};
+
+		if (!o.quiet)
+			print_startup_summary(o, model_label, ctx_size,
+				kv_bytes_for_mode(shape, ctx_size, o.kv_mode), shape.n_layer,
+				gs, host);
+		actx.o = &o;
+		actx.model_path = model_path;
+		actx.mp_template = mp_template;
+		actx.device_storage = device_storage;
+		actx.model_ptr = model_ptr;
+		actx.loaded_gpu_layers = gs.gpu_layers_selected;
+		actx.prompt_tokens = &prompt_tokens;
+		actx.ctx_size = ctx_size;
+		actx.cb = stream ? stream_token : NULL;
+		actx.gs = &gs;
+		gs.fallback_engaged = true;
+		ok_overall = membrane_fallback_run(gs.joint_result.candidates,
+				gs.joint_result.candidate_count,
+				gs.joint_result.selected_index, gs.device_total_bytes,
+				gs.safety_reserve_bytes, real_apply_fn, &actx,
+				real_refresh_fn, &gs, &gs.fallback_trace) != 0;
+		if (!o.quiet)
+			print_fallback_diagnostics(gs.fallback_trace, o.verbose);
+		if (!ok_overall)
+		{
+			fprintf(stderr, "membrane-run: every legal auto-managed plan "
+				"failed to instantiate (%s)\n", gs.fallback_trace.reason_code);
+			print_error_json(o, MEMBRANE_EXIT_RUNTIME_ERROR,
+				gs.fallback_trace.reason_code,
+				"every legal auto-managed plan failed to instantiate",
+				"Try a smaller --ctx, explicit --gpu-layers/--kv/"
+				"--kv-placement, or --gpu-layers 0 for CPU-only.");
+			return (MEMBRANE_EXIT_RUNTIME_ERROR);
+		}
+		tel = actx.tel;
+		text = actx.text;
+		result = actx.gen_result;
+		effective_o.kv_mode = actx.effective_kv_mode;
 	}
-	if (!run_kv_store_pass(model, prompt_tokens, o.gen_tokens, o.kv_mode,
-			ctx_size, o.verbose, NULL, false, 0, &text, &tel, &result, cb,
-			NULL, placement_arg))
+	else
 	{
-		fprintf(stderr, "membrane-run: generation failed\n");
-		print_error_json(o, MEMBRANE_EXIT_RUNTIME_ERROR,
-			MEMBRANE_REASON_GENERATION_FAILED, "generation failed");
-		return (MEMBRANE_EXIT_RUNTIME_ERROR);
+		memset(&tel, 0, sizeof(tel));
+		tel.kv_store_mode_name = kv_mode_name(o.kv_mode);
+		/* This path never falls back: run_kv_store_pass() either
+		 * succeeds with the requested storage type or fails the whole
+		 * run -- there is no retry-with-native path for a failed q8/q5
+		 * context (gs.joint_planner_used is false here by construction:
+		 * see this function's own header comment). */
+		tel.no_fallback_occurred = 1;
+		kv_bytes = kv_bytes_for_mode(shape, ctx_size, o.kv_mode);
+		membrane_kv_store_read_rss(&tel.rss_after_model_load);
+		if (!o.quiet)
+			print_startup_summary(o, model_label, ctx_size, kv_bytes,
+				shape.n_layer, gs, host);
+		/* Phase 12H: gs.kv_placement_resolved is only true when
+		 * o.kv_placement != MEMBRANE_KV_PLACEMENT_DEFAULT AND
+		 * resolve_kv_placement() succeeded (main() already returned
+		 * MEMBRANE_EXIT_UNSUPPORTED_KV otherwise, before reaching here)
+		 * -- placement_arg stays NULL (kv_dev_override left untouched)
+		 * for plain default-mode runs. */
+		placement_arg = NULL;
+		if (gs.kv_placement_resolved)
+		{
+			placement_map.n_layer = gs.kv_placement.n_layer;
+			placement_map.layer_on_gpu = gs.kv_placement.layer_on_gpu;
+			placement_arg = &placement_map;
+		}
+		if (!run_kv_store_pass(*model_ptr, prompt_tokens, o.gen_tokens,
+				o.kv_mode, ctx_size, o.verbose, NULL, false, 0, &text, &tel,
+				&result, stream ? stream_token : NULL, NULL, placement_arg))
+		{
+			fprintf(stderr, "membrane-run: generation failed\n");
+			print_error_json(o, MEMBRANE_EXIT_RUNTIME_ERROR,
+				MEMBRANE_REASON_GENERATION_FAILED, "generation failed");
+			return (MEMBRANE_EXIT_RUNTIME_ERROR);
+		}
+		tel.generated_tokens = result.tokens.size();
+		tel.ctx_size = ctx_size;
+		/* kv_bytes is the real allocation size (real ggml_row_size()
+		 * times real per-model constants, same arithmetic llama.cpp's
+		 * own allocator uses -- see Phase 7) -- not re-derived from
+		 * anything run_kv_store_pass() itself measured, since that
+		 * function has no reason to know about byte accounting; it
+		 * only manages the context/decode loop. */
+		tel.compressed_kv_allocated_bytes = kv_bytes;
+		membrane_kv_store_rss_max(&tel.rss_after_model_load,
+			&tel.rss_after_context, &tel.rss_peak);
+		membrane_kv_store_rss_max(&tel.rss_peak, &tel.rss_after_prompt,
+			&tel.rss_peak);
+		membrane_kv_store_rss_max(&tel.rss_peak, &tel.rss_final,
+			&tel.rss_peak);
 	}
-	tel.generated_tokens = result.tokens.size();
-	tel.ctx_size = ctx_size;
-	/* kv_bytes is the real allocation size (real ggml_row_size() times
-	 * real per-model constants, same arithmetic llama.cpp's own
-	 * allocator uses -- see Phase 7) -- not re-derived from anything
-	 * run_kv_store_pass() itself measured, since that function has no
-	 * reason to know about byte accounting; it only manages the
-	 * context/decode loop. */
-	tel.compressed_kv_allocated_bytes = kv_bytes;
-	membrane_kv_store_rss_max(&tel.rss_after_model_load,
-		&tel.rss_after_context, &tel.rss_peak);
-	membrane_kv_store_rss_max(&tel.rss_peak, &tel.rss_after_prompt,
-		&tel.rss_peak);
-	membrane_kv_store_rss_max(&tel.rss_peak, &tel.rss_final, &tel.rss_peak);
 	if (o.want_json)
 	{
 		membrane_gpu_memory_observed_t	gpu_mem_observed;
 
 		observe_gpu_memory_after_run(gs, &gpu_mem_observed);
-		print_run_json(o, model_label, tel, text, gs, host, result.ok,
-			result.ok ? MEMBRANE_EXIT_SUCCESS : MEMBRANE_EXIT_RUNTIME_ERROR,
-			prompt_tokens.size(), gpu_mem_observed);
+		print_run_json(effective_o, model_label, tel, text, gs, host,
+			result.ok, result.ok ? MEMBRANE_EXIT_SUCCESS
+				: MEMBRANE_EXIT_RUNTIME_ERROR, prompt_tokens.size(),
+			gpu_mem_observed);
 	}
 	else
 	{
@@ -2690,8 +3140,9 @@ int	main(int argc, char **argv)
 	else
 	{
 		build_plan_warnings(o, host, &gs);
-		rc = run_normal_mode(effective_o, model, prompt_tokens, model_label,
-				ctx_size, shape, gs, host);
+		rc = run_normal_mode(effective_o, &model, o.model_path, mp,
+				&device_storage, prompt_tokens, model_label, ctx_size, shape,
+				gs, host);
 	}
 	llama_model_free(model);
 	llama_backend_free();

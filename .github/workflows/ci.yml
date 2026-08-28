@@ -37,6 +37,66 @@ jobs:
       - name: Verify planner accuracy measurements
         run: python3 scripts/verify-planner-accuracy.py
 
+  # Phase 21: validates results/auto-fallback/validation.json's schema,
+  # attempt-ordering/candidate-index invariants, and REAL-vs-SIMULATED
+  # provenance (a REAL run may never claim a failure class this
+  # project's real apply adapter has no API surface to prove). Same
+  # reasoning as the two jobs above: python3 + checkout only, no GPU,
+  # no model download, no C/C++ build -- this validates the committed
+  # evidence file, it does not regenerate it.
+  auto-fallback-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify auto-fallback validation evidence
+        run: python3 scripts/verify-auto-fallback.py
+
+  # Phase 21: exercises the fallback controller's own test suite
+  # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
+  # paying for a full llama.cpp/ggml build -- both are registered
+  # inside the MEMBRANE_ENABLE_LLAMA CMake block (same convention as
+  # every other *_policy.h module's own test executable in this
+  # project), but neither their own library nor test binary links
+  # llama/ggml at all, so a target-scoped `cmake --build --target ...`
+  # only configures the tree (cheap, needs the submodule checked out)
+  # and compiles these few pure-C translation units -- confirmed
+  # directly: zero ggml/llama compilation occurs for this job's build
+  # step. This is the ONLY CI coverage either test gets today (the
+  # existing build-and-test/thread-sanitizer jobs never set
+  # MEMBRANE_ENABLE_LLAMA, so targets registered inside that block,
+  # including test_joint_planner since Phase 20, were never actually
+  # running in CI before this job existed -- a pre-existing gap this
+  # phase closes as a direct side effect, not a scope expansion: fixing
+  # the broader llama-enabled build-and-test matrix itself is out of
+  # scope for Phase 21).
+  fallback-controller-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake
+      # ASan/UBSan: target-scoped (see the Build step below), so
+      # llama/ggml itself is never compiled at all, sanitized or not.
+      - name: Configure (ASan/UBSan)
+        run: |
+          cmake -S . -B build-fallback-tests -DMEMBRANE_ENABLE_LLAMA=ON \
+            -DCMAKE_BUILD_TYPE=Debug -DMEMBRANE_ENABLE_SANITIZERS=ON
+      - name: Build (target-scoped -- no llama/ggml compilation)
+        run: cmake --build build-fallback-tests -j2 --target test_auto_fallback test_joint_planner
+      - name: Test
+        run: |
+          ctest --test-dir build-fallback-tests --output-on-failure \
+            -R 'test_auto_fallback|test_joint_planner'
+
   build-and-test:
     runs-on: ubuntu-latest
     strategy:
