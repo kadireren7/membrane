@@ -1746,6 +1746,24 @@ def main() -> int:
 			print("\nFAILED: scripts/verify-release-readiness.py reported "
 				"failures (see output above)")
 			return 1
+
+	# Same reasoning as the four chains above -- v0.3.0-rc2's own real
+	# external user-validation reports (Phase 23) get their own dedicated
+	# validator, chained here as another unnumbered step. Only runs once
+	# results/rc2-user-validation/summary.json actually exists (Section 14
+	# of the Phase 23 task: add the validator only after real evidence
+	# exists to validate).
+	rc2_validation_script = REPO_ROOT / "scripts" / "verify-rc2-user-validation.py"
+	if rc2_validation_script.exists():
+		print()
+		print("Also verifying RC2 user-validation reports "
+			"(scripts/verify-rc2-user-validation.py):")
+		sys.stdout.flush()
+		result = subprocess.run([sys.executable, str(rc2_validation_script)])
+		if result.returncode != 0:
+			print("\nFAILED: scripts/verify-rc2-user-validation.py reported "
+				"failures (see output above)")
+			return 1
 	return 0
 
 
