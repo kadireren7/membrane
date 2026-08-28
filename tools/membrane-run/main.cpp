@@ -1433,15 +1433,21 @@ static const char	*requested_kv_name(const membrane_run_opts_t &o,
  * gpu_policy's pre-load estimate was checked against -- reusing
  * membrane_gpu_list_devices() (never a new/different API), so this is
  * the same driver-reported free-heap-bytes figure as gs.device_free_
- * bytes, just re-read after model load + context + generation are all
- * done. This lets a consumer compute a real observed GPU-memory delta
- * to compare against the pre-load estimate (estimated_model_bytes +
- * estimated_kv_bytes) -- see docs/planner-accuracy.md. Deliberately
- * NOT a peak (nothing here samples memory continuously during decode)
- * and deliberately NOT claimed to be exact -- the same driver-reported-
- * budget caveats that apply to the pre-load figure apply here too, and
- * this single post-run read can be diluted by any other process on the
- * same device between the two reads. */
+ * bytes, just re-read after run_kv_store_pass() (decode_loop.cpp)
+ * returns. CodeRabbit review (PR #29) caught what this call site
+ * actually observes: run_kv_store_pass() calls llama_free(ctx) --
+ * destroying the KV cache/context -- before it returns, so by the
+ * time this runs, the KV cache is already gone; only the model
+ * WEIGHTS (freed separately, later, by run_normal_mode()'s caller)
+ * are still GPU-resident. This must be compared against
+ * estimated_model_bytes ALONE, never + estimated_kv_bytes -- see
+ * docs/planner-accuracy.md. Deliberately NOT a peak (nothing here
+ * samples memory continuously during decode, and it structurally
+ * cannot include the KV cache at all) and deliberately NOT claimed to
+ * be exact -- the same driver-reported-budget caveats that apply to
+ * the pre-load figure apply here too, and this single post-run read
+ * can be diluted by any other process on the same device between the
+ * two reads. */
 typedef struct s_membrane_gpu_memory_observed
 {
 	bool		available;
@@ -1483,9 +1489,14 @@ static void	print_gpu_memory_observed_json(const membrane_gpu_state_t &gs,
 
 		printf(",\"measurement_method\":\"driver-reported free heap "
 			"bytes via ggml_backend_dev_get_props(), re-queried after "
-			"model load + context + generation -- not a peak, not a "
-			"guaranteed live figure, same caveats as the pre-load "
-			"estimate this is compared against\","
+			"run_kv_store_pass() returns -- that function already calls "
+			"llama_free(ctx) internally before returning, so this "
+			"reflects GPU memory attributable to the model WEIGHTS "
+			"ONLY; the KV cache/context is already destroyed by this "
+			"point. Compare against estimated_model_bytes alone, never "
+			"+ estimated_kv_bytes. Not a peak, not a guaranteed live "
+			"figure, same caveats as the pre-load estimate this is "
+			"compared against\","
 			"\"device_free_bytes_before\":%llu,"
 			"\"device_free_bytes_after\":%llu,"
 			"\"observed_delta_bytes\":%lld",

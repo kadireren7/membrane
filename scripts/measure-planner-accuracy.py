@@ -99,20 +99,30 @@ POINTS = [
 
 
 def run_point(bin_path, point):
-	cmd = [bin_path, "--model", str(REPO_ROOT / point["model"]),
-		"--prompt", "The capital of France is", "--ctx", str(point["ctx"]),
+	# Repo-relative args only (point["model"] is already relative,
+	# e.g. "models/SmolLM2-135M-Instruct-f16.gguf") -- run with cwd=
+	# REPO_ROOT so that resolves, rather than expanding it to an
+	# absolute path that would embed this machine's directory layout.
+	args = ["--model", point["model"], "--prompt",
+		"The capital of France is", "--ctx", str(point["ctx"]),
 		"--gen-tokens", str(point["gen_tokens"]), "--json",
 		"--gpu-layers", point["gpu_layers"], "--kv", point["kv"]]
 	if point["kv_placement"]:
-		cmd += ["--kv-placement", point["kv_placement"]]
+		args += ["--kv-placement", point["kv_placement"]]
 	t0 = time.time()
-	proc = subprocess.run(cmd, capture_output=True, text=True)
+	proc = subprocess.run([bin_path] + args, capture_output=True, text=True,
+		cwd=str(REPO_ROOT))
 	wall_seconds = time.time() - t0
 	try:
 		parsed = json.loads(proc.stdout)
 	except json.JSONDecodeError:
 		parsed = None
-	return (proc.returncode, parsed, proc.stderr, wall_seconds, cmd)
+	# Sanitized for provenance: "membrane-run" stands in for bin_path,
+	# which is a developer-local (often absolute, often /tmp-scratch)
+	# path with no meaning to anyone else re-running this script --
+	# see MEMBRANE_RUN_BIN in this file's own module docstring instead.
+	logical_cmd = ["membrane-run"] + args
+	return (proc.returncode, parsed, proc.stderr, wall_seconds, logical_cmd)
 
 
 def classify_outcome(returncode, parsed):
@@ -201,19 +211,19 @@ def build_measurement(point, returncode, parsed, stderr, wall_seconds, cmd,
 	m["planner"]["estimated_host_kv_bytes"] = (
 		parsed.get("storage") or {}).get("kv_allocated_bytes")
 	if weight_bytes is not None:
-		if placement == "cpu":
-			# KV was explicitly kept off the GPU -- the real-world GPU
-			# footprint this plan implies is weights only. gpu_policy's
-			# OWN budget check still reserves room for KV regardless
-			# (a known, previously-documented gap -- see
-			# docs/planner-accuracy.md), but that is a capacity-check
-			# behavior, not what actually landed on the device.
-			m["planner"]["estimated_total_gpu_bytes"] = weight_bytes
-			m["planner"]["estimated_total_gpu_bytes_basis"] = (
-				"weights_only (kv_placement=cpu)")
-		elif kv_bytes is not None:
-			m["planner"]["estimated_total_gpu_bytes"] = weight_bytes + kv_bytes
-			m["planner"]["estimated_total_gpu_bytes_basis"] = "weights_plus_kv"
+		# ALWAYS weights-only, regardless of kv_placement: gpu_memory_
+		# observed is read after run_kv_store_pass() returns, and that
+		# function already calls llama_free(ctx) -- destroying the KV
+		# cache/context -- before returning (CodeRabbit review, PR #29).
+		# So the observed delta structurally can never include KV bytes,
+		# on ANY placement, not just kv_placement=cpu. Comparing it
+		# against weight_bytes + kv_bytes would silently overstate the
+		# estimate's real error. See docs/planner-accuracy.md.
+		m["planner"]["estimated_total_gpu_bytes"] = weight_bytes
+		m["planner"]["estimated_total_gpu_bytes_basis"] = (
+			"weights_only (KV cache is already freed, by run_kv_store_"
+			"pass()'s own llama_free(ctx), before gpu_memory_observed "
+			"is read -- see docs/planner-accuracy.md)")
 
 	if obs.get("available"):
 		before = obs.get("device_free_bytes_before")

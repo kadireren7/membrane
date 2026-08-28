@@ -116,26 +116,73 @@ def check_cpu_has_no_gpu_fields(measurements):
 					f"({observed[f]!r}) -- there is no GPU device to observe")
 
 
-@check("error fields are populated only when both real inputs they compare are present")
-def check_errors_have_real_inputs(measurements):
+@check("error fields are recomputed from their real inputs and match exactly")
+def check_errors_recompute_correctly(measurements):
 	for m in measurements:
 		label = m.get("label", "<no label>")
 		planner = m.get("planner") or {}
 		observed = m.get("observed") or {}
 		errors = m.get("errors") or {}
+
+		est_total = planner.get("estimated_total_gpu_bytes")
+		obs_delta = observed.get("gpu_observed_delta_bytes")
 		gpu_err = errors.get("gpu_estimate_error_bytes")
-		if gpu_err is not None:
-			if (planner.get("estimated_total_gpu_bytes") is None
-					or observed.get("gpu_observed_delta_bytes") is None):
-				fail(label, "errors.gpu_estimate_error_bytes is populated but "
-					"planner.estimated_total_gpu_bytes or observed."
-					"gpu_observed_delta_bytes is missing -- a fabricated error")
+		gpu_err_pct = errors.get("gpu_estimate_error_percent")
+		if gpu_err is not None and (est_total is None or obs_delta is None):
+			fail(label, "errors.gpu_estimate_error_bytes is populated but "
+				"planner.estimated_total_gpu_bytes or observed."
+				"gpu_observed_delta_bytes is missing -- a fabricated error")
+		elif est_total is not None and obs_delta is not None:
+			expected_err = obs_delta - est_total
+			if gpu_err != expected_err:
+				fail(label, f"errors.gpu_estimate_error_bytes={gpu_err!r} does "
+					f"not match recomputed value {expected_err} "
+					f"(observed_delta - estimated_total)")
+			expected_pct = (round(100.0 * expected_err / obs_delta, 3)
+				if obs_delta != 0 else None)
+			if gpu_err_pct != expected_pct:
+				fail(label, f"errors.gpu_estimate_error_percent={gpu_err_pct!r} "
+					f"does not match recomputed value {expected_pct!r}")
+
+		# storage.kv_allocated_bytes (-> estimated_host_kv_bytes) and the
+		# RSS checkpoints are populated for EVERY run, GPU or CPU -- an
+		# RSS delta after context creation on a GPU-KV run reflects
+		# host-side driver/context bookkeeping, not the KV cache itself
+		# (which lives on the GPU there), so a host-side error is only
+		# ever expected when KV genuinely lives in host RAM: backend
+		# "cpu", or kv_placement_resolved "cpu" (weights on GPU, KV
+		# forced to host). Mirrors measure-planner-accuracy.py's own
+		# kv_is_on_host gate -- kept in sync deliberately, not by
+		# importing that script, so this validator still catches a
+		# regression in either file independently.
+		kv_is_on_host = (m.get("backend") == "cpu"
+			or m.get("kv_placement_resolved") == "cpu")
+		est_kv_bytes = planner.get("estimated_host_kv_bytes")
+		rss_delta_kb = observed.get("host_rss_after_context_delta_kb")
 		host_err = errors.get("host_kv_estimate_error_kb")
-		if host_err is not None:
-			if (planner.get("estimated_host_kv_bytes") is None
-					or observed.get("host_rss_after_context_delta_kb") is None):
-				fail(label, "errors.host_kv_estimate_error_kb is populated but "
-					"its real inputs are missing -- a fabricated error")
+		host_err_pct = errors.get("host_kv_estimate_error_percent")
+		if not kv_is_on_host:
+			if host_err is not None or host_err_pct is not None:
+				fail(label, "errors.host_kv_estimate_error_kb/_percent is "
+					"populated but KV does not live in host RAM for this "
+					"measurement (backend != cpu and kv_placement_resolved "
+					"!= cpu) -- an RSS delta here reflects driver/context "
+					"bookkeeping, not the KV cache, and comparing it to the "
+					"KV-bytes estimate would be misleading")
+		elif host_err is not None and (est_kv_bytes is None or rss_delta_kb is None):
+			fail(label, "errors.host_kv_estimate_error_kb is populated but "
+				"its real inputs are missing -- a fabricated error")
+		elif est_kv_bytes is not None and rss_delta_kb is not None:
+			expected_err_kb = round(rss_delta_kb - est_kv_bytes / 1024.0, 1)
+			if host_err != expected_err_kb:
+				fail(label, f"errors.host_kv_estimate_error_kb={host_err!r} "
+					f"does not match recomputed value {expected_err_kb}")
+			expected_host_pct = (round(100.0 * expected_err_kb / rss_delta_kb, 3)
+				if rss_delta_kb != 0 else None)
+			if host_err_pct != expected_host_pct:
+				fail(label,
+					f"errors.host_kv_estimate_error_percent={host_err_pct!r} "
+					f"does not match recomputed value {expected_host_pct!r}")
 
 
 @check("no field or provenance string claims a continuous GPU peak sample")
@@ -161,18 +208,30 @@ def check_no_fabricated_gpu_peak_claim(data, measurements):
 				"provenance.measurement_method claims a GPU peak")
 
 
+def reject_non_finite_json(constant_name):
+	# json.loads() otherwise silently accepts the bare tokens NaN/
+	# Infinity/-Infinity as float('nan')/float('inf')/float('-inf') --
+	# a NaN in particular would pass every `v < 0` check below (NaN
+	# compares false to everything), letting a corrupted/hand-edited
+	# byte count through undetected.
+	raise ValueError(
+		f"measurements.json contains the non-finite JSON constant "
+		f"{constant_name!r} -- not valid for a real byte/kb count")
+
+
 def main():
 	if not DATA_PATH.exists():
 		print(f"FATAL: {DATA_PATH} does not exist", file=sys.stderr)
 		return 1
-	data = json.loads(DATA_PATH.read_text())
+	data = json.loads(DATA_PATH.read_text(),
+		parse_constant=reject_non_finite_json)
 	check_top_level(data)
 	measurements = data.get("measurements", [])
 	if not isinstance(measurements, list):
 		measurements = []
 	check_measurement_shape(measurements)
 	check_cpu_has_no_gpu_fields(measurements)
-	check_errors_have_real_inputs(measurements)
+	check_errors_recompute_correctly(measurements)
 	check_no_fabricated_gpu_peak_claim(data, measurements)
 
 	print()
