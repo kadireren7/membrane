@@ -31,6 +31,19 @@ TIMING_FIELDS = ("total_ms", "planner_ms", "model_load_ms", "tokenization_ms",
 	"context_create_ms", "prefill_ms", "decode_ms", "first_token_ms")
 THROUGHPUT_FIELDS = ("prefill_tokens_per_second", "decode_tokens_per_second")
 
+# CodeRabbit review (PR #34): the exact, fixed 12-point label set
+# scripts/measure-performance-profile.py's own POINTS list produces --
+# a missing/duplicate/unexpected label must fail, not silently pass an
+# incomplete matrix as if it were the full committed evidence set.
+EXPECTED_LABELS = frozenset({
+	"smollm2-135m_vulkan_native", "smollm2-135m_vulkan_q8",
+	"smollm2-135m_vulkan_q5", "smollm2-135m_vulkan_adaptive",
+	"smollm2-135m_cpu_native", "smollm2-135m_cpu_q8",
+	"smollm2-360m_vulkan_native", "qwen2.5-1.5b_vulkan_native_gpu_placement",
+	"qwen2.5-1.5b_vulkan_native_cpu_placement", "qwen2.5-1.5b_cpu_native",
+	"smollm2-135m_vulkan_partial_half_15", "smollm2-135m_vulkan_auto",
+})
+
 
 def fail(name, detail):
 	FAILURES.append(f"{name}: {detail}")
@@ -183,6 +196,143 @@ def check_median_matches_raw(measurements):
 					f"the raw runs' real maximum {raw[-1]!r}")
 
 
+@check("the measurement set is exactly the expected 12-point matrix -- "
+	"no missing, duplicate, or unexpected label")
+def check_exact_label_set(measurements):
+	labels = [m.get("label") for m in measurements]
+	seen = set()
+	duplicates = set()
+	for label in labels:
+		if label in seen:
+			duplicates.add(label)
+		seen.add(label)
+	if duplicates:
+		fail("label set", f"duplicate label(s): {sorted(duplicates)!r}")
+	missing = EXPECTED_LABELS - seen
+	if missing:
+		fail("label set", f"missing expected label(s): {sorted(missing)!r} "
+			f"-- an incomplete matrix must never silently pass as the full "
+			f"committed evidence set")
+	unexpected = seen - EXPECTED_LABELS
+	if unexpected:
+		fail("label set", f"unexpected label(s) not in the fixed matrix: "
+			f"{sorted(unexpected)!r}")
+
+
+@check("raw-sample cardinality matches ok_count, and throughput is "
+	"recomputable from real token counts and stage durations")
+def check_raw_cardinality_and_throughput_authenticity(measurements):
+	for m in measurements:
+		label = m.get("label", "<no label>")
+		ok_count = m.get("ok_count", 0)
+		if ok_count == 0:
+			continue
+		for field in TIMING_FIELDS + THROUGHPUT_FIELDS:
+			block = stat_block(m, field)
+			raw = (block or {}).get("raw") or []
+			if len(raw) != ok_count:
+				fail(label, f"{field}.raw has {len(raw)} sample(s), expected "
+					f"exactly ok_count ({ok_count}) -- a successful run must "
+					f"never be silently dropped from its own stage's raw "
+					f"samples")
+		token_counts = m.get("token_counts") or {}
+		prompt_tokens = token_counts.get("prompt_tokens") or []
+		generated_tokens = token_counts.get("generated_tokens") or []
+		if len(prompt_tokens) != ok_count or len(generated_tokens) != ok_count:
+			fail(label, f"token_counts has {len(prompt_tokens)} prompt/"
+				f"{len(generated_tokens)} generated sample(s), expected "
+				f"ok_count ({ok_count}) each -- cannot verify throughput "
+				f"authenticity without a real token count per run")
+			continue
+		prefill_raw = ((m.get("timings_ms") or {}).get("prefill_ms") or {}).get("raw") or []
+		decode_raw = ((m.get("timings_ms") or {}).get("decode_ms") or {}).get("raw") or []
+		prefill_tp_raw = ((m.get("throughput") or {}).get(
+			"prefill_tokens_per_second") or {}).get("raw") or []
+		decode_tp_raw = ((m.get("throughput") or {}).get(
+			"decode_tokens_per_second") or {}).get("raw") or []
+		if not (len(prefill_raw) == len(decode_raw) == len(prefill_tp_raw)
+				== len(decode_tp_raw) == ok_count):
+			continue  # already flagged by the raw-cardinality check above
+		for i in range(ok_count):
+			if prefill_raw[i] > 0:
+				expected_prefill_tp = prompt_tokens[i] / (prefill_raw[i] / 1000.0)
+				if abs(expected_prefill_tp - prefill_tp_raw[i]) > max(
+						0.5, 0.02 * expected_prefill_tp):
+					fail(label, f"run {i}: prefill_tokens_per_second "
+						f"{prefill_tp_raw[i]!r} does not match "
+						f"prompt_tokens ({prompt_tokens[i]!r}) / prefill_ms "
+						f"({prefill_raw[i]!r}) = ~{round(expected_prefill_tp, 3)}")
+			if decode_raw[i] > 0:
+				expected_decode_tp = generated_tokens[i] / (decode_raw[i] / 1000.0)
+				if abs(expected_decode_tp - decode_tp_raw[i]) > max(
+						0.5, 0.02 * expected_decode_tp):
+					fail(label, f"run {i}: decode_tokens_per_second "
+						f"{decode_tp_raw[i]!r} does not match "
+						f"generated_tokens ({generated_tokens[i]!r}) / "
+						f"decode_ms ({decode_raw[i]!r}) = "
+						f"~{round(expected_decode_tp, 3)}")
+
+
+DOC_PATH = REPO_ROOT / "docs" / "performance-profiling.md"
+
+
+@check("docs/performance-profiling.md's specific numeric claims match the "
+	"committed measurements (no doc drift)")
+def check_docs_match_measurements(measurements):
+	if not DOC_PATH.exists():
+		fail("doc claims", f"{DOC_PATH} does not exist")
+		return
+	text = DOC_PATH.read_text()
+	by_label = {m.get("label"): m for m in measurements}
+
+	# The matrix size and success/failure counts the doc's own prose
+	# states must match the real data exactly.
+	ok_points = sum(1 for m in measurements if m.get("ok_count", 0) > 0)
+	failed_points = len(measurements) - ok_points
+	if f"{ok_points}/{len(measurements)} points succeeded" not in text:
+		fail("doc claims", f"doc does not state the real "
+			f"'{ok_points}/{len(measurements)} points succeeded' figure")
+	if failed_points > 0 and str(failed_points) not in text:
+		fail("doc claims", f"doc does not appear to mention the real "
+			f"failed-point count ({failed_points})")
+
+	# Every named-in-doc label must actually exist in the evidence file
+	# (catches a stale/renamed label reference).
+	for label in EXPECTED_LABELS:
+		if label not in text:
+			fail("doc claims", f"expected label {label!r} is never "
+				f"mentioned in {DOC_PATH.name}")
+
+	# The doc's own "planner_ms/tokenization_ms/context_create_ms all
+	# stay under X%" claim must actually hold for the real max observed
+	# -- re-derive the real max and require the doc to state a threshold
+	# at or above it (a stale, too-low threshold is a real doc bug, not
+	# just cosmetic -- see PR #34 review).
+	max_share_pct = 0.0
+	for m in measurements:
+		if m.get("ok_count", 0) == 0:
+			continue
+		total = ((m.get("timings_ms") or {}).get("total_ms") or {}).get("median")
+		if not total:
+			continue
+		for field in ("planner_ms", "tokenization_ms", "context_create_ms"):
+			v = ((m.get("timings_ms") or {}).get(field) or {}).get("median")
+			if v is not None:
+				max_share_pct = max(max_share_pct, 100.0 * v / total)
+	m_threshold = re.search(r"stay under ~?(\d+(?:\.\d+)?)% in every", text)
+	if not m_threshold:
+		fail("doc claims", "doc does not state a checkable "
+			"'stay under X% in every' threshold for planner/tokenization/"
+			"context-create share of total time")
+	else:
+		stated = float(m_threshold.group(1))
+		if stated < max_share_pct:
+			fail("doc claims", f"doc claims these stages stay under "
+				f"{stated}%, but the real max observed share is "
+				f"{round(max_share_pct, 2)}% -- the stated threshold must "
+				f"be >= the real max")
+
+
 def main():
 	if not DATA_PATH.exists():
 		print(f"FATAL: {DATA_PATH} does not exist", file=sys.stderr)
@@ -193,10 +343,13 @@ def main():
 	if not isinstance(measurements, list):
 		measurements = []
 	check_measurement_shape(measurements)
+	check_exact_label_set(measurements)
 	check_hardware_scope(measurements)
 	check_no_cross_contamination(measurements)
 	check_finite_nonnegative(measurements)
 	check_median_matches_raw(measurements)
+	check_raw_cardinality_and_throughput_authenticity(measurements)
+	check_docs_match_measurements(measurements)
 
 	print()
 	if FAILURES:

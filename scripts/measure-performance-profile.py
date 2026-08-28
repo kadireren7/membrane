@@ -180,6 +180,15 @@ def build_measurement(point, bin_path, membrane_commit):
 	resolved = {}
 	ok_count = 0
 	last_failure_reason = None
+	# CodeRabbit review (PR #34): captured defensively in case a failed
+	# run's own JSON ever carries a "fallback" object -- verified during
+	# this fix that main.cpp's print_error_json() (the schema an
+	# AUTO_FALLBACK_EXHAUSTED failure actually uses) does NOT include one
+	# today, so this stays empty for every currently-observed failure
+	# mode; documented as a real, disclosed JSON-schema gap in
+	# docs/performance-profiling.md rather than silently assumed
+	# resolved by adding this field.
+	failed_fallback_attempted = []
 	for rep in range(REPEATS):
 		returncode, parsed, logical_cmd = run_once(bin_path, point)
 		if returncode == 0 and parsed is not None and parsed.get("ok"):
@@ -195,9 +204,15 @@ def build_measurement(point, bin_path, membrane_commit):
 		else:
 			if parsed is not None and isinstance(parsed.get("error"), dict):
 				last_failure_reason = parsed["error"].get("reason_code")
+			if parsed is not None and isinstance(parsed.get("fallback"), dict):
+				failed_fallback_attempted.append(
+					parsed["fallback"].get("attempted"))
 			print(f"    rep {rep + 1}/{REPEATS}: FAILED (exit {returncode}"
 				f"{f', {last_failure_reason}' if last_failure_reason else ''})",
 				file=sys.stderr)
+
+	if failed_fallback_attempted:
+		resolved["fallback_attempted_on_failed_runs"] = failed_fallback_attempted
 
 	timings_agg = {}
 	for field in TIMING_FIELDS:
@@ -207,6 +222,17 @@ def build_measurement(point, bin_path, membrane_commit):
 	for field in THROUGHPUT_FIELDS:
 		throughput_agg[field] = median_min_max(
 			[r["timings"]["throughput"].get(field) for r in raw_runs])
+	# CodeRabbit review (PR #34): real token counts per successful run,
+	# so the validator can recompute throughput from
+	# tokens/(stage_ms/1000) and cross-check it against the reported
+	# value -- a hand-edited artifact can no longer swap in an
+	# arbitrary-but-internally-consistent throughput number undetected.
+	token_counts = {
+		"prompt_tokens": [r.get("execution", {}).get("prompt_tokens")
+			for r in raw_runs],
+		"generated_tokens": [r.get("execution", {}).get("generated_tokens")
+			for r in raw_runs],
+	}
 
 	return {
 		"schema_version": 1,
@@ -227,6 +253,7 @@ def build_measurement(point, bin_path, membrane_commit):
 		"resolved": resolved,
 		"repeats": REPEATS,
 		"ok_count": ok_count,
+		"token_counts": token_counts,
 		"note": None if ok_count > 0 else (
 			f"0/{REPEATS} repeats succeeded -- last observed failure "
 			f"reason_code={last_failure_reason!r}. See "
@@ -257,17 +284,26 @@ def main():
 			"--target membrane-run", file=sys.stderr)
 		return 1
 
+	# CodeRabbit review (PR #34): a missing fixture used to be silently
+	# skipped, letting an incomplete matrix pass as if it were the full
+	# committed 12-point set (the validator only checked "non-empty").
+	# Preflight ALL fixtures before running anything, and fail closed --
+	# no partial artifact is ever written.
+	missing = [point["model"] for point in POINTS
+		if not (REPO_ROOT / point["model"]).is_file()]
+	if missing:
+		print("error: required model fixture(s) missing, refusing to "
+			"write a partial artifact:", file=sys.stderr)
+		for rel in sorted(set(missing)):
+			print(f"  - {REPO_ROOT / rel}", file=sys.stderr)
+		return 1
+
 	commit = subprocess.run(["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
 		capture_output=True, text=True, check=True).stdout.strip()
 	run_timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 	measurements = []
 	for point in POINTS:
-		model_path = REPO_ROOT / point["model"]
-		if not model_path.is_file():
-			print(f"skipping {point['label']}: model not found at "
-				f"{model_path}", file=sys.stderr)
-			continue
 		print(f"=== {point['label']} ({REPEATS} repeats) ===", file=sys.stderr)
 		m = build_measurement(point, bin_path, commit)
 		measurements.append(m)

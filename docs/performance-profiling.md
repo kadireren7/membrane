@@ -53,13 +53,13 @@ separate MEMBRANE-owned step to time, so none was fabricated.
 
 ## Controlled points
 
-12 points, `ctx=2048`, `gen-tokens=32` (16 for the two Qwen2.5 CPU
-points, kept smaller given real CPU decode cost — see below), 3
-repeats each. Real local models only, no downloads: SmolLM2-135M,
-SmolLM2-360M, Qwen2.5-1.5B. Host: this project's own real Pop!_OS 24.04
-dev machine (AMD Ryzen 5 5600H, real NVIDIA GTX 1650 Vulkan device
-`Vulkan1`) — every number below is scoped to this one host, never
-generalized (Section 19 of the Phase 24 task; `scripts/verify-
+12 points, `ctx=2048`, `gen-tokens=32` (16 for the one Qwen2.5 CPU
+point, kept smaller given real CPU decode cost — see below), 3 repeats
+each. Real local models only, no downloads: SmolLM2-135M, SmolLM2-360M,
+Qwen2.5-1.5B. Host: this project's own real Pop!_OS 24.04 dev machine
+(AMD Ryzen 5 5600H, real NVIDIA GTX 1650 Vulkan device `Vulkan1`) —
+every number below is scoped to this one host, never generalized
+(Section 19 of the Phase 24 task; `scripts/verify-
 performance-profiling.py` enforces every Vulkan row names a real
 device).
 
@@ -71,76 +71,110 @@ CPU-only Qwen2.5-1.5B substitute point was added instead (Section 29 of
 the Phase 24 task: never sacrifice machine stability or fabricate a
 result to fill a matrix cell).
 
+| # | Label (`results/performance-profiling/measurements.json`) | Result |
+|---|---|---|
+| 1 | `smollm2-135m_vulkan_native` | ok |
+| 2 | `smollm2-135m_vulkan_q8` | ok |
+| 3 | `smollm2-135m_vulkan_q5` | ok |
+| 4 | `smollm2-135m_vulkan_adaptive` | ok |
+| 5 | `smollm2-135m_cpu_native` | ok |
+| 6 | `smollm2-135m_cpu_q8` | ok |
+| 7 | `smollm2-360m_vulkan_native` | ok |
+| 8 | `qwen2.5-1.5b_vulkan_native_gpu_placement` | **failed, real cause disclosed below** |
+| 9 | `qwen2.5-1.5b_vulkan_native_cpu_placement` | **failed, real cause disclosed below** |
+| 10 | `qwen2.5-1.5b_cpu_native` | ok (real substitute point) |
+| 11 | `smollm2-135m_vulkan_partial_half_15` | ok |
+| 12 | `smollm2-135m_vulkan_auto` | ok |
+
 ## Top measured bottlenecks
 
 **SmolLM2-135M, Vulkan, native, all 30 layers** (representative small-model point):
 
 | Stage | Median | Share of total |
 |---|---|---|
-| `model_load_ms` | 253.0 ms | **50.1%** |
-| `decode_ms` | 128.5 ms | 25.4% |
-| `prefill_ms` | 13.3 ms | 2.6% |
-| `context_create_ms` | 11.2 ms | 2.2% |
-| `planner_ms` | 9.6 ms | 1.9% |
+| `model_load_ms` | 255.2 ms | **53.7%** |
+| `decode_ms` | 107.3 ms | 22.6% |
+| `prefill_ms` | 14.3 ms | 3.0% |
+| `context_create_ms` | 11.2 ms | 2.4% |
+| `planner_ms` | 8.9 ms | 1.9% |
 | `tokenization_ms` | 0.1 ms | 0.0% |
-| *(unaccounted)* | ~90 ms | ~17.8% |
-| **total** | **505.2 ms** | 100% |
+| *(unaccounted)* | ~78 ms | ~16.4% |
+| **total** | **475.1 ms** | 100% |
 
-**BOTTLENECK 1: model load, ~50% of total wall time** for a small model
-at a short generation length. This dominates every point in the matrix
-except the largest (Qwen2.5-1.5B CPU, where decode overtakes it at
-longer real generation — see below). The unaccounted ~18% here is
-process-level overhead this instrumentation does not claim to capture
-(backend init, model-label/basename computation, RSS reads, JSON
-serialization) — disclosed, not hidden.
+**BOTTLENECK 1: model load, over half of total wall time** for a small
+model at a short generation length. This dominates every small-model
+point in the matrix. The unaccounted ~16% here is process-level
+overhead this instrumentation does not claim to capture (backend init,
+model-label/basename computation, RSS reads, JSON serialization) —
+disclosed, not hidden.
 
 **Qwen2.5-1.5B, CPU, native** (representative large-model point, 16
 generated tokens):
 
 | Stage | Median | Share of total |
 |---|---|---|
-| `decode_ms` | 7269.2 ms | **45.5%** |
-| `model_load_ms` | 5543.8 ms | **34.7%** |
-| `prefill_ms` | 2582.4 ms | 16.2% |
-| `context_create_ms` | 79.2 ms | 0.5% |
+| `model_load_ms` | 5505.9 ms | **38.8%** |
+| `decode_ms` | 4309.7 ms | **30.4%** |
+| `prefill_ms` | 2254.1 ms | 15.9% |
+| `context_create_ms` | 80.8 ms | 0.6% |
 | `planner_ms` / `tokenization_ms` | ~0 ms | ~0.0% |
-| **total** | **15989.8 ms** | 100% (96.9% accounted) |
+| **total** | **14191.0 ms** | 100% (85.6% accounted) |
 
-**BOTTLENECK 2: decode, ~46% of total for a larger model with more
-generated tokens** — decode share grows with model size and generation
-length, exactly as expected once there's enough generation for the
-per-token cost to dominate the fixed model-load cost. Decode throughput
-itself: **2.2 tokens/second** on this host's CPU for a 1.5B model —
-slow in absolute terms, a real, disclosed data point, not a claim about
-CPU inference generally.
+**BOTTLENECK 2: model load and decode are comparably large for a
+larger model**, both well ahead of prefill. Unlike the small-model
+point above, this specific measurement's own repeat-to-repeat spread
+was wide (a real symptom of this host's own ambient load, not a
+MEMBRANE artifact — this point took 14–17 real seconds per repeat, long
+enough for other processes on this shared machine to visibly compete):
+a prior measurement session (still available in this PR's own commit
+history, not restated here as a second contradicting "fact") recorded
+decode as high as ~46% of total for the same point. Both sessions agree
+decode share grows with model size and generation length relative to
+the small-model point above; neither session's exact percentage is
+claimed to be the stable, reproducible value — 3 repeats is enough to
+see spread, not enough to pin down a precise share for a 14+ second
+point on a noisy host. Decode throughput itself: **3.7 tokens/second**
+in this session (2.2 in the prior one) on this host's CPU for a 1.5B
+model — slow in absolute terms either way, a real, disclosed, and
+visibly noisy data point, not a claim about CPU inference generally.
 
 **BOTTLENECK 3: none of `planner_ms`'s own joint-planner arithmetic,
-`tokenization_ms`, or `context_create_ms` is ever a measurable share of
-total time** — all three stay under ~2.5% in every single point
-measured. Section 5's own expectation ("planner overhead may be tiny —
-do not assume it matters") is confirmed, not assumed.
+`tokenization_ms`, or `context_create_ms` is ever a large share of
+total time** — all three stay under ~4% in every single point measured
+(`context_create_ms` is consistently the largest of the three, in the
+2–4% range depending on the point and session; `scripts/verify-
+performance-profiling.py` checks the real max directly against
+`measurements.json` on every run, rather than this threshold being an
+unchecked, potentially-stale number). Section 5's own expectation
+("planner overhead may be tiny — do not assume it matters") is
+confirmed, not assumed.
 
 ## Native vs Q8 vs Q5 (SmolLM2-135M, Vulkan, all layers)
 
 | Mode | Decode tok/s (median) | Prefill tok/s (median) |
 |---|---|---|
-| native | 249.0 | **375.7** |
-| q8 | **268.9** | 266.3 |
-| q5 | 255.1 | 342.1 |
+| native | **298.3** | 350.0 |
+| q8 | 267.3 | 333.0 |
+| q5 | 267.3 | **376.8** |
 
 Measured directly, not inferred from Phase 12G/prior research (Section
-12 of the Phase 24 task). The result is **not** a clean "compression
-always costs X%" story: q8 has the *highest* decode throughput and the
-*lowest* prefill throughput of the three; native is the reverse.
-Sample size is small (3 repeats) on one host — this is reported as an
-observed pattern worth Phase 25 attention, not a mechanism explanation
-(no root cause is claimed here).
+12 of the Phase 24 task). **The ordering is not stable across
+measurement sessions on this host, and this is itself the real
+finding**: an earlier measurement session on this same host, same
+matrix definition, recorded q8 with the *highest* decode throughput and
+native with the *lowest* — the exact opposite of the table above.
+Sample size is 3 repeats per session; the two sessions together show
+this is real host-level noise at this sample size, not a reproducible
+precision-dependent ordering. No compression-cost or compression-
+benefit direction is claimed for decode or prefill throughput on this
+evidence — Phase 25 attention would need a substantially larger sample
+before any directional claim is defensible.
 
-CPU (same model, `gpu-layers 0`): native 68.0 tok/s decode vs q8 62.3
-tok/s decode — native measured *faster* than q8 here too, opposite the
-naive "compression should be cheaper to move, therefore faster"
-intuition. Real, small-sample, disclosed — not generalized into a
-product claim.
+CPU (same model, `gpu-layers 0`): this session measured native and q8
+decode as effectively tied (68.2 vs 68.6 tok/s); an earlier session
+measured native measurably faster (68.0 vs 62.3). Same conclusion as
+above: real, small-sample, session-to-session noise, disclosed rather
+than generalized into a product claim either direction.
 
 ## CPU KV vs GPU KV
 
@@ -158,17 +192,16 @@ resolved by inference.
 
 | GPU layers | Decode tok/s (median) |
 |---|---|
-| 0 (CPU-only) | 68.0 |
-| 15 (half) | 119.0 |
-| 30 (all) | 249.0 |
+| 0 (CPU-only) | 68.2 |
+| 15 (half) | 121.8 |
+| 30 (all) | 298.3 |
 
-Clean, monotonic, roughly-linear scaling with GPU layer count on this
-host — no anomaly at the midpoint. `smollm2-135m_vulkan_partial_half_15`
-is also the point with the largest observed cold-start gap (see
-below) — the first-ever run of a *new* (0 GPU layers vs 15 vs 30 is
-effectively a distinct model-weight layout) offload configuration on
-this host paid the largest one-time cost seen in this whole matrix
-(1719 ms vs 1082/615 ms for repeats 2–3).
+Clean, monotonic scaling with GPU layer count on this host in both
+measurement sessions — no anomaly at the midpoint either time.
+`smollm2-135m_vulkan_partial_half_15` is also a session-first (model,
+layer-count) pair (see "Cold start" below) — it paid a real one-time
+cost on its own first run each session (1285.6 ms cold vs 617.7/570.4
+ms warm this session).
 
 ## Auto vs explicit
 
@@ -181,8 +214,8 @@ forced identical, disclosed rather than silently treated as
 
 | | `planner_ms` | `total_ms` |
 |---|---|---|
-| explicit q8 | 8.507 | 484.9 |
-| `--auto` | 8.453 | 507.1 |
+| explicit q8 | 8.591 | 479.8 |
+| `--auto` | 8.721 | 489.8 |
 
 Planner overhead is statistically indistinguishable between the two
 paths (both route through the identical joint-planner code, as
@@ -200,7 +233,7 @@ I/O), and the joint planner's own arithmetic
 three — `resolve_gpu_config()` short-circuits immediately when no GPU
 was requested) measured `planner_ms` at **0.006–0.007 ms**, confirming
 the joint planner's own arithmetic is genuinely negligible, exactly as
-Section 5 anticipated. Every GPU-requested point measured **8.5–10.2
+Section 5 anticipated. Every GPU-requested point measured **8.6–12.0
 ms** instead — this is real, but it is device-enumeration-plus-GGUF-
 scan cost, not joint-planner arithmetic; conflating the two would be a
 false attribution. Isolating these three sub-costs from each other is
@@ -210,12 +243,24 @@ own instrumentation itself lightweight).
 
 ## Fallback overhead
 
-Every point in this phase's own matrix succeeded on its primary
-candidate (`fallback_attempted: false` throughout) — no real fallback
-event occurred during this phase's own measurement runs, so
-`auto_fallback.c`'s new per-attempt `apply_wall_ms` field has no fresh
-data point to report here (matching Section 6's explicit instruction to
+Every one of the **10 successful** points in this phase's own matrix
+succeeded on its primary candidate (`fallback_attempted: false`) — no
+real fallback event occurred on any of them, so `auto_fallback.c`'s new
+per-attempt `apply_wall_ms` field has no fresh successful-run data
+point to report here (matching Section 6's explicit instruction to
 reuse Phase 21's own real evidence rather than force an OOM scenario).
+
+The 2 **failed** points (see "A real, disclosed measurement gap" below)
+did engage the fallback controller for real — their live stderr output
+showed a genuine `SKIPPED_UPDATED_MEMORY` event followed by
+`AUTO_FALLBACK_EXHAUSTED` — but this phase's own JSON-based measurement
+script could not capture that trace as structured data: verified
+directly that `main.cpp`'s `print_error_json()` (the schema an
+`AUTO_FALLBACK_EXHAUSTED` failure actually returns) carries no
+`"fallback"` object at all, unlike the success schema. This is a real,
+disclosed JSON-schema gap this phase found but does not fix (Section 22:
+profiling only, no behavior change) — listed as a Phase 25 candidate
+below.
 
 Phase 21's own committed evidence
 (`results/auto-fallback/validation.json`'s
@@ -253,24 +298,37 @@ successfully instead (see Bottleneck 2 above).
 
 ## Cold start
 
-Every Vulkan point's first-of-3 raw run was measurably slower than
-repeats 2–3 — a real, consistent pattern across every Vulkan point in
-this matrix (never observed on the CPU-only points, which showed no
-such gap):
+**Not every Vulkan point shows a cold-start gap** — an earlier draft of
+this document overclaimed "every Vulkan point" before checking the
+q8/q5/adaptive/`--auto` points specifically (caught in review; see PR
+#34). The real, precisely-scoped pattern, re-verified directly against
+`measurements.json`: only the *first time a given (model, GPU-layer-
+count) configuration is loaded within a measurement session* pays a
+large one-time cost — every subsequent point that reuses an
+already-warmed (model, layer-count) pair (q8/q5/adaptive/`--auto` all
+reuse `native`'s already-warmed SmolLM2-135M/30-layers combination,
+executed first) shows no such gap at all:
 
-| Point | Cold (run 1) | Warm (runs 2–3) |
-|---|---|---|
-| `smollm2-135m_vulkan_native` | 1170.4 ms | 505.2 / 462.1 ms |
-| `smollm2-360m_vulkan_native` | 1570.2 ms | 766.1 / 732.3 ms |
-| `smollm2-135m_vulkan_partial_half_15` | 1719.0 ms | 1082.3 / 614.7 ms |
+| Point | Cold (run 1) | Warm (runs 2–3) | Session-first for this (model, layers)? |
+|---|---|---|---|
+| `smollm2-135m_vulkan_native` | 1362.7 ms | 475.1 / 467.4 ms | yes |
+| `smollm2-360m_vulkan_native` | 2663.7 ms | 931.8 / 802.2 ms | yes (different model) |
+| `smollm2-135m_vulkan_partial_half_15` | 1285.6 ms | 617.7 / 570.4 ms | yes (different layer count, 15 not 30) |
+| `smollm2-135m_vulkan_q8` | 479.8 ms | 474.5 / 486.2 ms | no — reuses `native`'s warm (135M, 30) |
+| `smollm2-135m_vulkan_q5` | 478.5 ms | 476.5 / 480.7 ms | no |
+| `smollm2-135m_vulkan_adaptive` | 479.8 ms | 473.7 / 485.9 ms | no |
+| `smollm2-135m_vulkan_auto` | 513.6 ms | 475.7 / 489.8 ms | no |
 
-The reported `median` statistic already resists this (median of 3
-picks the middle value, not the cold outlier), so every other number
+The reported `median` statistic already resists a cold outlier when
+one exists (median of 3 picks the middle value), so every other number
 in this document is effectively warm-biased already — but the cold
-cost itself is real and disclosed here rather than silently absorbed.
-Likely cause (not separately instrumented this phase, so stated as a
-plausible explanation, not a measured fact): Vulkan shader/pipeline
-compilation on first use of a given device+configuration.
+cost itself is real for a session-first (model, layers) pair and
+disclosed here rather than silently absorbed. Likely cause (not
+separately instrumented this phase, so stated as a plausible
+explanation, not a measured fact): Vulkan shader/pipeline compilation
+specific to a given device+model+layer-count combination, cached
+thereafter for the rest of the process's lifetime (and possibly beyond,
+via a driver-level shader cache — not verified this phase).
 
 ## Limitations
 
@@ -323,11 +381,11 @@ generated-token count and identical output (bit-for-bit, matching this
 project's own quality-preservation discipline).
 
 **OPT-03: planner-stage cost attribution**
-measured cost: 8.5–10.2 ms per GPU-requested run, currently un-split
+measured cost: 8.6–12.0 ms per GPU-requested run, currently un-split
 between device enumeration, GGUF scan, and joint-planner arithmetic.
 possible approach: add 2 more stage-boundary timers inside
 `resolve_gpu_config()` (device enumeration vs GGUF scan vs planner
-call) to attribute this 8.5–10.2 ms precisely, before deciding whether
+call) to attribute this 8.6–12.0 ms precisely, before deciding whether
 any of the three is worth further optimization.
 risk: low (pure additive instrumentation, same pattern this phase
 already used).
@@ -335,17 +393,17 @@ success metric: three sub-costs sum to the already-measured
 `planner_ms` (a correctness check on the new instrumentation itself,
 not a performance target).
 
-**OPT-04: native vs Q8 vs Q5 throughput pattern**
-measured cost: not a "cost" in the bottleneck sense — an unexplained,
-real, counter-intuitive ordering (q8 fastest decode, native fastest
-prefill; CPU native faster than CPU q8) worth understanding before
-any future precision-related work assumes a direction.
+**OPT-04: native vs Q8 vs Q5 throughput ordering stability**
+measured cost: not a "cost" in the bottleneck sense — two independent
+measurement sessions on this host produced *opposite* native-vs-q8-vs-q5
+decode/prefill orderings (see "Native vs Q8 vs Q5" above), meaning no
+directional precision-cost claim is currently defensible either way.
 possible approach: a larger-sample re-measurement (more repeats, more
 context sizes) specifically targeting this question, before any code
-change.
+change or any future precision-related work assumes a direction.
 risk: none (measurement only).
-success metric: a statistically stable ordering (or confirmation that
-none exists) across a larger sample.
+success metric: a statistically stable ordering (or a confirmed,
+reproducible "no stable ordering exists") across a larger sample.
 
 **OPT-05 (deferred, not prioritized): the two unmeasured Qwen2.5-1.5B
 GPU points.** Re-attempt on a host with more available VRAM headroom,
@@ -354,3 +412,21 @@ be more conservative specifically for larger models — but this
 touches `gpu_policy.h`'s reserve policy, `joint-planner.md`'s own
 documented scope, and would need its own dedicated investigation, not
 a Phase 25 quick win.
+
+**OPT-06: fallback trace missing from the error JSON schema**
+measured cost: not a performance cost — a real observability gap found
+while investigating OPT-05's own failures: `main.cpp`'s
+`print_error_json()` (the schema an `AUTO_FALLBACK_EXHAUSTED` failure
+actually returns) carries no `"fallback"` object at all, unlike the
+success schema's detailed per-attempt trace — so a caller parsing JSON
+alone cannot see *why* the fallback was exhausted (skip vs. failed
+apply, which candidates were tried) on a fully-failed run, only the
+top-level `reason_code`.
+possible approach: extend `print_error_json()` to optionally include
+the fallback trace when one exists (additive JSON, matching this
+project's existing schema-evolution discipline).
+risk: low (additive-only JSON change, same pattern as every other
+`print_*_json()` function in this file).
+success metric: a fully-exhausted `--auto` run's JSON output includes
+the same per-attempt detail the success schema already has, verified
+against a real reproduction of this exact failure mode.

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "note": "Phase 24: inference performance profiling at a small, fixed set of controlled points, 3 repeats each. Profiling only -- no optimization was performed in this phase. See docs/performance-profiling.md.",
-  "membrane_commit": "b7210f95caf01013709554300d4a452de9a73633",
-  "generated_at": "2026-08-28T15:59:11Z",
+  "membrane_commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
+  "generated_at": "2026-08-28T18:45:41Z",
   "host": {
     "note": "generated on the developer machine that ran scripts/measure-performance-profile.py -- see each measurement's own device/backend field for the exact tested hardware; never generalize a device-scoped number."
   },
@@ -10,7 +10,7 @@
     {
       "schema_version": 1,
       "label": "smollm2-135m_vulkan_native",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "vulkan",
       "device": "Vulkan1",
       "model": "SmolLM2-135M-Instruct-f16.gguf",
@@ -31,108 +31,120 @@
       },
       "repeats": 3,
       "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
       "note": null,
       "timings_ms": {
         "total_ms": {
-          "median": 505.218,
-          "min": 462.118,
-          "max": 1170.38,
+          "median": 475.054,
+          "min": 467.385,
+          "max": 1362.66,
           "raw": [
-            1170.38,
-            505.218,
-            462.118
+            1362.66,
+            475.054,
+            467.385
           ]
         },
         "planner_ms": {
-          "median": 9.597,
-          "min": 9.504,
-          "max": 11.297,
+          "median": 8.855,
+          "min": 8.69,
+          "max": 12.192,
           "raw": [
-            11.297,
-            9.504,
-            9.597
+            12.192,
+            8.69,
+            8.855
           ]
         },
         "model_load_ms": {
-          "median": 252.959,
-          "min": 244.711,
-          "max": 542.567,
+          "median": 255.205,
+          "min": 250.488,
+          "max": 624.993,
           "raw": [
-            542.567,
-            252.959,
-            244.711
+            624.993,
+            255.205,
+            250.488
           ]
         },
         "tokenization_ms": {
-          "median": 0.107,
-          "min": 0.094,
-          "max": 0.136,
+          "median": 0.108,
+          "min": 0.083,
+          "max": 0.111,
           "raw": [
-            0.107,
-            0.136,
-            0.094
+            0.108,
+            0.083,
+            0.111
           ]
         },
         "context_create_ms": {
-          "median": 11.159,
-          "min": 10.187,
-          "max": 16.304,
+          "median": 11.223,
+          "min": 10.212,
+          "max": 40.444,
           "raw": [
-            16.304,
-            11.159,
-            10.187
+            40.444,
+            10.212,
+            11.223
           ]
         },
         "prefill_ms": {
-          "median": 13.307,
-          "min": 13.222,
-          "max": 29.478,
+          "median": 14.287,
+          "min": 13.047,
+          "max": 30.606,
           "raw": [
-            29.478,
-            13.307,
-            13.222
+            30.606,
+            13.047,
+            14.287
           ]
         },
         "decode_ms": {
-          "median": 128.503,
-          "min": 106.768,
-          "max": 132.054,
+          "median": 107.263,
+          "min": 102.342,
+          "max": 112.814,
           "raw": [
-            128.503,
-            132.054,
-            106.768
+            112.814,
+            107.263,
+            102.342
           ]
         },
         "first_token_ms": {
-          "median": 6.948,
-          "min": 5.004,
-          "max": 7.432,
+          "median": 5.28,
+          "min": 4.995,
+          "max": 6.541,
           "raw": [
-            6.948,
-            7.432,
-            5.004
+            6.541,
+            5.28,
+            4.995
           ]
         }
       },
       "throughput": {
         "prefill_tokens_per_second": {
-          "median": 375.738,
-          "min": 169.617,
-          "max": 378.154,
+          "median": 349.976,
+          "min": 163.367,
+          "max": 383.243,
           "raw": [
-            169.617,
-            375.738,
-            378.154
+            163.367,
+            383.243,
+            349.976
           ]
         },
         "decode_tokens_per_second": {
-          "median": 249.021,
-          "min": 242.325,
-          "max": 299.715,
+          "median": 298.332,
+          "min": 283.653,
+          "max": 312.678,
           "raw": [
-            249.021,
-            242.325,
-            299.715
+            283.653,
+            298.332,
+            312.678
           ]
         }
       },
@@ -144,7 +156,7 @@
     {
       "schema_version": 1,
       "label": "smollm2-135m_vulkan_q8",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "vulkan",
       "device": "Vulkan1",
       "model": "SmolLM2-135M-Instruct-f16.gguf",
@@ -165,108 +177,120 @@
       },
       "repeats": 3,
       "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
       "note": null,
       "timings_ms": {
         "total_ms": {
-          "median": 484.92,
-          "min": 480.768,
-          "max": 490.219,
+          "median": 479.827,
+          "min": 474.53,
+          "max": 486.235,
           "raw": [
-            484.92,
-            490.219,
-            480.768
+            479.827,
+            474.53,
+            486.235
           ]
         },
         "planner_ms": {
-          "median": 8.507,
-          "min": 8.479,
-          "max": 9.161,
+          "median": 8.591,
+          "min": 8.577,
+          "max": 8.73,
           "raw": [
-            8.479,
-            9.161,
-            8.507
+            8.577,
+            8.73,
+            8.591
           ]
         },
         "model_load_ms": {
-          "median": 245.195,
-          "min": 243.969,
-          "max": 246.176,
+          "median": 248.82,
+          "min": 245.577,
+          "max": 251.898,
           "raw": [
-            246.176,
-            243.969,
-            245.195
+            245.577,
+            248.82,
+            251.898
           ]
         },
         "tokenization_ms": {
-          "median": 0.107,
-          "min": 0.086,
-          "max": 0.122,
+          "median": 0.108,
+          "min": 0.091,
+          "max": 0.123,
           "raw": [
-            0.107,
-            0.086,
-            0.122
+            0.123,
+            0.091,
+            0.108
           ]
         },
         "context_create_ms": {
-          "median": 11.909,
-          "min": 11.72,
-          "max": 16.214,
+          "median": 11.612,
+          "min": 10.844,
+          "max": 12.131,
           "raw": [
-            16.214,
-            11.909,
-            11.72
+            12.131,
+            10.844,
+            11.612
           ]
         },
         "prefill_ms": {
-          "median": 18.776,
-          "min": 17.645,
-          "max": 22.579,
+          "median": 15.015,
+          "min": 14.878,
+          "max": 16.381,
           "raw": [
-            18.776,
-            22.579,
-            17.645
+            16.381,
+            15.015,
+            14.878
           ]
         },
         "decode_ms": {
-          "median": 119.025,
-          "min": 118.762,
-          "max": 121.78,
+          "median": 119.723,
+          "min": 116.274,
+          "max": 121.407,
           "raw": [
-            119.025,
-            121.78,
-            118.762
+            119.723,
+            116.274,
+            121.407
           ]
         },
         "first_token_ms": {
-          "median": 5.697,
-          "min": 5.568,
-          "max": 6.45,
+          "median": 5.821,
+          "min": 5.776,
+          "max": 6.448,
           "raw": [
-            5.568,
-            6.45,
-            5.697
+            5.821,
+            5.776,
+            6.448
           ]
         }
       },
       "throughput": {
         "prefill_tokens_per_second": {
-          "median": 266.295,
-          "min": 221.443,
-          "max": 283.367,
+          "median": 332.989,
+          "min": 305.236,
+          "max": 336.073,
           "raw": [
-            266.295,
-            221.443,
-            283.367
+            305.236,
+            332.989,
+            336.073
           ]
         },
         "decode_tokens_per_second": {
-          "median": 268.851,
-          "min": 262.77,
-          "max": 269.447,
+          "median": 267.283,
+          "min": 263.576,
+          "max": 275.211,
           "raw": [
-            268.851,
-            262.77,
-            269.447
+            267.283,
+            275.211,
+            263.576
           ]
         }
       },
@@ -278,7 +302,7 @@
     {
       "schema_version": 1,
       "label": "smollm2-135m_vulkan_q5",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "vulkan",
       "device": "Vulkan1",
       "model": "SmolLM2-135M-Instruct-f16.gguf",
@@ -299,108 +323,120 @@
       },
       "repeats": 3,
       "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
       "note": null,
       "timings_ms": {
         "total_ms": {
-          "median": 477.595,
-          "min": 474.576,
-          "max": 496.635,
+          "median": 478.471,
+          "min": 476.477,
+          "max": 480.682,
           "raw": [
-            496.635,
-            477.595,
-            474.576
+            478.471,
+            476.477,
+            480.682
           ]
         },
         "planner_ms": {
-          "median": 8.656,
-          "min": 8.511,
-          "max": 9.933,
+          "median": 8.684,
+          "min": 8.526,
+          "max": 8.833,
           "raw": [
-            8.511,
-            8.656,
-            9.933
+            8.833,
+            8.526,
+            8.684
           ]
         },
         "model_load_ms": {
-          "median": 242.412,
-          "min": 239.526,
-          "max": 254.106,
+          "median": 248.51,
+          "min": 244.648,
+          "max": 252.593,
           "raw": [
-            254.106,
-            239.526,
-            242.412
+            244.648,
+            248.51,
+            252.593
           ]
         },
         "tokenization_ms": {
-          "median": 0.104,
-          "min": 0.09,
-          "max": 0.148,
+          "median": 0.106,
+          "min": 0.104,
+          "max": 0.109,
           "raw": [
-            0.148,
-            0.09,
-            0.104
+            0.109,
+            0.104,
+            0.106
           ]
         },
         "context_create_ms": {
-          "median": 10.518,
-          "min": 10.172,
-          "max": 12.168,
+          "median": 11.965,
+          "min": 10.517,
+          "max": 12.757,
           "raw": [
-            10.518,
-            10.172,
-            12.168
+            12.757,
+            10.517,
+            11.965
           ]
         },
         "prefill_ms": {
-          "median": 14.615,
-          "min": 13.423,
-          "max": 17.873,
+          "median": 13.269,
+          "min": 13.182,
+          "max": 16.754,
           "raw": [
-            17.873,
-            13.423,
-            14.615
+            16.754,
+            13.269,
+            13.182
           ]
         },
         "decode_ms": {
-          "median": 125.455,
-          "min": 120.527,
-          "max": 126.242,
+          "median": 119.715,
+          "min": 119.103,
+          "max": 120.549,
           "raw": [
-            125.455,
-            126.242,
-            120.527
+            120.549,
+            119.715,
+            119.103
           ]
         },
         "first_token_ms": {
-          "median": 5.87,
-          "min": 5.716,
-          "max": 5.995,
+          "median": 5.904,
+          "min": 5.808,
+          "max": 6.645,
           "raw": [
-            5.995,
-            5.716,
-            5.87
+            6.645,
+            5.808,
+            5.904
           ]
         }
       },
       "throughput": {
         "prefill_tokens_per_second": {
-          "median": 342.125,
-          "min": 279.749,
-          "max": 372.496,
+          "median": 376.821,
+          "min": 298.439,
+          "max": 379.295,
           "raw": [
-            279.749,
-            372.496,
-            342.125
+            298.439,
+            376.821,
+            379.295
           ]
         },
         "decode_tokens_per_second": {
-          "median": 255.072,
-          "min": 253.482,
-          "max": 265.5,
+          "median": 267.301,
+          "min": 265.451,
+          "max": 268.675,
           "raw": [
-            255.072,
-            253.482,
-            265.5
+            265.451,
+            267.301,
+            268.675
           ]
         }
       },
@@ -412,7 +448,7 @@
     {
       "schema_version": 1,
       "label": "smollm2-135m_vulkan_adaptive",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "vulkan",
       "device": "Vulkan1",
       "model": "SmolLM2-135M-Instruct-f16.gguf",
@@ -433,108 +469,120 @@
       },
       "repeats": 3,
       "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
       "note": null,
       "timings_ms": {
         "total_ms": {
-          "median": 483.547,
-          "min": 481.294,
-          "max": 525.656,
+          "median": 479.789,
+          "min": 473.674,
+          "max": 485.869,
           "raw": [
-            525.656,
-            481.294,
-            483.547
+            479.789,
+            473.674,
+            485.869
           ]
         },
         "planner_ms": {
-          "median": 8.45,
-          "min": 8.325,
-          "max": 8.483,
+          "median": 8.626,
+          "min": 8.574,
+          "max": 8.901,
           "raw": [
-            8.325,
-            8.483,
-            8.45
+            8.626,
+            8.901,
+            8.574
           ]
         },
         "model_load_ms": {
-          "median": 248.354,
-          "min": 244.921,
-          "max": 252.873,
+          "median": 252.245,
+          "min": 246.956,
+          "max": 252.261,
           "raw": [
-            244.921,
-            252.873,
-            248.354
+            252.245,
+            246.956,
+            252.261
           ]
         },
         "tokenization_ms": {
-          "median": 0.101,
-          "min": 0.091,
-          "max": 0.123,
+          "median": 0.111,
+          "min": 0.105,
+          "max": 0.135,
           "raw": [
-            0.101,
-            0.123,
-            0.091
+            0.135,
+            0.111,
+            0.105
           ]
         },
         "context_create_ms": {
-          "median": 13.25,
-          "min": 12.849,
-          "max": 13.67,
+          "median": 11.334,
+          "min": 11.025,
+          "max": 11.766,
           "raw": [
-            13.67,
-            12.849,
-            13.25
+            11.025,
+            11.766,
+            11.334
           ]
         },
         "prefill_ms": {
-          "median": 17.288,
-          "min": 13.516,
-          "max": 19.079,
+          "median": 14.165,
+          "min": 13.365,
+          "max": 15.081,
           "raw": [
-            19.079,
-            13.516,
-            17.288
+            14.165,
+            13.365,
+            15.081
           ]
         },
         "decode_ms": {
-          "median": 120.365,
-          "min": 118.138,
-          "max": 165.289,
+          "median": 117.965,
+          "min": 116.957,
+          "max": 120.869,
           "raw": [
-            165.289,
-            118.138,
-            120.365
+            117.965,
+            116.957,
+            120.869
           ]
         },
         "first_token_ms": {
-          "median": 6.484,
-          "min": 6.308,
-          "max": 7.655,
+          "median": 5.604,
+          "min": 5.578,
+          "max": 6.21,
           "raw": [
-            7.655,
-            6.308,
-            6.484
+            5.604,
+            5.578,
+            6.21
           ]
         }
       },
       "throughput": {
         "prefill_tokens_per_second": {
-          "median": 289.22,
-          "min": 262.069,
-          "max": 369.926,
+          "median": 352.991,
+          "min": 331.542,
+          "max": 374.101,
           "raw": [
-            262.069,
-            369.926,
-            289.22
+            352.991,
+            374.101,
+            331.542
           ]
         },
         "decode_tokens_per_second": {
-          "median": 265.857,
-          "min": 193.6,
-          "max": 270.87,
+          "median": 271.266,
+          "min": 264.749,
+          "max": 273.606,
           "raw": [
-            193.6,
-            270.87,
-            265.857
+            271.266,
+            273.606,
+            264.749
           ]
         }
       },
@@ -546,7 +594,7 @@
     {
       "schema_version": 1,
       "label": "smollm2-135m_cpu_native",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "cpu",
       "device": null,
       "model": "SmolLM2-135M-Instruct-f16.gguf",
@@ -567,108 +615,120 @@
       },
       "repeats": 3,
       "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
       "note": null,
       "timings_ms": {
         "total_ms": {
-          "median": 747.812,
-          "min": 745.756,
-          "max": 753.324,
+          "median": 737.263,
+          "min": 724.765,
+          "max": 746.386,
           "raw": [
-            747.812,
-            745.756,
-            753.324
+            737.263,
+            724.765,
+            746.386
           ]
         },
         "planner_ms": {
-          "median": 0.007,
+          "median": 0.006,
           "min": 0.006,
           "max": 0.007,
           "raw": [
-            0.006,
             0.007,
-            0.007
+            0.006,
+            0.006
           ]
         },
         "model_load_ms": {
-          "median": 148.889,
-          "min": 147.831,
-          "max": 170.345,
+          "median": 146.148,
+          "min": 145.747,
+          "max": 146.783,
           "raw": [
-            147.831,
-            148.889,
-            170.345
+            146.148,
+            146.783,
+            145.747
           ]
         },
         "tokenization_ms": {
-          "median": 0.086,
-          "min": 0.086,
-          "max": 0.091,
+          "median": 0.088,
+          "min": 0.087,
+          "max": 0.088,
           "raw": [
-            0.086,
-            0.091,
-            0.086
+            0.087,
+            0.088,
+            0.088
           ]
         },
         "context_create_ms": {
-          "median": 27.583,
-          "min": 27.522,
-          "max": 28.242,
+          "median": 26.858,
+          "min": 26.804,
+          "max": 27.169,
           "raw": [
-            27.583,
-            28.242,
-            27.522
+            27.169,
+            26.858,
+            26.804
           ]
         },
         "prefill_ms": {
-          "median": 17.11,
-          "min": 15.982,
-          "max": 17.136,
+          "median": 16.945,
+          "min": 16.334,
+          "max": 18.287,
           "raw": [
-            15.982,
-            17.11,
-            17.136
+            16.945,
+            18.287,
+            16.334
           ]
         },
         "decode_ms": {
-          "median": 470.936,
-          "min": 453.0,
-          "max": 476.958,
+          "median": 469.055,
+          "min": 454.147,
+          "max": 470.573,
           "raw": [
-            476.958,
-            470.936,
-            453.0
+            469.055,
+            454.147,
+            470.573
           ]
         },
         "first_token_ms": {
-          "median": 15.603,
-          "min": 13.757,
-          "max": 15.945,
+          "median": 15.504,
+          "min": 14.451,
+          "max": 15.982,
           "raw": [
-            15.603,
-            15.945,
-            13.757
+            15.504,
+            15.982,
+            14.451
           ]
         }
       },
       "throughput": {
         "prefill_tokens_per_second": {
-          "median": 292.222,
-          "min": 291.787,
-          "max": 312.853,
+          "median": 295.069,
+          "min": 273.423,
+          "max": 306.103,
           "raw": [
-            312.853,
-            292.222,
-            291.787
+            295.069,
+            273.423,
+            306.103
           ]
         },
         "decode_tokens_per_second": {
-          "median": 67.95,
-          "min": 67.092,
-          "max": 70.64,
+          "median": 68.222,
+          "min": 68.002,
+          "max": 70.462,
           "raw": [
-            67.092,
-            67.95,
-            70.64
+            68.222,
+            70.462,
+            68.002
           ]
         }
       },
@@ -680,7 +740,7 @@
     {
       "schema_version": 1,
       "label": "smollm2-135m_cpu_q8",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "cpu",
       "device": null,
       "model": "SmolLM2-135M-Instruct-f16.gguf",
@@ -701,108 +761,120 @@
       },
       "repeats": 3,
       "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
       "note": null,
       "timings_ms": {
         "total_ms": {
-          "median": 786.321,
-          "min": 746.344,
-          "max": 849.244,
+          "median": 740.293,
+          "min": 727.976,
+          "max": 752.826,
           "raw": [
-            786.321,
-            746.344,
-            849.244
+            740.293,
+            752.826,
+            727.976
           ]
         },
         "planner_ms": {
-          "median": 0.007,
-          "min": 0.007,
-          "max": 0.008,
+          "median": 0.006,
+          "min": 0.006,
+          "max": 0.006,
           "raw": [
-            0.007,
-            0.007,
-            0.008
+            0.006,
+            0.006,
+            0.006
           ]
         },
         "model_load_ms": {
-          "median": 157.904,
-          "min": 157.836,
-          "max": 167.55,
+          "median": 156.439,
+          "min": 155.698,
+          "max": 171.012,
           "raw": [
-            157.904,
-            157.836,
-            167.55
+            156.439,
+            171.012,
+            155.698
           ]
         },
         "tokenization_ms": {
-          "median": 0.087,
+          "median": 0.089,
           "min": 0.086,
-          "max": 0.09,
+          "max": 0.101,
           "raw": [
-            0.09,
-            0.086,
-            0.087
+            0.101,
+            0.089,
+            0.086
           ]
         },
         "context_create_ms": {
-          "median": 18.877,
-          "min": 18.376,
-          "max": 20.601,
+          "median": 18.428,
+          "min": 18.062,
+          "max": 18.557,
           "raw": [
-            18.877,
-            18.376,
-            20.601
+            18.062,
+            18.557,
+            18.428
           ]
         },
         "prefill_ms": {
-          "median": 17.112,
-          "min": 16.477,
-          "max": 17.158,
+          "median": 17.807,
+          "min": 17.189,
+          "max": 17.916,
           "raw": [
-            16.477,
-            17.112,
-            17.158
+            17.189,
+            17.916,
+            17.807
           ]
         },
         "decode_ms": {
-          "median": 513.602,
-          "min": 472.1,
-          "max": 559.91,
+          "median": 466.524,
+          "min": 454.986,
+          "max": 469.409,
           "raw": [
-            513.602,
-            472.1,
-            559.91
+            469.409,
+            466.524,
+            454.986
           ]
         },
         "first_token_ms": {
-          "median": 15.026,
-          "min": 14.53,
-          "max": 15.336,
+          "median": 14.64,
+          "min": 14.135,
+          "max": 16.121,
           "raw": [
-            15.026,
-            15.336,
-            14.53
+            16.121,
+            14.64,
+            14.135
           ]
         }
       },
       "throughput": {
         "prefill_tokens_per_second": {
-          "median": 292.198,
-          "min": 291.405,
-          "max": 303.456,
+          "median": 280.793,
+          "min": 279.081,
+          "max": 290.876,
           "raw": [
-            303.456,
-            292.198,
-            291.405
+            290.876,
+            279.081,
+            280.793
           ]
         },
         "decode_tokens_per_second": {
-          "median": 62.305,
-          "min": 57.152,
-          "max": 67.782,
+          "median": 68.592,
+          "min": 68.171,
+          "max": 70.332,
           "raw": [
-            62.305,
-            67.782,
-            57.152
+            68.171,
+            68.592,
+            70.332
           ]
         }
       },
@@ -814,7 +886,7 @@
     {
       "schema_version": 1,
       "label": "smollm2-360m_vulkan_native",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "vulkan",
       "device": "Vulkan1",
       "model": "SmolLM2-360M-Instruct-f16.gguf",
@@ -835,108 +907,120 @@
       },
       "repeats": 3,
       "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
       "note": null,
       "timings_ms": {
         "total_ms": {
-          "median": 766.146,
-          "min": 732.306,
-          "max": 1570.212,
+          "median": 931.816,
+          "min": 802.215,
+          "max": 2663.737,
           "raw": [
-            1570.212,
-            766.146,
-            732.306
+            2663.737,
+            931.816,
+            802.215
           ]
         },
         "planner_ms": {
-          "median": 8.679,
-          "min": 8.661,
-          "max": 10.177,
+          "median": 12.033,
+          "min": 9.212,
+          "max": 14.7,
           "raw": [
-            10.177,
-            8.679,
-            8.661
+            12.033,
+            14.7,
+            9.212
           ]
         },
         "model_load_ms": {
-          "median": 403.643,
-          "min": 400.255,
-          "max": 1217.995,
+          "median": 477.49,
+          "min": 448.917,
+          "max": 2299.185,
           "raw": [
-            1217.995,
-            403.643,
-            400.255
+            2299.185,
+            477.49,
+            448.917
           ]
         },
         "tokenization_ms": {
-          "median": 0.1,
-          "min": 0.098,
-          "max": 0.106,
+          "median": 0.121,
+          "min": 0.118,
+          "max": 0.123,
           "raw": [
-            0.1,
-            0.098,
-            0.106
+            0.123,
+            0.118,
+            0.121
           ]
         },
         "context_create_ms": {
-          "median": 13.725,
-          "min": 13.497,
-          "max": 17.024,
+          "median": 19.416,
+          "min": 19.025,
+          "max": 60.389,
           "raw": [
-            17.024,
-            13.725,
-            13.497
+            19.416,
+            60.389,
+            19.025
           ]
         },
         "prefill_ms": {
-          "median": 18.396,
-          "min": 18.114,
-          "max": 25.806,
+          "median": 20.196,
+          "min": 19.919,
+          "max": 20.963,
           "raw": [
-            25.806,
-            18.396,
-            18.114
+            20.963,
+            19.919,
+            20.196
           ]
         },
         "decode_ms": {
-          "median": 216.434,
-          "min": 214.592,
-          "max": 219.654,
+          "median": 233.479,
+          "min": 225.528,
+          "max": 239.533,
           "raw": [
-            219.654,
-            214.592,
-            216.434
+            233.479,
+            239.533,
+            225.528
           ]
         },
         "first_token_ms": {
-          "median": 9.219,
-          "min": 8.677,
-          "max": 10.847,
+          "median": 9.769,
+          "min": 9.651,
+          "max": 9.795,
           "raw": [
-            10.847,
-            8.677,
-            9.219
+            9.769,
+            9.651,
+            9.795
           ]
         }
       },
       "throughput": {
         "prefill_tokens_per_second": {
-          "median": 271.791,
-          "min": 193.751,
-          "max": 276.024,
+          "median": 247.572,
+          "min": 238.516,
+          "max": 251.012,
           "raw": [
-            193.751,
-            271.791,
-            276.024
+            238.516,
+            251.012,
+            247.572
           ]
         },
         "decode_tokens_per_second": {
-          "median": 147.851,
-          "min": 145.684,
-          "max": 149.12,
+          "median": 137.057,
+          "min": 133.593,
+          "max": 141.889,
           "raw": [
-            145.684,
-            149.12,
-            147.851
+            137.057,
+            133.593,
+            141.889
           ]
         }
       },
@@ -948,7 +1032,7 @@
     {
       "schema_version": 1,
       "label": "qwen2.5-1.5b_vulkan_native_gpu_placement",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "vulkan",
       "device": null,
       "model": "qwen2.5-1.5b-instruct-fp16.gguf",
@@ -964,6 +1048,10 @@
       "resolved": {},
       "repeats": 3,
       "ok_count": 0,
+      "token_counts": {
+        "prompt_tokens": [],
+        "generated_tokens": []
+      },
       "note": "0/3 repeats succeeded -- last observed failure reason_code='AUTO_FALLBACK_EXHAUSTED'. See docs/performance-profiling.md for this specific point's own real, disclosed root-cause discussion (never silently omitted, never a fabricated measurement).",
       "timings_ms": {
         "total_ms": {
@@ -1037,7 +1125,7 @@
     {
       "schema_version": 1,
       "label": "qwen2.5-1.5b_vulkan_native_cpu_placement",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "vulkan",
       "device": null,
       "model": "qwen2.5-1.5b-instruct-fp16.gguf",
@@ -1053,6 +1141,10 @@
       "resolved": {},
       "repeats": 3,
       "ok_count": 0,
+      "token_counts": {
+        "prompt_tokens": [],
+        "generated_tokens": []
+      },
       "note": "0/3 repeats succeeded -- last observed failure reason_code='AUTO_FALLBACK_EXHAUSTED'. See docs/performance-profiling.md for this specific point's own real, disclosed root-cause discussion (never silently omitted, never a fabricated measurement).",
       "timings_ms": {
         "total_ms": {
@@ -1126,7 +1218,7 @@
     {
       "schema_version": 1,
       "label": "qwen2.5-1.5b_cpu_native",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "cpu",
       "device": null,
       "model": "qwen2.5-1.5b-instruct-fp16.gguf",
@@ -1147,108 +1239,120 @@
       },
       "repeats": 3,
       "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          16,
+          16,
+          16
+        ]
+      },
       "note": null,
       "timings_ms": {
         "total_ms": {
-          "median": 15989.839,
-          "min": 15618.941,
-          "max": 16088.063,
+          "median": 14191.0,
+          "min": 12640.876,
+          "max": 16952.248,
           "raw": [
-            15989.839,
-            16088.063,
-            15618.941
+            12640.876,
+            16952.248,
+            14191.0
           ]
         },
         "planner_ms": {
-          "median": 0.006,
-          "min": 0.005,
+          "median": 0.007,
+          "min": 0.006,
           "max": 0.007,
           "raw": [
+            0.007,
             0.006,
-            0.005,
             0.007
           ]
         },
         "model_load_ms": {
-          "median": 5543.841,
-          "min": 5450.704,
-          "max": 6248.233,
+          "median": 5505.918,
+          "min": 4945.68,
+          "max": 5699.914,
           "raw": [
-            5543.841,
-            5450.704,
-            6248.233
+            5505.918,
+            5699.914,
+            4945.68
           ]
         },
         "tokenization_ms": {
-          "median": 4.205,
-          "min": 3.332,
-          "max": 5.225,
+          "median": 3.963,
+          "min": 3.683,
+          "max": 4.122,
           "raw": [
-            3.332,
-            4.205,
-            5.225
+            3.963,
+            4.122,
+            3.683
           ]
         },
         "context_create_ms": {
-          "median": 79.212,
-          "min": 77.635,
-          "max": 91.691,
+          "median": 80.777,
+          "min": 73.831,
+          "max": 82.574,
           "raw": [
-            91.691,
-            77.635,
-            79.212
+            80.777,
+            73.831,
+            82.574
           ]
         },
         "prefill_ms": {
-          "median": 2582.444,
-          "min": 2126.998,
-          "max": 2739.245,
+          "median": 2254.047,
+          "min": 1829.664,
+          "max": 6445.389,
           "raw": [
-            2126.998,
-            2739.245,
-            2582.444
+            2254.047,
+            6445.389,
+            1829.664
           ]
         },
         "decode_ms": {
-          "median": 7269.187,
-          "min": 6064.225,
-          "max": 7681.393,
+          "median": 4309.718,
+          "min": 4206.021,
+          "max": 6768.918,
           "raw": [
-            7681.393,
-            7269.187,
-            6064.225
+            4309.718,
+            4206.021,
+            6768.918
           ]
         },
         "first_token_ms": {
-          "median": 1392.673,
-          "min": 1136.141,
-          "max": 2179.225,
+          "median": 1307.488,
+          "min": 585.757,
+          "max": 1311.519,
           "raw": [
-            1136.141,
-            1392.673,
-            2179.225
+            1307.488,
+            585.757,
+            1311.519
           ]
         }
       },
       "throughput": {
         "prefill_tokens_per_second": {
-          "median": 1.936,
-          "min": 1.825,
-          "max": 2.351,
+          "median": 2.218,
+          "min": 0.776,
+          "max": 2.733,
           "raw": [
-            2.351,
-            1.825,
-            1.936
+            2.218,
+            0.776,
+            2.733
           ]
         },
         "decode_tokens_per_second": {
-          "median": 2.201,
-          "min": 2.083,
-          "max": 2.638,
+          "median": 3.713,
+          "min": 2.364,
+          "max": 3.804,
           "raw": [
-            2.083,
-            2.201,
-            2.638
+            3.713,
+            3.804,
+            2.364
           ]
         }
       },
@@ -1260,7 +1364,7 @@
     {
       "schema_version": 1,
       "label": "smollm2-135m_vulkan_partial_half_15",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "vulkan",
       "device": "Vulkan1",
       "model": "SmolLM2-135M-Instruct-f16.gguf",
@@ -1281,108 +1385,120 @@
       },
       "repeats": 3,
       "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
       "note": null,
       "timings_ms": {
         "total_ms": {
-          "median": 1082.343,
-          "min": 614.718,
-          "max": 1719.027,
+          "median": 617.74,
+          "min": 570.433,
+          "max": 1285.605,
           "raw": [
-            1719.027,
-            1082.343,
-            614.718
+            1285.605,
+            617.74,
+            570.433
           ]
         },
         "planner_ms": {
-          "median": 10.229,
-          "min": 8.675,
-          "max": 13.001,
+          "median": 8.577,
+          "min": 8.573,
+          "max": 11.607,
           "raw": [
-            13.001,
-            10.229,
-            8.675
+            11.607,
+            8.573,
+            8.577
           ]
         },
         "model_load_ms": {
-          "median": 332.483,
-          "min": 194.971,
-          "max": 841.15,
+          "median": 195.438,
+          "min": 184.215,
+          "max": 493.355,
           "raw": [
-            841.15,
-            332.483,
-            194.971
+            493.355,
+            195.438,
+            184.215
           ]
         },
         "tokenization_ms": {
           "median": 0.087,
-          "min": 0.077,
-          "max": 1.836,
+          "min": 0.086,
+          "max": 0.161,
           "raw": [
-            1.836,
-            0.077,
+            0.086,
+            0.161,
             0.087
           ]
         },
         "context_create_ms": {
-          "median": 24.007,
-          "min": 22.756,
-          "max": 25.536,
+          "median": 22.916,
+          "min": 19.733,
+          "max": 29.814,
           "raw": [
-            25.536,
-            24.007,
-            22.756
+            22.916,
+            29.814,
+            19.733
           ]
         },
         "prefill_ms": {
-          "median": 24.853,
-          "min": 20.975,
-          "max": 103.246,
+          "median": 22.25,
+          "min": 20.059,
+          "max": 39.635,
           "raw": [
-            103.246,
-            24.853,
-            20.975
+            39.635,
+            22.25,
+            20.059
           ]
         },
         "decode_ms": {
-          "median": 268.826,
-          "min": 263.728,
-          "max": 285.538,
+          "median": 262.649,
+          "min": 251.725,
+          "max": 278.408,
           "raw": [
-            263.728,
-            268.826,
-            285.538
+            262.649,
+            278.408,
+            251.725
           ]
         },
         "first_token_ms": {
-          "median": 10.908,
-          "min": 10.424,
-          "max": 15.506,
+          "median": 10.825,
+          "min": 9.595,
+          "max": 13.263,
           "raw": [
-            10.424,
-            15.506,
-            10.908
+            13.263,
+            10.825,
+            9.595
           ]
         }
       },
       "throughput": {
         "prefill_tokens_per_second": {
-          "median": 201.185,
-          "min": 48.428,
-          "max": 238.379,
+          "median": 224.721,
+          "min": 126.151,
+          "max": 249.27,
           "raw": [
-            48.428,
-            201.185,
-            238.379
+            126.151,
+            224.721,
+            249.27
           ]
         },
         "decode_tokens_per_second": {
-          "median": 119.036,
-          "min": 112.069,
-          "max": 121.337,
+          "median": 121.836,
+          "min": 114.939,
+          "max": 127.123,
           "raw": [
-            121.337,
-            119.036,
-            112.069
+            121.836,
+            114.939,
+            127.123
           ]
         }
       },
@@ -1394,7 +1510,7 @@
     {
       "schema_version": 1,
       "label": "smollm2-135m_vulkan_auto",
-      "commit": "b7210f95caf01013709554300d4a452de9a73633",
+      "commit": "17b7602e744a7fed498bf0eb5d8398ca8d99c7a1",
       "backend": "vulkan",
       "device": "Vulkan1",
       "model": "SmolLM2-135M-Instruct-f16.gguf",
@@ -1415,108 +1531,120 @@
       },
       "repeats": 3,
       "ok_count": 3,
+      "token_counts": {
+        "prompt_tokens": [
+          5,
+          5,
+          5
+        ],
+        "generated_tokens": [
+          32,
+          32,
+          32
+        ]
+      },
       "note": null,
       "timings_ms": {
         "total_ms": {
-          "median": 507.055,
-          "min": 483.917,
-          "max": 525.634,
+          "median": 489.798,
+          "min": 475.682,
+          "max": 513.635,
           "raw": [
-            525.634,
-            507.055,
-            483.917
+            513.635,
+            475.682,
+            489.798
           ]
         },
         "planner_ms": {
-          "median": 8.453,
-          "min": 8.297,
-          "max": 8.728,
+          "median": 8.721,
+          "min": 8.134,
+          "max": 8.83,
           "raw": [
-            8.728,
-            8.453,
-            8.297
+            8.721,
+            8.83,
+            8.134
           ]
         },
         "model_load_ms": {
-          "median": 252.481,
-          "min": 250.259,
-          "max": 260.855,
+          "median": 251.886,
+          "min": 245.83,
+          "max": 257.13,
           "raw": [
-            260.855,
-            252.481,
-            250.259
+            257.13,
+            245.83,
+            251.886
           ]
         },
         "tokenization_ms": {
-          "median": 0.102,
+          "median": 0.105,
           "min": 0.085,
           "max": 0.12,
           "raw": [
-            0.085,
+            0.105,
             0.12,
-            0.102
+            0.085
           ]
         },
         "context_create_ms": {
-          "median": 10.743,
-          "min": 10.686,
-          "max": 16.074,
+          "median": 12.155,
+          "min": 11.554,
+          "max": 15.09,
           "raw": [
-            16.074,
-            10.743,
-            10.686
+            15.09,
+            11.554,
+            12.155
           ]
         },
         "prefill_ms": {
-          "median": 19.614,
-          "min": 14.698,
-          "max": 24.605,
+          "median": 14.835,
+          "min": 13.719,
+          "max": 17.988,
           "raw": [
-            24.605,
-            19.614,
-            14.698
+            17.988,
+            14.835,
+            13.719
           ]
         },
         "decode_ms": {
-          "median": 134.937,
-          "min": 121.342,
-          "max": 137.813,
+          "median": 118.382,
+          "min": 117.806,
+          "max": 130.831,
           "raw": [
-            134.937,
-            137.813,
-            121.342
+            130.831,
+            118.382,
+            117.806
           ]
         },
         "first_token_ms": {
-          "median": 7.057,
-          "min": 7.001,
-          "max": 7.382,
+          "median": 6.023,
+          "min": 5.685,
+          "max": 6.065,
           "raw": [
-            7.057,
-            7.382,
-            7.001
+            6.023,
+            6.065,
+            5.685
           ]
         }
       },
       "throughput": {
         "prefill_tokens_per_second": {
-          "median": 254.926,
-          "min": 203.213,
-          "max": 340.193,
+          "median": 337.041,
+          "min": 277.958,
+          "max": 364.468,
           "raw": [
-            203.213,
-            254.926,
-            340.193
+            277.958,
+            337.041,
+            364.468
           ]
         },
         "decode_tokens_per_second": {
-          "median": 237.147,
-          "min": 232.2,
-          "max": 263.718,
+          "median": 270.312,
+          "min": 244.59,
+          "max": 271.633,
           "raw": [
-            237.147,
-            232.2,
-            263.718
+            244.59,
+            270.312,
+            271.633
           ]
         }
       },
