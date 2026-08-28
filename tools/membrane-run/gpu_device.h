@@ -62,11 +62,35 @@ size_t	membrane_gpu_list_devices(membrane_gpu_device_info_t *out,
 size_t	membrane_gpu_match_device(const membrane_gpu_device_info_t *devices,
 			size_t n_devices, const char *query, size_t *out_index);
 
+# define MEMBRANE_GPU_ARCH_NAME_MAX	64
+
 typedef struct s_membrane_gpu_model_estimate
 {
 	uint64_t	bytes_per_layer;	/* real average, from GGUF tensor
 									 * sizes -- not a hardcoded number */
 	uint64_t	total_bytes;
+	/* Phase 20: real bytes of whichever tensor(s) llama.cpp assigns the
+	 * LLM_TENSOR_LAYER_OUTPUT role to (see llama-model-loader.cpp's
+	 * create_tensor()) -- source-verified against llama.cpp: the
+	 * output-role tensor(s) are GPU-eligible as soon as n_gpu_layers >=
+	 * 1, counted as ONE extra "layer" beyond the model's n_layer_all
+	 * blk.N. layers (llama_model::n_gpu_layers()'s own comment: "plus 1
+	 * for the 'output' layer"), while the input token-embedding tensor
+	 * is ALWAYS CPU-resident regardless of n_gpu_layers
+	 * (llama-model.cpp's dev_input assignment: "there is very little
+	 * benefit to offloading the input layer, so always keep it on the
+	 * CPU"). Concretely: real "output.weight" + "output_norm.weight"
+	 * bytes if a separate output.weight tensor exists; on a TIED-
+	 * embedding model (no separate output.weight in the GGUF -- e.g.
+	 * SmolLM2), llama.cpp creates a DUPLICATE, separately-allocated
+	 * copy of token_embd.weight specifically for the output role
+	 * (TENSOR_DUPLICATED, see llama-model-loader.cpp:1086 routing it to
+	 * the output buft_list, not the input one) -- so this field is
+	 * token_embd.weight's own bytes + output_norm.weight's bytes in
+	 * that case. 0 if neither tensor was found (unrecognized/nonstandard
+	 * architecture tensor naming) -- callers must not assume every
+	 * architecture's output-role footprint is captured here. */
+	uint64_t	output_role_bytes;
 	int32_t		n_layer;			/* real count of distinct "blk.N."
 									 * groups seen */
 	int32_t		n_embd;
@@ -78,6 +102,13 @@ typedef struct s_membrane_gpu_model_estimate
 									 * architecture leaves this 0) --
 									 * callers must not estimate a KV
 									 * budget when this is 0 */
+	/* Phase 20: "general.architecture"'s raw string value, always set
+	 * whenever hparams_available is 1 (both are read from the same GGUF
+	 * key lookup) -- lets a caller run membrane_check_kv_compat()
+	 * PRE-LOAD, before this field existed only main.cpp's post-load
+	 * read_model_shape() could supply an architecture string. Empty
+	 * string if hparams_available is 0. */
+	char		arch_name[MEMBRANE_GPU_ARCH_NAME_MAX];
 }	membrane_gpu_model_estimate_t;
 
 /* Reads real per-tensor byte sizes AND hparams from GGUF metadata
@@ -86,9 +117,10 @@ typedef struct s_membrane_gpu_model_estimate
  * safe to call before deciding how many layers to offload. Weight
  * bytes: sums every tensor whose name starts with the real llama.cpp
  * per-layer prefix "blk.N." into an average bytes-per-layer figure
- * (over however many distinct "blk.N." groups are present), and every
- * tensor's bytes (layer and non-layer) into a total. Hparams: reads
- * "general.architecture" then the arch-prefixed
+ * (over however many distinct "blk.N." groups are present), every
+ * tensor's bytes (layer and non-layer) into a total, and separately
+ * tracks the output-role tensor(s)' real bytes (see output_role_bytes
+ * above). Hparams: reads "general.architecture" then the arch-prefixed
  * "{arch}.attention.head_count" / "{arch}.attention.head_count_kv" /
  * "{arch}.embedding_length" keys llama.cpp itself writes -- exactly
  * the fields membrane-run's own native_kv_bytes()/q8_kv_bytes()
@@ -97,11 +129,11 @@ typedef struct s_membrane_gpu_model_estimate
  *
  * Returns 1 if at least the tensor-byte estimate succeeded (out->
  * bytes_per_layer/n_layer are then usable); out->hparams_available
- * must be checked separately before trusting n_embd/n_head/n_head_kv
- * -- an unrecognized architecture, or missing keys, leaves it 0
- * rather than a guessed value. Returns 0 (all outputs left at 0/unset)
- * only if the file can't be read as GGUF or has no recognizable
- * "blk." tensors at all -- never a fabricated fallback. */
+ * must be checked separately before trusting n_embd/n_head/n_head_kv/
+ * arch_name -- an unrecognized architecture, or missing keys, leaves
+ * it 0 rather than a guessed value. Returns 0 (all outputs left at
+ * 0/unset) only if the file can't be read as GGUF or has no
+ * recognizable "blk." tensors at all -- never a fabricated fallback. */
 int		membrane_gpu_estimate_model(const char *model_path,
 			membrane_gpu_model_estimate_t *out);
 

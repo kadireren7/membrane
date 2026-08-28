@@ -128,6 +128,14 @@ int	membrane_gpu_policy_resolve(int32_t requested_layers,
 		uint64_t device_total_bytes, uint64_t bytes_per_layer_estimate,
 		uint64_t kv_bytes_estimate, membrane_gpu_policy_result_t *out);
 
+/* Phase 20: the same reserve policy membrane_gpu_policy_resolve() has
+ * always used internally (max(MEMBRANE_GPU_RESERVE_PCT% of total,
+ * MEMBRANE_GPU_RESERVE_FIXED_BYTES)), exposed so joint_planner.h's
+ * candidate fit-check can reuse this EXACT arithmetic instead of
+ * duplicating the two-line formula -- zero behavior change to the
+ * existing resolve function, purely additive API surface. */
+uint64_t	membrane_gpu_reserve_bytes(uint64_t device_total_bytes);
+
 # ifdef __cplusplus
 }
 # endif
