@@ -342,6 +342,22 @@ typedef struct s_membrane_gpu_state
 	 * is final. Never changes exit_code/ok; purely additive telemetry
 	 * for --verbose/--json consumers. */
 	std::vector<std::string>	warnings;
+
+	/* Phase 25 (OPT-03): attributes planner_ms's own 8.6-12.0 ms GPU-
+	 * requested cost (Phase 24 finding) across the three real sub-steps
+	 * resolve_gpu_config() bundles -- device enumeration
+	 * (membrane_gpu_list_devices()), GGUF metadata pre-scan
+	 * (membrane_gpu_estimate_model()), and the joint planner's own
+	 * arithmetic (membrane_joint_plan_resolve()). Each stays 0.0 unless
+	 * its own call site actually runs on this invocation (e.g. an
+	 * explicit CPU-only request returns before any of the three run;
+	 * a device/GGUF error returns before the joint planner call) --
+	 * verify-performance-optimization.py checks these three sum to
+	 * approximately the already-measured planner_ms, not that all three
+	 * are always nonzero. */
+	double		device_enumeration_ms;
+	double		gguf_prescan_ms;
+	double		joint_planner_core_ms;
 }	membrane_gpu_state_t;
 
 /* Phase 24: top-level pipeline stage timings that don't belong to any
@@ -413,10 +429,18 @@ static std::string	gpu_layers_label(int32_t gpu_layers)
  * not offer impossible fixes") -- only populated at the handful of
  * call sites where one genuinely exists; every other call site passes
  * NULL and the field is omitted entirely, not emitted empty. */
+/* Phase 25 (OPT-06): forward-declared here for the same reason as
+ * print_error_json() above -- its real definition lives next to
+ * print_fallback_json() (which shares its logic), but print_error_json()
+ * itself needs to call it. */
+static void	print_fallback_trace_json(const membrane_fallback_trace_t &ft,
+				bool trailing_comma);
+
 static void	print_error_json(const membrane_run_opts_t &o, int exit_code,
 				const char *reason_code, const std::string &message,
 				const char *suggestion = NULL,
-				const std::vector<std::string> *available_devices = NULL);
+				const std::vector<std::string> *available_devices = NULL,
+				const membrane_fallback_trace_t *fallback_trace = NULL);
 
 /* Review fix (CodeRabbit, PR #22): the two --auto-implied CPU fallback
  * sites inside resolve_gpu_config() below assigned these same six
@@ -495,6 +519,9 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	gs->auto_cpu_fallback = false;
 	gs->reason_trace.clear();
 	gs->warnings.clear();
+	gs->device_enumeration_ms = 0.0;
+	gs->gguf_prescan_ms = 0.0;
+	gs->joint_planner_core_ms = 0.0;
 	if (o.auto_mode)
 		gs->reason_trace.push_back("AUTO_REQUESTED");
 	gs->requested = (o.gpu_layers != 0);
@@ -549,8 +576,11 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	}
 
 	membrane_gpu_device_info_t	devices[MEMBRANE_GPU_MAX_DEVICES];
+	struct timespec				substage_t0;
 
+	clock_gettime(CLOCK_MONOTONIC, &substage_t0);
 	n_devices = membrane_gpu_list_devices(devices, MEMBRANE_GPU_MAX_DEVICES);
+	gs->device_enumeration_ms = seconds_since(&substage_t0) * 1000.0;
 	gpu_count = 0;
 	for (i = 0; i < n_devices; ++i)
 		if (devices[i].type == MEMBRANE_DEV_TYPE_GPU
@@ -650,7 +680,10 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 	gs->reason_trace.push_back("GPU_DEVICE_FOUND");
 
 	membrane_gpu_model_estimate_t	est;
+
+	clock_gettime(CLOCK_MONOTONIC, &substage_t0);
 	int		have_est = membrane_gpu_estimate_model(o.model_path, &est);
+	gs->gguf_prescan_ms = seconds_since(&substage_t0) * 1000.0;
 	uint64_t	kv_bytes_estimate = 0;
 	uint64_t	kv_bytes_estimate_q5 = 0;	/* adaptive's second
 											 * candidate only */
@@ -939,7 +972,11 @@ static bool	resolve_gpu_config(const membrane_run_opts_t &o,
 			else
 				jreq.kv_bytes_native = kv_bytes_estimate;
 		}
-		if (!membrane_joint_plan_resolve(&jreq, &jres))
+		clock_gettime(CLOCK_MONOTONIC, &substage_t0);
+		bool	jplan_ok = membrane_joint_plan_resolve(&jreq, &jres);
+
+		gs->joint_planner_core_ms = seconds_since(&substage_t0) * 1000.0;
+		if (!jplan_ok)
 		{
 			fprintf(stderr, "membrane-run: %s\n", jres.reason);
 			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
@@ -1549,7 +1586,8 @@ static void	print_json_escaped(const std::string &text)
  * failures), not every CLI-parse-time misuse. */
 static void	print_error_json(const membrane_run_opts_t &o, int exit_code,
 				const char *reason_code, const std::string &message,
-				const char *suggestion, const std::vector<std::string> *available_devices)
+				const char *suggestion, const std::vector<std::string> *available_devices,
+				const membrane_fallback_trace_t *fallback_trace)
 {
 	if (!o.want_json)
 		return ;
@@ -1587,7 +1625,22 @@ static void	print_error_json(const membrane_run_opts_t &o, int exit_code,
 		}
 		printf("]");
 	}
-	printf("}}\n");
+	printf("}");
+	/* Phase 25 (OPT-06): additive-only, top-level sibling of "error" --
+	 * same key/shape the success schema's print_run_json() already
+	 * emits via print_fallback_trace_json(), so a caller does not need
+	 * two different parsers for "was there a fallback trace" depending
+	 * on ok:true vs ok:false. Only ever passed non-NULL by the one real
+	 * AUTO_FALLBACK_EXHAUSTED call site (run_normal_mode(), after
+	 * membrane_fallback_run() actually ran) -- every other call site
+	 * still passes NULL (unchanged from before this change) and this
+	 * field is omitted entirely, not emitted empty. */
+	if (fallback_trace != NULL)
+	{
+		printf(",");
+		print_fallback_trace_json(*fallback_trace, false);
+	}
+	printf("}\n");
 }
 
 /* Phase 11A: every print_*() site below receives `o` already resolved
@@ -1721,36 +1774,32 @@ static void	print_joint_planner_json(const membrane_gpu_state_t &gs)
  * per-candidate array) is included only when the controller actually
  * ran (engaged=true) -- Section 13: keep the trace bounded and never
  * emit it for a run that has none. */
-static void	print_fallback_json(const membrane_gpu_state_t &gs,
-				bool engaged, bool ran_at_all, bool overall_ok)
+/* Phase 25 (OPT-06): the actual "attempts" array/attempted/final_status/
+ * reason_code emission, factored out of print_fallback_json() below so
+ * print_error_json() can emit the SAME real trace on a fully-exhausted
+ * run -- previously only the success schema ever called this logic, so
+ * an AUTO_FALLBACK_EXHAUSTED failure's JSON carried no "fallback" object
+ * at all (a real gap found during Phase 24's own OPT-05 investigation,
+ * see docs/performance-profiling.md). No field here is new; this is a
+ * pure extraction, byte-identical output to what the success path
+ * already printed before this change. */
+static void	print_fallback_trace_json(const membrane_fallback_trace_t &ft,
+				bool trailing_comma)
 {
 	int	i;
 
-	if (!ran_at_all)
-	{
-		printf("\"fallback\":{\"attempted\":false,\"attempt_count\":0,"
-			"\"final_status\":\"not_applicable\"},");
-		return ;
-	}
-	if (!engaged)
-	{
-		printf("\"fallback\":{\"attempted\":false,\"attempt_count\":1,"
-			"\"final_status\":\"%s\"},", overall_ok ? "success" : "error");
-		return ;
-	}
 	printf("\"fallback\":{\"attempted\":%s,\"attempt_count\":%d,"
 		"\"initial_candidate_index\":%d,\"final_candidate_index\":%d,"
-		"\"final_status\":\"", gs.fallback_trace.attempted ? "true" : "false",
-		gs.fallback_trace.attempt_count,
-		gs.fallback_trace.initial_candidate_index,
-		gs.fallback_trace.final_candidate_index);
-	print_json_escaped(gs.fallback_trace.final_status);
+		"\"final_status\":\"", ft.attempted ? "true" : "false",
+		ft.attempt_count, ft.initial_candidate_index,
+		ft.final_candidate_index);
+	print_json_escaped(ft.final_status);
 	printf("\",\"reason_code\":\"");
-	print_json_escaped(gs.fallback_trace.reason_code);
+	print_json_escaped(ft.reason_code);
 	printf("\",\"attempts\":[");
-	for (i = 0; i < gs.fallback_trace.n_entries; ++i)
+	for (i = 0; i < ft.n_entries; ++i)
 	{
-		const membrane_fallback_attempt_t	&a = gs.fallback_trace.entries[i];
+		const membrane_fallback_attempt_t	&a = ft.entries[i];
 
 		printf("%s{\"candidate_index\":%d,\"gpu_layers\":%d,"
 			"\"kv_precision\":%d,\"kv_placement\":%d,\"refreshed\":%s",
@@ -1779,7 +1828,25 @@ static void	print_fallback_json(const membrane_gpu_state_t &gs,
 		}
 		printf("}");
 	}
-	printf("]},");
+	printf("]}%s", trailing_comma ? "," : "");
+}
+
+static void	print_fallback_json(const membrane_gpu_state_t &gs,
+				bool engaged, bool ran_at_all, bool overall_ok)
+{
+	if (!ran_at_all)
+	{
+		printf("\"fallback\":{\"attempted\":false,\"attempt_count\":0,"
+			"\"final_status\":\"not_applicable\"},");
+		return ;
+	}
+	if (!engaged)
+	{
+		printf("\"fallback\":{\"attempted\":false,\"attempt_count\":1,"
+			"\"final_status\":\"%s\"},", overall_ok ? "success" : "error");
+		return ;
+	}
+	print_fallback_trace_json(gs.fallback_trace, true);
 }
 
 static void	print_gpu_json(const membrane_gpu_state_t &gs)
@@ -1893,13 +1960,29 @@ static void	print_json_string_array(const std::vector<std::string> &arr)
  * reason" convention: the reason here is simply mode:"plan" itself,
  * already visible one level up). first_token_ms is null (not -1) in
  * JSON specifically when no token was generated -- distinct from a
- * real 0.0 that could never actually happen for a real decode step. */
+ * real 0.0 that could never actually happen for a real decode step.
+ *
+ * Phase 25 (OPT-03): "planner_stages" is always present (never gated on
+ * gs.policy_used) -- each of its three sub-costs independently defaults
+ * to 0.0 whenever its own resolve_gpu_config() call site didn't run on
+ * this invocation (e.g. explicit CPU-only never enumerates a device at
+ * all), so a plain, un-conditional numeric 0.0 is the correct value
+ * there, not a fabricated placeholder. device_enumeration_ms +
+ * gguf_prescan_ms + joint_planner_core_ms is expected to sum to
+ * approximately planner_ms (Section 12 of the Phase 25 task) -- this is
+ * an attribution/correctness check on the new instrumentation itself,
+ * not a performance claim. */
 static void	print_timings_json(const membrane_timings_t &timings,
-				const membrane_kv_store_telemetry_t *tel)
+				const membrane_kv_store_telemetry_t *tel,
+				const membrane_gpu_state_t &gs)
 {
 	printf("\"timings\":{\"total_ms\":%.3f,\"planner_ms\":%.3f,"
+		"\"planner_stages\":{\"device_enumeration_ms\":%.3f,"
+		"\"gguf_prescan_ms\":%.3f,\"joint_planner_core_ms\":%.3f},"
 		"\"model_load_ms\":%.3f,\"tokenization_ms\":%.3f,",
-		timings.total_ms, timings.planner_ms, timings.model_load_ms,
+		timings.total_ms, timings.planner_ms,
+		gs.device_enumeration_ms, gs.gguf_prescan_ms,
+		gs.joint_planner_core_ms, timings.model_load_ms,
 		timings.tokenization_ms);
 	if (tel == NULL)
 	{
@@ -1961,7 +2044,7 @@ static void	print_run_json(const membrane_run_opts_t &o,
 	print_gpu_memory_observed_json(gs, gpu_mem_observed);
 	print_joint_planner_json(gs);
 	print_fallback_json(gs, gs.fallback_engaged, true, success);
-	print_timings_json(timings, &t);
+	print_timings_json(timings, &t, gs);
 	print_kv_placement_json(o, gs);
 	printf("\"memory\":{\"rss_after_model_load_kb\":%llu,"
 		"\"rss_after_context_kb\":%llu,\"rss_after_prompt_kb\":%llu,"
@@ -2119,7 +2202,7 @@ static void	print_plan_only_json(const membrane_run_opts_t &o,
 	 * final_status, never "success" (which would wrongly imply a real
 	 * attempt happened). */
 	print_fallback_json(gs, false, false, false);
-	print_timings_json(timings, NULL);
+	print_timings_json(timings, NULL, gs);
 	/* Review fix (CodeRabbit, PR #23): host_memory now sits at the same
 	 * top level in both JSON schemas (print_run_json emits it
 	 * top-level too) -- previously nested inside memory_plan here only,
@@ -2502,7 +2585,8 @@ static int	run_normal_mode(const membrane_run_opts_t &o,
 				gs.fallback_trace.reason_code,
 				"every legal auto-managed plan failed to instantiate",
 				"Try a smaller --ctx, explicit --gpu-layers/--kv/"
-				"--kv-placement, or --gpu-layers 0 for CPU-only.");
+				"--kv-placement, or --gpu-layers 0 for CPU-only.",
+				NULL, &gs.fallback_trace);
 			return (MEMBRANE_EXIT_RUNTIME_ERROR);
 		}
 		tel = actx.tel;

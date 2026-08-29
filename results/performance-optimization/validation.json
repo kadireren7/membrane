@@ -1,0 +1,244 @@
+{
+ "schema_version": 1,
+ "membrane_commit": "01072be8aaa6836bb9ba891663001d9a90227957",
+ "generated_at": "2026-08-29T14:14:50Z",
+ "note": "Phase 25: evidence-backed performance OPTIMIZATION, built directly on Phase 24's committed profiling evidence (results/performance-profiling/measurements.json, immutable, never rewritten here). This phase's own own investigation of the two highest-priority measured bottlenecks (OPT-01 model load, OPT-02 decode throughput) found both are, on this host and this codebase, fully third-party/backend cost with no MEMBRANE-owned code inside the timed boundary -- see 'investigations' below for the source-level evidence. Zero performance-changing code optimizations were implemented this phase (within the master prompt's own 'at most two' cap; 0 is an explicitly sanctioned outcome, not a shortfall) -- see docs/performance-optimization.md for the full narrative. 'optimizations' is therefore empty by design, not omitted evidence.",
+ "host": {
+  "note": "same real Pop!_OS 24.04 dev machine as Phase 24 (AMD Ryzen 5 5600H, real NVIDIA GTX 1650 Vulkan device 'Vulkan1', real AMD Radeon RADV RENOIR integrated 'Vulkan0'), 5.6 GiB RAM -- every number below is device-scoped, never generalized (Section 19 of the Phase 24 task, carried forward)."
+ },
+ "optimizations": [],
+ "investigations": [
+  {
+   "id": "OPT-01",
+   "target": "model_load_ms (measured cost: 53.7% of total on smollm2-135m_vulkan_native, 38.8% on qwen2.5-1.5b_cpu_native -- results/performance-profiling/measurements.json)",
+   "decision": "INVESTIGATED_NOT_ACTIONABLE",
+   "ownership": "LLAMA_CPP_OWNED / BACKEND_OWNED / DRIVER_OWNED",
+   "evidence": [
+    "tools/membrane-run/main.cpp: model_load_ms times exactly one call, `model = llama_model_load_from_file(o.model_path, mp);` -- no MEMBRANE-authored code executes inside this timed boundary at all (verified by direct source read of the timed span).",
+    "MEMBRANE only sets 3 fields on the llama_model_params struct passed in (n_gpu_layers, main_gpu, devices) -- every other field (including load_mode, which defaults to LLAMA_LOAD_MODE_MMAP) is llama.cpp's own default, never touched by this product's code.",
+    "Cold-start root cause (Phase 24's own 'plausible, not measured' hypothesis) is now source-confirmed: third_party/llama.cpp/src/llama-model-loader.cpp:1500 calls ggml_backend_dev_init(dev, nullptr) -- the real Vulkan device/pipeline-compile step -- from INSIDE the model-loading path llama_model_load_from_file() triggers. third_party/llama.cpp/src/llama.cpp's llama_backend_init() (called once, early, before resolve_gpu_config()) only calls ggml_backend_load_all() (loads backend REGISTRIES/shared libraries), never ggml_backend_dev_init() -- so MEMBRANE's own device-enumeration call (membrane_gpu_list_devices(), which only calls ggml_backend_dev_get_props()) never pays this cost; the real shader/pipeline compilation is entirely inside llama.cpp's own model-loader, one time, lazily, on first real device use.",
+    "third_party/llama.cpp/ggml/src/ggml-vulkan/ggml-vulkan.cpp contains dozens of ggml_vk_create_pipeline() call sites reachable from that same device-init path -- consistent with the real, large, one-time cold-start cost Phase 24 measured (1362.7 ms cold vs 475.1/467.4 ms warm for smollm2-135m_vulkan_native)."
+   ],
+   "possible_approach_considered": "llama_model_params exposes a load_mode field (LLAMA_LOAD_MODE_MMAP default, alternatives MLOCK/DIRECT_IO) that MEMBRANE could set without patching llama.cpp -- considered but not attempted: MLOCK risks real instability on this host's 5.6 GiB RAM for any model larger than the smallest test fixture, and neither alternative changes the real, dominant cost for a Vulkan point (GPU weight upload + one-time shader/pipeline compilation happen regardless of how the file itself is read from disk).",
+   "conclusion": "No MEMBRANE-owned code exists inside the timed model_load_ms boundary to optimize, and the two real cost drivers (llama.cpp's own model-loader logic; ggml-vulkan's one-time device/pipeline init) are both third-party. Per Section 3 of the Phase 25 task, forking/patching llama.cpp or ggml-vulkan merely because they are slow is out of scope. No safe product-local optimization exists for this target."
+  },
+  {
+   "id": "OPT-02",
+   "target": "decode_ms / decode_tokens_per_second (measured: 22.6% of total on the small-model point, 30.4% on the large-model point; CPU decode as low as 2.2-3.7 tok/s for Qwen2.5-1.5B)",
+   "decision": "INVESTIGATED_NOT_ACTIONABLE",
+   "ownership": "LLAMA_CPP_OWNED / BACKEND_OWNED",
+   "evidence": [
+    "tools/membrane-llama-runtime/decode_loop.cpp's timed_decode() (called once per generated token from run_generation(), and once per prompt chunk from decode_prompt()) wraps exactly one real inference call, llama_decode(ctx, batch), plus MEMBRANE's own bookkeeping around it.",
+    "The MEMBRANE-owned bookkeeping is, by direct source read: membrane_llama_hook_set_step_context()/membrane_llama_hook_flush_step() (llama_hook.cpp) -- both are `if (ctx == NULL) return;` no-ops on membrane-run's own product-CLI path, since run_kv_store_pass() always passes hook_ctx=NULL for that path (only membrane-llama-run's research/comparison tooling ever passes a non-NULL hook context); membrane_runtime_begin_step()/membrane_runtime_end_step()/membrane_runtime_add_inference_seconds() (runtime_core.c) -- two integer increments, one true no-op, and one double addition, all O(1) and unmeasurable at millisecond precision.",
+    "Token-piece conversion (llama_token_to_piece) and the optional --stream token callback only run when text output or streaming is actually requested, and are O(piece length) per token -- not a fixed per-token tax, and not part of decode_ms's own timed span in any case (they run after timed_decode() returns, still inside the same generation loop iteration, but this is existing, unavoidable CLI output work, not hidden research instrumentation)."
+   ],
+   "possible_approach_considered": "SIMD/threading changes to MEMBRANE's own code -- explicitly out of scope per Section 10 of the Phase 25 task, and moot regardless: there is no MEMBRANE-owned per-token hot loop to optimize. cp.n_threads/cp.n_threads_batch are already set (4/4, tools/membrane-llama-runtime/decode_loop.cpp) and are llama.cpp's own thread-pool configuration, not a MEMBRANE compute path.",
+   "conclusion": "MEMBRANE adds no meaningful per-token overhead on the product CLI's real path -- the entire decode_ms cost is inside llama_decode() itself. Per Section 10 of the Phase 25 task ('If profiling shows llama.cpp matmul dominates: do not reimplement llama.cpp'), no safe product-local optimization exists for this target."
+  },
+  {
+   "id": "OPT-03",
+   "target": "planner_ms attribution (measured: 8.6-12.0 ms per GPU-requested run, previously un-split between device enumeration, GGUF pre-scan, and joint-planner arithmetic)",
+   "decision": "OPTIMIZED",
+   "note_on_classification": "Instrumentation, not a performance change (Section 21 of the Phase 25 task: 'Instrumentation / observability fixes do not count toward this limit') -- listed as OPTIMIZED because the deliverable (attribution) was fully implemented and verified, not because runtime got faster.",
+   "implementation": "tools/membrane-run/main.cpp: added device_enumeration_ms/gguf_prescan_ms/joint_planner_core_ms to membrane_gpu_state_t, timed independently around resolve_gpu_config()'s three real sub-steps (membrane_gpu_list_devices(), membrane_gpu_estimate_model(), membrane_joint_plan_resolve()), exposed as a new additive 'planner_stages' JSON object nested under 'timings'.",
+   "correctness_check": "device_enumeration_ms + gguf_prescan_ms + joint_planner_core_ms sums to approximately planner_ms -- verified directly from the structured 'raw_data' above (not by construction), and recomputed by scripts/verify-performance-optimization.py's own check_opt03_stage_attribution() on every CI run. Real range across the 5 recorded GPU-requested repeats: gguf_prescan_ms in [8.016, 11.583] ms, device_enumeration_ms in [0.235, 0.476] ms. CPU-only reference: all three sub-costs measured exactly 0.0, matching planner_ms's own already-tiny 0.006 ms.",
+   "real_finding": "gguf_prescan_ms dominates the GPU-requested planner window, NOT device enumeration -- see 'raw_data' above for the exact, validator-checked per-repeat figures (never restated as a separate, potentially-stale number here). This corrects Phase 24's own vaguer 'device-enumeration-plus-GGUF-scan' dual attribution (docs/performance-profiling.md's 'Planner overhead' section) with a precise, evidence-backed split. joint_planner_core_ms stays at 0.001-0.005 ms throughout, confirming Phase 24's own hypothesis that the joint planner's own arithmetic is genuinely negligible (Section 13 of the Phase 25 task's success condition).",
+   "gguf_prescan_optimization_considered": "Section 14 of the Phase 25 task explicitly forbids breaking pre-load planning semantics to avoid this scan (the joint planner needs GGUF metadata BEFORE model load, to decide gpu_layers before calling llama_model_load_from_file). membrane_gpu_estimate_model() (tools/membrane-run/gpu_device.cpp) already uses gguf_init_from_file() with no_alloc=true (metadata only, no tensor data read) -- the minimal-cost API llama.cpp itself exposes for this purpose. No further reduction identified without patching ggml's own gguf.cpp (out of scope, Section 3).",
+   "device_enumeration_caching_considered": "Section 15 of the Phase 25 task raised device-enumeration caching as a possible win IF enumeration dominates -- it does not (0.25-0.31 ms of an 8.6-12.0 ms window), so the absolute upside of caching it is negligible on this evidence, and every real call site (resolve_gpu_config() planning-time query, observe_gpu_memory_after_run() post-run report, real_refresh_fn() fallback-controller re-query) has a distinct real purpose and needs a fresh memory_free reading each time (Section 15's own explicit rule: 'Never cache dynamic free VRAM as immutable') -- not implemented.",
+   "raw_data": {
+    "model": "SmolLM2-135M-Instruct-f16.gguf",
+    "backend": "vulkan",
+    "device": "Vulkan1",
+    "gpu_requested_repeats": [
+     {
+      "repeat": 1,
+      "device_enumeration_ms": 0.476,
+      "gguf_prescan_ms": 11.583,
+      "joint_planner_core_ms": 0.005,
+      "stage_sum_ms": 12.064,
+      "planner_ms": 12.072
+     },
+     {
+      "repeat": 2,
+      "device_enumeration_ms": 0.235,
+      "gguf_prescan_ms": 8.045,
+      "joint_planner_core_ms": 0.001,
+      "stage_sum_ms": 8.281,
+      "planner_ms": 8.289
+     },
+     {
+      "repeat": 3,
+      "device_enumeration_ms": 0.277,
+      "gguf_prescan_ms": 8.016,
+      "joint_planner_core_ms": 0.001,
+      "stage_sum_ms": 8.294,
+      "planner_ms": 8.304
+     },
+     {
+      "repeat": 4,
+      "device_enumeration_ms": 0.277,
+      "gguf_prescan_ms": 8.215,
+      "joint_planner_core_ms": 0.001,
+      "stage_sum_ms": 8.493,
+      "planner_ms": 8.504
+     },
+     {
+      "repeat": 5,
+      "device_enumeration_ms": 0.252,
+      "gguf_prescan_ms": 8.284,
+      "joint_planner_core_ms": 0.001,
+      "stage_sum_ms": 8.537,
+      "planner_ms": 8.548
+     }
+    ],
+    "cpu_only_reference": {
+     "device_enumeration_ms": 0.0,
+     "gguf_prescan_ms": 0.0,
+     "joint_planner_core_ms": 0.0,
+     "stage_sum_ms": 0.0,
+     "planner_ms": 0.006
+    }
+   }
+  },
+  {
+   "id": "OPT-04",
+   "target": "native vs Q8 vs Q5 decode/prefill throughput ordering stability (SmolLM2-135M, Vulkan, ctx=2048, all 30 GPU layers)",
+   "decision": "INVESTIGATED_NOT_ACTIONABLE",
+   "methodology": "8 warm repeats per mode (24 runs total), interleaved round-robin (native, q8, q5) x8, preceded by one separate discarded cold warm-up run -- a substantially larger, more carefully controlled sample than Phase 24's original 3-repeats-per-session design (Section 16 of the Phase 25 task).",
+   "raw_data": {
+    "native": {
+     "decode_tokens_per_second": {
+      "raw_8_repeats_interleaved": [
+       212.911,
+       309.605,
+       308.435,
+       297.811,
+       311.625,
+       311.324,
+       299.818,
+       314.773
+      ],
+      "median_all_8": 309.02,
+      "median_rounds_2_8_excl_first_as_residual_warm_up": 309.605
+     },
+     "prefill_tokens_per_second": {
+      "raw_8_repeats_interleaved": [
+       339.726,
+       379.018,
+       372.498,
+       391.626,
+       379.721,
+       320.647,
+       349.117,
+       386.805
+      ],
+      "median_all_8": 375.758,
+      "median_rounds_2_8_excl_first_as_residual_warm_up": 379.018
+     }
+    },
+    "q8": {
+     "decode_tokens_per_second": {
+      "raw_8_repeats_interleaved": [
+       232.024,
+       271.84,
+       273.855,
+       267.219,
+       265.076,
+       264.414,
+       272.441,
+       262.243
+      ],
+      "median_all_8": 266.147,
+      "median_rounds_2_8_excl_first_as_residual_warm_up": 267.219
+     },
+     "prefill_tokens_per_second": {
+      "raw_8_repeats_interleaved": [
+       230.595,
+       364.826,
+       364.289,
+       283.445,
+       307.195,
+       342.852,
+       353.754,
+       348.597
+      ],
+      "median_all_8": 345.724,
+      "median_rounds_2_8_excl_first_as_residual_warm_up": 348.597
+     }
+    },
+    "q5": {
+     "decode_tokens_per_second": {
+      "raw_8_repeats_interleaved": [
+       253.819,
+       265.637,
+       252.927,
+       254.895,
+       242.523,
+       263.26,
+       258.69,
+       261.468
+      ],
+      "median_all_8": 256.793,
+      "median_rounds_2_8_excl_first_as_residual_warm_up": 258.69
+     },
+     "prefill_tokens_per_second": {
+      "raw_8_repeats_interleaved": [
+       255.911,
+       361.367,
+       323.022,
+       358.528,
+       347.164,
+       357.155,
+       369.4,
+       354.133
+      ],
+      "median_all_8": 355.644,
+      "median_rounds_2_8_excl_first_as_residual_warm_up": 357.155
+     }
+    }
+   },
+   "cross_session_comparison": {
+    "session_A_phase24_original_3_repeats": {
+     "decode_tps_median": {
+      "native": 298.3,
+      "q8": 267.3,
+      "q5": 267.3
+     },
+     "ordering": "native fastest"
+    },
+    "session_B_phase24_regenerated_3_repeats": {
+     "note": "exact medians not separately re-committed (superseded by the final measurements.json); docs/performance-profiling.md records this session's ORDERING as q8 fastest, native slowest -- the opposite of session A.",
+     "ordering": "q8 fastest, native slowest"
+    },
+    "session_C_phase25_this_investigation_8_repeats": {
+     "decode_tps_median_rounds_2_8": {
+      "native": 309.605,
+      "q8": 267.219,
+      "q5": 258.69
+     },
+     "ordering": "native fastest"
+    }
+   },
+   "conclusion": "2 of 3 independent sessions on this host (A and C) show native fastest for decode throughput; 1 (B) shows the opposite. Round 1 of this session's own 8-repeat run was a clear outlier across all three modes simultaneously (native 212.9 vs 298-315 for rounds 2-8; q8 232.0 vs 262-274 for rounds 2-8) -- most plausibly a residual warm-up/host-scheduling effect despite the separate discarded warm-up run, disclosed rather than silently excluded without explanation. Excluding it, THIS session's within-session ordering is tight and consistent (native clearly fastest, q8 second, q5 third) -- but this does not resolve the cross-session question Phase 24 raised, since only one additional independent session was added. Per Section 17 of the Phase 25 task: no code change made; precision-throughput ordering remains genuinely unresolved across sessions on this host, now confirmed with a larger sample rather than assumed from a 3-repeat sample.",
+   "specific_finding": "NO_REPRODUCIBLE_PRECISION_SPEED_ORDERING"
+  },
+  {
+   "id": "OPT-05",
+   "target": "the two unmeasured Qwen2.5-1.5B GPU-resident-weights points (qwen2.5-1.5b_vulkan_native_gpu_placement / _cpu_placement)",
+   "decision": "DEFERRED_NEEDS_MORE_DATA",
+   "conclusion": "Per Section 29 of the Phase 25 task, the Qwen2.5 GPU 6/6-failure campaign was NOT retried this phase (real host VRAM pressure already established twice in Phase 24; retrying would not produce new evidence, only repeat risk to host stability). Remains deferred exactly as Phase 24's own doc scoped it -- would need either a host with more available VRAM headroom, or a dedicated investigation into gpu_policy.h's safety-reserve conservatism for larger models, neither of which is a Phase 25 task."
+  },
+  {
+   "id": "OPT-06",
+   "target": "fallback trace missing from the AUTO_FALLBACK_EXHAUSTED error JSON schema (main.cpp's print_error_json())",
+   "decision": "OPTIMIZED",
+   "note_on_classification": "Not a performance change (Section 19 of the Phase 25 task: 'This is not performance work') -- an additive JSON/observability fix, does not count toward the 2-optimization cap.",
+   "implementation": "tools/membrane-run/main.cpp: extracted the existing attempts-array/attempted/final_status/reason_code emission out of print_fallback_json() into a shared print_fallback_trace_json(trace, trailing_comma) helper (byte-identical output on the already-working success path, verified by construction -- pure cut/paste plus one new bool parameter to keep JSON comma-valid at two different call sites), then added an optional trailing fallback_trace parameter to print_error_json() (default NULL, every pre-existing call site unaffected) so the one real AUTO_FALLBACK_EXHAUSTED call site (run_normal_mode(), after membrane_fallback_run() actually ran) can pass &gs.fallback_trace.",
+   "verification": [
+    "Live CLI checks (real membrane-run binary, build-vulkan): a normal success run with no fallback engagement still emits 'fallback':{'attempted':false,...} unchanged; a real CLI model-load-failure error path (which does not pass a fallback trace) correctly omits the 'fallback' key entirely, confirming the additive-only contract for every pre-existing error call site.",
+    "test_auto_fallback.c's existing Phase 21 test suite (test_all_retryable_fail_exhausted, test_memory_shrink_skips_then_next_applies, test_same_candidate_never_attempted_twice, test_first_retryable_fails_second_succeeds) already independently verifies every membrane_fallback_trace_t structural property Section 20 of the Phase 25 task asks for -- attempt_count, reason_code/final_status for an exhausted run, candidate indices never repeated and preserved in the correct order, failure classes preserved per entry, and a memory-refit SKIP entry visible with fit_after_refresh=0/apply_started=0 -- all passing under ASan (build-llama-asan, this phase)."
+   ],
+   "known_limitation": "A full LIVE end-to-end reproduction of AUTO_FALLBACK_EXHAUSTED through the real CLI (real GPU, real driver-reported memory divergence) was intentionally NOT attempted this phase -- Section 29 of the Phase 25 task explicitly forbids retrying the Qwen2.5 GPU VRAM-pressure campaign that is this project's only known real trigger for this failure mode, and no smaller, safe, deterministic way to force it was found (a small model has enough real headroom on this host's GPUs that an artificial trigger would require the same kind of memory-pressure probing Section 29 discourages). The new JSON-wiring code path is therefore verified by direct code review plus the layered evidence above, not by a fresh live top-to-bottom reproduction -- disclosed here rather than silently assumed equivalent to one."
+  }
+ ]
+}

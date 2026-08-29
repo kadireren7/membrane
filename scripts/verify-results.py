@@ -1779,6 +1779,21 @@ def main() -> int:
 			print("\nFAILED: scripts/verify-performance-profiling.py "
 				"reported failures (see output above)")
 			return 1
+
+	# Same reasoning as the six chains above -- Phase 25's real
+	# performance-optimization investigation/evidence gets its own
+	# dedicated validator, chained here as another unnumbered step.
+	perf_opt_script = REPO_ROOT / "scripts" / "verify-performance-optimization.py"
+	if perf_opt_script.exists():
+		print()
+		print("Also verifying performance-optimization evidence "
+			"(scripts/verify-performance-optimization.py):")
+		sys.stdout.flush()
+		result = subprocess.run([sys.executable, str(perf_opt_script)])
+		if result.returncode != 0:
+			print("\nFAILED: scripts/verify-performance-optimization.py "
+				"reported failures (see output above)")
+			return 1
 	return 0
 
 
