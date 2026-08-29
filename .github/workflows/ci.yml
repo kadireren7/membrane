@@ -70,6 +70,21 @@ jobs:
       - name: Verify performance-profiling measurements
         run: python3 scripts/verify-performance-profiling.py
 
+  # Phase 25: validates the committed performance-optimization evidence
+  # only -- python3 + checkout, no GPU, no model download, no C/C++
+  # build, and (Section 31 of the Phase 25 task) no absolute-performance
+  # benchmark or threshold ever runs in CI.
+  performance-optimization-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify performance-optimization evidence
+        run: python3 scripts/verify-performance-optimization.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
