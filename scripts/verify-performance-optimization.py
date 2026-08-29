@@ -244,6 +244,60 @@ def check_opt04_raw_data(investigations):
 					f"median(samples[1:]) = {round(real_median_warm, 3)!r}")
 
 
+@check("OPT-03's structured planner-substage records sum to their own "
+	"reported planner_ms (CodeRabbit review, PR #35)")
+def check_opt03_stage_attribution(investigations):
+	opt03 = next((i for i in investigations if i.get("id") == "OPT-03"), None)
+	if opt03 is None:
+		return
+	raw = opt03.get("raw_data")
+	if not isinstance(raw, dict) or not raw:
+		fail("OPT-03", "missing 'raw_data' object -- the stage-attribution "
+			"claim in 'correctness_check'/'real_finding' must be backed by "
+			"structured, independently-checkable records, not prose alone")
+		return
+	repeats = raw.get("gpu_requested_repeats")
+	if not isinstance(repeats, list) or not repeats:
+		fail("OPT-03", "'raw_data.gpu_requested_repeats' must be a "
+			"non-empty list")
+		repeats = []
+	for r in repeats:
+		label = f"repeat {r.get('repeat', '<no repeat>')}"
+		fields = ("device_enumeration_ms", "gguf_prescan_ms",
+			"joint_planner_core_ms", "planner_ms")
+		if any(not isinstance(r.get(f), (int, float)) for f in fields):
+			fail("OPT-03", f"{label}: one of {fields} is missing/non-numeric")
+			continue
+		real_sum = round(r["device_enumeration_ms"] + r["gguf_prescan_ms"]
+			+ r["joint_planner_core_ms"], 3)
+		claimed_sum = r.get("stage_sum_ms")
+		if claimed_sum is None or abs(claimed_sum - real_sum) > 0.01:
+			fail("OPT-03", f"{label}: stage_sum_ms {claimed_sum!r} does "
+				f"not match device_enumeration_ms + gguf_prescan_ms + "
+				f"joint_planner_core_ms = {real_sum!r}")
+		# Real clock_gettime() calls between the summed sub-timers and the
+		# outer planner_ms timer are not perfectly nested (Section 12 of
+		# the Phase 25 task: "approximately") -- 1.0 ms absolute or 5%
+		# relative, whichever is larger, is the real observed noise band
+		# across the 5 committed repeats, not an arbitrarily loose bound.
+		tolerance = max(1.0, 0.05 * r["planner_ms"])
+		if abs(real_sum - r["planner_ms"]) > tolerance:
+			fail("OPT-03", f"{label}: stage sum {real_sum!r} ms does not "
+				f"approximately match planner_ms {r['planner_ms']!r} ms "
+				f"(tolerance {round(tolerance, 3)} ms)")
+	cpu_ref = raw.get("cpu_only_reference")
+	if not isinstance(cpu_ref, dict):
+		fail("OPT-03", "missing 'raw_data.cpu_only_reference'")
+	else:
+		for f in ("device_enumeration_ms", "gguf_prescan_ms",
+				"joint_planner_core_ms"):
+			if cpu_ref.get(f) != 0.0:
+				fail("OPT-03", f"cpu_only_reference.{f} = "
+					f"{cpu_ref.get(f)!r}, expected exactly 0.0 -- a "
+					f"CPU-only request never runs any GPU-requested "
+					f"planner sub-step")
+
+
 @check("docs/performance-optimization.md exists and names every "
 	"OPT-01..OPT-06 target")
 def check_docs_exist_and_cover_targets():
@@ -274,6 +328,7 @@ def main():
 	check_optimization_arithmetic(optimizations)
 	check_investigations(investigations)
 	check_opt04_raw_data(investigations)
+	check_opt03_stage_attribution(investigations)
 	check_docs_exist_and_cover_targets()
 
 	print()

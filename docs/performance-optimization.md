@@ -142,27 +142,33 @@ invocation (e.g. explicit CPU-only never enumerates a device).
 
 **Correctness check** (5 repeats, `smollm2-135m_vulkan_native`): the
 three sub-costs sum to approximately the already-measured `planner_ms`
-every time:
+every time. Every number in this table is a structured field in
+`results/performance-optimization/validation.json`'s OPT-03
+`raw_data.gpu_requested_repeats`/`raw_data.cpu_only_reference` — not
+prose alone — and `scripts/verify-performance-optimization.py`'s
+`check_opt03_stage_attribution()` recomputes `stage_sum_ms` and
+re-checks it against `planner_ms` on every run (CodeRabbit review, PR
+#35), so this table cannot silently drift from the committed evidence:
 
 | Repeat | `device_enumeration_ms` | `gguf_prescan_ms` | `joint_planner_core_ms` | sum | `planner_ms` |
 |---|---|---|---|---|---|
-| 1 | 0.288 | 10.956 | 0.009 | 11.253 | 11.278 |
-| 2 | 0.255 | 8.573 | 0.001 | 8.829 | 8.840 |
-| 3 | 0.311 | 9.155 | 0.002 | 9.468 | 9.483 |
-| 4 | 0.268 | 8.449 | 0.001 | 8.718 | 8.730 |
-| 5 | 0.299 | 8.275 | 0.001 | 8.575 | 8.584 |
+| 1 | 0.476 | 11.583 | 0.005 | 12.064 | 12.072 |
+| 2 | 0.235 | 8.045 | 0.001 | 8.281 | 8.289 |
+| 3 | 0.277 | 8.016 | 0.001 | 8.294 | 8.304 |
+| 4 | 0.277 | 8.215 | 0.001 | 8.493 | 8.504 |
+| 5 | 0.252 | 8.284 | 0.001 | 8.537 | 8.548 |
 
-CPU-only: all three sub-costs measured exactly `0.0`, matching
-`planner_ms`'s own already-tiny `0.007` ms.
+CPU-only reference: all three sub-costs measured exactly `0.0`,
+matching `planner_ms`'s own already-tiny `0.006` ms.
 
 **Real finding, correcting Phase 24's own attribution:**
-`gguf_prescan_ms` (8.3–9.2 ms) dominates the GPU-requested planner
-window — **not** device enumeration (0.25–0.31 ms). Phase 24's own doc
+`gguf_prescan_ms` (8.0–11.6 ms) dominates the GPU-requested planner
+window — **not** device enumeration (0.24–0.48 ms). Phase 24's own doc
 described this as "device-enumeration-plus-GGUF-scan cost" as if both
 mattered comparably; this phase's direct measurement shows the GGUF
 metadata pre-scan (`membrane_gpu_estimate_model()`, which calls
 `gguf_init_from_file()` with `no_alloc=true`) is responsible for nearly
-all of it. `joint_planner_core_ms` stays at 0.001–0.009 ms throughout,
+all of it. `joint_planner_core_ms` stays at 0.001–0.005 ms throughout,
 confirming Phase 24's own hypothesis that the joint planner's own
 arithmetic is genuinely negligible (the success condition Section 13 of
 the Phase 25 task named).

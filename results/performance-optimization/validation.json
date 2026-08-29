@@ -41,10 +41,64 @@
    "decision": "OPTIMIZED",
    "note_on_classification": "Instrumentation, not a performance change (Section 21 of the Phase 25 task: 'Instrumentation / observability fixes do not count toward this limit') -- listed as OPTIMIZED because the deliverable (attribution) was fully implemented and verified, not because runtime got faster.",
    "implementation": "tools/membrane-run/main.cpp: added device_enumeration_ms/gguf_prescan_ms/joint_planner_core_ms to membrane_gpu_state_t, timed independently around resolve_gpu_config()'s three real sub-steps (membrane_gpu_list_devices(), membrane_gpu_estimate_model(), membrane_joint_plan_resolve()), exposed as a new additive 'planner_stages' JSON object nested under 'timings'.",
-   "correctness_check": "device_enumeration_ms + gguf_prescan_ms + joint_planner_core_ms sums to approximately planner_ms, verified directly (not by construction) -- 5 repeat runs, smollm2-135m_vulkan_native: planner_ms in [8.584, 9.483], stage-sum in the same range each time (e.g. one run: dev_enum=0.288 + gguf_prescan=10.956 + joint_core=0.009 = 11.253 vs planner_ms=11.278). CPU-only run: all three sub-costs measured exactly 0.0, matching planner_ms's own already-tiny 0.007 ms.",
-   "real_finding": "gguf_prescan_ms (8.3-9.2 ms across 5 repeats) dominates the GPU-requested planner window, NOT device enumeration (0.25-0.31 ms) -- this corrects Phase 24's own vaguer 'device-enumeration-plus-GGUF-scan' dual attribution (docs/performance-profiling.md's 'Planner overhead' section) with a precise, evidence-backed split. joint_planner_core_ms is consistently ~0.001-0.009 ms, confirming Phase 24's own hypothesis that the joint planner's own arithmetic is genuinely negligible (Section 13 of the Phase 25 task's success condition).",
+   "correctness_check": "device_enumeration_ms + gguf_prescan_ms + joint_planner_core_ms sums to approximately planner_ms -- verified directly from the structured 'raw_data' above (not by construction), and recomputed by scripts/verify-performance-optimization.py's own check_opt03_stage_attribution() on every CI run. Real range across the 5 recorded GPU-requested repeats: gguf_prescan_ms in [8.016, 11.583] ms, device_enumeration_ms in [0.235, 0.476] ms. CPU-only reference: all three sub-costs measured exactly 0.0, matching planner_ms's own already-tiny 0.006 ms.",
+   "real_finding": "gguf_prescan_ms dominates the GPU-requested planner window, NOT device enumeration -- see 'raw_data' above for the exact, validator-checked per-repeat figures (never restated as a separate, potentially-stale number here). This corrects Phase 24's own vaguer 'device-enumeration-plus-GGUF-scan' dual attribution (docs/performance-profiling.md's 'Planner overhead' section) with a precise, evidence-backed split. joint_planner_core_ms stays at 0.001-0.005 ms throughout, confirming Phase 24's own hypothesis that the joint planner's own arithmetic is genuinely negligible (Section 13 of the Phase 25 task's success condition).",
    "gguf_prescan_optimization_considered": "Section 14 of the Phase 25 task explicitly forbids breaking pre-load planning semantics to avoid this scan (the joint planner needs GGUF metadata BEFORE model load, to decide gpu_layers before calling llama_model_load_from_file). membrane_gpu_estimate_model() (tools/membrane-run/gpu_device.cpp) already uses gguf_init_from_file() with no_alloc=true (metadata only, no tensor data read) -- the minimal-cost API llama.cpp itself exposes for this purpose. No further reduction identified without patching ggml's own gguf.cpp (out of scope, Section 3).",
-   "device_enumeration_caching_considered": "Section 15 of the Phase 25 task raised device-enumeration caching as a possible win IF enumeration dominates -- it does not (0.25-0.31 ms of an 8.6-12.0 ms window), so the absolute upside of caching it is negligible on this evidence, and every real call site (resolve_gpu_config() planning-time query, observe_gpu_memory_after_run() post-run report, real_refresh_fn() fallback-controller re-query) has a distinct real purpose and needs a fresh memory_free reading each time (Section 15's own explicit rule: 'Never cache dynamic free VRAM as immutable') -- not implemented."
+   "device_enumeration_caching_considered": "Section 15 of the Phase 25 task raised device-enumeration caching as a possible win IF enumeration dominates -- it does not (0.25-0.31 ms of an 8.6-12.0 ms window), so the absolute upside of caching it is negligible on this evidence, and every real call site (resolve_gpu_config() planning-time query, observe_gpu_memory_after_run() post-run report, real_refresh_fn() fallback-controller re-query) has a distinct real purpose and needs a fresh memory_free reading each time (Section 15's own explicit rule: 'Never cache dynamic free VRAM as immutable') -- not implemented.",
+   "raw_data": {
+    "model": "SmolLM2-135M-Instruct-f16.gguf",
+    "backend": "vulkan",
+    "device": "Vulkan1",
+    "gpu_requested_repeats": [
+     {
+      "repeat": 1,
+      "device_enumeration_ms": 0.476,
+      "gguf_prescan_ms": 11.583,
+      "joint_planner_core_ms": 0.005,
+      "stage_sum_ms": 12.064,
+      "planner_ms": 12.072
+     },
+     {
+      "repeat": 2,
+      "device_enumeration_ms": 0.235,
+      "gguf_prescan_ms": 8.045,
+      "joint_planner_core_ms": 0.001,
+      "stage_sum_ms": 8.281,
+      "planner_ms": 8.289
+     },
+     {
+      "repeat": 3,
+      "device_enumeration_ms": 0.277,
+      "gguf_prescan_ms": 8.016,
+      "joint_planner_core_ms": 0.001,
+      "stage_sum_ms": 8.294,
+      "planner_ms": 8.304
+     },
+     {
+      "repeat": 4,
+      "device_enumeration_ms": 0.277,
+      "gguf_prescan_ms": 8.215,
+      "joint_planner_core_ms": 0.001,
+      "stage_sum_ms": 8.493,
+      "planner_ms": 8.504
+     },
+     {
+      "repeat": 5,
+      "device_enumeration_ms": 0.252,
+      "gguf_prescan_ms": 8.284,
+      "joint_planner_core_ms": 0.001,
+      "stage_sum_ms": 8.537,
+      "planner_ms": 8.548
+     }
+    ],
+    "cpu_only_reference": {
+     "device_enumeration_ms": 0.0,
+     "gguf_prescan_ms": 0.0,
+     "joint_planner_core_ms": 0.0,
+     "stage_sum_ms": 0.0,
+     "planner_ms": 0.006
+    }
+   }
   },
   {
    "id": "OPT-04",
