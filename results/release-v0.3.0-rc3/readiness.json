@@ -1,0 +1,225 @@
+{
+ "schema_version": 1,
+ "label": "REAL",
+ "note": "Committed release-readiness evidence for v0.3.0-rc3 (Phase 27) -- checkable by scripts/verify-release-rc3.py. Local build/test/install numbers below were captured against release/v0.3.0-rc3-prep at membrane_commit; CI/CodeQL run IDs are the actual GitHub Actions runs for this PR. This file is additive-only evidence, not a replacement for results/compat-expansion/validation.json (Phase 26), results/performance-profiling/measurements.json (Phase 24), results/performance-optimization/validation.json (Phase 25), or results/rc2-user-validation/summary.json (Phase 23), all cited here by reference, not restated. results/release-v0.3.0-rc2/readiness.json (Phase 22) remains immutable and is not superseded by this file, only extended.",
+ "membrane_commit": "61414bc2c00db6c8d10dcd998e6c16d0afb42b28",
+ "membrane_version": "0.3.0-rc3",
+ "base_release": "v0.3.0-rc2",
+ "pull_request": "https://github.com/kadireren7/membrane/pull/37",
+ "test_results": {
+  "ctest_lightweight_build": {
+   "passed": 67,
+   "total": 67
+  },
+  "ctest_llama_asan_targeted": {
+   "passed": 4,
+   "total": 4,
+   "targets": [
+    "test_compat_check",
+    "test_joint_planner",
+    "test_auto_fallback",
+    "test_product_cli"
+   ],
+   "cmake_flags": "MEMBRANE_ENABLE_LLAMA=ON MEMBRANE_ENABLE_SANITIZERS=ON"
+  },
+  "verify_results": {
+   "passed": 73,
+   "total": 73
+  },
+  "verify_compatibility": {
+   "passed": 13,
+   "total": 13,
+   "rows": 26,
+   "supported": 19,
+   "unsupported": 6,
+   "not_yet_validated": 1,
+   "note": "current live counts -- a real change from RC2's own frozen 16/9/1, since Phase 26 reclassified MC-17/MC-18/MC-19 with real evidence. verify-release-readiness.py continues to check RC2's own historical 16/9/1 against the v0.3.0-rc2 tag specifically, unchanged."
+  },
+  "verify_planner_accuracy": {
+   "passed": 6,
+   "total": 6,
+   "note": "immutable Phase 19 evidence, not re-measured this phase"
+  },
+  "verify_auto_fallback": {
+   "passed": 9,
+   "total": 9,
+   "note": "unchanged Phase 21 evidence, not re-measured this phase"
+  },
+  "verify_release_readiness": {
+   "passed": 10,
+   "total": 10,
+   "note": "RC2's own historical validator -- fixed this phase (two more live-tree-vs-frozen-tag bugs) so it continues to validate RC2's facts correctly forever"
+  },
+  "verify_rc2_user_validation": {
+   "passed": 9,
+   "total": 9,
+   "note": "immutable Phase 23 evidence, not re-measured this phase"
+  },
+  "verify_performance_profiling": {
+   "passed": 9,
+   "total": 9,
+   "note": "immutable Phase 24 evidence, not re-measured this phase"
+  },
+  "verify_performance_optimization": {
+   "passed": 8,
+   "total": 8,
+   "note": "immutable Phase 25 evidence, not re-measured this phase"
+  },
+  "verify_compat_expansion": {
+   "passed": 7,
+   "total": 7,
+   "note": "immutable Phase 26 evidence, not re-measured this phase"
+  }
+ },
+ "qwen2_evidence_references": {
+  "source": "results/compat-expansion/validation.json",
+  "row_ids": [
+   "CE-01",
+   "CE-02",
+   "CE-03",
+   "CE-04",
+   "CE-05",
+   "CE-06",
+   "CE-07",
+   "CE-08"
+  ],
+  "model": "Qwen2.5-1.5B-Instruct",
+  "q8_ratio_of_native": 0.53125,
+  "q5_ratio_of_native": 0.375,
+  "note": "cited here, not restated as a new measurement -- Phase 26 evidence is immutable"
+ },
+ "install_verification": {
+  "cpu": {
+   "fresh_configure_build_install": true,
+   "outside_tree_help_and_version": true,
+   "uninstall_removes_all_files": true
+  },
+  "vulkan": {
+   "install_reused_existing_local_build": true,
+   "note": "an existing local Vulkan-enabled build tree (already rebuilt/exercised repeatedly this phase) was reused rather than a from-scratch clone, to avoid an unnecessary heavy/risky rebuild on this memory-constrained host -- the Vulkan install/uninstall CONTRACT itself is still exercised fresh every push/PR by the packaging-smoke CI job (see ci_runs below)",
+   "outside_tree_help_and_version": true,
+   "uninstall_removes_all_files": true,
+   "real_generation_smoke": {
+    "model": "Qwen2.5-1.5B-Instruct-fp16.gguf",
+    "device": "Vulkan1",
+    "kv_precision": "q8",
+    "membrane_version_in_json": "0.3.0-rc3",
+    "ok": true,
+    "selected_kv": "q8"
+   }
+  }
+ },
+ "regression_matrix": {
+  "note": "small, real, non-benchmark points -- ctx=512, <=8 generated tokens, no deliberate OOM, no context/generation-length stress",
+  "qwen2": [
+   {
+    "backend": "cpu",
+    "kv": "q8",
+    "ok": true
+   },
+   {
+    "backend": "cpu",
+    "kv": "q5",
+    "ok": true
+   },
+   {
+    "backend": "vulkan",
+    "kv": "q8",
+    "gpu_layers": 4,
+    "ok": true
+   },
+   {
+    "backend": "vulkan",
+    "kv": "adaptive",
+    "gpu_layers": 4,
+    "ok": true,
+    "selected_kv": "q8"
+   }
+  ],
+  "llama_smollm2_135m": [
+   {
+    "backend": "cpu",
+    "kv": "native",
+    "ok": true
+   },
+   {
+    "backend": "vulkan",
+    "kv": "q8",
+    "gpu_layers": "all",
+    "ok": true
+   },
+   {
+    "backend": "cpu",
+    "kv": "adaptive",
+    "ok": true,
+    "selected_kv": "q8"
+   }
+  ]
+ },
+ "json_contract_checks": {
+  "normal_success_stdout_single_object": true,
+  "plan_only_stdout_single_object": true,
+  "qwen2_q8_success_stdout_single_object": true,
+  "qwen2_adaptive_success_stdout_single_object": true,
+  "schema_version_consistent": 1,
+  "additive_fields_present": [
+   "timings",
+   "timings.planner_stages"
+  ],
+  "known_gap_disclosed": "CLI-parse-time validation errors (product_cli.cpp's own argument checks, e.g. --kv-placement gpu without --gpu-layers) print plain text to stdout/stderr and do not respect --json -- this is pre-existing behavior from Phase 12H, unrelated to the RC2->RC3 delta, not a regression introduced this phase, and out of this release-readiness phase's own scope to fix (Section 1 of the Phase 27 task: no new product feature scope). Every runtime-level rejection (the compat_check.c architecture/shape gate, AUTO_FALLBACK_EXHAUSTED, model-load failure, etc.) DOES correctly emit a single clean JSON object via print_error_json() when --json is set -- confirmed directly this phase."
+ },
+ "fail_closed_audit": {
+  "unknown_compressed_architecture": "test_compat_check.c::test_q8_gemma3_still_rejected",
+  "malformed_shape": "test_compat_check.c::test_q8_qwen2_bad_shape_rejected, test_q8_head_dim_not_block_aligned_rejected",
+  "explicit_illegal_placement": "test_product_cli.cpp (MC-20/MC-21 CLI-level rejections, unchanged)",
+  "no_feasible_candidate": "test_joint_planner.c::test_incompatible_architecture_adaptive_fails_closed (now gemma3, not qwen2)",
+  "fallback_cleanup_failure": "test_auto_fallback.c (Phase 21 tests, unchanged)",
+  "note": "all confirmed passing under ASan this phase (ctest_llama_asan_targeted above)"
+ },
+ "performance_claim_audit": {
+  "speed_changing_code_shipped_this_cycle": false,
+  "note": "Phase 25's own conclusion (docs/performance-optimization.md): no MEMBRANE-owned model-load/decode hot loop found. No 'faster'/'performance optimized'/'improved inference speed' claim appears in any release-facing doc for this cycle -- confirmed by direct grep across README.md, docs/release-v0.3.0-rc3.md, docs/compat-expansion.md, docs/compatibility.md, docs/performance-profiling.md, docs/performance-optimization.md."
+ },
+ "external_validation_status": {
+  "hosts_validated": 1,
+  "backends_validated_on_that_host": [
+   "cpu",
+   "vulkan-nvidia",
+   "vulkan-amd"
+  ],
+  "independent_hosts_validated": 0,
+  "status": "PHASE23_RC2_VALIDATION_NEEDS_MORE_USERS (unchanged since Phase 23)",
+  "note": "Backend diversity on one physical developer host is not host/user diversity -- see docs/release-v0.3.0-rc3.md's 'External validation status' section. Phase 28 handoff: validate on at least two additional independent physical hosts before considering a stable v0.3.0."
+ },
+ "known_limitations": [
+  "Vulkan validated on a small number of real local hosts/devices (NVIDIA GTX 1650 Mobile class, AMD Radeon RADV RENOIR integrated) -- not a general claim about other GPUs, vendors, or hosts.",
+  "CUDA is not a MEMBRANE product path -- evaluated in Phase 26 (docs/compat-expansion.md), deferred: no validation hardware available.",
+  "Qwen2 support is scoped to Qwen2.5-1.5B-Instruct specifically, not 'all Qwen2 models'.",
+  "VRAM/estimate accuracy depends on model, context size, and hardware -- never an absolute OOM guarantee.",
+  "Independent-host external validation remains pending (see external_validation_status above)."
+ ],
+ "ci_runs": {
+  "note": "GitHub Actions run IDs for kadireren7/membrane#37 (release/v0.3.0-rc3-prep), commit f86c313014a37e6e7f92e2974d21945a5122e59c, all SUCCESS at time of writing",
+  "workflow_runs": [
+   33292177149,
+   33292178470,
+   33292178473
+  ],
+  "jobs_all_passing": [
+   "CodeQL",
+   "CodeQL analysis (c-cpp)",
+   "build-and-test (Debug)",
+   "build-and-test (ASan)",
+   "thread-sanitizer",
+   "packaging-smoke",
+   "compatibility-check",
+   "planner-accuracy-check",
+   "auto-fallback-check",
+   "fallback-controller-tests",
+   "performance-profile-check",
+   "performance-optimization-check",
+   "compat-expansion-check",
+   "release-rc3-check"
+  ]
+ }
+}

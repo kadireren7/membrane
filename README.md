@@ -175,11 +175,14 @@ live in
 with SHA256-verified provenance back to this repository.
 
 **Release status**: latest stable tag `v0.2.0`, release candidate
-`v0.3.0-rc2` (supersedes the now-stale `v0.3.0-rc1`, which predates
-Q5/adaptive KV, static KV residency, the compatibility matrix, the
-joint `--auto` planner, and apply-time fallback — see
-[docs/release-v0.3.0-rc2.md](docs/release-v0.3.0-rc2.md) for the full
-RC1→RC2 delta). `v0.2.0` stable's CPU-only default behavior is
+`v0.3.0-rc3` (supersedes the now-stale `v0.3.0-rc2`, which predates
+Qwen2 compressed-KV support, performance-profiling/planner-substage
+timing diagnostics, the fallback trace on a fully-exhausted error JSON,
+and real-user validation on CPU/NVIDIA-Vulkan/AMD-Vulkan — all still
+from a single physical developer host; independent-host validation
+remains pending — see
+[docs/release-v0.3.0-rc3.md](docs/release-v0.3.0-rc3.md) for the full
+RC2→RC3 delta). `v0.2.0` stable's CPU-only default behavior is
 unchanged by any of this.
 
 ## AI-assisted development
