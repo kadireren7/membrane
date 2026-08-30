@@ -9,13 +9,64 @@ checks, not a general documentation linter.
 Exit code: 0 if every check passes, 1 otherwise.
 """
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_RC_VERSION = "0.3.0-rc2"
+RC2_TAG = "v0.3.0-rc2"
 FAILURES = []
 CHECK_COUNT = 0
+
+
+def read_file_at_rc2_tag(rel_path):
+	"""Reads a file's content AS IT EXISTED AT THE v0.3.0-rc2 TAG, not the
+	live working tree. Every claim this script makes is inherently about
+	what RC2 itself documented at release time -- README.md,
+	product_cli.h's MEMBRANE_VERSION, docs/compatibility.json, etc. are
+	all living files later phases legitimately keep changing (Phase 26
+	bumped MEMBRANE_VERSION and reclassified 3 compatibility rows), so
+	pinning any of these checks to the CURRENT working tree would make
+	them fail the instant a later phase does its own legitimate work --
+	not what "RC2's documented scope" means. Reading each file's own
+	historical snapshot via `git show` keeps every check in this script
+	meaningful forever, regardless of how far main moves ahead of RC2
+	(Section 31/32 of the Phase 26 task, generalized here to every check
+	in this file that was still reading the live tree -- Phase 27).
+
+	Returns (content, None) on success, or (None, error_detail) on
+	failure -- callers call fail() themselves so each check's own name
+	appears in the failure line.
+
+	Prerequisite: the checkout running this script must have the RC2 tag
+	available locally (a normal `git clone` has it; a shallow/tagless CI
+	checkout may not -- `git fetch --tags`, or `actions/checkout`'s
+	`fetch-tags: true`, fixes that). This script is not currently run
+	from CI (no CI job invokes it), only locally via
+	scripts/verify-results.py/prepare-release.sh.
+	"""
+	git_bin = shutil.which("git")
+	if git_bin is None:
+		return (None, "git is not on PATH")
+	tag_check = subprocess.run(
+		[git_bin, "rev-parse", "--verify", "-q", f"{RC2_TAG}^{{commit}}"],
+		cwd=REPO_ROOT, capture_output=True, text=True,
+	)
+	if tag_check.returncode != 0:
+		return (None, f"the {RC2_TAG} tag is not available in this "
+			f"checkout -- run `git fetch --tags` (or, in a CI checkout, "
+			f"set `actions/checkout`'s `fetch-tags: true`) before "
+			f"running this script")
+	result = subprocess.run(
+		[git_bin, "show", f"{RC2_TAG}:{rel_path}"],
+		cwd=REPO_ROOT, capture_output=True, text=True,
+	)
+	if result.returncode != 0:
+		return (None, f"could not read {rel_path} at the {RC2_TAG} tag "
+			f"via git show: {result.stderr.strip()}")
+	return (result.stdout, None)
 
 # Section 20 of the Phase 22 task: reject wording equivalent to these,
 # case-insensitively, across the release-facing docs below.
@@ -54,18 +105,22 @@ def check(name):
 	return decorator
 
 
-@check("MEMBRANE_VERSION matches the expected RC2 version string")
+@check("MEMBRANE_VERSION matched the expected RC2 version string AT THE "
+	"v0.3.0-rc2 TAG -- not the live, ongoing product_cli.h")
 def check_version_string():
-	path = REPO_ROOT / "tools" / "membrane-run" / "product_cli.h"
-	text = path.read_text()
+	text, err = read_file_at_rc2_tag("tools/membrane-run/product_cli.h")
+	if err is not None:
+		fail("version string", err)
+		return
 	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', text)
 	if not m:
-		fail("version string", f"MEMBRANE_VERSION not found in {path}")
+		fail("version string", f"MEMBRANE_VERSION not found in "
+			f"tools/membrane-run/product_cli.h at the {RC2_TAG} tag")
 		return
 	found = m.group(1)
 	if found != EXPECTED_RC_VERSION:
-		fail("version string", f"MEMBRANE_VERSION is {found!r}, expected "
-			f"{EXPECTED_RC_VERSION!r}")
+		fail("version string", f"MEMBRANE_VERSION was {found!r} at the "
+			f"{RC2_TAG} tag, expected {EXPECTED_RC_VERSION!r}")
 
 
 @check("release-notes document exists for the expected RC2 version")
@@ -75,12 +130,16 @@ def check_release_notes_exist():
 		fail("release notes", f"{path} does not exist")
 
 
-@check("README's release-status line references the current RC2 version")
+@check("README's release-status line referenced RC2 AT THE v0.3.0-rc2 TAG "
+	"-- not the live, ongoing README.md")
 def check_readme_release_status():
-	text = (REPO_ROOT / "README.md").read_text()
+	text, err = read_file_at_rc2_tag("README.md")
+	if err is not None:
+		fail("README release status", err)
+		return
 	if EXPECTED_RC_VERSION not in text:
-		fail("README release status", f"README.md never mentions "
-			f"{EXPECTED_RC_VERSION!r}")
+		fail("README release status", f"README.md at the {RC2_TAG} tag "
+			f"never mentions {EXPECTED_RC_VERSION!r}")
 
 
 @check("no stable v0.3.0 claim exists anywhere in tracked release-facing docs")
@@ -143,52 +202,10 @@ def check_no_overclaim_phrases():
 	"AT THE v0.3.0-rc2 TAG -- not the live, ongoing docs/compatibility.json")
 def check_compat_counts():
 	import json
-	import shutil
-	import subprocess
 
-	# Phase 26 fix: this is a claim about what v0.3.0-rc2 itself
-	# documented at release time -- docs/compatibility.json is a living
-	# file main keeps growing/reclassifying (e.g. Phase 26 moved
-	# MC-17/MC-18/MC-19 from UNSUPPORTED to SUPPORTED), so pinning this
-	# check to the CURRENT working-tree file would make it fail every
-	# time a later phase legitimately changes compatibility, which is
-	# not what "RC2's documented scope" means. Reading the tag's own
-	# historical snapshot via git keeps this check meaningful forever,
-	# regardless of how far main moves ahead of RC2 (Section 31/32 of
-	# the Phase 26 task: "Current main may now be ahead of RC2").
-	#
-	# Prerequisite: the checkout running this script must have the
-	# v0.3.0-rc2 tag available locally (a normal `git clone` has it; a
-	# shallow/tagless CI checkout may not -- `git fetch --tags` or
-	# `actions/checkout`'s `fetch-tags: true` fixes that). This script
-	# is not currently run from CI (no CI job invokes it), only locally
-	# via scripts/verify-results.py/prepare-release.sh -- CodeRabbit
-	# review (PR #36): documented here rather than silently assumed, and
-	# the failure message below names the fix instead of surfacing a
-	# raw git error.
-	git_bin = shutil.which("git")
-	if git_bin is None:
-		fail("compatibility counts", "git is not on PATH -- cannot read "
-			"docs/compatibility.json at the v0.3.0-rc2 tag")
-		return
-	tag_check = subprocess.run(
-		[git_bin, "rev-parse", "--verify", "-q", "v0.3.0-rc2^{commit}"],
-		cwd=REPO_ROOT, capture_output=True, text=True,
-	)
-	if tag_check.returncode != 0:
-		fail("compatibility counts", "the v0.3.0-rc2 tag is not available "
-			"in this checkout -- run `git fetch --tags` (or, in a CI "
-			"checkout, set `actions/checkout`'s `fetch-tags: true`) "
-			"before running this script")
-		return
-	try:
-		raw = subprocess.run(
-			[git_bin, "show", "v0.3.0-rc2:docs/compatibility.json"],
-			cwd=REPO_ROOT, capture_output=True, text=True, check=True,
-		).stdout
-	except subprocess.CalledProcessError as e:
-		fail("compatibility counts", f"could not read docs/compatibility.json "
-			f"at the v0.3.0-rc2 tag via git show: {e.stderr.strip()}")
+	raw, err = read_file_at_rc2_tag("docs/compatibility.json")
+	if err is not None:
+		fail("compatibility counts", err)
 		return
 	data = json.loads(raw)
 	rows = data.get("rows", [])
@@ -229,19 +246,23 @@ def check_readiness_evidence_shape():
 			f"{data.get('membrane_commit')!r} is not a 40-hex SHA")
 
 
-@check("readiness evidence's membrane_version matches the product's own MEMBRANE_VERSION")
+@check("readiness evidence's membrane_version matched MEMBRANE_VERSION AT "
+	"THE v0.3.0-rc2 TAG -- not the live, ongoing product_cli.h")
 def check_readiness_evidence_version_matches():
 	if not READINESS_EVIDENCE_PATH.exists():
 		return
 	import json
 	data = json.loads(READINESS_EVIDENCE_PATH.read_text())
-	path = REPO_ROOT / "tools" / "membrane-run" / "product_cli.h"
-	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', path.read_text())
+	text, err = read_file_at_rc2_tag("tools/membrane-run/product_cli.h")
+	if err is not None:
+		fail("readiness evidence", err)
+		return
+	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', text)
 	product_version = m.group(1) if m else None
 	if data.get("membrane_version") != product_version:
 		fail("readiness evidence", f"evidence membrane_version "
-			f"{data.get('membrane_version')!r} does not match the product's "
-			f"own MEMBRANE_VERSION {product_version!r}")
+			f"{data.get('membrane_version')!r} does not match "
+			f"MEMBRANE_VERSION {product_version!r} at the {RC2_TAG} tag")
 
 
 @check("readiness evidence never reports a partial pass as release-ready")
