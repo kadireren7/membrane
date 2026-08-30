@@ -109,6 +109,65 @@ def check_top_level(data):
 		fail("top-level shape", "'rows' must be a non-empty list")
 
 
+# CodeRabbit review (PR #36): a non-empty 'rows' list alone does not
+# substantiate docs/compatibility.md's claim of 8 successful real Qwen2
+# validations -- a row could be deleted, or silently downgraded to a
+# failed/non-REAL/empty-quality entry, and this file would still pass.
+# Pin the exact coverage this phase's own real experiment produced (one
+# row id per (backend, precision, placement) combination Sections
+# 7/10/11/12 of the Phase 26 task required) so removing or degrading any
+# one of them is a real, loud failure, not silently unnoticed.
+REQUIRED_ROW_COVERAGE = {
+	"CE-01": ("cpu", "native", "default"),
+	"CE-02": ("cpu", "q8", "default"),
+	"CE-03": ("cpu", "q5", "default"),
+	"CE-04": ("cpu", "adaptive", "default"),
+	"CE-05": ("vulkan", "q8", "default"),
+	"CE-06": ("vulkan", "q5", "default"),
+	"CE-07": ("vulkan", "q8", "cpu"),
+	"CE-08": ("vulkan", "adaptive", "default"),
+}
+
+
+@check("the exact required (backend, precision, placement) coverage is "
+	"present, every required row is REAL with a successful exit and a "
+	"real quality result -- not just a non-empty rows list "
+	"(CodeRabbit review, PR #36)")
+def check_required_coverage(rows):
+	by_id = {r.get("id"): r for r in rows}
+	missing_ids = set(REQUIRED_ROW_COVERAGE) - set(by_id)
+	if missing_ids:
+		fail("required coverage", f"missing required row id(s): "
+			f"{sorted(missing_ids)} -- docs/compatibility.md's "
+			f"MC-17/MC-18/MC-19 SUPPORTED claim depends on this exact "
+			f"coverage existing")
+	for rid, (backend, precision, placement) in REQUIRED_ROW_COVERAGE.items():
+		row = by_id.get(rid)
+		if row is None:
+			continue
+		if (row.get("backend"), row.get("precision"), row.get("placement")) \
+				!= (backend, precision, placement):
+			fail(rid, f"expected (backend, precision, placement) = "
+				f"{(backend, precision, placement)!r}, found "
+				f"{(row.get('backend'), row.get('precision'), row.get('placement'))!r} "
+				f"-- a required row was repurposed to cover something "
+				f"else")
+		if row.get("evidence_class") != "REAL":
+			fail(rid, f"evidence_class is {row.get('evidence_class')!r}, "
+				f"expected REAL -- this row backs a SUPPORTED "
+				f"compatibility claim and cannot be SIMULATED")
+		if row.get("exit_code") != 0:
+			fail(rid, f"exit_code is {row.get('exit_code')!r}, expected 0 "
+				f"-- a required row must be a real success, not a "
+				f"failed run")
+		quality = row.get("quality_result")
+		if not isinstance(quality, dict) \
+				or not (quality.get("generated_text") or "").strip():
+			fail(rid, "quality_result.generated_text is missing/empty -- "
+				"a required row must show real, non-empty generated "
+				"output, not just an exit code")
+
+
 @check("every row has the full required schema and real enum values")
 def check_row_schema(rows, allowlisted):
 	for row in rows:
@@ -172,12 +231,25 @@ def check_kv_byte_arithmetic(rows):
 		if native is None:
 			continue
 		native_kv = native.get("kv_bytes")
-		if not native_kv:
+		if not isinstance(native_kv, (int, float)) or native_kv <= 0:
+			fail(native.get("id", "<no id>"), f"native kv_bytes "
+				f"{native_kv!r} is not a positive number -- cannot check "
+				f"any compressed row's byte ratio against it")
 			continue
 		for precision, expected_ratio in (
 				("q8", EXPECTED_Q8_RATIO), ("q5", EXPECTED_Q5_RATIO)):
 			row = by_precision.get(precision)
 			if row is None:
+				# A native baseline exists for this exact (architecture,
+				# model, backend, context, placement) key but its q8/q5
+				# counterpart is missing -- CodeRabbit review (PR #36):
+				# this used to `continue` silently, letting a deleted
+				# compressed row go unnoticed by this check even though
+				# the byte-ratio claim depends on it existing.
+				fail(f"{key!r}", f"a native row exists for this "
+					f"(architecture, model, backend, context, placement) "
+					f"but no matching {precision!r} row was found -- "
+					f"cannot verify the {precision} byte-ratio claim")
 				continue
 			kv = row.get("kv_bytes")
 			rid = row.get("id", "<no id>")
@@ -240,6 +312,7 @@ def main():
 	if not isinstance(rows, list):
 		rows = []
 	allowlisted = get_allowlisted_architectures()
+	check_required_coverage(rows)
 	check_row_schema(rows, allowlisted)
 	check_no_unallowlisted_promotion(rows, allowlisted)
 	check_kv_byte_arithmetic(rows)

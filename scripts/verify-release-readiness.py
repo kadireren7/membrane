@@ -143,6 +143,7 @@ def check_no_overclaim_phrases():
 	"AT THE v0.3.0-rc2 TAG -- not the live, ongoing docs/compatibility.json")
 def check_compat_counts():
 	import json
+	import shutil
 	import subprocess
 
 	# Phase 26 fix: this is a claim about what v0.3.0-rc2 itself
@@ -155,9 +156,34 @@ def check_compat_counts():
 	# historical snapshot via git keeps this check meaningful forever,
 	# regardless of how far main moves ahead of RC2 (Section 31/32 of
 	# the Phase 26 task: "Current main may now be ahead of RC2").
+	#
+	# Prerequisite: the checkout running this script must have the
+	# v0.3.0-rc2 tag available locally (a normal `git clone` has it; a
+	# shallow/tagless CI checkout may not -- `git fetch --tags` or
+	# `actions/checkout`'s `fetch-tags: true` fixes that). This script
+	# is not currently run from CI (no CI job invokes it), only locally
+	# via scripts/verify-results.py/prepare-release.sh -- CodeRabbit
+	# review (PR #36): documented here rather than silently assumed, and
+	# the failure message below names the fix instead of surfacing a
+	# raw git error.
+	git_bin = shutil.which("git")
+	if git_bin is None:
+		fail("compatibility counts", "git is not on PATH -- cannot read "
+			"docs/compatibility.json at the v0.3.0-rc2 tag")
+		return
+	tag_check = subprocess.run(
+		[git_bin, "rev-parse", "--verify", "-q", "v0.3.0-rc2^{commit}"],
+		cwd=REPO_ROOT, capture_output=True, text=True,
+	)
+	if tag_check.returncode != 0:
+		fail("compatibility counts", "the v0.3.0-rc2 tag is not available "
+			"in this checkout -- run `git fetch --tags` (or, in a CI "
+			"checkout, set `actions/checkout`'s `fetch-tags: true`) "
+			"before running this script")
+		return
 	try:
 		raw = subprocess.run(
-			["git", "show", "v0.3.0-rc2:docs/compatibility.json"],
+			[git_bin, "show", "v0.3.0-rc2:docs/compatibility.json"],
 			cwd=REPO_ROOT, capture_output=True, text=True, check=True,
 		).stdout
 	except subprocess.CalledProcessError as e:

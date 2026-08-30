@@ -290,9 +290,9 @@ real attempt happened.
 ## Qwen2.5 regression (Section 26) — historical, at the Phase 21 commit
 
 **Superseded by Phase 26** — Qwen2 compressed KV is now allowlisted
-(`docs/compatibility.json`'s MC-17/MC-18/MC-19 rows, `docs/
-compat-expansion.md`), so a bare `--auto` request on Qwen2.5 no longer
-fails this way. This section is kept as-written because it describes
+(`docs/compatibility.json`'s MC-17/MC-18/MC-19 rows,
+`docs/compat-expansion.md`), so a bare `--auto` request on Qwen2.5 no
+longer fails this way. This section is kept as-written because it describes
 real, immutable evidence captured *at the Phase 21 commit*
 (`results/auto-fallback/validation.json` is never rewritten), not
 because the behavior is still current. At that commit: fallback never

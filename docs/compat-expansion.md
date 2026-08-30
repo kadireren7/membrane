@@ -102,7 +102,7 @@ never attention semantics.
 Qwen2.5-1.5B-Instruct's real hparams (dumped via a throwaway program
 linking the already-built `membrane_gpu_estimate_model()`, not guessed):
 
-```
+```text
 arch_name=qwen2  n_embd=1536  n_head=12  n_head_kv=2  n_layer=28
 head_dim=128  (1536 / 12)
 ```

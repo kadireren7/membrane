@@ -265,13 +265,32 @@ def check_compat_check_invariant():
 			"MC-19 rows describe this exact gate and need re-review if it "
 			"changed.")
 		return
-	for arch in ('"llama"', '"qwen2"'):
-		if arch not in src:
-			fail("compat_check.c invariant",
-				f"expected allowlist entry {arch} not found outside "
-				f"comments -- docs/compatibility.json's MC-13..MC-19 rows "
-				f"describe both architectures and need re-review if "
-				f"either was removed.")
+	# CodeRabbit review (PR #36): parse the actual array initializer and
+	# require the EXACT set {"llama", "qwen2"} -- merely searching the
+	# whole file for both literals (the previous version of this check)
+	# would still pass if a third architecture were added anywhere else
+	# in compat_check.c, silently widening the real gate beyond what
+	# docs/compatibility.json's MC-13..MC-19 rows actually have evidence
+	# for.
+	m = re.search(
+		r"MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST\[\]\s*=\s*\{([^}]*)\}",
+		src, re.DOTALL)
+	if not m:
+		fail("compat_check.c invariant",
+			"found the MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST name but "
+			"could not parse its array initializer -- expected "
+			"`... ARCH_ALLOWLIST[] = { \"llama\", \"qwen2\", };`")
+		return
+	entries = set(re.findall(r'"([a-zA-Z0-9_.]+)"', m.group(1)))
+	expected = {"llama", "qwen2"}
+	if entries != expected:
+		fail("compat_check.c invariant",
+			f"allowlist entries {sorted(entries)} != expected "
+			f"{sorted(expected)} -- docs/compatibility.json's MC-13..MC-19 "
+			f"rows describe evidence for exactly llama and qwen2; a "
+			f"missing or additional entry here needs a matching "
+			f"compatibility.json row (with real evidence) before this "
+			f"invariant can be updated to match.")
 	# The gate itself must actually consult the allowlist, not just
 	# define it unused -- a real behavioral proof, not just a static
 	# grep, still lives in tools/membrane-run/test_compat_check.c's
