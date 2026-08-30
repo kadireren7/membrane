@@ -252,21 +252,36 @@ def strip_c_comments(src):
 	return "".join(out)
 
 
-@check("compat_check.c's llama-only architecture gate matches what MC-17/MC-18 claim")
+@check("compat_check.c's architecture allowlist matches what MC-17/MC-18 claim "
+	"(Phase 26: exactly llama + qwen2, an explicit list, not a widened "
+	"strcmp)")
 def check_compat_check_invariant():
 	path = REPO_ROOT / "tools" / "membrane-run" / "compat_check.c"
 	src = strip_c_comments(path.read_text())
-	if 'strcmp(arch_name, "llama")' not in src:
+	if "MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST" not in src:
 		fail("compat_check.c invariant",
-			"expected exact-match gate on arch_name==\"llama\" not found "
-			"outside comments -- docs/compatibility.json's MC-17/MC-18 rows "
-			"describe this exact gate and need re-review if it changed. "
-			"(This is a static source check, not a compiled behavioral "
-			"proof -- the real behavioral proof is "
-			"tools/membrane-run/test_compat_check.c's "
-			"test_q8_qwen2_architecture_rejected/test_q5_llama_.../etc, "
-			"which run as `ctest -R test_compat_check` inside CI's "
-			"build-and-test job on every push/PR.)")
+			"expected the named architecture allowlist array not found "
+			"outside comments -- docs/compatibility.json's MC-17/MC-18/"
+			"MC-19 rows describe this exact gate and need re-review if it "
+			"changed.")
+		return
+	for arch in ('"llama"', '"qwen2"'):
+		if arch not in src:
+			fail("compat_check.c invariant",
+				f"expected allowlist entry {arch} not found outside "
+				f"comments -- docs/compatibility.json's MC-13..MC-19 rows "
+				f"describe both architectures and need re-review if "
+				f"either was removed.")
+	# The gate itself must actually consult the allowlist, not just
+	# define it unused -- a real behavioral proof, not just a static
+	# grep, still lives in tools/membrane-run/test_compat_check.c's
+	# test_q8_qwen2_real_shape_accepted/test_q8_gemma3_still_rejected/
+	# etc, which run as `ctest -R test_compat_check` inside CI's
+	# build-and-test job on every push/PR.
+	if "membrane_arch_supports_compressed_kv(arch_name)" not in src:
+		fail("compat_check.c invariant",
+			"membrane_check_kv_compat() no longer appears to call the "
+			"allowlist helper -- the gate may have been bypassed")
 
 
 def list_cmake_files_under(root):

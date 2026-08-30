@@ -16,9 +16,12 @@ extern "C" {
  * it's testable (test_compat_check.c) without a real model.
  *
  * Scope, matching this project's own documented limits
- * (docs/live-runtime.md): verified only for LLM_ARCH_LLAMA, CPU
- * backend. Flash-attention *availability* itself is a runtime-
- * resolved property of the backend (see llama-context.cpp's
+ * (docs/compatibility.md): compressed KV (q8/q5/adaptive) is verified
+ * for LLM_ARCH_LLAMA and (Phase 26) LLM_ARCH_QWEN2 only -- an explicit
+ * allowlist in compat_check.c, not a broad architecture-family
+ * heuristic; every other architecture string still fails closed here
+ * regardless of backend. Flash-attention *availability* itself is a
+ * runtime-resolved property of the backend (see llama-context.cpp's
  * resolve_fused_ops) that cannot be soundly determined without
  * actually constructing a context -- this check does not claim to
  * predict it; it only rejects the inputs that are knowable in advance

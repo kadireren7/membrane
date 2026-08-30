@@ -40,37 +40,73 @@ static void	test_q8_wrong_architecture_rejected(void)
 		"the offending architecture name appears in the reason");
 }
 
-/* Phase 18: the same rejection as test_q8_wrong_architecture_rejected(),
- * but naming the exact real architecture string ("qwen2") that
- * results/v0.3/kv-residency-productization/capacity_uplift.json's
- * qwen2.5-1.5b-instruct-fp16.gguf run actually reports (verified against
- * third_party/llama.cpp/src/llama-arch.cpp's LLM_ARCH_QWEN2 name), so
- * docs/compatibility.json can point at a test that names its real
- * evidence model's architecture literally, not just a generic
- * stand-in. The gate is architecture-string-only and returns before any
- * shape check runs, so the shape arguments below are arbitrary valid
- * values reused from the SmolLM2 tests above, not a claim about
- * Qwen2.5-1.5B's own real n_embd/n_head. */
-static void	test_q8_qwen2_architecture_rejected(void)
+/* Phase 26: qwen2 was rejected here through Phase 25 (see the historical
+ * MC-17/MC-18/MC-19 UNSUPPORTED rows this test used to back, now
+ * SUPPORTED -- docs/compatibility.json). Source-level investigation
+ * this phase proved LLM_ARCH_QWEN2 and LLM_ARCH_LLAMA both route
+ * through the exact same generic, non-SWA llama_kv_cache construction
+ * path in llama.cpp's create_memory() (Qwen2 never sets swa_type), and
+ * a real CPU+Vulkan q8/q5/adaptive/placement experiment against the
+ * local Qwen2.5-1.5B-Instruct fixture confirmed it end to end (see
+ * results/compat-expansion/validation.json). Shapes below are that
+ * exact model's real hparams (verified via a throwaway
+ * membrane_gpu_estimate_model() dump against the committed GGUF: n_embd
+ * 1536, n_head 12, n_head_kv 2, head_dim 128 -- 128 is evenly divisible
+ * by both Q8_0's and Q5_1's 32-element block size), not arbitrary
+ * stand-in values. */
+static void	test_q8_qwen2_real_shape_accepted(void)
 {
 	membrane_compat_result_t	r;
 
-	TEST_ASSERT(membrane_check_kv_compat("qwen2", 576, 9, 3, 2048,
-			KV_Q8, &r) == 0, "qwen2 architecture rejected for q8");
-	TEST_ASSERT(r.ok == 0, "out->ok reflects failure");
-	TEST_ASSERT(strstr(r.reason, "qwen2") != NULL,
-		"the offending architecture name appears in the reason");
+	TEST_ASSERT(membrane_check_kv_compat("qwen2", 1536, 12, 2, 512,
+			KV_Q8, &r) == 1,
+		"Qwen2.5-1.5B's real shape passes q8 compat (Phase 26)");
+	TEST_ASSERT(r.ok == 1, "out->ok reflects success");
 }
 
-static void	test_q5_qwen2_architecture_rejected(void)
+static void	test_q5_qwen2_real_shape_accepted(void)
 {
 	membrane_compat_result_t	r;
 
-	TEST_ASSERT(membrane_check_kv_compat("qwen2", 576, 9, 3, 2048,
-			KV_Q5, &r) == 0, "qwen2 architecture rejected for q5");
-	TEST_ASSERT(r.ok == 0, "out->ok reflects failure");
-	TEST_ASSERT(strstr(r.reason, "qwen2") != NULL,
-		"the offending architecture name appears in the reason");
+	TEST_ASSERT(membrane_check_kv_compat("qwen2", 1536, 12, 2, 512,
+			KV_Q5, &r) == 1,
+		"Qwen2.5-1.5B's real shape passes q5 compat (Phase 26)");
+	TEST_ASSERT(r.ok == 1, "out->ok reflects success");
+}
+
+/* The shape guard still runs for qwen2 too -- allowlisting the
+ * architecture does not bypass the head-dimension/block-alignment
+ * check below it. Same synthetic bad-shape example
+ * test_q8_head_dim_not_block_aligned_rejected() uses for llama (head
+ * dim 80, not divisible by 32), just under the qwen2 architecture
+ * string this time. */
+static void	test_q8_qwen2_bad_shape_rejected(void)
+{
+	membrane_compat_result_t	r;
+
+	TEST_ASSERT(membrane_check_kv_compat("qwen2", 640, 8, 8, 2048,
+			KV_Q8, &r) == 0,
+		"qwen2 with head dim 80 (not divisible by 32) still rejected");
+	TEST_ASSERT(strstr(r.reason, "80") != NULL,
+		"the actual head dimension appears in the reason");
+}
+
+/* Phase 26's allowlist is a two-entry list, not a broadened family
+ * heuristic -- a real, still-unsupported architecture (gemma3, no
+ * MEMBRANE evidence for compressed KV at all) must still fail closed
+ * exactly as it did before this phase, matching
+ * test_q8_wrong_architecture_rejected() above but stated explicitly so
+ * this file itself proves the allowlist didn't silently widen further
+ * than intended. */
+static void	test_q8_gemma3_still_rejected(void)
+{
+	membrane_compat_result_t	r;
+
+	TEST_ASSERT(membrane_check_kv_compat("gemma3", 1536, 12, 2, 512,
+			KV_Q8, &r) == 0,
+		"gemma3 (not on the Phase 26 allowlist) still rejected for q8");
+	TEST_ASSERT(strstr(r.reason, "LLM_ARCH_QWEN2") != NULL,
+		"the updated reason message names both allowlisted architectures");
 }
 
 static void	test_q8_unknown_architecture_rejected(void)
@@ -195,8 +231,10 @@ int	main(void)
 	test_native_always_ok();
 	test_q8_llama_smollm2_shape_ok();
 	test_q8_wrong_architecture_rejected();
-	test_q8_qwen2_architecture_rejected();
-	test_q5_qwen2_architecture_rejected();
+	test_q8_qwen2_real_shape_accepted();
+	test_q5_qwen2_real_shape_accepted();
+	test_q8_qwen2_bad_shape_rejected();
+	test_q8_gemma3_still_rejected();
 	test_q8_unknown_architecture_rejected();
 	test_q8_head_dim_not_block_aligned_rejected();
 	test_q8_head_dim_block_aligned_accepted();

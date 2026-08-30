@@ -216,21 +216,27 @@ static void	test_constrained_q5_required_for_memory_guard(void)
 		"q5's own real max-fit layer count at this budget");
 }
 
-/* 5. qwen2 (incompatible architecture): adaptive request finds NO
- * eligible candidate at all -- never falls back to native (adaptive
- * never proposes native, matching adaptive_kv_policy.h's own
- * contract), fails closed with a stable, informative reason. */
+/* 5. gemma3 (still-incompatible architecture, Phase 26's own allowlist
+ * stays at exactly llama+qwen2): adaptive request finds NO eligible
+ * candidate at all -- never falls back to native (adaptive never
+ * proposes native, matching adaptive_kv_policy.h's own contract), fails
+ * closed with a stable, informative reason. Phase 26 note: this used to
+ * use "qwen2" as its incompatible example -- that architecture is now
+ * allowlisted (see test_qwen2_adaptive_legal_after_phase26 below), so
+ * this test switched to a real architecture MEMBRANE genuinely has no
+ * compressed-KV evidence for, to keep proving the SAME "an incompatible
+ * architecture fails closed" behavior the qwen2 case used to. */
 static void	test_incompatible_architecture_adaptive_fails_closed(void)
 {
 	membrane_joint_plan_request_t	req;
 	membrane_joint_plan_result_t	res;
 
 	fill_base_request(&req);
-	req.arch_name = "qwen2";
+	req.arch_name = "gemma3";
 	req.device_free_bytes = (uint64_t)(3.9 * (double)GIB);
 	req.device_total_bytes = 4 * GIB;
 	TEST_ASSERT(membrane_joint_plan_resolve(&req, &res) == 0,
-		"qwen2 + adaptive (q8/q5 only) has no eligible candidate");
+		"gemma3 + adaptive (q8/q5 only) has no eligible candidate");
 	TEST_ASSERT(res.ok == 0, "out->ok reflects failure");
 	TEST_ASSERT(res.selected_index == -1, "no candidate selected");
 	TEST_ASSERT(strcmp(res.candidates[0].reason_code,
@@ -246,16 +252,114 @@ static void	test_explicit_q8_incompatible_architecture(void)
 	membrane_joint_plan_result_t	res;
 
 	fill_base_request(&req);
-	req.arch_name = "qwen2";
+	req.arch_name = "gemma3";
 	req.precision_request = MEMBRANE_JOINT_KV_Q8;
 	req.device_free_bytes = (uint64_t)(3.9 * (double)GIB);
 	req.device_total_bytes = 4 * GIB;
 	TEST_ASSERT(membrane_joint_plan_resolve(&req, &res) == 0,
-		"explicit q8 on qwen2 has no eligible candidate");
+		"explicit q8 on gemma3 has no eligible candidate");
 	TEST_ASSERT(res.candidate_count == 1,
 		"exactly one (ineligible) candidate recorded, no substitution");
 	TEST_ASSERT(res.candidates[0].kv_precision == MEMBRANE_JOINT_KV_Q8,
 		"the recorded candidate is still q8, never silently native/q5");
+}
+
+/* Phase 26, Section 26: proves the joint planner itself needed ZERO
+ * architecture-specific changes -- membrane_joint_plan_resolve() always
+ * delegated its own architecture gate to membrane_check_kv_compat()
+ * (joint_planner.c's own build_candidate()), so widening that ONE
+ * function's allowlist (compat_check.c) is sufficient; qwen2 becomes
+ * legal here purely as a side effect, with no planner-ranking special
+ * case for it anywhere. Shape values are Qwen2.5-1.5B's real hparams
+ * (n_embd 1536, n_head 12, n_head_kv 2, head_dim 128 -- divisible by
+ * 32), matching test_compat_check.c's own real-shape tests. */
+static void	test_qwen2_explicit_q8_legal_after_phase26(void)
+{
+	membrane_joint_plan_request_t	req;
+	membrane_joint_plan_result_t	res;
+
+	fill_base_request(&req);
+	req.arch_name = "qwen2";
+	req.n_embd = 1536;
+	req.n_head = 12;
+	req.n_head_kv = 2;
+	req.precision_request = MEMBRANE_JOINT_KV_Q8;
+	req.device_free_bytes = 4 * GIB;
+	req.device_total_bytes = 4 * GIB;
+	TEST_ASSERT(membrane_joint_plan_resolve(&req, &res) == 1,
+		"qwen2 + explicit q8 resolves (Phase 26 allowlist)");
+	TEST_ASSERT(res.ok == 1, "out->ok reflects success");
+	TEST_ASSERT(res.candidates[res.selected_index].kv_precision
+			== MEMBRANE_JOINT_KV_Q8, "the selected candidate is q8");
+	TEST_ASSERT(res.candidates[res.selected_index].eligible == 1,
+		"the winning candidate is genuinely eligible, not forced");
+}
+
+static void	test_qwen2_explicit_q5_legal_after_phase26(void)
+{
+	membrane_joint_plan_request_t	req;
+	membrane_joint_plan_result_t	res;
+
+	fill_base_request(&req);
+	req.arch_name = "qwen2";
+	req.n_embd = 1536;
+	req.n_head = 12;
+	req.n_head_kv = 2;
+	req.precision_request = MEMBRANE_JOINT_KV_Q5;
+	req.device_free_bytes = 4 * GIB;
+	req.device_total_bytes = 4 * GIB;
+	TEST_ASSERT(membrane_joint_plan_resolve(&req, &res) == 1,
+		"qwen2 + explicit q5 resolves (Phase 26 allowlist)");
+	TEST_ASSERT(res.candidates[res.selected_index].kv_precision
+			== MEMBRANE_JOINT_KV_Q5, "the selected candidate is q5");
+}
+
+static void	test_qwen2_adaptive_legal_after_phase26(void)
+{
+	membrane_joint_plan_request_t	req;
+	membrane_joint_plan_result_t	res;
+
+	fill_base_request(&req);
+	req.arch_name = "qwen2";
+	req.n_embd = 1536;
+	req.n_head = 12;
+	req.n_head_kv = 2;
+	req.device_free_bytes = 4 * GIB;
+	req.device_total_bytes = 4 * GIB;
+	TEST_ASSERT(membrane_joint_plan_resolve(&req, &res) == 1,
+		"qwen2 + adaptive resolves to a legal q8/q5 candidate "
+		"(Phase 26 allowlist)");
+	TEST_ASSERT(res.candidates[res.selected_index].kv_precision
+			== MEMBRANE_JOINT_KV_Q8
+			|| res.candidates[res.selected_index].kv_precision
+			== MEMBRANE_JOINT_KV_Q5,
+		"adaptive picked a real compressed candidate, never native");
+}
+
+/* Placement stays independent of precision for qwen2 too (Phase 26,
+ * Section 12) -- --kv-placement cpu resolves alongside q8 exactly as it
+ * would for llama, no special-casing. */
+static void	test_qwen2_q8_cpu_placement_independent_after_phase26(void)
+{
+	membrane_joint_plan_request_t	req;
+	membrane_joint_plan_result_t	res;
+
+	fill_base_request(&req);
+	req.arch_name = "qwen2";
+	req.n_embd = 1536;
+	req.n_head = 12;
+	req.n_head_kv = 2;
+	req.precision_request = MEMBRANE_JOINT_KV_Q8;
+	req.kv_placement_mode = MEMBRANE_JOINT_PLACEMENT_CPU;
+	req.device_free_bytes = 4 * GIB;
+	req.device_total_bytes = 4 * GIB;
+	TEST_ASSERT(membrane_joint_plan_resolve(&req, &res) == 1,
+		"qwen2 + q8 + explicit cpu placement resolves");
+	TEST_ASSERT(res.candidates[res.selected_index].kv_precision
+			== MEMBRANE_JOINT_KV_Q8, "precision stays q8");
+	TEST_ASSERT(res.candidates[res.selected_index].kv_placement
+			== MEMBRANE_JOINT_PLACEMENT_CPU,
+		"placement stays cpu, independent of the precision gate");
 }
 
 /* 7. Explicit --kv-placement cpu never produces a GPU placement
@@ -458,6 +562,10 @@ int	main(void)
 	test_constrained_q5_required_for_memory_guard();
 	test_incompatible_architecture_adaptive_fails_closed();
 	test_explicit_q8_incompatible_architecture();
+	test_qwen2_explicit_q8_legal_after_phase26();
+	test_qwen2_explicit_q5_legal_after_phase26();
+	test_qwen2_adaptive_legal_after_phase26();
+	test_qwen2_q8_cpu_placement_independent_after_phase26();
 	test_explicit_cpu_placement_never_gpu();
 	test_explicit_gpu_layers_never_changed();
 	test_explicit_gpu_layers_impossible_fails_closed();
