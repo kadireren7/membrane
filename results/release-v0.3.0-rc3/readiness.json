@@ -5,7 +5,7 @@
  "membrane_commit": "61414bc2c00db6c8d10dcd998e6c16d0afb42b28",
  "membrane_version": "0.3.0-rc3",
  "base_release": "v0.3.0-rc2",
- "pull_request": "PLACEHOLDER -- filled in after the PR is opened, before merge",
+ "pull_request": "https://github.com/kadireren7/membrane/pull/37",
  "test_results": {
   "ctest_lightweight_build": {
    "passed": 67,
@@ -199,8 +199,27 @@
   "Independent-host external validation remains pending (see external_validation_status above)."
  ],
  "ci_runs": {
-  "note": "PLACEHOLDER -- filled in with real GitHub Actions run IDs after the PR is opened and CI completes, before merge",
-  "workflow_runs": [],
-  "jobs_all_passing": []
+  "note": "GitHub Actions run IDs for kadireren7/membrane#37 (release/v0.3.0-rc3-prep), commit f6c7db46b1b66fbd107f72b58e03f7cf5814a796, all SUCCESS at time of writing",
+  "workflow_runs": [
+   33291828810,
+   33291839134,
+   33291839154
+  ],
+  "jobs_all_passing": [
+   "CodeQL",
+   "CodeQL analysis (c-cpp)",
+   "build-and-test (Debug)",
+   "build-and-test (ASan)",
+   "thread-sanitizer",
+   "packaging-smoke",
+   "compatibility-check",
+   "planner-accuracy-check",
+   "auto-fallback-check",
+   "fallback-controller-tests",
+   "performance-profile-check",
+   "performance-optimization-check",
+   "compat-expansion-check",
+   "release-rc3-check"
+  ]
  }
 }

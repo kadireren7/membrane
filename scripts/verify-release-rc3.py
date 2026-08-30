@@ -115,6 +115,29 @@ def check_readiness_evidence():
 	if data.get("base_release") != "v0.3.0-rc2":
 		fail("readiness evidence", f"base_release "
 			f"{data.get('base_release')!r} != 'v0.3.0-rc2'")
+	# CodeRabbit review (PR #37): the envelope-field checks above passed
+	# even while this file was still a draft (pull_request a placeholder
+	# string, ci_runs empty) -- this is the release GATE, so draft
+	# evidence must fail it, not silently pass through to merge.
+	pr_url = data.get("pull_request", "")
+	if not re.fullmatch(
+			r"https://github\.com/kadireren7/membrane/pull/\d+", pr_url):
+		fail("readiness evidence", f"pull_request {pr_url!r} is not a "
+			f"real PR URL (still a placeholder?) -- this must be filled "
+			f"in with the real PR before this evidence can gate a merge")
+	ci_runs = data.get("ci_runs") or {}
+	workflow_runs = ci_runs.get("workflow_runs") or []
+	jobs_all_passing = ci_runs.get("jobs_all_passing") or []
+	if not workflow_runs or not all(
+			isinstance(r, int) for r in workflow_runs):
+		fail("readiness evidence", f"ci_runs.workflow_runs "
+			f"{workflow_runs!r} is empty or not all-integer -- real "
+			f"GitHub Actions run IDs are required before this evidence "
+			f"can gate a merge")
+	if not jobs_all_passing:
+		fail("readiness evidence", "ci_runs.jobs_all_passing is empty -- "
+			"the real list of passing CI job names is required before "
+			"this evidence can gate a merge")
 
 
 @check("current live compatibility counts match what "
@@ -148,6 +171,12 @@ def check_compat_counts_match_doc():
 				f"{n} {label} row(s))")
 
 
+EXPECTED_QWEN2_ROW_IDS = frozenset({
+	"CE-01", "CE-02", "CE-03", "CE-04", "CE-05", "CE-06", "CE-07", "CE-08",
+})
+EXPECTED_QWEN2_MODEL = "Qwen2.5-1.5B-Instruct"
+
+
 @check("the Qwen2 compressed-KV support claim has direct Phase 26 "
 	"evidence (results/compat-expansion/validation.json)")
 def check_qwen2_claim_has_evidence():
@@ -156,16 +185,52 @@ def check_qwen2_claim_has_evidence():
 			f"the release doc's Qwen2 claim would be unsubstantiated")
 		return
 	data = json.loads(COMPAT_EXPANSION_PATH.read_text())
-	if not data.get("rows"):
-		fail("Qwen2 claim", "results/compat-expansion/validation.json has "
-			"no rows")
+	rows = data.get("rows") or []
+	# CodeRabbit review (PR #37): a non-empty rows list alone does not
+	# prove the SPECIFIC rows this release's own claim cites (CE-01..
+	# CE-08) still exist, or that they still cover the exact model the
+	# release doc names -- bind the claim to those exact rows, not just
+	# "some evidence exists somewhere in this file".
+	by_id = {r.get("id"): r for r in rows}
+	missing = EXPECTED_QWEN2_ROW_IDS - set(by_id)
+	if missing:
+		fail("Qwen2 claim", f"results/compat-expansion/validation.json "
+			f"is missing required row id(s) {sorted(missing)} -- the "
+			f"release doc's Qwen2 claim cites these specific rows")
+	for rid in EXPECTED_QWEN2_ROW_IDS & set(by_id):
+		row = by_id[rid]
+		if row.get("model") != EXPECTED_QWEN2_MODEL:
+			fail("Qwen2 claim", f"{rid}.model is {row.get('model')!r}, "
+				f"expected {EXPECTED_QWEN2_MODEL!r} -- the release doc's "
+				f"claim is scoped to this exact model")
 	if not RELEASE_DOC_PATH.exists():
 		return
 	text = RELEASE_DOC_PATH.read_text()
-	if "Qwen2.5-1.5B-Instruct" not in text:
+	if EXPECTED_QWEN2_MODEL not in text:
 		fail("Qwen2 claim", "release doc does not name the exact tested "
 			"model (Qwen2.5-1.5B-Instruct) -- an unscoped 'Qwen2' claim "
 			"would overclaim beyond the real evidence")
+	# Cross-check the two specific byte-ratio percentages the release
+	# doc states against this same evidence file's own committed
+	# kv_bytes fields, so a stale/hand-edited percentage in the doc
+	# would be caught, not just the row's existence.
+	by_precision = {}
+	for rid in ("CE-01", "CE-02", "CE-03"):
+		row = by_id.get(rid)
+		if row is not None:
+			by_precision[row.get("precision")] = row.get("kv_bytes")
+	native_kv = by_precision.get("native")
+	if native_kv:
+		for precision, doc_pct in (("q8", "53.125%"), ("q5", "37.5%")):
+			kv = by_precision.get(precision)
+			if kv is None:
+				continue
+			real_pct = round(100 * kv / native_kv, 3)
+			doc_val = float(doc_pct.rstrip("%"))
+			if abs(real_pct - doc_val) > 0.01:
+				fail("Qwen2 claim", f"release doc states {precision} = "
+					f"{doc_pct}, but the cited evidence's own kv_bytes "
+					f"({kv} / {native_kv}) computes to {real_pct}%")
 	if "all Qwen2 models" in text.lower():
 		fail("Qwen2 claim", "release doc appears to generalize to 'all "
 			"Qwen2 models' -- the evidence only covers "

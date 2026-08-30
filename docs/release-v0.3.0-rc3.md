@@ -204,11 +204,14 @@ the release-prep PR description for the concrete next step.
 
 ## Upgrade notes
 
-No breaking CLI or JSON-schema change since RC2. New CLI-visible
-behavior: none (Qwen2 support and the new timing fields both use
-existing flags/output shape). `schema_version` has stayed `1`
-throughout — every JSON field added since RC2 (`timings`,
-`planner_stages`, the error-path `fallback` trace) is additive.
+No breaking CLI or JSON-schema change since RC2 — Qwen2 compressed-KV
+support uses the existing `--kv q8/q5/adaptive` flags and output shape,
+not a new flag or a schema change; it *is* new behavior in the sense
+that matters (`--kv q8`/`q5`/`adaptive` on a Qwen2.5-1.5B-Instruct model
+now succeeds where it previously failed closed — see "Qwen2 compressed
+KV" above). `schema_version` has stayed `1` throughout — every JSON
+field added since RC2 (`timings`, `planner_stages`, the error-path
+`fallback` trace) is additive.
 
 ## Validation status
 

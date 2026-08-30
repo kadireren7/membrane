@@ -224,16 +224,32 @@ def check_compat_counts():
 				f"{counts.get(status, 0)}, expected {n}")
 
 
-READINESS_EVIDENCE_PATH = REPO_ROOT / "results" / "release-v0.3.0-rc2" / "readiness.json"
+READINESS_EVIDENCE_REL_PATH = "results/release-v0.3.0-rc2/readiness.json"
 
 
-@check("readiness.json is valid JSON with the expected top-level shape")
-def check_readiness_evidence_shape():
-	if not READINESS_EVIDENCE_PATH.exists():
-		fail("readiness evidence", f"{READINESS_EVIDENCE_PATH} does not exist")
-		return
+def _load_readiness_evidence_at_rc2_tag():
+	"""CodeRabbit review (PR #37): this evidence file is itself part of
+	RC2's own historical record -- reading it from the LIVE tree (as
+	every check below originally did) meant a later edit to this file
+	could silently change what "RC2 was ready" means while this
+	validator kept reporting success, as long as membrane_version still
+	matched. Reading it from the v0.3.0-rc2 tag, same as every other
+	check in this file, closes that gap. Returns (data, None) or
+	(None, error_detail)."""
 	import json
-	data = json.loads(READINESS_EVIDENCE_PATH.read_text())
+	raw, err = read_file_at_rc2_tag(READINESS_EVIDENCE_REL_PATH)
+	if err is not None:
+		return (None, err)
+	return (json.loads(raw), None)
+
+
+@check("readiness.json (AT THE v0.3.0-rc2 TAG) is valid JSON with the "
+	"expected top-level shape")
+def check_readiness_evidence_shape():
+	data, err = _load_readiness_evidence_at_rc2_tag()
+	if err is not None:
+		fail("readiness evidence", err)
+		return
 	for field in ("schema_version", "label", "membrane_commit",
 			"membrane_version", "test_results"):
 		if field not in data:
@@ -249,10 +265,10 @@ def check_readiness_evidence_shape():
 @check("readiness evidence's membrane_version matched MEMBRANE_VERSION AT "
 	"THE v0.3.0-rc2 TAG -- not the live, ongoing product_cli.h")
 def check_readiness_evidence_version_matches():
-	if not READINESS_EVIDENCE_PATH.exists():
+	data, err = _load_readiness_evidence_at_rc2_tag()
+	if err is not None:
+		fail("readiness evidence", err)
 		return
-	import json
-	data = json.loads(READINESS_EVIDENCE_PATH.read_text())
 	text, err = read_file_at_rc2_tag("tools/membrane-run/product_cli.h")
 	if err is not None:
 		fail("readiness evidence", err)
@@ -265,12 +281,13 @@ def check_readiness_evidence_version_matches():
 			f"MEMBRANE_VERSION {product_version!r} at the {RC2_TAG} tag")
 
 
-@check("readiness evidence never reports a partial pass as release-ready")
+@check("readiness evidence (AT THE v0.3.0-rc2 TAG) never reports a "
+	"partial pass as release-ready")
 def check_readiness_evidence_no_partial_pass():
-	if not READINESS_EVIDENCE_PATH.exists():
+	data, err = _load_readiness_evidence_at_rc2_tag()
+	if err is not None:
+		fail("readiness evidence", err)
 		return
-	import json
-	data = json.loads(READINESS_EVIDENCE_PATH.read_text())
 	for name, result in (data.get("test_results") or {}).items():
 		if not isinstance(result, dict) or "passed" not in result:
 			continue
