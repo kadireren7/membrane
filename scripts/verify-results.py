@@ -1809,6 +1809,26 @@ def main() -> int:
 			print("\nFAILED: scripts/verify-compat-expansion.py reported "
 				"failures (see output above)")
 			return 1
+
+	# Same reasoning as the eight chains above -- Phase 27's RC3
+	# release-readiness evidence gets its own dedicated validator,
+	# separate from the already-chained scripts/verify-release-
+	# readiness.py above (which stays pinned to RC2's own frozen
+	# historical facts, read via `git show v0.3.0-rc2:...` -- Phase 27
+	# fixed the last two live-tree-vs-frozen-tag bugs in that script so
+	# it keeps passing here forever, unaffected by this or any future
+	# phase's changes).
+	rc3_script = REPO_ROOT / "scripts" / "verify-release-rc3.py"
+	if rc3_script.exists():
+		print()
+		print("Also verifying RC3 release readiness "
+			"(scripts/verify-release-rc3.py):")
+		sys.stdout.flush()
+		result = subprocess.run([sys.executable, str(rc3_script)])
+		if result.returncode != 0:
+			print("\nFAILED: scripts/verify-release-rc3.py reported "
+				"failures (see output above)")
+			return 1
 	return 0
 
 
