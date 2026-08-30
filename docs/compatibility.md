@@ -43,18 +43,29 @@ inferred from a model's filename.
 unmodified llama.cpp behavior (`compat_check.c` runs zero checks for it,
 confirmed by `test_native_always_ok`). `q8`/`q5`/`adaptive` all go through
 `membrane_check_kv_compat()` in `tools/membrane-run/compat_check.c`, which
-accepts **only** `general.architecture == "llama"` (an exact string
-match, not a family heuristic) plus a per-head-dimension block-alignment
-check. `adaptive` is not a separate gate: it resolves to a concrete
-candidate (`q8` or `q5`) first, then that candidate goes through the same
-check — so an unsupported architecture fails `adaptive` closed with the
-identical `KV_COMPAT_UNSUPPORTED` reason, never a silent fallback to
-`native` (MC-19).
+accepts **only** an architecture string on an explicit allowlist
+(`MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST` — currently `llama` and, since
+Phase 26, `qwen2`; an exact string match against each entry, never a
+family heuristic) plus a per-head-dimension block-alignment check.
+`adaptive` is not a separate gate: it resolves to a concrete candidate
+(`q8` or `q5`) first, then that candidate goes through the same check —
+so an unsupported architecture fails `adaptive` closed with the identical
+`KV_COMPAT_UNSUPPORTED` reason, never a silent fallback to `native`.
 
-Qwen2.5 is the concrete counter-example this repo has direct evidence for:
-validated at `native` precision (MC-13..MC-16) and explicitly rejected for
-`q8`/`q5`/`adaptive` (MC-17..MC-19) — the same real model, two different
-compatibility answers on two independent axes.
+Qwen2.5 was the concrete counter-example this repo used to have direct
+evidence *against* through the Phase 25 commit: validated at `native`
+precision (MC-13..MC-16) but explicitly rejected for `q8`/`q5`/`adaptive`.
+Phase 26 closed that gap with real evidence (source-level architectural
+equivalence between `LLM_ARCH_LLAMA` and `LLM_ARCH_QWEN2` in the pinned
+llama.cpp's own KV-cache construction code, plus a real CPU+Vulkan
+q8/q5/adaptive experiment against this exact model) — see
+[`docs/compat-expansion.md`](compat-expansion.md) for the full narrative.
+Qwen2.5-1.5B-Instruct is now `SUPPORTED` on **every** row in this matrix
+(MC-13..MC-19): the same real model, one compatibility answer across both
+axes, not two anymore. This is a claim about *this one architecture
+string and this one tested model*, not a generalization to every
+Qwen2-family variant or every architecture llama.cpp implements — see
+"Not yet validated" below.
 
 ## Placement compatibility
 
@@ -91,12 +102,11 @@ itself fails closed before model load (MC-21) — `--kv-placement cpu` and
 Each row in `docs/compatibility.json` carries a `hardware_scope`:
 
 - `tested` — validated on one specific, named device (currently: a real
-  GTX 1650 for every row in this matrix with `hardware_scope: "tested"`).
+  GTX 1650 for every row in this matrix with `hardware_scope: "tested"`,
+  including MC-17/MC-18/MC-19 since Phase 26's real Vulkan experiment —
+  `results/compat-expansion/validation.json`'s CE-05/CE-06/CE-08 rows).
   This is a claim about that exact device, not "all Vulkan GPUs" or "all
-  NVIDIA GPUs." Not every row whose `backend` includes `vulkan` carries
-  this scope — MC-17/MC-18 name `vulkan` in `backend` (the architecture
-  gate applies there too) but their evidence is source/test-based, not a
-  hardware run, so their `hardware_scope` is `not-hardware-specific`.
+  NVIDIA GPUs."
 - `backend-level` — the claim is about the backend/build configuration
   itself (e.g. "no GPU backend compiled in" fails closed), not tied to
   specific hardware.
@@ -105,8 +115,13 @@ Each row in `docs/compatibility.json` carries a `hardware_scope`:
 
 ## Known intentional rejections
 
-- Compressed KV (`q8`/`q5`/`adaptive`) on any architecture other than
-  `llama` (MC-17..MC-19).
+- Compressed KV (`q8`/`q5`/`adaptive`) on any architecture not on
+  `compat_check.c`'s explicit allowlist (currently `llama`, `qwen2`) — no
+  row currently in this matrix demonstrates this directly against a real
+  third architecture, but `test_compat_check.c`'s
+  `test_q8_gemma3_still_rejected` and `test_joint_planner.c`'s
+  `test_incompatible_architecture_adaptive_fails_closed` both prove it
+  against a real, still-unsupported architecture string (`gemma3`).
 - `--kv-placement gpu`/`auto` without `--gpu-layers` (MC-20).
 - `--gpu-layers all|auto` on a build with no GPU backend compiled in
   (MC-21).
@@ -164,3 +179,9 @@ neither one's checks counted into the other's total.
   `--plan-only --json`/CLI smokes against local GGUF fixtures already
   committed to `models/`, run to fill specific gaps this phase's audit
   found in existing evidence (not a benchmark sweep).
+- `results/compat-expansion/validation.json` (Phase 26) — 8 real,
+  live `membrane-run` invocations validating Qwen2 compressed KV
+  (native/q8/q5/adaptive, CPU and Vulkan, default and `cpu` placement),
+  checked by `scripts/verify-compat-expansion.py`. See
+  [`docs/compat-expansion.md`](compat-expansion.md) for the full
+  investigation this evidence backs.
