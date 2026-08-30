@@ -1794,6 +1794,21 @@ def main() -> int:
 			print("\nFAILED: scripts/verify-performance-optimization.py "
 				"reported failures (see output above)")
 			return 1
+
+	# Same reasoning as the seven chains above -- Phase 26's real
+	# compatibility-expansion evidence gets its own dedicated validator,
+	# chained here as another unnumbered step.
+	compat_exp_script = REPO_ROOT / "scripts" / "verify-compat-expansion.py"
+	if compat_exp_script.exists():
+		print()
+		print("Also verifying compat-expansion evidence "
+			"(scripts/verify-compat-expansion.py):")
+		sys.stdout.flush()
+		result = subprocess.run([sys.executable, str(compat_exp_script)])
+		if result.returncode != 0:
+			print("\nFAILED: scripts/verify-compat-expansion.py reported "
+				"failures (see output above)")
+			return 1
 	return 0
 
 

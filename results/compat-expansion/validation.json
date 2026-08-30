@@ -1,0 +1,246 @@
+{
+ "schema_version": 1,
+ "membrane_commit": "3b8d87ebcb429d8f651fec2d2b88f94e14f2c293",
+ "generated_at": "2026-08-30T02:59:07Z",
+ "expansion_decision": "EXPAND_QWEN2_COMPRESSION",
+ "note": "Phase 26: expands compressed-KV (q8/q5/adaptive) architecture support from llama-only to llama+qwen2, backed by two independent, real layers of evidence -- see docs/compat-expansion.md for the full narrative. All 8 rows below are REAL (live membrane-run product-path invocations against the local Qwen2.5-1.5B-Instruct fixture, this exact commit's binary); none are SIMULATED. A separate, non-row SOURCE_PROVEN finding (architectural equivalence between LLM_ARCH_LLAMA and LLM_ARCH_QWEN2 in the pinned llama.cpp's own KV-cache construction code) is documented in docs/compat-expansion.md, not restated as JSON here -- it is a claim about source code, not a measurement, so it does not fit this file's row schema.",
+ "host": {
+  "note": "same real Pop!_OS 24.04 dev machine as every prior phase (AMD Ryzen 5 5600H, real NVIDIA GTX 1650 Vulkan device Vulkan1), 5.6 GiB RAM -- every row is device-scoped, never generalized."
+ },
+ "memory_reduction_check": {
+  "native_kv_bytes": 14680064,
+  "q8_kv_bytes": 7798784,
+  "q5_kv_bytes": 5505024,
+  "q8_ratio_of_native": 0.53125,
+  "q5_ratio_of_native": 0.375,
+  "expected_q8_ratio": 0.53125,
+  "expected_q5_ratio": 0.375,
+  "note": "q8/q5 ratios recomputed here directly from CE-01/CE-02/CE-03's own real kv_bytes fields and checked against the Q8_0/Q5_1 ggml block-format formulas (34 bytes/32 elements, 24 bytes/32 elements, vs F16's 2 bytes/element) -- scripts/verify-compat-expansion.py re-derives and checks this arithmetic independently on every run, not just at evidence-authoring time."
+ },
+ "rows": [
+  {
+   "id": "CE-01",
+   "evidence_class": "REAL",
+   "architecture": "qwen2",
+   "model": "Qwen2.5-1.5B-Instruct",
+   "backend": "cpu",
+   "precision": "native",
+   "placement": "default",
+   "context": 512,
+   "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt 'The capital of France is' --ctx 512 --gen-tokens 16 --json --quiet --include-text --gpu-layers 0 --kv native",
+   "exit_code": 0,
+   "quality_result": {
+    "generated_text": " Paris. The capital of France is also the capital of which other country?\nA",
+    "note": "baseline for comparison against q8/q5 below -- same prompt, same seed-free greedy decode"
+   },
+   "kv_bytes": 14680064,
+   "resolved_plan": {
+    "gpu_layers_selected": 0,
+    "backend": "CPU",
+    "device_selected": "",
+    "selected_kv": "native",
+    "requested_kv": "native",
+    "kv_placement_mode": "default"
+   },
+   "hardware": "real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H (CPU backend, no device-specific claim)",
+   "commit": "3b8d87ebcb429d8f651fec2d2b88f94e14f2c293",
+   "notes": "Native has no MEMBRANE-side architecture gate at all (unmodified llama.cpp behavior) -- included here as the quality/byte baseline the compressed rows are compared against, not new evidence of a gate change."
+  },
+  {
+   "id": "CE-02",
+   "evidence_class": "REAL",
+   "architecture": "qwen2",
+   "model": "Qwen2.5-1.5B-Instruct",
+   "backend": "cpu",
+   "precision": "q8",
+   "placement": "default",
+   "context": 512,
+   "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt 'The capital of France is' --ctx 512 --gen-tokens 16 --json --quiet --include-text --gpu-layers 0 --kv q8",
+   "exit_code": 0,
+   "quality_result": {
+    "generated_text": " Paris. The capital of France is also the capital of which country?\nA)",
+    "note": "coherent, plausible continuation ('Paris...'), same opening token as native; KV bytes 7798784 = exactly 53.125% of native (14680064) -- matches the documented Q8_0 block-format ratio (34 bytes/32 elements vs F16's 2 bytes/element = 0.53125) exactly, confirming real quantization was applied, not a shadow/no-op path."
+   },
+   "kv_bytes": 7798784,
+   "resolved_plan": {
+    "gpu_layers_selected": 0,
+    "backend": "CPU",
+    "device_selected": "",
+    "selected_kv": "q8",
+    "requested_kv": "q8",
+    "kv_placement_mode": "default"
+   },
+   "hardware": "real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H (CPU backend, no device-specific claim)",
+   "commit": "3b8d87ebcb429d8f651fec2d2b88f94e14f2c293",
+   "notes": "First real evidence that CE-supported: compressed KV works on Qwen2 at all."
+  },
+  {
+   "id": "CE-03",
+   "evidence_class": "REAL",
+   "architecture": "qwen2",
+   "model": "Qwen2.5-1.5B-Instruct",
+   "backend": "cpu",
+   "precision": "q5",
+   "placement": "default",
+   "context": 512,
+   "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt 'The capital of France is' --ctx 512 --gen-tokens 16 --json --quiet --include-text --gpu-layers 0 --kv q5",
+   "exit_code": 0,
+   "quality_result": {
+    "generated_text": " Paris. The capital of France is also the capital of which country?\nThe capital",
+    "note": "coherent, plausible continuation, same opening token as native/q8; KV bytes 5505024 = exactly 37.5% of native -- matches the documented Q5_1 ratio (24 bytes/32 elements vs F16 = 0.375) exactly."
+   },
+   "kv_bytes": 5505024,
+   "resolved_plan": {
+    "gpu_layers_selected": 0,
+    "backend": "CPU",
+    "device_selected": "",
+    "selected_kv": "q5",
+    "requested_kv": "q5",
+    "kv_placement_mode": "default"
+   },
+   "hardware": "real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H (CPU backend, no device-specific claim)",
+   "commit": "3b8d87ebcb429d8f651fec2d2b88f94e14f2c293",
+   "notes": "Q5_1 quantization confirmed genuinely applied (not q8's shadow value) via the distinct, formula-matching byte count."
+  },
+  {
+   "id": "CE-04",
+   "evidence_class": "REAL",
+   "architecture": "qwen2",
+   "model": "Qwen2.5-1.5B-Instruct",
+   "backend": "cpu",
+   "precision": "adaptive",
+   "placement": "default",
+   "context": 512,
+   "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt 'The capital of France is' --ctx 512 --gen-tokens 16 --json --quiet --include-text --gpu-layers 0 --kv adaptive",
+   "exit_code": 0,
+   "quality_result": {
+    "generated_text": " Paris. The capital of France is also the capital of which country?\nA)",
+    "note": "adaptive resolved to q8 (CPU_ADAPTIVE_Q8_DEFAULT) -- identical text/KV bytes to CE-02's explicit q8 run, confirming adaptive routes through the exact same, now-widened compat gate with zero Qwen2-specific special-casing."
+   },
+   "kv_bytes": 7798784,
+   "resolved_plan": {
+    "gpu_layers_selected": 0,
+    "backend": "CPU",
+    "device_selected": "",
+    "selected_kv": "q8",
+    "requested_kv": "adaptive",
+    "kv_placement_mode": "default"
+   },
+   "hardware": "real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H (CPU backend, no device-specific claim)",
+   "commit": "3b8d87ebcb429d8f651fec2d2b88f94e14f2c293",
+   "notes": "Proves Section 11 of the Phase 26 task: compatibility flows through compat_check, the joint planner needed no architecture-specific change."
+  },
+  {
+   "id": "CE-05",
+   "evidence_class": "REAL",
+   "architecture": "qwen2",
+   "model": "Qwen2.5-1.5B-Instruct",
+   "backend": "vulkan",
+   "precision": "q8",
+   "placement": "default",
+   "context": 512,
+   "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt 'The capital of France is' --ctx 512 --gen-tokens 16 --json --quiet --include-text --gpu-layers 4 --kv q8",
+   "exit_code": 0,
+   "quality_result": {
+    "generated_text": " Paris. The capital of France is also the capital of which country?\nA)",
+    "note": "byte-for-byte identical generated text and KV byte count to CE-02's CPU q8 run -- confirms the kv_type_override mechanism behaves identically across backends for this architecture."
+   },
+   "kv_bytes": 7798784,
+   "resolved_plan": {
+    "gpu_layers_selected": 4,
+    "backend": "Vulkan",
+    "device_selected": "Vulkan1",
+    "selected_kv": "q8",
+    "requested_kv": "q8",
+    "kv_placement_mode": "default"
+   },
+   "hardware": "real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H, real NVIDIA GTX 1650 Vulkan device Vulkan1",
+   "commit": "3b8d87ebcb429d8f651fec2d2b88f94e14f2c293",
+   "notes": "gpu-layers=4 (partial offload), not 'all' -- this host's real, already-documented VRAM pressure (see docs/performance-profiling.md's 'A real, disclosed measurement gap') makes a full 28-layer Qwen2.5-1.5B GPU-resident weight load unreliable here; partial offload isolates the KV-storage-type question from that unrelated, already-known capacity constraint (Section 28 of the Phase 26 task: no deliberate OOM)."
+  },
+  {
+   "id": "CE-06",
+   "evidence_class": "REAL",
+   "architecture": "qwen2",
+   "model": "Qwen2.5-1.5B-Instruct",
+   "backend": "vulkan",
+   "precision": "q5",
+   "placement": "default",
+   "context": 512,
+   "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt 'The capital of France is' --ctx 512 --gen-tokens 16 --json --quiet --include-text --gpu-layers 4 --kv q5",
+   "exit_code": 0,
+   "quality_result": {
+    "generated_text": " Paris. The capital of France is also the capital of which country?\nThe capital",
+    "note": "byte-for-byte identical generated text and KV byte count to CE-03's CPU q5 run."
+   },
+   "kv_bytes": 5505024,
+   "resolved_plan": {
+    "gpu_layers_selected": 4,
+    "backend": "Vulkan",
+    "device_selected": "Vulkan1",
+    "selected_kv": "q5",
+    "requested_kv": "q5",
+    "kv_placement_mode": "default"
+   },
+   "hardware": "real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H, real NVIDIA GTX 1650 Vulkan device Vulkan1",
+   "commit": "3b8d87ebcb429d8f651fec2d2b88f94e14f2c293",
+   "notes": "Same partial-offload rationale as CE-05."
+  },
+  {
+   "id": "CE-07",
+   "evidence_class": "REAL",
+   "architecture": "qwen2",
+   "model": "Qwen2.5-1.5B-Instruct",
+   "backend": "vulkan",
+   "precision": "q8",
+   "placement": "cpu",
+   "context": 512,
+   "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt 'The capital of France is' --ctx 512 --gen-tokens 16 --json --quiet --include-text --gpu-layers 4 --kv q8 --kv-placement cpu",
+   "exit_code": 0,
+   "quality_result": {
+    "generated_text": " Paris. The capital of France is also the capital of which country?\nA)",
+    "note": "identical generated text to CE-05 (same precision, only placement differs) -- kv_placement resolved cleanly to all-28-layers-CPU (PLACEMENT_CPU_FULL), kv_gpu_bytes=0, matching --kv-placement's own documented independence from --kv precision."
+   },
+   "kv_bytes": 7798784,
+   "resolved_plan": {
+    "gpu_layers_selected": 4,
+    "backend": "Vulkan",
+    "device_selected": "Vulkan1",
+    "selected_kv": "q8",
+    "requested_kv": "q8",
+    "kv_placement_mode": "cpu"
+   },
+   "hardware": "real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H, real NVIDIA GTX 1650 Vulkan device Vulkan1",
+   "commit": "3b8d87ebcb429d8f651fec2d2b88f94e14f2c293",
+   "notes": "Proves Section 12 of the Phase 26 task: precision compatibility and KV placement are independent axes for qwen2 too, same as llama."
+  },
+  {
+   "id": "CE-08",
+   "evidence_class": "REAL",
+   "architecture": "qwen2",
+   "model": "Qwen2.5-1.5B-Instruct",
+   "backend": "vulkan",
+   "precision": "adaptive",
+   "placement": "default",
+   "context": 512,
+   "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt 'The capital of France is' --ctx 512 --gen-tokens 16 --json --quiet --include-text --gpu-layers 4 --kv adaptive",
+   "exit_code": 0,
+   "quality_result": {
+    "generated_text": " Paris. The capital of France is also the capital of which country?\nA)",
+    "note": "adaptive resolved to q8 (Q8_FITS) -- identical text/KV bytes to CE-05's explicit Vulkan q8 run."
+   },
+   "kv_bytes": 7798784,
+   "resolved_plan": {
+    "gpu_layers_selected": 4,
+    "backend": "Vulkan",
+    "device_selected": "Vulkan1",
+    "selected_kv": "q8",
+    "requested_kv": "adaptive",
+    "kv_placement_mode": "default"
+   },
+   "hardware": "real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H, real NVIDIA GTX 1650 Vulkan device Vulkan1",
+   "commit": "3b8d87ebcb429d8f651fec2d2b88f94e14f2c293",
+   "notes": "Same cross-backend adaptive confirmation as CE-04, this time on Vulkan."
+  }
+ ]
+}

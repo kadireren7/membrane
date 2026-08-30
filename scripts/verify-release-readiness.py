@@ -139,14 +139,58 @@ def check_no_overclaim_phrases():
 						f"nearby")
 
 
-@check("compatibility counts match the documented RC2 scope (16/9/1)")
+@check("compatibility counts match the documented RC2 scope (16/9/1) "
+	"AT THE v0.3.0-rc2 TAG -- not the live, ongoing docs/compatibility.json")
 def check_compat_counts():
 	import json
-	path = REPO_ROOT / "docs" / "compatibility.json"
-	if not path.exists():
-		fail("compatibility counts", f"{path} does not exist")
+	import shutil
+	import subprocess
+
+	# Phase 26 fix: this is a claim about what v0.3.0-rc2 itself
+	# documented at release time -- docs/compatibility.json is a living
+	# file main keeps growing/reclassifying (e.g. Phase 26 moved
+	# MC-17/MC-18/MC-19 from UNSUPPORTED to SUPPORTED), so pinning this
+	# check to the CURRENT working-tree file would make it fail every
+	# time a later phase legitimately changes compatibility, which is
+	# not what "RC2's documented scope" means. Reading the tag's own
+	# historical snapshot via git keeps this check meaningful forever,
+	# regardless of how far main moves ahead of RC2 (Section 31/32 of
+	# the Phase 26 task: "Current main may now be ahead of RC2").
+	#
+	# Prerequisite: the checkout running this script must have the
+	# v0.3.0-rc2 tag available locally (a normal `git clone` has it; a
+	# shallow/tagless CI checkout may not -- `git fetch --tags` or
+	# `actions/checkout`'s `fetch-tags: true` fixes that). This script
+	# is not currently run from CI (no CI job invokes it), only locally
+	# via scripts/verify-results.py/prepare-release.sh -- CodeRabbit
+	# review (PR #36): documented here rather than silently assumed, and
+	# the failure message below names the fix instead of surfacing a
+	# raw git error.
+	git_bin = shutil.which("git")
+	if git_bin is None:
+		fail("compatibility counts", "git is not on PATH -- cannot read "
+			"docs/compatibility.json at the v0.3.0-rc2 tag")
 		return
-	data = json.loads(path.read_text())
+	tag_check = subprocess.run(
+		[git_bin, "rev-parse", "--verify", "-q", "v0.3.0-rc2^{commit}"],
+		cwd=REPO_ROOT, capture_output=True, text=True,
+	)
+	if tag_check.returncode != 0:
+		fail("compatibility counts", "the v0.3.0-rc2 tag is not available "
+			"in this checkout -- run `git fetch --tags` (or, in a CI "
+			"checkout, set `actions/checkout`'s `fetch-tags: true`) "
+			"before running this script")
+		return
+	try:
+		raw = subprocess.run(
+			[git_bin, "show", "v0.3.0-rc2:docs/compatibility.json"],
+			cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+		).stdout
+	except subprocess.CalledProcessError as e:
+		fail("compatibility counts", f"could not read docs/compatibility.json "
+			f"at the v0.3.0-rc2 tag via git show: {e.stderr.strip()}")
+		return
+	data = json.loads(raw)
 	rows = data.get("rows", [])
 	from collections import Counter
 	counts = Counter(r.get("status") for r in rows)

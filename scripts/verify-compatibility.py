@@ -252,21 +252,55 @@ def strip_c_comments(src):
 	return "".join(out)
 
 
-@check("compat_check.c's llama-only architecture gate matches what MC-17/MC-18 claim")
+@check("compat_check.c's architecture allowlist matches what MC-17/MC-18 claim "
+	"(Phase 26: exactly llama + qwen2, an explicit list, not a widened "
+	"strcmp)")
 def check_compat_check_invariant():
 	path = REPO_ROOT / "tools" / "membrane-run" / "compat_check.c"
 	src = strip_c_comments(path.read_text())
-	if 'strcmp(arch_name, "llama")' not in src:
+	if "MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST" not in src:
 		fail("compat_check.c invariant",
-			"expected exact-match gate on arch_name==\"llama\" not found "
-			"outside comments -- docs/compatibility.json's MC-17/MC-18 rows "
-			"describe this exact gate and need re-review if it changed. "
-			"(This is a static source check, not a compiled behavioral "
-			"proof -- the real behavioral proof is "
-			"tools/membrane-run/test_compat_check.c's "
-			"test_q8_qwen2_architecture_rejected/test_q5_llama_.../etc, "
-			"which run as `ctest -R test_compat_check` inside CI's "
-			"build-and-test job on every push/PR.)")
+			"expected the named architecture allowlist array not found "
+			"outside comments -- docs/compatibility.json's MC-17/MC-18/"
+			"MC-19 rows describe this exact gate and need re-review if it "
+			"changed.")
+		return
+	# CodeRabbit review (PR #36): parse the actual array initializer and
+	# require the EXACT set {"llama", "qwen2"} -- merely searching the
+	# whole file for both literals (the previous version of this check)
+	# would still pass if a third architecture were added anywhere else
+	# in compat_check.c, silently widening the real gate beyond what
+	# docs/compatibility.json's MC-13..MC-19 rows actually have evidence
+	# for.
+	m = re.search(
+		r"MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST\[\]\s*=\s*\{([^}]*)\}",
+		src, re.DOTALL)
+	if not m:
+		fail("compat_check.c invariant",
+			"found the MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST name but "
+			"could not parse its array initializer -- expected "
+			"`... ARCH_ALLOWLIST[] = { \"llama\", \"qwen2\", };`")
+		return
+	entries = set(re.findall(r'"([a-zA-Z0-9_.]+)"', m.group(1)))
+	expected = {"llama", "qwen2"}
+	if entries != expected:
+		fail("compat_check.c invariant",
+			f"allowlist entries {sorted(entries)} != expected "
+			f"{sorted(expected)} -- docs/compatibility.json's MC-13..MC-19 "
+			f"rows describe evidence for exactly llama and qwen2; a "
+			f"missing or additional entry here needs a matching "
+			f"compatibility.json row (with real evidence) before this "
+			f"invariant can be updated to match.")
+	# The gate itself must actually consult the allowlist, not just
+	# define it unused -- a real behavioral proof, not just a static
+	# grep, still lives in tools/membrane-run/test_compat_check.c's
+	# test_q8_qwen2_real_shape_accepted/test_q8_gemma3_still_rejected/
+	# etc, which run as `ctest -R test_compat_check` inside CI's
+	# build-and-test job on every push/PR.
+	if "membrane_arch_supports_compressed_kv(arch_name)" not in src:
+		fail("compat_check.c invariant",
+			"membrane_check_kv_compat() no longer appears to call the "
+			"allowlist helper -- the gate may have been bypassed")
 
 
 def list_cmake_files_under(root):

@@ -149,19 +149,26 @@ candidate — see `test_joint_planner.c`'s
 `test_explicit_cpu_placement_never_gpu` /
 `test_explicit_q8_incompatible_architecture`.
 
-## Qwen2.5 regression (Section 14)
+## Qwen2.5 regression (Section 14) — historical, at the Phase 20 commit
 
-Qwen2.5 is `qwen2`-architecture — `compat_check.c` rejects q8/q5 for it
+**Superseded by Phase 26** (`docs/compatibility.json`'s MC-17/MC-18/MC-19
+rows are now `SUPPORTED`, `docs/compatibility.md`) — Qwen2 compressed KV
+is now allowlisted. This section is kept as-written because it describes
+real, immutable evidence captured *at the Phase 20 commit*
+(`results/joint-planner/estimate-correction.json` is never rewritten),
+not because the behavior it describes is still current. At that commit:
+Qwen2.5 is `qwen2`-architecture — `compat_check.c` rejected q8/q5 for it
 unconditionally. Live-verified on this repo's real Vulkan device and
 captured in `results/joint-planner/estimate-correction.json`'s
 `qwen2_regression_smokes` (**REAL**, real commands/exit codes/`--json`
-fields, not paraphrased): `--kv q8`/`--kv adaptive` both fail closed with
+fields, not paraphrased): `--kv q8`/`--kv adaptive` both failed closed with
 `NO_FEASIBLE_CANDIDATE` (adaptive
-never falls back to native — matching its own contract), while `--kv native
+never fell back to native — matching its own contract), while `--kv native
 --gpu-layers all --kv-placement cpu` at `ctx=28500` (a real constrained-VRAM
-point from prior evidence) still succeeds with all 28 layers, KV correctly
-placed off-GPU. Compression is never attempted merely to make a
-compression-incompatible model fit.
+point from prior evidence) still succeeded with all 28 layers, KV correctly
+placed off-GPU. Compression was never attempted merely to make a
+then-compression-incompatible model fit. See `docs/compat-expansion.md`
+(Phase 26) for the current, real q8/q5/adaptive Qwen2 evidence.
 
 ## Out of scope (this phase)
 

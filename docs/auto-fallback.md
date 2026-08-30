@@ -287,16 +287,27 @@ real attempt happened.
   estimate was unavailable) retains its exact pre-Phase-21
   single-attempt behavior.
 
-## Qwen2.5 regression (Section 26)
+## Qwen2.5 regression (Section 26) — historical, at the Phase 21 commit
 
-Fallback must never turn `qwen2 + --kv adaptive` into `native` just
-because native could work. This is enforced structurally, not by any
-Phase-21-specific check: `compat_check.c`'s architecture gate already
-rejects Qwen2.5 for q8/q5 inside Phase 20's own candidate generation,
-so a bare `--auto` (adaptive) request on Qwen2.5 fails with
-`NO_FEASIBLE_CANDIDATE` *before* the fallback controller is ever
-invoked -- see `results/auto-fallback/validation.json`'s
-`qwen2.5_1.5b_bare_auto_still_fails_closed` run.
+**Superseded by Phase 26** — Qwen2 compressed KV is now allowlisted
+(`docs/compatibility.json`'s MC-17/MC-18/MC-19 rows,
+`docs/compat-expansion.md`), so a bare `--auto` request on Qwen2.5 no
+longer fails this way. This section is kept as-written because it describes
+real, immutable evidence captured *at the Phase 21 commit*
+(`results/auto-fallback/validation.json` is never rewritten), not
+because the behavior is still current. At that commit: fallback never
+turned `qwen2 + --kv adaptive` into `native` just because native could
+work. This was enforced structurally, not by any Phase-21-specific
+check: `compat_check.c`'s architecture gate rejected Qwen2.5 for q8/q5
+inside Phase 20's own candidate generation, so a bare `--auto`
+(adaptive) request on Qwen2.5 failed with `NO_FEASIBLE_CANDIDATE`
+*before* the fallback controller was ever invoked -- see
+`results/auto-fallback/validation.json`'s
+`qwen2.5_1.5b_bare_auto_still_fails_closed` run. The general principle
+this section demonstrates (fallback never silently substitutes a
+different precision than what compatibility/policy actually resolved)
+remains true and structurally enforced today -- only the specific
+Qwen2.5 example is now outdated.
 
 ## Real smokes
 

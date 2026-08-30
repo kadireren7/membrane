@@ -292,15 +292,16 @@
       "kv_placement": "any",
       "gpu_layers_mode": "any",
       "context_class": "n/a",
-      "hardware_scope": "not-hardware-specific",
-      "status": "UNSUPPORTED",
-      "reason_code": "KV_COMPAT_UNSUPPORTED",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "",
       "evidence": [
         "tools/membrane-run/compat_check.c",
-        "tools/membrane-run/test_compat_check.c",
-        "results/phase18-compatibility-smoke.json#C"
+        "tools/membrane-run/test_compat_check.c#test_q8_qwen2_real_shape_accepted",
+        "results/compat-expansion/validation.json#CE-02",
+        "results/compat-expansion/validation.json#CE-05"
       ],
-      "notes": "Intentional: compat_check.c's architecture gate accepts only arch_name==\"llama\" for compressed KV. The gate takes no backend parameter, so this rejection is identical on CPU and Vulkan builds. This is a placement/precision-independent finding, distinct from MC-13..MC-16's native+placement evidence for this same model family."
+      "notes": "Phase 26: compat_check.c's architecture allowlist now includes qwen2 (MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST), added after source-level proof that LLM_ARCH_QWEN2 and LLM_ARCH_LLAMA share the identical, architecture-agnostic KV-cache construction path in the pinned llama.cpp, plus a real CPU+Vulkan experiment against this model's real fixture confirming correct output and exactly-formula-matching KV byte reduction (53.125% of native). Was UNSUPPORTED through the Phase 25 commit -- see docs/joint-planner.md's 'Qwen2.5 regression' section for that historical, still-immutable evidence."
     },
     {
       "id": "MC-18",
@@ -311,31 +312,34 @@
       "kv_placement": "any",
       "gpu_layers_mode": "any",
       "context_class": "n/a",
-      "hardware_scope": "not-hardware-specific",
-      "status": "UNSUPPORTED",
-      "reason_code": "KV_COMPAT_UNSUPPORTED",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "",
       "evidence": [
         "tools/membrane-run/compat_check.c",
-        "tools/membrane-run/test_compat_check.c"
+        "tools/membrane-run/test_compat_check.c#test_q5_qwen2_real_shape_accepted",
+        "results/compat-expansion/validation.json#CE-03",
+        "results/compat-expansion/validation.json#CE-06"
       ],
-      "notes": "Same architecture gate as MC-17, Q5_1 variant."
+      "notes": "Same architecture allowlist as MC-17, Q5_1 variant -- real KV byte reduction matched the Q5_1 formula exactly (37.5% of native). Was UNSUPPORTED through the Phase 25 commit."
     },
     {
       "id": "MC-19",
       "model_family": "Qwen2.5-1.5B-Instruct",
       "model_arch": "qwen2",
-      "backend": "cpu",
+      "backend": "cpu, vulkan",
       "kv_precision": "adaptive",
       "kv_placement": "default",
-      "gpu_layers_mode": "0",
+      "gpu_layers_mode": "any",
       "context_class": "n/a",
-      "hardware_scope": "not-hardware-specific",
-      "status": "UNSUPPORTED",
-      "reason_code": "KV_COMPAT_UNSUPPORTED",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "CANDIDATE_SELECTED",
       "evidence": [
-        "results/phase18-compatibility-smoke.json#E"
+        "results/compat-expansion/validation.json#CE-04",
+        "results/compat-expansion/validation.json#CE-08"
       ],
-      "notes": "Adaptive resolves to a q8 candidate first, then hits the same MC-17 gate -- fails closed with the identical reason code, never a silent fallback to native."
+      "notes": "Adaptive resolves to a q8 candidate first (CPU_ADAPTIVE_Q8_DEFAULT / Q8_FITS in the real runs cited), then that candidate passes the same now-widened MC-17 gate -- no Qwen2-specific special-casing anywhere in the joint planner (Section 11 of the Phase 26 task). Was UNSUPPORTED (fails closed with KV_COMPAT_UNSUPPORTED) through the Phase 25 commit."
     },
     {
       "id": "MC-20",

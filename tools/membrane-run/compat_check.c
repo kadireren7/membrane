@@ -3,6 +3,52 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Phase 26: explicit allowlist, not a widened strcmp chain -- adding a
+ * third architecture means adding one entry here, never touching the
+ * caller's own if/else structure. Each entry is source- AND real-model-
+ * evidence-backed before being added (see docs/compatibility.json's
+ * MC-17/MC-18/MC-19 rows and results/compat-expansion/validation.json):
+ *
+ *   "llama" -- the original, Phase 8-era validated architecture.
+ *   "qwen2" -- added this phase after (1) source-level proof that
+ *      LLM_ARCH_QWEN2 and LLM_ARCH_LLAMA both fall through to the exact
+ *      same generic, non-SWA/non-hybrid llama_kv_cache construction
+ *      path in llama-model.cpp's create_memory() (Qwen2 has no
+ *      sliding-window attention: hparams.swa_type stays
+ *      LLAMA_SWA_TYPE_NONE, and llama-kv-cache.cpp's own KV tensor
+ *      creation is 100% architecture-agnostic -- it dispatches purely
+ *      on the kv_type_override callback plus generic n_embd_k_gqa/
+ *      n_embd_v_gqa, never on an architecture enum), and (2) a real,
+ *      passing q8/q5/adaptive/CPU/Vulkan/placement experiment against
+ *      the local Qwen2.5-1.5B-Instruct fixture.
+ *
+ * A new entry here is a claim about ONE architecture string, never a
+ * model family ("Qwen2.5-1.5B tested" is not "all Qwen2 models
+ * supported") -- see docs/compatibility.md's own "Do not generalize"
+ * rule (Section 14 of the Phase 26 task). */
+static const char	*const MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST[] =
+{
+	"llama",
+	"qwen2",
+};
+
+static int	membrane_arch_supports_compressed_kv(const char *arch_name)
+{
+	size_t	i;
+
+	if (arch_name == NULL || arch_name[0] == '\0')
+		return (0);
+	i = 0;
+	while (i < sizeof(MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST)
+			/ sizeof(MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST[0]))
+	{
+		if (strcmp(arch_name, MEMBRANE_COMPRESSED_KV_ARCH_ALLOWLIST[i]) == 0)
+			return (1);
+		i++;
+	}
+	return (0);
+}
+
 int	membrane_check_kv_compat(const char *arch_name, int32_t n_embd,
 		int32_t n_head, int32_t n_head_kv, uint32_t ctx_size, int kv_mode,
 		membrane_compat_result_t *out)
@@ -37,12 +83,12 @@ int	membrane_check_kv_compat(const char *arch_name, int32_t n_embd,
 			"context size must be at least 1");
 		return (out->ok = 0, 0);
 	}
-	if (arch_name == NULL || arch_name[0] == '\0'
-		|| strcmp(arch_name, "llama") != 0)
+	if (!membrane_arch_supports_compressed_kv(arch_name))
 	{
 		snprintf(out->reason, sizeof(out->reason),
 			"model architecture '%s' is not validated for %s KV "
-			"storage (only LLM_ARCH_LLAMA is supported)",
+			"storage (only LLM_ARCH_LLAMA and LLM_ARCH_QWEN2 are "
+			"supported)",
 			(arch_name != NULL && arch_name[0] != '\0')
 				? arch_name : "(unknown)", type_label);
 		return (out->ok = 0, 0);

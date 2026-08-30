@@ -85,6 +85,23 @@ jobs:
       - name: Verify performance-optimization evidence
         run: python3 scripts/verify-performance-optimization.py
 
+  # Phase 26: validates the committed compat-expansion evidence only --
+  # python3 + checkout, no GPU, no model download, no C/C++ build. Real
+  # model runs (results/compat-expansion/validation.json's rows) were
+  # captured locally against this repo's own committed GGUF fixtures;
+  # this job checks that committed evidence file, it does not
+  # regenerate it.
+  compat-expansion-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify compat-expansion evidence
+        run: python3 scripts/verify-compat-expansion.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
