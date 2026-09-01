@@ -711,9 +711,9 @@ static void	test_help_text_documents_auto_compare_bench_exception(void)
 	fclose(f);
 	TEST_ASSERT(strstr(buf, "--compare-kv") != NULL
 			&& strstr(buf, "--gpu-bench") != NULL
-			&& strstr(buf, "AUTOMATIC POLICY") != NULL,
+			&& strstr(buf, "AUTOMATIC MODE") != NULL,
 		"--help mentions --compare-kv/--gpu-bench in the AUTOMATIC "
-		"POLICY section");
+		"MODE section");
 	/* The specific sentence added for this follow-up -- "leaves --kv-
 	 * placement at default instead" is the actual behavioral claim,
 	 * not just an incidental mention of the flag names above. */
@@ -1225,9 +1225,87 @@ static void	test_help_mentions_key_concepts(void)
 		"help states the architecture-scope limitation");
 	TEST_ASSERT(strstr(buf, "--auto") != NULL,
 		"help documents --auto");
-	TEST_ASSERT(strstr(buf, "AUTOMATIC POLICY") != NULL,
+	TEST_ASSERT(strstr(buf, "AUTOMATIC MODE") != NULL,
 		"help is organized into labeled sections, including "
-		"AUTOMATIC POLICY for --auto");
+		"AUTOMATIC MODE for --auto");
+}
+
+/* Phase 28, Section 10/15: --list-devices/--doctor need no --model/
+ * --prompt at all -- same short-circuit shape as --help/--version
+ * (test_help_and_version_short_circuit below), just resolved one step
+ * later (after the parse loop, not mid-loop) since main.cpp -- not
+ * this llama-free parser -- is what actually implements them (both
+ * need live device enumeration). */
+static void	test_list_devices_flag_short_circuits(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args.push_back("membrane-run");
+	args.push_back("--list-devices");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--list-devices alone (no --model/--prompt) parses successfully");
+	TEST_ASSERT(o.want_list_devices == 1, "--list-devices sets want_list_devices");
+	TEST_ASSERT(o.want_doctor == 0, "--list-devices does not set want_doctor");
+}
+
+static void	test_doctor_flag_short_circuits(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args.push_back("membrane-run");
+	args.push_back("--doctor");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--doctor alone (no --model/--prompt) parses successfully");
+	TEST_ASSERT(o.want_doctor == 1, "--doctor sets want_doctor");
+	TEST_ASSERT(o.want_list_devices == 0, "--doctor does not set want_list_devices");
+}
+
+/* --doctor still accepts --model (checked for readability, not
+ * required) without falling through to the normal --model/--prompt
+ * validation below it. */
+static void	test_doctor_flag_with_model_still_short_circuits(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args.push_back("membrane-run");
+	args.push_back("--doctor");
+	args.push_back("--model");
+	args.push_back("/no/such/model.gguf");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--doctor --model ... still short-circuits (no --prompt required)");
+	TEST_ASSERT(o.want_doctor == 1, "--doctor sets want_doctor");
+}
+
+/* Section 3: reorganized --help structure -- QUICK START and EXAMPLES
+ * are new sections this phase adds; --list-devices/--doctor are new
+ * flags this phase adds and must be documented. Substring checks
+ * against the real membrane_run_usage() output (Section 20: no
+ * brittle whole-output snapshot), same pattern as the existing
+ * test_help_text_documents_auto_compare_bench_exception /
+ * test_help_mentions_key_concepts above. */
+static void	test_help_documents_phase28_additions(void)
+{
+	char	buf[16384] = {0};
+	FILE	*f = fmemopen(buf, sizeof(buf), "w");
+
+	TEST_ASSERT(f != NULL, "fmemopen for capturing --help output");
+	membrane_run_usage(f);
+	fclose(f);
+	TEST_ASSERT(strstr(buf, "QUICK START") != NULL,
+		"help has a QUICK START section");
+	TEST_ASSERT(strstr(buf, "EXAMPLES") != NULL,
+		"help has an EXAMPLES section");
+	TEST_ASSERT(strstr(buf, "--list-devices") != NULL,
+		"help documents --list-devices");
+	TEST_ASSERT(strstr(buf, "--doctor") != NULL,
+		"help documents --doctor");
+	TEST_ASSERT(strstr(buf, "MODEL / PROMPT") != NULL,
+		"help has a MODEL / PROMPT section");
+	TEST_ASSERT(strstr(buf, "ADVANCED MEMORY CONTROL") != NULL,
+		"help has an ADVANCED MEMORY CONTROL section");
 }
 
 int	main(void)
@@ -1285,6 +1363,10 @@ int	main(void)
 	test_help_and_version_short_circuit();
 	test_version_output_format();
 	test_help_mentions_key_concepts();
+	test_list_devices_flag_short_circuits();
+	test_doctor_flag_short_circuits();
+	test_doctor_flag_with_model_still_short_circuits();
+	test_help_documents_phase28_additions();
 	printf("test_product_cli: all tests passed\n");
 	return (0);
 }

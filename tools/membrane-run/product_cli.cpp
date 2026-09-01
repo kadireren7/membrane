@@ -31,11 +31,25 @@ void	membrane_run_usage(FILE *out)
 		"model load, one context, prompt, generation, exit -- no\n"
 		"hidden comparison work.\n"
 		"\n"
-		"Example:\n"
-		"  membrane-run --model model.gguf --prompt \"Hello\" \\\n"
-		"      --ctx 4096 --kv q8\n"
+		"QUICK START\n"
+		"  1. Point MEMBRANE at any local .gguf file and a prompt:\n"
+		"       membrane-run --model model.gguf --prompt \"Hello\"\n"
+		"     (CPU, full-precision KV -- no flags to learn first)\n"
+		"  2. Once that works, let MEMBRANE pick GPU offload and KV\n"
+		"     memory settings for you (needs an explicit --ctx --\n"
+		"     see AUTOMATIC MODE below for why):\n"
+		"       membrane-run --model model.gguf --prompt \"Hello\" \\\n"
+		"           --ctx 2048 --auto\n"
+		"  3. See exactly what --auto would choose, without\n"
+		"     generating anything:\n"
+		"       membrane-run --model model.gguf --ctx 2048 --auto \\\n"
+		"           --plan-only\n"
+		"  You never need to know q8/q5, GPU layer counts, or KV\n"
+		"  placement to use --auto -- see EXAMPLES below for more,\n"
+		"  and ADVANCED MEMORY CONTROL / GPU only if you want manual\n"
+		"  control over any of that.\n"
 		"\n"
-		"MODEL\n"
+		"MODEL / PROMPT\n"
 		"  --model FILE       .gguf model path (required)\n"
 		"  --prompt TEXT      prompt text\n"
 		"  --prompt-file FILE prompt text file\n"
@@ -49,6 +63,11 @@ void	membrane_run_usage(FILE *out)
 		"  --gen-tokens N     tokens to generate (default 128)\n"
 		"  --threads N        decode thread count (default: let\n"
 		"                     llama.cpp choose)\n"
+		"\n"
+		"ADVANCED MEMORY CONTROL\n"
+		"None of this section is required -- --auto (see AUTOMATIC\n"
+		"MODE below) picks safe values for all of it automatically.\n"
+		"Read on only if you want manual control over KV memory.\n"
 		"\n"
 		"KV PRECISION -- controls KV cache storage TYPE (memory/quality),\n"
 		"a SEPARATE dimension from KV PLACEMENT below (which controls\n"
@@ -110,7 +129,7 @@ void	membrane_run_usage(FILE *out)
 		"                     Requires --kv adaptive; never alters an\n"
 		"                     explicit native/q8/q5 choice.\n"
 		"\n"
-		"GPU OFFLOAD\n"
+		"GPU\n"
 		"  --gpu-layers all|auto|N\n"
 		"                     GPU layer offload (default: 0, i.e. CPU-\n"
 		"                     only -- explicit CPU-forcing option too;\n"
@@ -139,6 +158,12 @@ void	membrane_run_usage(FILE *out)
 		"                     --gpu-layers all|auto|N. Fails clearly if\n"
 		"                     no device matches, or if more than one\n"
 		"                     does.\n"
+		"  --list-devices     print every backend device MEMBRANE can see\n"
+		"                     (CPU and any compiled-in GPU backend) and\n"
+		"                     exit. No --model needed. Always exits 0,\n"
+		"                     even with zero GPU devices found -- this is\n"
+		"                     a diagnostic listing, not a requirement\n"
+		"                     check.\n"
 		"\n"
 		"KV PLACEMENT -- controls KV cache DEVICE residency, a SEPARATE\n"
 		"dimension from KV PRECISION above (which controls storage TYPE\n"
@@ -175,7 +200,7 @@ void	membrane_run_usage(FILE *out)
 		"                     otherwise); cpu and default are always\n"
 		"                     valid, including CPU-only builds.\n"
 		"\n"
-		"AUTOMATIC POLICY\n"
+		"AUTOMATIC MODE\n"
 		"  --auto             MEMBRANE-managed convenience preset --\n"
 		"                     equivalent to --gpu-layers auto --kv\n"
 		"                     adaptive and, for a normal run, --kv-\n"
@@ -270,8 +295,35 @@ void	membrane_run_usage(FILE *out)
 		"                     resolving once beforehand. Requires\n"
 		"                     --gpu-layers all|auto|N. Mutually\n"
 		"                     exclusive with --compare-kv.\n"
+		"  --doctor           run a handful of cheap, non-destructive\n"
+		"                     first-run checks (executable, GPU backend/\n"
+		"                     device visibility, host RAM, model file\n"
+		"                     readability if --model was also given) and\n"
+		"                     print [OK]/[WARN] for each. No generation.\n"
+		"                     Always exits 0 -- a [WARN] line is\n"
+		"                     informational, not a failure.\n"
 		"  --version          print version and exit\n"
 		"  --help             print this message and exit\n"
+		"\n"
+		"EXAMPLES\n"
+		"  CPU, minimal (no flags to learn first):\n"
+		"    membrane-run --model model.gguf --prompt \"Hello\"\n"
+		"\n"
+		"  Automatic GPU offload + KV precision/placement:\n"
+		"    membrane-run --model model.gguf --prompt \"Hello\" \\\n"
+		"        --ctx 2048 --auto\n"
+		"\n"
+		"  Inspect the resolved plan without generating anything:\n"
+		"    membrane-run --model model.gguf --ctx 4096 --auto \\\n"
+		"        --plan-only\n"
+		"\n"
+		"  Machine-readable output (scripts/CI):\n"
+		"    membrane-run --model model.gguf --prompt \"Hello\" \\\n"
+		"        --ctx 2048 --auto --json\n"
+		"\n"
+		"  Explicit compressed KV with GPU offload (manual control):\n"
+		"    membrane-run --model model.gguf --prompt \"Hello\" \\\n"
+		"        --ctx 4096 --kv q8 --gpu-layers auto\n"
 		"\n"
 		"Exit codes: 0 success, 2 CLI/config error, 3 model load "
 		"error,\n"
@@ -353,6 +405,8 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 	o->want_kv_placement = 0;
 	o->want_version = 0;
 	o->want_help = 0;
+	o->want_list_devices = 0;
+	o->want_doctor = 0;
 	i = 1;
 	while (i < argc)
 	{
@@ -360,6 +414,10 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 			return (o->want_help = 1, MEMBRANE_EXIT_SUCCESS);
 		else if (strcmp(argv[i], "--version") == 0)
 			return (o->want_version = 1, MEMBRANE_EXIT_SUCCESS);
+		else if (strcmp(argv[i], "--list-devices") == 0)
+			o->want_list_devices = 1;
+		else if (strcmp(argv[i], "--doctor") == 0)
+			o->want_doctor = 1;
 		else if (strcmp(argv[i], "--model") == 0 && i + 1 < argc)
 			o->model_path = argv[++i];
 		else if (strcmp(argv[i], "--prompt") == 0 && i + 1 < argc)
@@ -537,6 +595,14 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 					&& !o->gpu_bench)
 				? MEMBRANE_KV_PLACEMENT_AUTO : MEMBRANE_KV_PLACEMENT_DEFAULT;
 	}
+	/* Phase 28, Section 10/15: --list-devices/--doctor need no model at
+	 * all (main.cpp handles both, right after this function returns,
+	 * before the --model/--prompt checks below would otherwise fire) --
+	 * same short-circuit shape as --help/--want_version above, just not
+	 * evaluated until here so a combined `--list-devices --json` (or
+	 * any other flag) still parses normally first. */
+	if (o->want_list_devices || o->want_doctor)
+		return (MEMBRANE_EXIT_SUCCESS);
 	if (o->model_path == NULL)
 		return (fprintf(stderr, "membrane-run: --model is required\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
@@ -561,6 +627,19 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 				"zero GPU layers requested is ambiguous\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
 	if (o->gpu_layers != 0 && o->ctx == 0)
+	{
+		/* Phase 28, Section 4: --auto's OWN implicit gpu_layers=auto
+		 * (never an explicit --gpu-layers) hits this same underlying
+		 * constraint, but "--gpu-layers all|auto|N requires --ctx"
+		 * names a flag the user never typed -- give the --auto path
+		 * its own actionable message instead. An explicit --auto
+		 * --gpu-layers ... keeps the flag-accurate message below,
+		 * since the user did name --gpu-layers themselves. */
+		if (o->auto_mode && !o->want_gpu_layers)
+			return (fprintf(stderr,
+					"membrane-run: --auto needs a context size because "
+					"memory planning depends on it.\nTry: --ctx 2048\n"),
+				MEMBRANE_EXIT_CLI_ERROR);
 		return (fprintf(stderr,
 				"membrane-run: --gpu-layers all|auto|N requires an "
 				"explicit --ctx N -- the GPU memory guard can't check "
@@ -569,6 +648,7 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 				"model already loaded (a decision GPU resolution needs "
 				"to make first, before load)\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
+	}
 	if (o->gpu_bench && o->compare_kv)
 		return (fprintf(stderr,
 				"membrane-run: --gpu-bench and --compare-kv are both "

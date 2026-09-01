@@ -5,6 +5,13 @@
 #include <string>
 #include <vector>
 
+/* Phase 28, Section 6: memfd_create()/dup2()/lseek() for the --json
+ * parse-error stderr capture (parse_opts_capture_stderr() below) --
+ * Linux-only, matching this project's existing Linux-only scope
+ * (docs/install.md). */
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include "ggml.h"
 #include "llama.h"
 #include "runtime_core.h"
@@ -3074,6 +3081,271 @@ static int	run_gpu_bench_mode(const membrane_run_opts_t &o,
 		? MEMBRANE_EXIT_SUCCESS : MEMBRANE_EXIT_RUNTIME_ERROR);
 }
 
+/* Phase 28, Section 6: pure argv scan, independent of membrane_run_
+ * parse_opts()'s own internal state -- the whole point is to know
+ * whether --json was requested even when parsing fails on an EARLIER
+ * argument before the parser's own loop would ever reach --json (e.g.
+ * `membrane-run --bogus --json`: the parser returns on --bogus, so
+ * o.want_json is never set even though the user did ask for JSON). */
+static bool	argv_has_json_flag(int argc, char **argv)
+{
+	int	i;
+
+	i = 1;
+	while (i < argc)
+	{
+		if (strcmp(argv[i], "--json") == 0)
+			return (true);
+		++i;
+	}
+	return (false);
+}
+
+/* Phase 28, Section 6: membrane_run_parse_opts() already prints one
+ * clear "membrane-run: ...\n" line (occasionally a couple more, e.g.
+ * --device's "Available:" listing) to stderr on every failure --
+ * captured here (fd 2 redirected to an anonymous in-memory file for
+ * the duration of the call only, via memfd_create -- Linux-only, same
+ * scope as the rest of this project) so a --json caller gets that
+ * exact text inside a machine-readable object on stdout, without a
+ * second hand-maintained copy of the parser's own error strings. The
+ * real stderr still receives the message afterward (re-emitted
+ * verbatim once fd 2 is restored) -- a --json run's stderr diagnostics
+ * are unaffected, matching this file's existing "stderr always gets
+ * diagnostics regardless of --json" convention. Falls back to an
+ * uncaptured call (captured left empty) if either fd operation fails,
+ * rather than losing the parse result itself. */
+static int	parse_opts_capture_stderr(int argc, char **argv,
+				membrane_run_opts_t *o, std::string *captured)
+{
+	int		saved_fd;
+	int		mem_fd;
+	int		rc;
+	off_t	len;
+
+	captured->clear();
+	fflush(stderr);
+	saved_fd = dup(STDERR_FILENO);
+	mem_fd = (int)memfd_create("membrane-run-parse-stderr", 0);
+	if (saved_fd < 0 || mem_fd < 0)
+	{
+		if (saved_fd >= 0)
+			close(saved_fd);
+		if (mem_fd >= 0)
+			close(mem_fd);
+		return (membrane_run_parse_opts(argc, argv, o));
+	}
+	dup2(mem_fd, STDERR_FILENO);
+	rc = membrane_run_parse_opts(argc, argv, o);
+	fflush(stderr);
+	dup2(saved_fd, STDERR_FILENO);
+	close(saved_fd);
+	len = lseek(mem_fd, 0, SEEK_END);
+	if (len > 0)
+	{
+		std::vector<char>	buf((size_t)len);
+		ssize_t				n;
+
+		lseek(mem_fd, 0, SEEK_SET);
+		n = read(mem_fd, buf.data(), (size_t)len);
+		if (n > 0)
+			captured->assign(buf.data(), (size_t)n);
+	}
+	close(mem_fd);
+	if (!captured->empty())
+		fputs(captured->c_str(), stderr);
+	return (rc);
+}
+
+/* Phase 28, Section 6: the CLI-parse-time JSON error contract -- a
+ * SEPARATE, smaller object shape from print_error_json()'s runtime
+ * error object above (that one requires a fully-parsed `o` and a
+ * chosen reason_code per failure class; a parse failure has neither).
+ * Purely additive: this path previously emitted no JSON at all on
+ * stdout (a pre-existing gap -- Phase 27 found parse-time failures did
+ * not respect --json), so there is no prior shape to stay compatible
+ * with here. suggestions is always a non-empty array -- Section 10:
+ * never an empty/absent suggestion, and never one that doesn't apply
+ * to the actual failure. */
+static void	print_cli_parse_error_json(const membrane_run_opts_t &o,
+				int exit_code, const std::string &raw_message)
+{
+	std::string			message = raw_message;
+	const std::string	prefix = "membrane-run: ";
+
+	if (message.compare(0, prefix.size(), prefix) == 0)
+		message.erase(0, prefix.size());
+	while (!message.empty() && (message.back() == '\n' || message.back() == '\r'))
+		message.pop_back();
+	if (message.empty())
+		message = "invalid command line arguments";
+	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
+		"\"ok\":false,\"exit_code\":%d,\"reason_code\":\"%s\","
+		"\"message\":\"", MEMBRANE_VERSION, exit_code,
+		MEMBRANE_REASON_CLI_PARSE_ERROR);
+	print_json_escaped(message);
+	printf("\",\"suggestions\":[");
+	/* Section 4/7: the one parse-time failure with a genuinely specific
+	 * fix known at this point -- every other parse failure gets the
+	 * always-true, always-actionable fallback (Section 7: never a
+	 * generic "try random flags" suggestion, but "see --help" for the
+	 * full legal option set is always both true and actionable). */
+	if (o.auto_mode && o.ctx == 0)
+		printf("\"--ctx 2048\"");
+	else
+		printf("\"Run 'membrane-run --help' for the full option list.\"");
+	printf("]}\n");
+	fflush(stdout);
+}
+
+/* Phase 28, Section 10: --list-devices needs no model, no context size,
+ * no policy resolution -- just the same device enumeration resolve_gpu_
+ * config() already uses for --device's own error listing, printed
+ * directly. Always succeeds (MEMBRANE_EXIT_SUCCESS): an empty GPU list
+ * is a truthful, non-error diagnostic outcome (Section 10: "This should
+ * be lightweight. No model required."). */
+static int	run_list_devices_mode(const membrane_run_opts_t &o)
+{
+	membrane_gpu_device_info_t	devices[MEMBRANE_GPU_MAX_DEVICES];
+	size_t						n_devices;
+	size_t						i;
+
+	n_devices = membrane_gpu_list_devices(devices, MEMBRANE_GPU_MAX_DEVICES);
+	if (o.want_json)
+	{
+		printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
+			"\"mode\":\"list-devices\",\"ok\":true,\"devices\":[",
+			MEMBRANE_VERSION);
+		for (i = 0; i < n_devices; ++i)
+		{
+			printf("%s{\"index\":%zu,\"backend\":\"", i == 0 ? "" : ",", i);
+			print_json_escaped(devices[i].backend);
+			printf("\",\"name\":\"");
+			print_json_escaped(devices[i].name);
+			printf("\",\"description\":\"");
+			print_json_escaped(devices[i].description);
+			printf("\",\"type\":\"%s\",\"memory_total_bytes\":%llu,"
+				"\"memory_free_bytes\":%llu}",
+				devices[i].type == MEMBRANE_DEV_TYPE_CPU ? "cpu"
+					: devices[i].type == MEMBRANE_DEV_TYPE_GPU ? "gpu"
+					: devices[i].type == MEMBRANE_DEV_TYPE_IGPU ? "igpu"
+					: "unknown",
+				(unsigned long long)devices[i].memory_total,
+				(unsigned long long)devices[i].memory_free);
+		}
+		printf("]}\n");
+		fflush(stdout);
+		return (MEMBRANE_EXIT_SUCCESS);
+	}
+	printf("INDEX  BACKEND    TYPE  TOTAL MiB   FREE MiB  NAME\n");
+	for (i = 0; i < n_devices; ++i)
+		printf("%-6zu %-10s %-5s %10.1f %10.1f  %s (%s)\n", i,
+			devices[i].backend, devices[i].type == MEMBRANE_DEV_TYPE_CPU
+				? "cpu" : devices[i].type == MEMBRANE_DEV_TYPE_GPU ? "gpu"
+				: devices[i].type == MEMBRANE_DEV_TYPE_IGPU ? "igpu"
+				: "unk",
+			(double)devices[i].memory_total / (1024.0 * 1024.0),
+			(double)devices[i].memory_free / (1024.0 * 1024.0),
+			devices[i].name, devices[i].description);
+	if (n_devices == 0)
+		printf("(no backend devices enumerated)\n");
+	return (MEMBRANE_EXIT_SUCCESS);
+}
+
+/* Phase 28, Section 15: a handful of cheap, non-destructive checks --
+ * deliberately NOT a subsystem (Section 15: "If implementing --doctor
+ * would become a subsystem: do not add it"). Every check here reuses
+ * an already-existing, already-tested query (gpu_device.h's device
+ * enumeration, read_host_meminfo(), a plain fopen() readability probe)
+ * -- no new detection logic of its own. Always exits 0: a [WARN] line
+ * is informational (Section 15's own example shows a [WARN] for "CUDA
+ * not supported" without failing the command), never a failure. */
+static int	run_doctor_mode(const membrane_run_opts_t &o)
+{
+	membrane_gpu_device_info_t	devices[MEMBRANE_GPU_MAX_DEVICES];
+	size_t						n_devices;
+	size_t						i;
+	size_t						gpu_count = 0;
+	membrane_host_meminfo_t		host;
+	bool						model_readable = false;
+	bool						model_checked = false;
+
+	n_devices = membrane_gpu_list_devices(devices, MEMBRANE_GPU_MAX_DEVICES);
+	for (i = 0; i < n_devices; ++i)
+		if (devices[i].type == MEMBRANE_DEV_TYPE_GPU
+			|| devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
+			++gpu_count;
+	read_host_meminfo(&host);
+	if (o.model_path != NULL)
+	{
+		FILE	*f;
+
+		model_checked = true;
+		f = fopen(o.model_path, "rb");
+		if (f != NULL)
+			model_readable = true, fclose(f);
+	}
+	if (o.want_json)
+	{
+		printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
+			"\"mode\":\"doctor\",\"ok\":true,"
+			"\"executable\":true,"
+			"\"gpu_backend_available\":%s,"
+			"\"gpu_devices_found\":%zu,"
+			"\"host_meminfo_available\":%s",
+			MEMBRANE_VERSION,
+			membrane_gpu_backend_available() ? "true" : "false", gpu_count,
+			host.ok ? "true" : "false");
+		if (host.ok)
+			printf(",\"host_total_bytes\":%llu,\"host_available_bytes\":%llu",
+				(unsigned long long)host.total_bytes,
+				(unsigned long long)host.available_bytes);
+		if (model_checked)
+			printf(",\"model_readable\":%s",
+				model_readable ? "true" : "false");
+		printf("}\n");
+		fflush(stdout);
+		return (MEMBRANE_EXIT_SUCCESS);
+	}
+	printf("MEMBRANE diagnostics\n\n");
+	printf("[OK] executable\n");
+	if (membrane_gpu_backend_available())
+		printf("[OK] GPU backend compiled in\n");
+	else
+		printf("[WARN] no GPU backend compiled in (CPU-only build -- "
+			"rebuild with e.g. -DGGML_VULKAN=ON for GPU offload)\n");
+	if (gpu_count > 0)
+	{
+		for (i = 0; i < n_devices; ++i)
+			if (devices[i].type == MEMBRANE_DEV_TYPE_GPU
+				|| devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
+				printf("[OK] GPU device: %s (%s)\n", devices[i].name,
+					devices[i].description);
+	}
+	else if (membrane_gpu_backend_available())
+		printf("[WARN] no GPU device found on this host at runtime "
+			"(driver/hardware not detected)\n");
+	if (host.ok)
+		printf("[OK] host RAM detected: %.1f MiB total, %.1f MiB "
+			"available\n", (double)host.total_bytes / (1024.0 * 1024.0),
+			(double)host.available_bytes / (1024.0 * 1024.0));
+	else
+		printf("[WARN] host RAM could not be read (non-Linux host, or "
+			"/proc/meminfo unavailable)\n");
+	if (model_checked)
+	{
+		if (model_readable)
+			printf("[OK] model file readable: %s\n",
+				membrane_runtime_safe_basename(o.model_path));
+		else
+			printf("[WARN] model file not readable: %s\n",
+				membrane_runtime_safe_basename(o.model_path));
+	}
+	printf("[OK] LLM_ARCH_LLAMA and LLM_ARCH_QWEN2 compressed-KV "
+		"compatibility available (see docs/compatibility.md)\n");
+	return (MEMBRANE_EXIT_SUCCESS);
+}
+
 int	main(int argc, char **argv)
 {
 	membrane_run_opts_t			o;
@@ -3094,20 +3366,49 @@ int	main(int argc, char **argv)
 	struct timespec					total_t0;
 	struct timespec					stage_t0;
 
-	rc = membrane_run_parse_opts(argc, argv, &o);
-	if (o.want_help)
-		return (membrane_run_usage(stdout), MEMBRANE_EXIT_SUCCESS);
-	if (o.want_version)
-		return (membrane_run_print_version(stdout), MEMBRANE_EXIT_SUCCESS);
-	if (rc != MEMBRANE_EXIT_SUCCESS)
-		return (membrane_run_usage(stderr), rc);
+	{
+		bool			want_json_argv;
+		std::string		parse_stderr;
+
+		/* Phase 28, Section 6: only pay for the stderr-capture
+		 * indirection when --json is actually in play -- the
+		 * overwhelming common case (no --json) calls the parser
+		 * exactly as before this phase. */
+		want_json_argv = argv_has_json_flag(argc, argv);
+		if (want_json_argv)
+			rc = parse_opts_capture_stderr(argc, argv, &o, &parse_stderr);
+		else
+			rc = membrane_run_parse_opts(argc, argv, &o);
+		if (o.want_help)
+			return (membrane_run_usage(stdout), MEMBRANE_EXIT_SUCCESS);
+		if (o.want_version)
+			return (membrane_run_print_version(stdout), MEMBRANE_EXIT_SUCCESS);
+		if (rc != MEMBRANE_EXIT_SUCCESS)
+		{
+			if (want_json_argv)
+				print_cli_parse_error_json(o, rc, parse_stderr);
+			return (membrane_run_usage(stderr), rc);
+		}
+	}
+	/* Phase 28: --list-devices/--doctor enumerate real backend devices,
+	 * which triggers each GPU backend's own INFO-level startup logging
+	 * (e.g. ggml_vulkan's "Found N Vulkan devices" block) -- suppressed
+	 * here up front, same as the normal-run path below, so neither
+	 * command is noisy by default without --verbose. */
+	if (!o.verbose)
+		llama_log_set(quiet_log_callback, NULL);
+	if (o.want_list_devices || o.want_doctor)
+	{
+		llama_backend_init();
+		rc = o.want_list_devices ? run_list_devices_mode(o)
+			: run_doctor_mode(o);
+		return (llama_backend_free(), rc);
+	}
 	if (!resolve_prompt(o, &prompt_text))
 	{
 		fprintf(stderr, "membrane-run: empty or unreadable prompt\n");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
-	if (!o.verbose)
-		llama_log_set(quiet_log_callback, NULL);
 	/* Phase 24: total_ms's own start point -- deliberately AFTER CLI
 	 * parse/prompt resolution (negligible, and not itself one of the
 	 * named stages Section 2 of the Phase 24 task lists), not before --
@@ -3223,7 +3524,10 @@ int	main(int argc, char **argv)
 			fprintf(stderr, "MEMBRANE: KV storage unsupported for "
 				"this model: %s.\n", compat.reason);
 			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
-				MEMBRANE_REASON_KV_COMPAT_UNSUPPORTED, compat.reason);
+				MEMBRANE_REASON_KV_COMPAT_UNSUPPORTED, compat.reason,
+				"Use --kv native (no architecture restriction), or see "
+				"docs/compatibility.md for the current list of "
+				"architectures q8/q5/adaptive support.");
 			llama_model_free(model);
 			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
 		}
@@ -3237,7 +3541,10 @@ int	main(int argc, char **argv)
 			fprintf(stderr, "MEMBRANE: KV storage unsupported for "
 				"this model: %s.\n", compat.reason);
 			print_error_json(o, MEMBRANE_EXIT_UNSUPPORTED_KV,
-				MEMBRANE_REASON_KV_COMPAT_UNSUPPORTED, compat.reason);
+				MEMBRANE_REASON_KV_COMPAT_UNSUPPORTED, compat.reason,
+				"Use --kv native (no architecture restriction), or see "
+				"docs/compatibility.md for the current list of "
+				"architectures q8/q5/adaptive support.");
 			llama_model_free(model);
 			return (llama_backend_free(), MEMBRANE_EXIT_UNSUPPORTED_KV);
 		}

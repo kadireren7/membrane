@@ -17,7 +17,43 @@ it's often what runs out before compute does. MEMBRANE looks at real device
 memory and model shape before committing to a plan, instead of a fixed
 `-ngl` guess that either wastes headroom or fails mid-run.
 
+## Build
+
+CPU-only:
+
+```bash
+cmake -S . -B build-llama -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-llama -j --target membrane-run
+```
+
+Vulkan (needs Vulkan development headers, `glslc`, and SPIR-V headers
+already on the system):
+
+```bash
+cmake -S . -B build-vulkan -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-vulkan -j --target membrane-run
+```
+
+Full walkthrough (install/uninstall, troubleshooting):
+[`docs/install.md`](docs/install.md). No CUDA, no GPU, no driver needed for
+a CPU-only build. Full flag reference and exit codes: `membrane-run
+--help`. Reproduction guide (llama-free core library, sanitizers, CI):
+`docs/reproduction.md`.
+
 ## Quick Start
+
+Point it at any local `.gguf` file and a prompt — no flags to learn first:
+
+```bash
+./build-vulkan/tools/membrane-run/membrane-run \
+  --model model.gguf \
+  --prompt "Hello"
+```
+
+That's CPU inference, full-precision KV, no GPU/memory flags at all. Once
+that works, let MEMBRANE pick GPU offload and KV memory settings for you —
+`--auto` just needs an explicit `--ctx` (memory planning depends on
+knowing the context size up front):
 
 ```bash
 ./build-vulkan/tools/membrane-run/membrane-run \
@@ -28,6 +64,13 @@ memory and model shape before committing to a plan, instead of a fixed
 ```
 
 ![--auto fans out into GPU layers, KV type, and KV residency, all automatically managed; an explicit --kv q8 override fixes only KV type, leaving the other two on auto](docs/assets/membrane-auto.svg)
+
+You never need to know `q8`/`q5`, GPU layer counts, or KV placement to use
+`--auto` — see "Precision and placement are separate" below only if you
+want manual control. `membrane-run --list-devices` lists every backend
+device MEMBRANE can see (no model needed); `membrane-run --doctor` runs a
+handful of cheap first-run checks (GPU backend/device visibility, host
+RAM, model file readability).
 
 Explicit flags override only the field they name — `--auto --kv q8` keeps
 GPU layers and KV placement on auto while pinning precision to `q8`.
@@ -109,27 +152,7 @@ text only, not a token-ID or numeric quantization-error claim.
 | `--plan-only` / `--verbose` diagnostics | | |
 | JSON diagnostics (`schema_version: 1`) | | |
 
-## Build
-
-CPU-only:
-
-```bash
-cmake -S . -B build-llama -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-llama -j --target membrane-run
-```
-
-Vulkan (needs Vulkan development headers, `glslc`, and SPIR-V headers
-already on the system):
-
-```bash
-cmake -S . -B build-vulkan -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-vulkan -j --target membrane-run
-```
-
-Full flag reference and exit codes: `membrane-run --help`. Reproduction
-guide (llama-free core library, sanitizers, CI): `docs/reproduction.md`.
-
-### Install
+## Install
 
 ```bash
 cmake --install build-vulkan --prefix "$HOME/.local"

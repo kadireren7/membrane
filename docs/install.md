@@ -125,6 +125,12 @@ run from any directory, not just the repo. If this is the first time
 you've installed to this prefix, open a new shell (or re-source your
 profile) so `PATH` picks up the change.
 
+`membrane-run --doctor` runs a handful of cheap, non-destructive checks
+(GPU backend/device visibility, host RAM detection) and prints [OK]/
+[WARN] for each — useful right after install to confirm the binary sees
+what you expect before your first real run. `membrane-run --list-devices`
+lists every backend device it can see (no model needed).
+
 CMake also writes `install_manifest.txt` to the build directory
 (`build-vulkan/install_manifest.txt`) listing every file the install
 step wrote — useful if you want to inspect the install footprint
