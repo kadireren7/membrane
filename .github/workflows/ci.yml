@@ -228,6 +228,25 @@ jobs:
       - name: Verify v0.3.0 stable-release readiness
         run: python3 scripts/verify-release-v0.3.0.py
 
+  # Phase 32: validates the v0.4 product-direction/roadmap planning
+  # documents (docs/product-direction.md, docs/v0.4-roadmap.md,
+  # results/product-direction/v0.4-decision.json) -- no runtime code
+  # changed this phase, so this is the only new check: required
+  # sections exist, no CUDA implementation commitment, no performance-
+  # speedup promise, no unsupported current-feature overclaim, live
+  # v0.3 facts cited accurately, and the phase roadmap is ordered/
+  # unique/sequential. python3 + checkout only.
+  v04-roadmap-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify v0.4 product-direction/roadmap documents
+        run: python3 scripts/verify-v0.4-roadmap.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
