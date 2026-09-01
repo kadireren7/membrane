@@ -65,6 +65,15 @@
  * and is easy to change by accident. */
 # define MEMBRANE_REASON_DEFAULT_BEHAVIOR_PRESERVED	"DEFAULT_BEHAVIOR_PRESERVED"
 
+/* Phase 28, Section 6: the one reason_code used for a CLI-parse-time
+ * failure's JSON error object (--json given anywhere in argv, but the
+ * parse itself failed before o.want_json could even be trusted -- see
+ * main.cpp's argv_has_json_flag()/print_cli_parse_error_json()). Every
+ * parse-time failure shares this one code (unlike the runtime reason
+ * codes above, parse failures have no finer-grained taxonomy -- the
+ * `message` field, not `reason_code`, carries the specific cause). */
+# define MEMBRANE_REASON_CLI_PARSE_ERROR	"CLI_PARSE_ERROR"
+
 /* Phase 13.2, Section 16: stable, machine-readable plan-warning codes --
  * informational, never errors (a warning never changes exit_code or
  * ok). Same never-change-the-meaning convention as every other reason-
@@ -205,6 +214,14 @@ typedef struct s_membrane_run_opts
 
 	int			want_version;
 	int			want_help;
+
+	/* Phase 28, Section 10/15: both short-circuit BEFORE --model/
+	 * --prompt are required, exactly like want_help/want_version above
+	 * -- neither needs a model file. Handled in main.cpp (both need
+	 * live device enumeration via gpu_device.h, which is llama-linked,
+	 * so they can't be resolved inside this llama-free parser). */
+	int			want_list_devices;	/* --list-devices */
+	int			want_doctor;		/* --doctor */
 }	membrane_run_opts_t;
 
 void	membrane_run_usage(FILE *out);

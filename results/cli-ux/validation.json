@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "membrane_version": "0.3.0-rc3",
+  "phase": "28-cli-ux",
+  "captured_at_commit": "80a915749715d95efc80794d64410873d348775a",
+  "hardware": "real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H, Vulkan backend visible (AMD Radeon Graphics iGPU + NVIDIA GeForce GTX 1650)",
+  "notes": "Every entry below except qwen2-compressed-run was captured by actually running the built tools/membrane-run/membrane-run binary (build-vulkan, Release) on this host at captured_at_commit's working tree (the Phase 28 CLI-UX changes, not yet committed at capture time). qwen2-compressed-run reuses an already-committed REAL evidence row (results/compat-expansion/validation.json, id CE-02) instead of re-running the 3.5GB Qwen2.5-1.5B model on this session's already memory-constrained host (~275MiB free at capture time) -- this is a citation of existing real evidence, not fabricated or simulated data.",
+  "examples": [
+    {
+      "id": "help",
+      "command": "membrane-run --help",
+      "exit_code": 0,
+      "ux_properties": [
+        "contains QUICK START section",
+        "contains EXAMPLES section",
+        "contains MODEL / PROMPT section",
+        "contains ADVANCED MEMORY CONTROL section",
+        "contains GPU section",
+        "contains AUTOMATIC MODE section",
+        "contains OUTPUT / DIAGNOSTICS section",
+        "documents --list-devices",
+        "documents --doctor",
+        "documents exit codes"
+      ]
+    },
+    {
+      "id": "basic-cpu-run",
+      "command": "membrane-run --model models/stories15M.gguf --prompt \"Once upon a time\" --gen-tokens 8",
+      "exit_code": 0,
+      "stdout_stderr_excerpt": "MEMBRANE 0.3.0-rc3\nmodel      stories15M.gguf\ncontext    21\nkv         native (F16)\nflash attn enabled\nkv bytes   0.14 MiB (F16, from real model hparams -- not measured until context creation)\nbackend    CPU (default -- pass --gpu-layers to use a GPU)\n\ngenerated  8 tokens\nspeed      299.5 tok/s\nkv memory  0.14 MiB (real allocation)\nrss final  241912 kB (peak 241912 kB)",
+      "ux_properties": [
+        "no flags beyond --model/--prompt/--gen-tokens",
+        "model label is a basename (stories15M.gguf), not an absolute path",
+        "human summary is short (not spammy)"
+      ]
+    },
+    {
+      "id": "vulkan-auto-run-json",
+      "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt \"Hello\" --ctx 2048 --auto --gen-tokens 8 --json",
+      "exit_code": 0,
+      "stdout_excerpt": "{\"schema_version\":1,\"membrane_version\":\"0.3.0-rc3\",\"mode\":\"run\",\"ok\":true,\"model_label\":\"SmolLM2-135M-Instruct-f16.gguf\",\"kv_store\":\"q8\",\"kv_type\":\"Q8_0\",\"requested_kv\":\"adaptive\",\"selected_kv\":\"q8\",\"adaptive_reason\":\"Q8_FULL_RESIDENCY\",\"ctx_size\":2048,\"generated_tokens\":8,\"auto\":{\"requested\":true,\"cpu_fallback\":false},\"reason_code\":\"Q8_FULL_RESIDENCY\"",
+      "ux_properties": [
+        "stdout is exactly one valid JSON object",
+        "auto resolved gpu_layers/kv/kv_placement without the user naming any of them",
+        "resolved backend/device visible in the object"
+      ]
+    },
+    {
+      "id": "plan-only-human",
+      "command": "membrane-run --model models/SmolLM2-135M-Instruct-f16.gguf --prompt \"Hello\" --ctx 2048 --auto --plan-only",
+      "exit_code": 0,
+      "stdout_stderr_excerpt": "MEMBRANE plan\n  device: Vulkan1\n  gpu layers: 30/30\n  kv precision: Q8_0\n  kv placement: auto\n  kv layers: 30 GPU / 0 CPU\n  estimated weight bytes: 249.9 MiB\n  estimated GPU KV: 23.9 MiB, estimated CPU KV: 0.0 MiB\n  reason: Q8_FULL_RESIDENCY\nmembrane-run: plan resolved (no generation performed)",
+      "ux_properties": [
+        "no generation performed (no generated-token output)",
+        "contains 'MEMBRANE plan'",
+        "contains 'kv precision'",
+        "contains 'kv placement'",
+        "contains a machine-readable reason"
+      ]
+    },
+    {
+      "id": "qwen2-compressed-run",
+      "command": "membrane-run --model models/qwen2.5-1.5b-instruct-fp16.gguf --prompt 'The capital of France is' --ctx 512 --gen-tokens 16 --json --quiet --include-text --gpu-layers 0 --kv q8",
+      "exit_code": 0,
+      "source": "results/compat-expansion/validation.json#CE-02 (Phase 26, REAL, not re-captured this phase -- see notes above)",
+      "ux_properties": [
+        "LLM_ARCH_QWEN2 compressed KV (q8) succeeds, not just LLM_ARCH_LLAMA",
+        "kv_bytes exactly matches the documented Q8_0 ratio (53.125% of native)"
+      ]
+    },
+    {
+      "id": "json-parse-error-unknown-flag",
+      "command": "membrane-run --bogus --json",
+      "exit_code": 2,
+      "stdout_excerpt": "{\"schema_version\":1,\"membrane_version\":\"0.3.0-rc3\",\"ok\":false,\"exit_code\":2,\"reason_code\":\"CLI_PARSE_ERROR\",\"message\":\"unknown option: --bogus\",\"suggestions\":[\"Run 'membrane-run --help' for the full option list.\"]}",
+      "ux_properties": [
+        "stdout is exactly one valid JSON object (Phase 27's pre-existing gap: parse-time failures did not respect --json)",
+        "--json recognized even though --bogus (which fails first) comes before it in argv",
+        "suggestions is a non-empty array",
+        "exit_code matches the process exit code (2)"
+      ]
+    },
+    {
+      "id": "json-parse-error-auto-without-ctx",
+      "command": "membrane-run --model x --prompt hi --auto --json",
+      "exit_code": 2,
+      "stdout_excerpt": "{\"schema_version\":1,\"membrane_version\":\"0.3.0-rc3\",\"ok\":false,\"exit_code\":2,\"reason_code\":\"CLI_PARSE_ERROR\",\"message\":\"--auto needs a context size because memory planning depends on it.\\nTry: --ctx 2048\",\"suggestions\":[\"--ctx 2048\"]}",
+      "ux_properties": [
+        "message names the actual missing requirement, not a flag the user never typed",
+        "suggestion (--ctx 2048) is a legal, actionable fix for this exact failure"
+      ]
+    },
+    {
+      "id": "unsupported-architecture-error",
+      "command": "membrane-run --model models/stories15M.gguf --prompt \"Hi\" --kv q8 --gen-tokens 4 --json",
+      "exit_code": 5,
+      "stdout_excerpt": "{\"schema_version\":1,\"membrane_version\":\"0.3.0-rc3\",\"mode\":\"run\",\"ok\":false,\"exit_code\":5,\"error\":{\"reason_code\":\"KV_COMPAT_UNSUPPORTED\",\"message\":\"head dimension 48 is not divisible by Q8_0 block size 32\",\"suggestion\":\"Use --kv native (no architecture restriction), or see docs/compatibility.md for the current list of architectures q8/q5/adaptive support.\"}}",
+      "ux_properties": [
+        "message names the real, specific cause (head dimension vs block size), not an opaque code",
+        "suggestion offers a legal fallback (--kv native) and a doc pointer, never an impossible fix"
+      ]
+    },
+    {
+      "id": "list-devices-json",
+      "command": "membrane-run --list-devices --json",
+      "exit_code": 0,
+      "stdout_excerpt": "{\"schema_version\":1,\"membrane_version\":\"0.3.0-rc3\",\"mode\":\"list-devices\",\"ok\":true,\"devices\":[{\"index\":0,\"backend\":\"Vulkan\",\"name\":\"Vulkan0\",\"description\":\"AMD Radeon Graphics (RADV RENOIR)\",\"type\":\"igpu\"",
+      "ux_properties": [
+        "no --model needed",
+        "always exits 0",
+        "quiet by default (no ggml_vulkan startup log noise without --verbose)"
+      ]
+    },
+    {
+      "id": "doctor-json",
+      "command": "membrane-run --doctor --json",
+      "exit_code": 0,
+      "ux_properties": [
+        "no --model needed",
+        "always exits 0",
+        "reports gpu_backend_available/gpu_devices_found/host_meminfo_available"
+      ]
+    }
+  ]
+}
