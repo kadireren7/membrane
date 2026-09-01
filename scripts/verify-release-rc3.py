@@ -14,6 +14,17 @@ scripts/verify-*.py -- this validates CURRENT/live state (unlike
 scripts/verify-release-readiness.py, which stays pinned to RC2's own
 frozen historical facts and is never touched by this file).
 
+RETIRED FROM CI as of Phase 31 (v0.3.0 stable): because this validates
+LIVE state rather than a pinned tag, its assertions (MEMBRANE_VERSION
+== 0.3.0-rc3, CITATION.cff still v0.2.0, no stable v0.3.0 claim exists)
+became permanently false the moment v0.3.0-rc3 was superseded by stable
+-- the same fate scripts/verify-release-readiness.py already had when
+RC2 was superseded, and handled the same way: unwired from .github/
+workflows/ci.yml, left otherwise untouched as a record of exactly what
+Phase 27 checked at the time. Its successor for live state is
+scripts/verify-release-v0.3.0.py. Running this script directly against
+a post-RC3 tree is expected to fail -- that is not a regression.
+
 Exit code: 0 if every check passes, 1 otherwise.
 """
 import json

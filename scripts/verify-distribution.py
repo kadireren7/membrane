@@ -24,6 +24,7 @@ Exit code: 0 if every check passes, 1 otherwise.
 """
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -242,27 +243,42 @@ def _c13():
 
 
 @check("the product-version -> Debian-package-version mapping recorded here "
-	"matches what CMakeLists.txt's own mapping rule produces from the live "
-	"MEMBRANE_VERSION (no drift between the two)")
+	"matches what CMakeLists.txt's own mapping rule produces from "
+	"MEMBRANE_VERSION AT the evidence's own captured_at_commit -- not "
+	"necessarily the live/current tree, which moves on with every "
+	"version bump; this evidence is a point-in-time capture, pinned to "
+	"its own commit, same frozen-snapshot pattern as scripts/verify-"
+	"release-readiness.py's `git show`-based checks")
 def _c14():
-	header_text = PRODUCT_CLI_H_PATH.read_text()
-	m = re.search(r'define MEMBRANE_VERSION\s+"([^"]+)"', header_text)
+	d = _load_data()
+	commit = d.get("captured_at_commit")
+	if not commit:
+		return False, "no captured_at_commit field in the evidence file"
+	result = subprocess.run(
+		["git", "-C", str(REPO_ROOT), "show",
+			f"{commit}:tools/membrane-run/product_cli.h"],
+		capture_output=True, text=True)
+	if result.returncode != 0:
+		return False, (f"could not read product_cli.h AT {commit} via git "
+			f"show: {result.stderr.strip()}")
+	m = re.search(r'define MEMBRANE_VERSION\s+"([^"]+)"', result.stdout)
 	if not m:
-		return False, "MEMBRANE_VERSION not found in product_cli.h"
-	live_version = m.group(1)
+		return False, f"MEMBRANE_VERSION not found in product_cli.h AT {commit}"
+	version_at_commit = m.group(1)
 	# Same rule as CMakeLists.txt's string(REPLACE "-" "~" ...): replace
 	# every hyphen with a tilde (Python's str.replace with no count limit
 	# matches CMake's string(REPLACE) semantics exactly -- both replace
-	# ALL occurrences, not just the first).
-	expected_debian_version = live_version.replace("-", "~")
+	# ALL occurrences, not just the first). Checked against the LIVE
+	# CMakeLists.txt deliberately -- the mapping RULE itself is expected
+	# to be permanent code structure, unlike the version VALUE above.
+	expected_debian_version = version_at_commit.replace("-", "~")
 	cmake_text = CMAKE_PATH.read_text()
 	if 'string(REPLACE "-" "~" MEMBRANE_DEBIAN_VERSION' not in cmake_text:
 		return False, "CMakeLists.txt no longer contains the expected version-mapping rule"
-	d = _load_data()
 	bad = []
-	if d.get("membrane_version") != live_version:
+	if d.get("membrane_version") != version_at_commit:
 		bad.append(f"validation.json membrane_version={d.get('membrane_version')!r} "
-			f"!= live MEMBRANE_VERSION={live_version!r}")
+			f"!= AT {commit[:12]}={version_at_commit!r}")
 	if d.get("package_version") != expected_debian_version:
 		bad.append(f"validation.json package_version={d.get('package_version')!r} "
 			f"!= expected {expected_debian_version!r}")
@@ -274,8 +290,8 @@ def _c14():
 			bad.append(f"{p['id']}: filename={p.get('filename')!r} does not match "
 				f"expected membrane_{expected_debian_version}_amd64.deb")
 	return len(bad) == 0, "; ".join(bad) if bad else (
-		f"live MEMBRANE_VERSION={live_version!r} maps to {expected_debian_version!r}, "
-		"consistent everywhere")
+		f"MEMBRANE_VERSION AT {commit[:12]}={version_at_commit!r} maps to "
+		f"{expected_debian_version!r}, consistent everywhere")
 
 
 @check("CMakeLists.txt's CPack config names the package 'membrane' and docs "

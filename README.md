@@ -211,16 +211,19 @@ live in
 **[kadireren7/membrane-research](https://github.com/kadireren7/membrane-research)**,
 with SHA256-verified provenance back to this repository.
 
-**Release status**: latest stable tag `v0.2.0`, release candidate
-`v0.3.0-rc3` (supersedes the now-stale `v0.3.0-rc2`, which predates
-Qwen2 compressed-KV support, performance-profiling/planner-substage
-timing diagnostics, the fallback trace on a fully-exhausted error JSON,
-and real-user validation on CPU/NVIDIA-Vulkan/AMD-Vulkan — all still
-from a single physical developer host; independent-host validation
-remains pending — see
-[docs/release-v0.3.0-rc3.md](docs/release-v0.3.0-rc3.md) for the full
-RC2→RC3 delta). `v0.2.0` stable's CPU-only default behavior is
-unchanged by any of this.
+**Release status**: latest stable tag `v0.3.0` (supersedes `v0.2.0`,
+now historical). Built on `v0.3.0-rc3`'s Qwen2 compressed-KV support,
+performance-profiling/planner-substage timing diagnostics, and the
+fallback trace on a fully-exhausted error JSON, plus post-RC3 CLI/
+first-run/packaging polish (`--doctor`, `--list-devices`,
+`--inspect-model`, an official Debian-family amd64 `.deb` package) —
+see [docs/release-v0.3.0.md](docs/release-v0.3.0.md) for the full
+release notes. All real-run validation (CPU, NVIDIA Vulkan, AMD Vulkan
+RADV) is still from the maintainer's own development host plus
+container-based packaging checks — **independent multi-host validation
+remains limited**; this is disclosed as a known limitation, not hidden.
+CPU-only default behavior (no flags, or `--gpu-layers 0`) is unchanged
+by any of this.
 
 ## AI-assisted development
 
