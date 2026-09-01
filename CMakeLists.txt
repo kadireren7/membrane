@@ -852,3 +852,106 @@ if(MEMBRANE_BUILD_TESTS)
     set_tests_properties(test_interrupted_resume PROPERTIES TIMEOUT 700)
   endif()
 endif()
+
+# ---------------------------------------------------------------------
+# Phase 29: .deb packaging (CPack). Configured unconditionally (cheap,
+# and `cmake --build <dir> --target package` is opt-in -- nothing here
+# runs on a normal configure/build) but only produces a non-empty
+# package when MEMBRANE_ENABLE_LLAMA=ON, since
+# tools/membrane-run/CMakeLists.txt's install() rules are the ONLY
+# install() rules anywhere in this tree (verified directly: `grep -rn
+# "^\s*install(" --include=CMakeLists.txt .` finds nothing else) -- the
+# package can never accidentally pick up tests, benchmarks, research
+# tools, or model files, because nothing else ever gets installed in
+# the first place, packaged or not.
+#
+# Single source of truth for the package version: MEMBRANE_VERSION
+# (tools/membrane-run/product_cli.h) is parsed here, not duplicated --
+# a release version bump only ever needs to change that one #define
+# (see product_cli.h's own header comment). file(STRINGS ...) reads the
+# header as plain text (no compiler invocation needed), so this works
+# identically whether or not MEMBRANE_ENABLE_LLAMA is set.
+file(STRINGS ${CMAKE_SOURCE_DIR}/tools/membrane-run/product_cli.h
+  MEMBRANE_VERSION_DEFINE_LINE REGEX "define MEMBRANE_VERSION")
+string(REGEX MATCH "\"([^\"]+)\"" _MEMBRANE_VERSION_MATCH
+  "${MEMBRANE_VERSION_DEFINE_LINE}")
+set(MEMBRANE_PRODUCT_VERSION "${CMAKE_MATCH_1}")
+if(NOT MEMBRANE_PRODUCT_VERSION)
+  message(FATAL_ERROR
+    "Could not parse MEMBRANE_VERSION from "
+    "tools/membrane-run/product_cli.h -- packaging version would be "
+    "empty/wrong, refusing to configure CPack with a guessed value")
+endif()
+
+# Debian version ordering (Debian Policy 5.6.12): a bare hyphen in an
+# upstream_version is the debian_revision separator, and dpkg's version
+# comparison algorithm sorts "-rc3" AFTER no suffix at all -- exactly
+# backwards from "rc3 is a prerelease of the final version" (0.3.0-rc3
+# would compare as NEWER than 0.3.0, so an apt upgrade from the rc to
+# the real 0.3.0 release would look like a downgrade and be refused).
+# "~" is the documented convention for this: it sorts before
+# everything, including the empty string, so "0.3.0~rc3" correctly
+# orders BEFORE "0.3.0". Only ever touches a "-rcN"/"-betaN"/etc.
+# suffix if MEMBRANE_PRODUCT_VERSION has one -- a plain stable version
+# like "0.2.0" has no hyphen and passes through unchanged. The product
+# itself keeps reporting the unmapped MEMBRANE_VERSION verbatim
+# (`membrane-run --version` prints "MEMBRANE 0.3.0-rc3", unaffected by
+# this) -- this mapping exists ONLY for the .deb's own Version: field,
+# documented in docs/install.md's packaging section.
+string(REPLACE "-" "~" MEMBRANE_DEBIAN_VERSION "${MEMBRANE_PRODUCT_VERSION}")
+
+set(CPACK_PACKAGE_NAME "membrane")
+set(CPACK_PACKAGE_VERSION "${MEMBRANE_DEBIAN_VERSION}")
+set(CPACK_PACKAGE_VENDOR "Kadir Eren Altintas")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+  "Memory-aware KV-cache planning runtime for llama.cpp")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/kadireren7/membrane")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGE_CONTACT
+  "Kadir Eren Altintas <kadirerenaltintas072@gmail.com>")
+# Debian packages install under /usr, never /usr/local -- this only
+# changes where CPack STAGES files for the .deb's own payload; the
+# ordinary `cmake --install --prefix ...` workflow (docs/install.md)
+# is completely separate and unaffected by this variable.
+set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+set(CPACK_STRIP_FILES ON)
+
+set(CPACK_GENERATOR "DEB")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER
+  "Kadir Eren Altintas <kadirerenaltintas072@gmail.com>")
+set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
+set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "${CPACK_PACKAGE_HOMEPAGE_URL}")
+set(CPACK_DEBIAN_PACKAGE_DESCRIPTION
+"${CPACK_PACKAGE_DESCRIPTION_SUMMARY}
+ Resolves GPU offload, KV precision, and CPU/GPU KV residency before
+ generation, with an inspectable plan and machine-readable
+ diagnostics, on top of an unmodified ggml/llama.cpp inference path.
+ .
+ Provides the membrane-run command-line tool. This package does not
+ include any model files -- point membrane-run at your own local
+ .gguf file. See https://github.com/kadireren7/membrane for details.")
+# Real, auto-detected runtime dependencies (dpkg-shlibdeps against the
+# actual installed ELF binaries), not a hand-maintained guess -- a
+# CPU-only build (no -DGGML_VULKAN=ON) never declares a Vulkan
+# dependency, and a Vulkan build declares exactly what libggml-vulkan
+# actually links against (e.g. libvulkan.so.1) -- whichever this exact
+# build produces. glslc (a build-time-only shader compiler, never
+# linked into the installed binary) can never appear here for that
+# same reason: dpkg-shlibdeps only inspects real ELF NEEDED entries.
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+# membrane-run's own installed libllama.so/libggml*.so (tools/membrane-
+# run/CMakeLists.txt's install loop) live inside THIS package, not a
+# separate system package -- without this, dpkg-shlibdeps has no way
+# to resolve those NEEDED entries against an apt-installed package and
+# either errors or (worse) silently omits the dependency line entirely.
+# CMake 3.20+ only; guarded so a configure on an older (but still
+# >=3.16, this project's own minimum) CMake still produces a package,
+# just without this refinement -- dpkg-shlibdeps would then warn on
+# stderr about unresolved libllama.so/libggml*.so instead of failing.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.20")
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS_PRIVATE_DIRS
+    "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
+endif()
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+
+include(CPack)

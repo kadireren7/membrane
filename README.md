@@ -19,6 +19,14 @@ memory and model shape before committing to a plan, instead of a fixed
 
 ## Build
 
+Easiest path on Ubuntu/Debian/Pop!_OS: a `.deb` package
+(`sudo apt install ./membrane_<version>_amd64.deb`) — no manual CMake
+flags. Release packages are produced by this project's build pipeline;
+none are hosted publicly yet, so build your own with
+`cmake --build <dir> --target package` (see
+[`docs/install.md`](docs/install.md)'s Option A). What follows here is
+building `membrane-run` directly from source.
+
 CPU-only:
 
 ```bash
