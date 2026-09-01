@@ -3256,25 +3256,44 @@ static int	run_list_devices_mode(const membrane_run_opts_t &o)
  * deliberately NOT a subsystem (Section 15: "If implementing --doctor
  * would become a subsystem: do not add it"). Every check here reuses
  * an already-existing, already-tested query (gpu_device.h's device
- * enumeration, read_host_meminfo(), a plain fopen() readability probe)
- * -- no new detection logic of its own. Always exits 0: a [WARN] line
- * is informational (Section 15's own example shows a [WARN] for "CUDA
- * not supported" without failing the command), never a failure. */
+ * enumeration, read_host_meminfo(), a plain fopen() readability probe,
+ * and -- Phase 30 -- membrane_gpu_estimate_model()/membrane_check_kv_
+ * compat() when --model is given, the SAME GGUF-metadata-only read and
+ * compatibility check --inspect-model uses below, never a second
+ * implementation). Always exits 0: a [WARN] line is informational
+ * (Section 15's own example shows a [WARN] for "CUDA not supported"
+ * without failing the command), never a failure. */
 static int	run_doctor_mode(const membrane_run_opts_t &o)
 {
 	membrane_gpu_device_info_t	devices[MEMBRANE_GPU_MAX_DEVICES];
 	size_t						n_devices;
 	size_t						i;
 	size_t						gpu_count = 0;
+	const char					*cpu_description = NULL;
 	membrane_host_meminfo_t		host;
 	bool						model_readable = false;
 	bool						model_checked = false;
+	membrane_gpu_model_estimate_t	est;
+	bool						model_hparams_ok = false;
+	membrane_compat_result_t		compat_q8 = {};
+	membrane_compat_result_t		compat_q5 = {};
 
 	n_devices = membrane_gpu_list_devices(devices, MEMBRANE_GPU_MAX_DEVICES);
 	for (i = 0; i < n_devices; ++i)
+	{
 		if (devices[i].type == MEMBRANE_DEV_TYPE_GPU
 			|| devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
 			++gpu_count;
+		/* Phase 30, Section 9: the enumeration already includes a real
+		 * CPU entry (ggml's own CPU backend description, e.g. "AMD
+		 * Ryzen 5 5600H...") -- --list-devices already shows it; doctor
+		 * previously didn't, even though it's free (already fetched
+		 * above for the GPU count) and directly answers Section 9's
+		 * "detected CPU" ask with no new detection logic. */
+		else if (devices[i].type == MEMBRANE_DEV_TYPE_CPU
+			&& cpu_description == NULL)
+			cpu_description = devices[i].description;
+	}
 	read_host_meminfo(&host);
 	if (o.model_path != NULL)
 	{
@@ -3284,6 +3303,22 @@ static int	run_doctor_mode(const membrane_run_opts_t &o)
 		f = fopen(o.model_path, "rb");
 		if (f != NULL)
 			model_readable = true, fclose(f);
+		/* Cheap (GGUF-metadata-only, no model load) -- same call
+		 * --inspect-model uses. Only attempted if the file opened
+		 * above; membrane_gpu_estimate_model() itself also re-verifies
+		 * readability/parseability, so a model_readable=true/hparams
+		 * read failure IS possible (e.g. a non-GGUF file with a
+		 * readable header) and handled below via model_hparams_ok. */
+		if (model_readable
+			&& membrane_gpu_estimate_model(o.model_path, &est)
+			&& est.hparams_available)
+		{
+			model_hparams_ok = true;
+			membrane_check_kv_compat(est.arch_name, est.n_embd, est.n_head,
+				est.n_head_kv, 1, MEMBRANE_KV_STORE_Q8, &compat_q8);
+			membrane_check_kv_compat(est.arch_name, est.n_embd, est.n_head,
+				est.n_head_kv, 1, MEMBRANE_KV_STORE_Q5, &compat_q5);
+		}
 	}
 	if (o.want_json)
 	{
@@ -3296,19 +3331,40 @@ static int	run_doctor_mode(const membrane_run_opts_t &o)
 			MEMBRANE_VERSION,
 			membrane_gpu_backend_available() ? "true" : "false", gpu_count,
 			host.ok ? "true" : "false");
+		if (cpu_description != NULL)
+		{
+			printf(",\"cpu\":\"");
+			print_json_escaped(cpu_description);
+			printf("\"");
+		}
 		if (host.ok)
 			printf(",\"host_total_bytes\":%llu,\"host_available_bytes\":%llu",
 				(unsigned long long)host.total_bytes,
 				(unsigned long long)host.available_bytes);
 		if (model_checked)
+		{
 			printf(",\"model_readable\":%s",
 				model_readable ? "true" : "false");
+			if (model_hparams_ok)
+			{
+				printf(",\"model_architecture\":\"");
+				print_json_escaped(est.arch_name);
+				printf("\",\"model_compatibility\":{\"q8\":%s,\"q5\":%s,"
+					"\"adaptive\":%s}",
+					compat_q8.ok ? "true" : "false",
+					compat_q5.ok ? "true" : "false",
+					(compat_q8.ok || compat_q5.ok) ? "true" : "false");
+			}
+		}
 		printf("}\n");
 		fflush(stdout);
 		return (MEMBRANE_EXIT_SUCCESS);
 	}
 	printf("MEMBRANE diagnostics\n\n");
+	printf("[OK] MEMBRANE %s\n", MEMBRANE_VERSION);
 	printf("[OK] executable\n");
+	if (cpu_description != NULL)
+		printf("[OK] CPU: %s\n", cpu_description);
 	/* Phase 29: llama_supports_gpu_offload() (which membrane_gpu_
 	 * backend_available() wraps) checks for an actually-ENUMERATED GPU/
 	 * IGPU device (ggml_backend_dev_by_type() != NULL), not "was a GPU
@@ -3349,15 +3405,212 @@ static int	run_doctor_mode(const membrane_run_opts_t &o)
 			"/proc/meminfo unavailable)\n");
 	if (model_checked)
 	{
-		if (model_readable)
-			printf("[OK] model file readable: %s\n",
-				membrane_runtime_safe_basename(o.model_path));
-		else
+		if (!model_readable)
 			printf("[WARN] model file not readable: %s\n",
 				membrane_runtime_safe_basename(o.model_path));
+		else if (!model_hparams_ok)
+			printf("[WARN] model file readable but its GGUF metadata "
+				"could not be read: %s\n",
+				membrane_runtime_safe_basename(o.model_path));
+		else
+		{
+			printf("[OK] model file readable: %s\n",
+				membrane_runtime_safe_basename(o.model_path));
+			printf("[OK] model architecture: %s\n", est.arch_name);
+			if (compat_q8.ok || compat_q5.ok)
+				printf("[OK] compressed KV supported: %s%s%s\n",
+					compat_q8.ok ? "q8" : "",
+					(compat_q8.ok && compat_q5.ok) ? ", " : "",
+					compat_q5.ok ? "q5" : "");
+			else
+				printf("[WARN] compressed KV (q8/q5/adaptive) not "
+					"supported for architecture '%s' -- native KV still "
+					"works\n", est.arch_name);
+		}
 	}
 	printf("[OK] LLM_ARCH_LLAMA and LLM_ARCH_QWEN2 compressed-KV "
 		"compatibility available (see docs/compatibility.md)\n");
+	/* Phase 30, Section 10: end with ONE concrete, relevant next
+	 * command -- never irrelevant advice (Section 10: "Do not print
+	 * irrelevant advice"). Model-aware when --model was given (reuses
+	 * the real basename, not a placeholder); GPU-aware otherwise
+	 * (--auto --plan-only only makes sense to suggest when a GPU is
+	 * actually visible to offload to -- Section 10's own two examples). */
+	printf("\n");
+	if (model_checked && model_readable)
+	{
+		const char	*label = membrane_runtime_safe_basename(o.model_path);
+
+		if (gpu_count > 0)
+			printf("Next: membrane-run --model %s --ctx 2048 --auto "
+				"--plan-only\n", label);
+		else
+			printf("Next: membrane-run --model %s --prompt \"Hello\"\n",
+				label);
+	}
+	else if (gpu_count > 0)
+		printf("Next: membrane-run --model model.gguf --ctx 2048 --auto "
+			"--plan-only\n");
+	else
+		printf("Next: membrane-run --model model.gguf --prompt \"Hello\"\n");
+	return (MEMBRANE_EXIT_SUCCESS);
+}
+
+/* Phase 30, Section 5-8: --inspect-model -- reads ONLY GGUF metadata
+ * (membrane_gpu_estimate_model(), gpu_device.h -- no llama_model_load_
+ * from_file(), no llama_backend_init() even) and reuses the exact same
+ * membrane_check_kv_compat() a real run's precheck calls (compat_
+ * check.c) -- never a second compatibility implementation (Section 8).
+ * Scope deliberately narrow (Section 6: "Do NOT turn this into a GGUF
+ * explorer"): basename, architecture, layer/embedding/head shape,
+ * native/q8/q5/adaptive support, and -- only if the caller also gave
+ * --ctx -- an estimated KV size per mode at that context. No --ctx
+ * means no memory-estimate section at all, never a silently invented
+ * default (Section 6). */
+static void	print_inspect_model_json(const char *model_label,
+				const membrane_gpu_model_estimate_t &est,
+				const membrane_compat_result_t &compat_q8,
+				const membrane_compat_result_t &compat_q5,
+				bool have_ctx, uint32_t ctx_size,
+				const model_shape_t &shape)
+{
+	printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
+		"\"mode\":\"inspect-model\",\"ok\":true,\"model\":{"
+		"\"file\":\"", MEMBRANE_VERSION);
+	print_json_escaped(model_label);
+	printf("\",\"architecture\":\"");
+	print_json_escaped(est.arch_name);
+	printf("\",\"layers\":%d,\"embedding\":%d,\"heads\":%d,"
+		"\"kv_heads\":%d},\"compatibility\":{\"native\":true,"
+		"\"q8\":%s,\"q5\":%s,\"adaptive\":%s",
+		est.n_layer, est.n_embd, est.n_head, est.n_head_kv,
+		compat_q8.ok ? "true" : "false", compat_q5.ok ? "true" : "false",
+		(compat_q8.ok || compat_q5.ok) ? "true" : "false");
+	if (!compat_q8.ok)
+	{
+		printf(",\"q8_reason\":\"");
+		print_json_escaped(compat_q8.reason);
+		printf("\"");
+	}
+	if (!compat_q5.ok)
+	{
+		printf(",\"q5_reason\":\"");
+		print_json_escaped(compat_q5.reason);
+		printf("\"");
+	}
+	printf("}");
+	if (have_ctx)
+	{
+		printf(",\"kv_estimate_bytes\":{\"ctx\":%u,\"native\":%llu,"
+			"\"q8\":%llu,\"q5\":%llu}", ctx_size,
+			(unsigned long long)kv_bytes_for_mode(shape, ctx_size,
+				MEMBRANE_KV_STORE_NATIVE),
+			(unsigned long long)kv_bytes_for_mode(shape, ctx_size,
+				MEMBRANE_KV_STORE_Q8),
+			(unsigned long long)kv_bytes_for_mode(shape, ctx_size,
+				MEMBRANE_KV_STORE_Q5));
+	}
+	printf("}\n");
+	fflush(stdout);
+}
+
+static int	run_inspect_model_mode(const membrane_run_opts_t &o)
+{
+	membrane_gpu_model_estimate_t	est;
+	const char						*model_label;
+
+	model_label = membrane_runtime_safe_basename(o.model_path);
+	if (!membrane_gpu_estimate_model(o.model_path, &est)
+		|| !est.hparams_available)
+	{
+		/* Two genuinely different real causes -- confirmed directly
+		 * (models/stories15M.gguf, a real fixture in this repo, is a
+		 * valid GGUF with real "blk.N." tensors that membrane_gpu_
+		 * estimate_model() reads fine, but lacks the arch-prefixed
+		 * hparam keys this tool needs, so hparams_available is 0 with
+		 * no parse failure at all -- a prior version of this message
+		 * called that "not a valid GGUF file", which is false and
+		 * confusing for exactly this case). */
+		bool	parse_failed = !est.hparams_available
+			&& est.n_layer == 0 && est.bytes_per_layer == 0;
+		std::string	detail = parse_failed
+			? (std::string("could not read '") + model_label
+				+ "' as a GGUF file -- verify the path and file format")
+			: (std::string("'") + model_label + "' is a readable GGUF "
+				"file, but its architecture/hparams metadata could not "
+				"be read -- compatibility can't be determined for it");
+
+		fprintf(stderr, "membrane-run: %s\n", detail.c_str());
+		if (o.want_json)
+		{
+			printf("{\"schema_version\":1,\"membrane_version\":\"%s\","
+				"\"mode\":\"inspect-model\",\"ok\":false,\"exit_code\":%d,"
+				"\"error\":{\"reason_code\":\"%s\",\"message\":\"",
+				MEMBRANE_VERSION, MEMBRANE_EXIT_MODEL_ERROR,
+				MEMBRANE_GPU_POLICY_REASON_METADATA_UNAVAILABLE);
+			print_json_escaped(detail);
+			printf("\"}}\n");
+			fflush(stdout);
+		}
+		return (MEMBRANE_EXIT_MODEL_ERROR);
+	}
+
+	model_shape_t	shape;
+
+	shape.arch_name = est.arch_name;
+	shape.n_layer = est.n_layer;
+	shape.n_embd = est.n_embd;
+	shape.n_head = est.n_head;
+	shape.n_head_kv = est.n_head_kv;
+	shape.n_embd_gqa = (shape.n_head > 0)
+		? (int64_t)(shape.n_embd / shape.n_head) * shape.n_head_kv : 0;
+
+	membrane_compat_result_t	compat_q8;
+	membrane_compat_result_t	compat_q5;
+
+	/* ctx_size argument here is a compat-check precondition only (must
+	 * be >=1 -- compat_check.c never uses it for divisibility math or
+	 * any other decision), NOT a memory estimate -- that only happens
+	 * below, and only if the caller actually gave --ctx. */
+	membrane_check_kv_compat(est.arch_name, est.n_embd, est.n_head,
+		est.n_head_kv, 1, MEMBRANE_KV_STORE_Q8, &compat_q8);
+	membrane_check_kv_compat(est.arch_name, est.n_embd, est.n_head,
+		est.n_head_kv, 1, MEMBRANE_KV_STORE_Q5, &compat_q5);
+
+	bool	have_ctx = o.ctx > 0;
+
+	if (o.want_json)
+	{
+		print_inspect_model_json(model_label, est, compat_q8, compat_q5,
+			have_ctx, o.ctx, shape);
+		return (MEMBRANE_EXIT_SUCCESS);
+	}
+	printf("Model\n");
+	printf("  file: %s\n", model_label);
+	printf("  architecture: %s\n", est.arch_name);
+	printf("  layers: %d\n", est.n_layer);
+	printf("  embedding: %d\n", est.n_embd);
+	printf("  heads: %d\n", est.n_head);
+	printf("  KV heads: %d\n", est.n_head_kv);
+	printf("\nMEMBRANE compatibility\n");
+	printf("  native KV: supported\n");
+	printf("  q8: %s\n", compat_q8.ok ? "supported" : compat_q8.reason);
+	printf("  q5: %s\n", compat_q5.ok ? "supported" : compat_q5.reason);
+	printf("  adaptive: %s\n", (compat_q8.ok || compat_q5.ok)
+		? "supported" : "not supported (neither q8 nor q5 is)");
+	if (have_ctx)
+	{
+		printf("\nEstimated KV @ ctx %u\n", o.ctx);
+		printf("  native: %.2f MiB\n",
+			(double)kv_bytes_for_mode(shape, o.ctx, MEMBRANE_KV_STORE_NATIVE)
+				/ (1024.0 * 1024.0));
+		printf("  q8: %.2f MiB\n",
+			(double)kv_bytes_for_mode(shape, o.ctx, MEMBRANE_KV_STORE_Q8)
+				/ (1024.0 * 1024.0));
+		printf("  q5: %.2f MiB\n",
+			(double)kv_bytes_for_mode(shape, o.ctx, MEMBRANE_KV_STORE_Q5)
+				/ (1024.0 * 1024.0));
+	}
 	return (MEMBRANE_EXIT_SUCCESS);
 }
 
@@ -3419,6 +3672,11 @@ int	main(int argc, char **argv)
 			: run_doctor_mode(o);
 		return (llama_backend_free(), rc);
 	}
+	/* Phase 30: --inspect-model reads only GGUF metadata -- no
+	 * llama_backend_init() needed at all, unlike --list-devices/
+	 * --doctor above (both enumerate real backend devices). */
+	if (o.want_inspect_model)
+		return (run_inspect_model_mode(o));
 	if (!resolve_prompt(o, &prompt_text))
 	{
 		fprintf(stderr, "membrane-run: empty or unreadable prompt\n");

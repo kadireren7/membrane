@@ -644,6 +644,68 @@ static void	test_plan_only_off_by_default(void)
 	TEST_ASSERT(o.plan_only == 0, "--plan-only is off by default");
 }
 
+/* Phase 30, Section 1/11/20: a real, pre-existing friction point this
+ * phase's own first-run audit found -- --plan-only never generates, so
+ * prompt content is never used by it, yet the CLI previously rejected
+ * `--plan-only --ctx N --auto` outright (even this project's own
+ * --help EXAMPLES text shipped exactly that command). --ctx explicit
+ * means auto-sizing (the only real use of prompt content on this
+ * path) never applies, so an empty placeholder prompt is injected
+ * instead of requiring one. */
+static void	test_plan_only_no_prompt_ok_with_explicit_ctx(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args.push_back("membrane-run");
+	args.push_back("--model");
+	args.push_back("/no/such/model.gguf");
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--auto");
+	args.push_back("--plan-only");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--plan-only --ctx N --auto parses without any --prompt");
+	TEST_ASSERT(o.prompt_mode == MEMBRANE_RUN_PROMPT_TEXT,
+		"an empty placeholder TEXT prompt is injected, not left NONE");
+	TEST_ASSERT(o.prompt_text.empty(),
+		"the injected placeholder prompt is genuinely empty, not a "
+		"fabricated string");
+}
+
+static void	test_plan_only_no_prompt_no_ctx_still_requires_prompt(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args.push_back("membrane-run");
+	args.push_back("--model");
+	args.push_back("/no/such/model.gguf");
+	args.push_back("--plan-only");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--plan-only with neither --ctx nor --prompt still requires a "
+		"prompt -- ctx auto-sizing genuinely needs one");
+}
+
+/* A real --prompt is never silently discarded/overridden by the
+ * placeholder-injection logic above -- it only ever fires when
+ * prompt_mode is still NONE. */
+static void	test_plan_only_explicit_prompt_not_overridden(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();	/* --prompt "hello" already present */
+	args.push_back("--ctx");
+	args.push_back("2048");
+	args.push_back("--plan-only");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--plan-only with both --ctx and an explicit --prompt parses");
+	TEST_ASSERT(o.prompt_text == "hello",
+		"the real --prompt value is preserved, not replaced with an "
+		"empty placeholder");
+}
+
 static void	test_plan_only_with_auto(void)
 {
 	std::vector<std::string>	args;
@@ -703,7 +765,7 @@ static void	test_help_text_documents_auto_compare_bench_exception(void)
 	 * text keeps growing phase over phase) case where the real --help
 	 * output fills the entire buffer and fmemopen("w")'s own trailing-
 	 * NUL-on-close has no room left to write. */
-	char	buf[16384] = {0};
+	char	buf[32768] = {0};
 	FILE	*f = fmemopen(buf, sizeof(buf), "w");
 
 	TEST_ASSERT(f != NULL, "fmemopen for capturing --help output");
@@ -1190,12 +1252,13 @@ static void	test_version_output_format(void)
 static void	test_help_mentions_key_concepts(void)
 {
 	FILE	*tmp;
-	char	buf[16384];	/* Phase 12H: grown from 8192 -- the
-						 * --kv-placement block legitimately grew the
-						 * real help text past the old buffer, which
-						 * silently truncated "Exit codes" out of the
-						 * captured tail rather than testing anything
-						 * meaningful about its absence. */
+	char	buf[32768];	/* Phase 12H: grown from 8192; Phase 30: grown
+						 * again from 16384 -- the real help text keeps
+						 * growing (most recently past 16384 with the
+						 * --inspect-model additions), which silently
+						 * truncated "Exit codes" out of the captured
+						 * tail rather than testing anything meaningful
+						 * about its absence. */
 	size_t	n;
 
 	tmp = tmpfile();
@@ -1288,7 +1351,7 @@ static void	test_doctor_flag_with_model_still_short_circuits(void)
  * test_help_mentions_key_concepts above. */
 static void	test_help_documents_phase28_additions(void)
 {
-	char	buf[16384] = {0};
+	char	buf[32768] = {0};
 	FILE	*f = fmemopen(buf, sizeof(buf), "w");
 
 	TEST_ASSERT(f != NULL, "fmemopen for capturing --help output");
@@ -1306,6 +1369,92 @@ static void	test_help_documents_phase28_additions(void)
 		"help has a MODEL / PROMPT section");
 	TEST_ASSERT(strstr(buf, "ADVANCED MEMORY CONTROL") != NULL,
 		"help has an ADVANCED MEMORY CONTROL section");
+}
+
+/* Phase 30, Section 5-8/29: --inspect-model CLI-parse-level coverage --
+ * the actual GGUF-metadata read and compatibility check (main.cpp's
+ * run_inspect_model_mode(), compat_check.c) are exercised by real
+ * models in results/first-run/validation.json instead, the same
+ * llama-free/testable-without-a-model split every other main.cpp mode
+ * in this project already uses (see test_list_devices_flag_short_
+ * circuits/test_doctor_flag_short_circuits above). */
+static void	test_inspect_model_flag_requires_model(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args.push_back("membrane-run");
+	args.push_back("--inspect-model");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--inspect-model without --model is a CLI error, same as an "
+		"ordinary run");
+	TEST_ASSERT(o.want_inspect_model == 1, "--inspect-model sets want_inspect_model");
+}
+
+static void	test_inspect_model_flag_no_prompt_required(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args.push_back("membrane-run");
+	args.push_back("--model");
+	args.push_back("/no/such/model.gguf");
+	args.push_back("--inspect-model");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--model + --inspect-model parses successfully with no --prompt");
+	TEST_ASSERT(o.want_inspect_model == 1, "--inspect-model sets want_inspect_model");
+	TEST_ASSERT(o.prompt_mode == MEMBRANE_RUN_PROMPT_NONE,
+		"no prompt mode is set -- --inspect-model never required one");
+}
+
+static void	test_inspect_model_flag_accepts_optional_ctx(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();	/* --model + --prompt already present */
+	args.push_back("--inspect-model");
+	args.push_back("--ctx");
+	args.push_back("4096");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--inspect-model with --ctx (and even an unused --prompt) still "
+		"parses -- --ctx is optional, not required, for --inspect-model");
+	TEST_ASSERT(o.ctx == 4096, "--ctx value is stored normally");
+}
+
+static void	test_inspect_model_rejects_other_modes(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args.push_back("membrane-run");
+	args.push_back("--model");
+	args.push_back("/no/such/model.gguf");
+	args.push_back("--inspect-model");
+	args.push_back("--plan-only");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--inspect-model + --plan-only is rejected -- pick one mode");
+
+	args.clear();
+	args.push_back("membrane-run");
+	args.push_back("--model");
+	args.push_back("/no/such/model.gguf");
+	args.push_back("--inspect-model");
+	args.push_back("--compare-kv");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--inspect-model + --compare-kv is rejected -- pick one mode");
+}
+
+static void	test_help_documents_inspect_model(void)
+{
+	char	buf[32768] = {0};
+	FILE	*f = fmemopen(buf, sizeof(buf), "w");
+
+	TEST_ASSERT(f != NULL, "fmemopen for capturing --help output");
+	membrane_run_usage(f);
+	fclose(f);
+	TEST_ASSERT(strstr(buf, "--inspect-model") != NULL,
+		"help documents --inspect-model");
 }
 
 int	main(void)
@@ -1340,6 +1489,9 @@ int	main(void)
 	test_gpu_bench_compare_kv_mutually_exclusive();
 	test_plan_only_accepted_alone();
 	test_plan_only_off_by_default();
+	test_plan_only_no_prompt_ok_with_explicit_ctx();
+	test_plan_only_no_prompt_no_ctx_still_requires_prompt();
+	test_plan_only_explicit_prompt_not_overridden();
 	test_plan_only_with_auto();
 	test_plan_only_rejects_compare_kv();
 	test_plan_only_rejects_gpu_bench();
@@ -1367,6 +1519,11 @@ int	main(void)
 	test_doctor_flag_short_circuits();
 	test_doctor_flag_with_model_still_short_circuits();
 	test_help_documents_phase28_additions();
+	test_inspect_model_flag_requires_model();
+	test_inspect_model_flag_no_prompt_required();
+	test_inspect_model_flag_accepts_optional_ctx();
+	test_inspect_model_rejects_other_modes();
+	test_help_documents_inspect_model();
 	printf("test_product_cli: all tests passed\n");
 	return (0);
 }

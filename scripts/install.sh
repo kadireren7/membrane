@@ -9,7 +9,16 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PREFIX="$HOME/.local"
 BUILD_DIR="$REPO_ROOT/build-install"
-JOBS="$(nproc 2>/dev/null || echo 2)"
+# Phase 30: deliberately NOT nproc -- llama.cpp/ggml's largest
+# translation units are memory-hungry enough that unbounded parallelism
+# on a CPU-count-high/RAM-low host (confirmed directly: this project's
+# own CI runners, 2 vCPU/~7 GiB, OOM-kill at unbounded -j; a real local
+# dev machine with 12 CPUs but only ~5.6 GiB RAM hits the same failure
+# mode) can OOM-kill the build outright. 2 is the same conservative
+# default this project's own CI already uses everywhere it compiles
+# llama.cpp/ggml. Pass --jobs N yourself if your machine has RAM to
+# spare.
+JOBS=2
 VULKAN=0
 
 usage() {
@@ -32,7 +41,12 @@ its own beyond running them for you.
                      changing build flags based on a guess about your
                      system is exactly the kind of hidden behavior this
                      script avoids)
-  --jobs N           parallel build jobs (default: nproc)
+  --jobs N           parallel build jobs (default: 2 -- deliberately
+                     conservative, not nproc; llama.cpp/ggml's largest
+                     translation units can OOM a build on a high-CPU-
+                     count/low-RAM host at unbounded parallelism.
+                     Raise it yourself if your machine has RAM to
+                     spare)
   --build-dir DIR    CMake build directory (default: build-install)
   -h, --help         this message
 

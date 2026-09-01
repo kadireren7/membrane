@@ -21,9 +21,12 @@ memory and model shape before committing to a plan, instead of a fixed
 
 Easiest path on Ubuntu/Debian/Pop!_OS: a `.deb` package
 (`sudo apt install ./membrane_<version>_amd64.deb`) — no manual CMake
-flags. Release packages are produced by this project's build pipeline;
-none are hosted publicly yet, so build your own with
-`cmake --build <dir> --target package` (see
+flags. That one package is Vulkan-enabled but runs correctly CPU-only
+(GPU offload stays opt-in, `--auto`/`--gpu-layers`); a CPU-only
+`membrane-cpu_<version>_amd64.deb` also exists as a CI-validation/
+build-your-own artifact. Release packages are produced by this
+project's build pipeline; none are hosted publicly yet, so build your
+own with `cmake --build <dir> --target package` (see
 [`docs/install.md`](docs/install.md)'s Option A). What follows here is
 building `membrane-run` directly from source.
 
@@ -50,25 +53,27 @@ a CPU-only build. Full flag reference and exit codes: `membrane-run
 
 ## Quick Start
 
-Point it at any local `.gguf` file and a prompt — no flags to learn first:
+Install → check → inspect → preview → run. No `Q8_0` block internals, no
+planner internals, no phase history required to get here — just five
+commands, each one optional past the first:
 
 ```bash
-./build-vulkan/tools/membrane-run/membrane-run \
-  --model model.gguf \
-  --prompt "Hello"
-```
+# Check what MEMBRANE sees on this host (no model needed)
+membrane-run --doctor
 
-That's CPU inference, full-precision KV, no GPU/memory flags at all. Once
-that works, let MEMBRANE pick GPU offload and KV memory settings for you —
-`--auto` just needs an explicit `--ctx` (memory planning depends on
-knowing the context size up front):
+# Point it at your model and see if it supports compressed KV -- no
+# generation, cheap
+membrane-run --model model.gguf --inspect-model
 
-```bash
-./build-vulkan/tools/membrane-run/membrane-run \
-  --model model.gguf \
-  --prompt "Hello" \
-  --ctx 32768 \
-  --auto
+# Run it -- CPU inference, full-precision KV, no flags to learn first
+membrane-run --model model.gguf --prompt "Hello"
+
+# Once that works, preview what --auto would choose (needs an explicit
+# --ctx -- memory planning depends on knowing the context size up front)
+membrane-run --model model.gguf --ctx 2048 --auto --plan-only
+
+# Then actually run it with --auto managing GPU offload and KV memory
+membrane-run --model model.gguf --prompt "Hello" --ctx 2048 --auto
 ```
 
 ![--auto fans out into GPU layers, KV type, and KV residency, all automatically managed; an explicit --kv q8 override fixes only KV type, leaving the other two on auto](docs/assets/membrane-auto.svg)
@@ -76,12 +81,12 @@ knowing the context size up front):
 You never need to know `q8`/`q5`, GPU layer counts, or KV placement to use
 `--auto` — see "Precision and placement are separate" below only if you
 want manual control. `membrane-run --list-devices` lists every backend
-device MEMBRANE can see (no model needed); `membrane-run --doctor` runs a
-handful of cheap first-run checks (GPU backend/device visibility, host
-RAM, model file readability).
+device MEMBRANE can see (no model needed).
 
 Explicit flags override only the field they name — `--auto --kv q8` keeps
 GPU layers and KV placement on auto while pinning precision to `q8`.
+Advanced options (KV precision/placement, GPU device selection, JSON
+diagnostics): `membrane-run --help`.
 
 ## See the plan before you run it
 
@@ -158,6 +163,7 @@ text only, not a token-ID or numeric quantization-error claim.
 | Static CPU/GPU KV residency | | |
 | `--auto` planning | | |
 | `--plan-only` / `--verbose` diagnostics | | |
+| `--doctor` / `--list-devices` / `--inspect-model` | | |
 | JSON diagnostics (`schema_version: 1`) | | |
 
 ## Install

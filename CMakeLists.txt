@@ -900,7 +900,31 @@ endif()
 # documented in docs/install.md's packaging section.
 string(REPLACE "-" "~" MEMBRANE_DEBIAN_VERSION "${MEMBRANE_PRODUCT_VERSION}")
 
-set(CPACK_PACKAGE_NAME "membrane")
+# Phase 30, Section 2-4/16: the Vulkan-enabled build is the ONE
+# official Linux amd64 .deb -- proven (real container validation,
+# Phase 29 and Phase 30) to run correctly CPU-only, handle a host with
+# libvulkan1 but zero visible GPU devices cleanly (--doctor gives an
+# accurate combined warning, --list-devices shows CPU only, a real
+# generation run succeeds), and never touch a GPU unless --auto or an
+# explicit --gpu-layers/--kv-placement flag asks for one -- see
+# results/distribution/validation.json and results/first-run/
+# validation.json. Its ONLY extra cost over the CPU-only build is one
+# additional real runtime dependency (libvulkan1, auto-detected below,
+# never hand-maintained) -- so it is the simplest honest choice
+# (Section 2: "Prefer the simplest honest user experience"): one
+# package name, "membrane", for the official artifact, keeping the
+# CPU-only variant (still built and validated every CI run --
+# packaging-smoke) as "membrane-cpu" -- a CI-validation/build-your-own
+# artifact, explicitly NOT the official release asset (see
+# docs/install.md and results/release-artifacts/manifest.json for the
+# full policy). This is a build-time choice (whether -DGGML_VULKAN=ON
+# was passed), not a separate CMake option of its own -- there is
+# nothing else that distinguishes the two variants.
+if(GGML_VULKAN)
+  set(CPACK_PACKAGE_NAME "membrane")
+else()
+  set(CPACK_PACKAGE_NAME "membrane-cpu")
+endif()
 set(CPACK_PACKAGE_VERSION "${MEMBRANE_DEBIAN_VERSION}")
 set(CPACK_PACKAGE_VENDOR "Kadir Eren Altintas")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
@@ -921,6 +945,22 @@ set(CPACK_DEBIAN_PACKAGE_MAINTAINER
   "Kadir Eren Altintas <kadirerenaltintas072@gmail.com>")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "${CPACK_PACKAGE_HOMEPAGE_URL}")
+if(GGML_VULKAN)
+  set(MEMBRANE_CPACK_BACKEND_DESC
+" Built with Vulkan GPU offload support (requires libvulkan1 at
+ runtime, declared as a real package dependency below) -- runs
+ CPU-only by default; GPU offload is opt-in via --auto or an
+ explicit --gpu-layers/--kv-placement flag, and this package works
+ correctly with no GPU visible at all (CPU fallback is not a
+ separate build).")
+else()
+  set(MEMBRANE_CPACK_BACKEND_DESC
+" CPU-only build: no Vulkan/GPU support compiled in. This is a CI-
+ validation/build-your-own artifact, not the official release
+ package -- see https://github.com/kadireren7/membrane's
+ docs/install.md. Prefer the membrane package (Vulkan-enabled, still
+ works CPU-only) for a normal install.")
+endif()
 set(CPACK_DEBIAN_PACKAGE_DESCRIPTION
 "${CPACK_PACKAGE_DESCRIPTION_SUMMARY}
  Resolves GPU offload, KV precision, and CPU/GPU KV residency before
@@ -929,7 +969,12 @@ set(CPACK_DEBIAN_PACKAGE_DESCRIPTION
  .
  Provides the membrane-run command-line tool. This package does not
  include any model files -- point membrane-run at your own local
- .gguf file. See https://github.com/kadireren7/membrane for details.")
+ .gguf file.
+ .
+${MEMBRANE_CPACK_BACKEND_DESC}
+ .
+ Debian-family Linux, amd64 only. See
+ https://github.com/kadireren7/membrane for details.")
 # Real, auto-detected runtime dependencies (dpkg-shlibdeps against the
 # actual installed ELF binaries), not a hand-maintained guess -- a
 # CPU-only build (no -DGGML_VULKAN=ON) never declares a Vulkan

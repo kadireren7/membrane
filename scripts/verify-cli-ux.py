@@ -278,8 +278,16 @@ def _c14():
 	if not m:
 		return False, "## Quick Start section not found"
 	section = m.group(1)
-	minimal_idx = section.find('--prompt "Hello"\n```')
+	# The minimal invocation is the one line that runs a real prompt
+	# with no --auto/--ctx on the SAME line (Phase 30 restructured the
+	# section into one combined bash block with per-command comments,
+	# rather than separate minimal/--auto code blocks -- match the line
+	# itself, not a "```"-terminated block boundary).
+	minimal_match = re.search(
+		r'^membrane-run --model model\.gguf --prompt "Hello"\s*$',
+		section, re.MULTILINE)
 	auto_idx = section.find("--auto")
+	minimal_idx = minimal_match.start() if minimal_match else -1
 	ok = minimal_idx != -1 and auto_idx != -1 and minimal_idx < auto_idx
 	return ok, f"minimal_idx={minimal_idx} auto_idx={auto_idx}"
 

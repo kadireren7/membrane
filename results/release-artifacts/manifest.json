@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "policy_version": 1,
+  "phase": "30-first-run-polish",
+  "product_version": "0.3.0-rc3",
+  "debian_version": "0.3.0~rc3",
+  "debian_version_mapping_rule": "replace every '-' with '~' (CMakeLists.txt: string(REPLACE \"-\" \"~\" ...) applied to MEMBRANE_VERSION from tools/membrane-run/product_cli.h) -- Debian Policy 5.6.12, so a prerelease always sorts before its eventual stable release",
+  "decision": {
+    "id": "one-official-vulkan-enabled-package",
+    "summary": "The Vulkan-enabled build (membrane, built with -DGGML_VULKAN=ON) is the ONE official Linux amd64 .deb. It runs correctly CPU-only by default and adds exactly one extra real runtime dependency (libvulkan1) over a CPU-only build.",
+    "options_considered": [
+      "A: publish only the Vulkan-enabled package as the official amd64 .deb (chosen)",
+      "B: publish CPU and Vulkan variants with distinct artifact filenames, both official",
+      "C: use separate Debian package names for both, both official"
+    ],
+    "chosen": "A, with the CPU-only variant kept as a non-official (CI-validation/build-your-own) artifact under a distinct package name -- not published as a release asset, but not deleted either (Section 15/16: filenames/Package: names must never collide or overwrite silently, whether official or not)",
+    "why": "Simplest honest user experience (Section 2): one package name for the one thing most users should install, with real (not hand-waved) evidence that it degrades gracefully with no GPU. A second official artifact would only exist to shave one dependency line off a package that already works fine without a GPU -- not worth the two-download decision it would force on every user.",
+    "proof": [
+      "runs correctly CPU-only: real generation completed inside a container with no GPU device visible, using the Vulkan-enabled package (results/distribution/validation.json, results/first-run/validation.json)",
+      "behaves correctly with libvulkan1 present but zero visible GPU devices: apt-installed cleanly, --list-devices reported CPU only, no crash, no hang",
+      "--doctor handles zero visible devices correctly: reports one honest combined [WARN] (Phase 29's own fix, re-verified this phase), never falsely claims 'no GPU backend compiled in' on this exact build",
+      "default invocation stays CPU-only unless GPU is requested: --gpu-layers defaults to 0 unconditionally; --auto only offloads if a device is actually found; no code path enables GPU offload implicitly"
+    ],
+    "never_claim": "This is NOT a claim of universal Linux support. Scope: Debian-family (Ubuntu/Pop!_OS/Debian), amd64 only, libvulkan1 runtime dependency, CPU fallback available, Vulkan GPU usage optional and opt-in. No Fedora/RPM, Arch, Flatpak, Snap, AppImage, macOS, or Windows claim exists anywhere in this project's docs."
+  },
+  "official_artifacts": [
+    {
+      "role": "official",
+      "package_name": "membrane",
+      "filename_pattern": "membrane_<debian_version>_amd64.deb",
+      "architecture": "amd64",
+      "backend_capability": "vulkan-enabled (CPU fallback always available; GPU offload opt-in via --auto/--gpu-layers/--kv-placement)",
+      "required_runtime_dependencies": ["libc6", "libgcc-s1", "libgomp1", "libstdc++6", "libvulkan1"],
+      "runtime_dependencies_source": "dpkg-shlibdeps, auto-detected from the real installed ELF binaries -- not hand-maintained",
+      "not_included": ["model files (.gguf)", "tests", "benchmarks", "source tree", "build directory", "git metadata"]
+    },
+    {
+      "role": "ci-validation-not-official",
+      "package_name": "membrane-cpu",
+      "filename_pattern": "membrane-cpu_<debian_version>_amd64.deb",
+      "architecture": "amd64",
+      "backend_capability": "cpu-only (no Vulkan/GPU support compiled in)",
+      "required_runtime_dependencies": ["libc6", "libgcc-s1", "libgomp1", "libstdc++6"],
+      "runtime_dependencies_source": "dpkg-shlibdeps, auto-detected from the real installed ELF binaries -- not hand-maintained",
+      "not_included": ["model files (.gguf)", "tests", "benchmarks", "source tree", "build directory", "git metadata"],
+      "note": "Built and real-container-validated every packaging-smoke CI run (same rigor as the official artifact). Not attached to GitHub releases -- exists for users who specifically want to avoid the libvulkan1 dependency, and as a CI regression check for the CPU-only build/package path."
+    }
+  ],
+  "no_stable_release_claim": "No v0.3.0 stable artifact exists yet. This manifest documents packaging POLICY for when stable readiness work (a future phase, not this one) actually cuts v0.3.0 -- no SHA256 or filename for a stable release is recorded here because none exists.",
+  "sha256": null
+}
