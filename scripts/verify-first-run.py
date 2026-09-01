@@ -23,6 +23,7 @@ Exit code: 0 if every check passes, 1 otherwise.
 """
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -118,17 +119,32 @@ def _c3():
 		else f"{len(ids)} scenarios, all required ids present")
 
 
-@check("membrane_version matches the live MEMBRANE_VERSION (no stale "
-	"version string)")
+@check("membrane_version matches MEMBRANE_VERSION AT the evidence's own "
+	"captured_at_commit (not necessarily the live/current tree, which "
+	"moves on with every version bump -- this evidence is a point-in-"
+	"time capture, pinned to its own commit, same frozen-snapshot "
+	"pattern as scripts/verify-release-readiness.py's `git show`-based "
+	"checks)")
 def _c4():
-	header_text = PRODUCT_CLI_H_PATH.read_text()
-	m = re.search(r'define MEMBRANE_VERSION\s+"([^"]+)"', header_text)
-	if not m:
-		return False, "MEMBRANE_VERSION not found in product_cli.h"
-	live_version = m.group(1)
 	d = _load_data()
-	ok = d.get("membrane_version") == live_version
-	return ok, f"evidence={d.get('membrane_version')!r} live={live_version!r}"
+	commit = d.get("captured_at_commit")
+	if not commit:
+		return False, "no captured_at_commit field in the evidence file"
+	result = subprocess.run(
+		["git", "-C", str(REPO_ROOT), "show",
+			f"{commit}:tools/membrane-run/product_cli.h"],
+		capture_output=True, text=True)
+	if result.returncode != 0:
+		return False, (f"could not read product_cli.h AT {commit} via git "
+			f"show -- run `git fetch` first if this is a shallow checkout: "
+			f"{result.stderr.strip()}")
+	m = re.search(r'define MEMBRANE_VERSION\s+"([^"]+)"', result.stdout)
+	if not m:
+		return False, f"MEMBRANE_VERSION not found in product_cli.h AT {commit}"
+	version_at_commit = m.group(1)
+	ok = d.get("membrane_version") == version_at_commit
+	return ok, (f"evidence={d.get('membrane_version')!r} "
+		f"AT {commit[:12]}={version_at_commit!r}")
 
 
 @check("every complete JSON-shaped excerpt embedded in the evidence "

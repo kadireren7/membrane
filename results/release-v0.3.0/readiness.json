@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "label": "REAL",
+  "version": "0.3.0",
+  "commit": "4f89b34ceb828e8eed10bc08bd72fe176f836cb2 (release-prep PR #41 head, pre-merge -- updated again to the exact post-merge main commit before tagging, Section 33-35 of the Phase 31 task)",
+  "base_prerelease": "v0.3.0-rc3",
+  "release_type": "stable",
+  "compatibility_counts": {
+    "total": 26,
+    "supported": 19,
+    "unsupported": 6,
+    "not_yet_validated": 1,
+    "source": "docs/compatibility.json, scripts/verify-compatibility.py (13/13 checks passed)"
+  },
+  "validators": {
+    "verify-results.py": "73/73 core (plus every still-chained validator: compatibility 13/13, planner-accuracy 6/6, auto-fallback 9/9, RC2 user-validation 9/9, performance-profiling 9/9, performance-optimization 8/8, compat-expansion 7/7). scripts/verify-release-readiness.py and scripts/verify-release-rc3.py RETIRED from this chain this phase -- see their own module docstrings/this phase's commit for why (both had live-tree premature-stable-promotion guards, now correctly and permanently triggered by this deliberate release).",
+    "verify-cli-ux.py": "15/15",
+    "verify-distribution.py": "18/18 (fixed a real latent bug this phase: its version-consistency check compared committed Phase 29 evidence against the LIVE tree instead of the evidence's own captured_at_commit -- would have broken on every future version bump; now pinned via `git show <commit>:...`, same pattern as verify-release-readiness.py)",
+    "verify-release-artifacts.py": "9/9 (updated for the stable policy: product_version/debian_version now 0.3.0, stable_release object added, no_stable_release_claim removed)",
+    "verify-first-run.py": "10/10 (same captured_at_commit fix as verify-distribution.py above)",
+    "verify-release-v0.3.0.py": "11/11 (this phase's own new validator)"
+  },
+  "ctest": {
+    "llama_free": {
+      "build_dir": "build",
+      "result": "66/67",
+      "note": "1 known failure: test_mem_guard, a real /proc-based RSS-monitoring test unrelated to any Phase 28-31 change (tools/membrane-kv-exact-sim/test_mem_guard.cpp, last touched by an unrelated pre-Phase-28 commit) -- classified HOST_MEMORY_FLAKE: this dev host had well under 1GiB available RAM at the time (see docs), and the same test fails at a DIFFERENT assertion on repeated local runs, consistent with genuine memory pressure rather than a deterministic code defect. CI's fresh, adequately-resourced runner is the corroborating evidence for this exact commit -- see the ci field below."
+    },
+    "llama_enabled_asan": {
+      "build_dir": "build-asan",
+      "result": "69/70",
+      "note": "same single known HOST_MEMORY_FLAKE as llama_free above, same test"
+    },
+    "vulkan": {
+      "build_dir": "build-vulkan",
+      "result": "69/70",
+      "note": "same single known HOST_MEMORY_FLAKE as llama_free above, same test"
+    }
+  },
+  "sanitizers": {
+    "asan_ubsan": "clean (no error/leak) on every Phase 28-31 touched code path, re-run directly against build-asan/tools/membrane-run/membrane-run and test_product_cli: --version, --doctor (with/without --model), --list-devices, --inspect-model (supported and unsupported-metadata cases), --plan-only (with and without --prompt), a real CPU generation run",
+    "thread_sanitizer": "CI-only (this project's own convention); not re-run locally this phase -- no Phase 28-31 change touches any TSan-relevant (threaded) code path"
+  },
+  "package": {
+    "filename": "membrane_0.3.0_amd64.deb",
+    "package_name": "membrane",
+    "architecture": "amd64",
+    "backend": "Vulkan-enabled (official policy, results/release-artifacts/manifest.json)",
+    "build_command": "cmake -S . -B build-vulkan -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build-vulkan -j2 --target membrane-run && cpack -G DEB",
+    "control_metadata": {
+      "Package": "membrane",
+      "Version": "0.3.0",
+      "Architecture": "amd64",
+      "Depends": "libc6 (>= 2.38), libgcc-s1 (>= 3.4), libgomp1 (>= 6), libstdc++6 (>= 13.1), libvulkan1 (>= 1.2.131.2)"
+    },
+    "contents": [
+      "/usr/bin/membrane-run",
+      "/usr/lib/libggml-base.so(.0)(.0.17.0)",
+      "/usr/lib/libggml-cpu.so(.0)(.0.17.0)",
+      "/usr/lib/libggml-vulkan.so(.0)(.0.17.0)",
+      "/usr/lib/libggml.so(.0)(.0.17.0)",
+      "/usr/lib/libllama.so(.0)(.0.0.1)",
+      "/usr/share/membrane/LICENSE.txt"
+    ],
+    "no_forbidden_payload": "no models, tests, build-tree paths, or git metadata -- confirmed via dpkg-deb -c (the only install() rules anywhere in this CMake tree belong to tools/membrane-run/CMakeLists.txt)",
+    "note": "This is the PRE-MERGE release-prep-branch build, used for this evidence file's own package_content/dependency/install-test checks (Sections 13-17). The actual GitHub Release asset is rebuilt from the exact post-merge main commit before tagging (Section 35) -- its own sha256 is recorded in this same field once that happens, replacing the value below."
+  },
+  "package_sha256": "9c77d4a4b67bf1ac387ed54ef550501205f8f9be739724ed9ad1fed435f89f41",
+  "container_install": {
+    "evidence_class": "REAL",
+    "environment": "fresh docker run --rm ubuntu:24.04, no GPU passthrough",
+    "steps": [
+      {"command": "apt-get install -y ./membrane_0.3.0_amd64.deb", "exit_code": 0},
+      {"command": "membrane-run --version", "stdout": "MEMBRANE 0.3.0", "exit_code": 0},
+      {"command": "membrane-run --doctor", "exit_code": 0, "note": "one honest combined GPU warning, no false claim on this Vulkan-enabled build"},
+      {"command": "membrane-run --list-devices", "exit_code": 0, "stdout_excerpt": "CPU (AMD Ryzen 5 5600H with Radeon Graphics)"},
+      {"command": "membrane-run --model model.gguf --prompt Hello --gen-tokens 6", "exit_code": 0, "generated_tokens": 6, "note": "real end-to-end CPU generation from the apt-installed binary alone"},
+      {"command": "apt-get remove -y membrane", "exit_code": 0, "files_remaining": 0}
+    ]
+  },
+  "local_vulkan_smoke": {
+    "evidence_class": "REAL",
+    "environment": "maintainer's own dev host, real AMD Radeon RADV RENOIR integrated GPU + NVIDIA GeForce GTX 1650, build-vulkan/tools/membrane-run/membrane-run run directly (not packaged)",
+    "steps": [
+      {"command": "membrane-run --version", "stdout": "MEMBRANE 0.3.0", "exit_code": 0},
+      {"command": "membrane-run --doctor", "exit_code": 0, "note": "2 real GPU devices reported"},
+      {"command": "membrane-run --list-devices", "exit_code": 0, "note": "2 real Vulkan devices + CPU"},
+      {"command": "membrane-run --model model.gguf --inspect-model", "exit_code": 0},
+      {"command": "membrane-run --model model.gguf --ctx 2048 --auto --plan-only", "exit_code": 0, "note": "resolved to real GPU offload (Vulkan1, 30/30 layers), not CPU fallback"},
+      {"command": "membrane-run --model model.gguf --prompt Hello --ctx 2048 --auto --gen-tokens 8", "exit_code": 0, "generated_tokens": 8, "generation_tok_per_s": 209.4}
+    ]
+  },
+  "json_contract": {
+    "modes_checked": ["doctor --json", "list-devices --json", "inspect-model --json", "plan-only --json", "run --json", "CLI-parse-time error --json", "KV-compat-failure --json"],
+    "result": "every mode emits exactly one valid JSON object on stdout, schema_version 1 throughout, no field removed since v0.2.0"
+  },
+  "cli_audit": {
+    "help_examples": "all 6 EXAMPLES commands in --help re-run against a real model, all exit 0 (including the plan-only example, which previously required a --prompt it never used -- fixed in Phase 30)",
+    "stale_wording": "none found -- the one 'v0.3.0-rc3' mention in --help is an accurate historical lineage note (Qwen2 support really was added in that release), not a current-version claim",
+    "no_llama_only_claim": true,
+    "no_speed_claims": true,
+    "no_stale_package_filenames": true
+  },
+  "known_limitations": [
+    "Independent multi-host validation remains limited -- all real-run evidence (CPU, NVIDIA Vulkan, AMD Vulkan RADV) comes from the maintainer's own development host, plus container-based packaging checks (a different execution environment, not a different physical machine/GPU)",
+    "Qwen2 support is scoped to Qwen2.5-1.5B-Instruct specifically, not all Qwen2 models",
+    "CUDA is not a MEMBRANE product path (evaluated, deferred)",
+    "AMD/Intel GPU validation is real but narrow (one AMD RADV integrated device, one physical host)",
+    "VRAM/estimate accuracy depends on model, context size, and hardware -- never an absolute OOM guarantee",
+    "No custom GPU kernels -- unmodified ggml/llama.cpp Vulkan backend only",
+    "No FPGA/CXL hardware claim (companion membrane-research repository only)",
+    "Debian-family Linux, amd64 only -- no Fedora/RPM, Arch, Flatpak, Snap, AppImage, macOS, or Windows"
+  ],
+  "external_validation_status": "Still limited -- disclosed explicitly in README.md and docs/release-v0.3.0.md, not hidden. The maintainer made an explicit, informed decision to ship v0.3.0 stable now rather than wait for independent-host testers. This is a documented known limitation of the release, not a blocker (per this phase's own explicit brief).",
+  "ci": {
+    "status": "SUCCESS",
+    "head_sha": "4f89b34ceb828e8eed10bc08bd72fe176f836cb2",
+    "run_ids": {
+      "pull_request": 33495656092,
+      "push": 33495649242
+    },
+    "note": "35/35 checks green on PR #41 at this head, including a real fix mid-PR: distribution-check/first-run-check initially failed (run IDs 33494871169/33494836246, head 9a083b84) because their new git-show-based version checks need full git history, which actions/checkout@v4's default shallow clone does not have -- fixed by adding fetch-depth: 0 to those two jobs, reproduced and confirmed fixed with a real local shallow clone before pushing the fix."
+  },
+  "codeql": {
+    "status": "SUCCESS",
+    "head_sha": "4f89b34ceb828e8eed10bc08bd72fe176f836cb2",
+    "run_id": 33495656058
+  }
+}

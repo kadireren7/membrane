@@ -1730,22 +1730,21 @@ def main() -> int:
 				"failures (see output above)")
 			return 1
 
-	# Same reasoning as the three chains above -- v0.3.0-rc2's own
-	# release-readiness claims (Phase 22) get their own dedicated
-	# validator, chained here as another unnumbered step. Deliberately
-	# NOT renumbered into this file's own 73 checks -- same reasoning as
-	# every other chained validator above.
-	release_script = REPO_ROOT / "scripts" / "verify-release-readiness.py"
-	if release_script.exists():
-		print()
-		print("Also verifying release readiness "
-			"(scripts/verify-release-readiness.py):")
-		sys.stdout.flush()
-		result = subprocess.run([sys.executable, str(release_script)])
-		if result.returncode != 0:
-			print("\nFAILED: scripts/verify-release-readiness.py reported "
-				"failures (see output above)")
-			return 1
+	# scripts/verify-release-readiness.py was chained here through
+	# Phase 30 -- RETIRED from this chain as of Phase 31 (v0.3.0
+	# stable). Most of its checks read a FROZEN v0.3.0-rc2 tag snapshot
+	# via `git show` and are genuinely permanent (confirmed still
+	# passing standalone), but two are deliberate premature-stable-
+	# promotion GUARDS that read the LIVE tree ("no stable v0.3.0 claim
+	# exists yet", "CITATION.cff still targets v0.2.0") -- their entire
+	# purpose was to catch an ACCIDENTAL stable claim during the RC1/RC2
+	# development window, and Phase 31's version bump/CITATION update
+	# is exactly the DELIBERATE trigger those guards exist to allow,
+	# once a human decision to release actually happens. Same
+	# retirement precedent as scripts/verify-release-rc3.py below (and,
+	# before it, this script's own CI job -- .github/workflows/ci.yml).
+	# The file itself is untouched; run it standalone if you want the
+	# frozen-tag checks specifically -- they still all pass.
 
 	# Same reasoning as the four chains above -- v0.3.0-rc2's own real
 	# external user-validation reports (Phase 23) get their own dedicated
@@ -1810,25 +1809,24 @@ def main() -> int:
 				"failures (see output above)")
 			return 1
 
-	# Same reasoning as the eight chains above -- Phase 27's RC3
-	# release-readiness evidence gets its own dedicated validator,
-	# separate from the already-chained scripts/verify-release-
-	# readiness.py above (which stays pinned to RC2's own frozen
-	# historical facts, read via `git show v0.3.0-rc2:...` -- Phase 27
-	# fixed the last two live-tree-vs-frozen-tag bugs in that script so
-	# it keeps passing here forever, unaffected by this or any future
-	# phase's changes).
-	rc3_script = REPO_ROOT / "scripts" / "verify-release-rc3.py"
-	if rc3_script.exists():
-		print()
-		print("Also verifying RC3 release readiness "
-			"(scripts/verify-release-rc3.py):")
-		sys.stdout.flush()
-		result = subprocess.run([sys.executable, str(rc3_script)])
-		if result.returncode != 0:
-			print("\nFAILED: scripts/verify-release-rc3.py reported "
-				"failures (see output above)")
-			return 1
+	# scripts/verify-release-rc3.py was chained here through Phase 30 --
+	# RETIRED from this chain as of Phase 31 (v0.3.0 stable), same
+	# reasoning and same precedent as scripts/verify-release-readiness.py
+	# above (this script reads the LIVE tree, not a pinned tag -- its
+	# "MEMBRANE_VERSION == 0.3.0-rc3"/"no stable v0.3.0 claim exists"
+	# checks are premature-promotion guards, now correctly and
+	# permanently failing now that stable promotion has deliberately
+	# happened; already retired from its own CI job for the same
+	# reason -- see .github/workflows/ci.yml and this script's own
+	# updated module docstring). File untouched.
+	#
+	# Phases 28-30's own newer validators (scripts/verify-cli-ux.py,
+	# verify-distribution.py, verify-release-artifacts.py, verify-
+	# first-run.py) and Phase 31's own scripts/verify-release-v0.3.0.py
+	# follow suit with THEIR established pattern instead: standalone
+	# scripts, each wired as its own CI job, never chained into this
+	# file -- run them individually (see docs/reproduction.md or each
+	# script's own docstring), not through verify-results.py.
 	return 0
 
 

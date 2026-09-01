@@ -158,16 +158,39 @@ def _c4():
 def _c5():
 	d = _load_data()
 	bad = []
-	if d.get("sha256") is not None:
-		bad.append(f"manifest.sha256={d.get('sha256')!r}, expected null "
-			"(no stable release exists yet)")
-	text = json.dumps(d)
-	if re.search(r'"0\.3\.0"(?!~|-|rc)', text):
-		bad.append('manifest references a bare "0.3.0" version -- looks '
-			"like a stable-release claim")
-	if not d.get("no_stable_release_claim"):
-		bad.append("manifest is missing an explicit no_stable_release_claim field")
-	return len(bad) == 0, "; ".join(bad) if bad else "no stable v0.3.0 asset claimed"
+	stable = d.get("stable_release")
+	no_claim = d.get("no_stable_release_claim")
+	if stable is None and not no_claim:
+		bad.append("manifest claims neither a stable release (via "
+			"stable_release) nor explicitly disclaims one (via "
+			"no_stable_release_claim) -- exactly one must be present")
+	if stable is not None and no_claim:
+		bad.append("manifest has BOTH a stable_release claim and a "
+			"no_stable_release_claim disclaimer -- contradictory")
+	if stable is not None:
+		# A real stable claim must point to real, separately-verified
+		# evidence (results/release-v0.3.0/readiness.json) rather than
+		# embedding an unverified sha256 directly in this POLICY
+		# document (Section 21: avoid two sources of truth for the
+		# same fact) -- so this file itself is checked for structure/
+		# consistency, not for a literal sha256 value.
+		if not stable.get("released"):
+			bad.append("stable_release.released is not true")
+		if not re.fullmatch(r"\d+\.\d+\.\d+", str(stable.get("version", ""))):
+			bad.append(f"stable_release.version={stable.get('version')!r} "
+				"is not a bare stable version (no ~/-/rc suffix)")
+		expected_fn = f"membrane_{stable.get('version')}_amd64.deb"
+		if stable.get("filename") != expected_fn:
+			bad.append(f"stable_release.filename={stable.get('filename')!r} "
+				f"!= expected {expected_fn!r}")
+		readiness_path = REPO_ROOT / "results" / f"release-v{stable.get('version')}" / "readiness.json"
+		if not readiness_path.exists():
+			bad.append(f"{readiness_path} does not exist -- a stable_release "
+				"claim needs real, separately-verified evidence")
+	return len(bad) == 0, ("; ".join(bad) if bad else
+		(f"stable_release claim for {stable.get('version')!r} is well-formed "
+			"and points to real evidence" if stable is not None
+			else "no stable release claimed yet, explicitly disclosed"))
 
 
 @check("architecture is amd64 only across every artifact (no arm64/other "

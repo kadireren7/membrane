@@ -102,22 +102,20 @@ jobs:
       - name: Verify compat-expansion evidence
         run: python3 scripts/verify-compat-expansion.py
 
-  # Phase 27: validates the committed RC3 release-readiness evidence
-  # only -- python3 + checkout, no GPU, no model download, no C/C++
-  # build. Checks CURRENT/live state (version, compatibility counts,
-  # doc claims), unlike scripts/verify-release-readiness.py (RC2's own
-  # frozen historical facts, not wired into CI -- see that script's own
-  # docstring), so this job needs no git tags fetched.
-  release-rc3-check:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Verify RC3 release readiness
-        run: python3 scripts/verify-release-rc3.py
+  # Phase 27 added this job checking CURRENT/live state (version,
+  # compatibility counts, doc claims) while v0.3.0-rc3 was the latest
+  # prerelease -- unlike scripts/verify-release-readiness.py (RC2's own
+  # FROZEN historical facts via `git show <tag>:...`, retired from CI
+  # the same way once RC2 was superseded). scripts/verify-release-rc3.py
+  # reads the LIVE tree, not a pinned tag, so once main moves past RC3
+  # (Phase 31: v0.3.0 stable) its assertions ("MEMBRANE_VERSION ==
+  # 0.3.0-rc3", "CITATION.cff still targets v0.2.0", "no stable v0.3.0
+  # claim exists") become permanently false by design -- retired here,
+  # same precedent as verify-release-readiness.py before it. The script
+  # FILE itself is untouched (still documents exactly what Phase 27
+  # checked, unrewritten) -- only this CI wiring is removed.
+  # scripts/verify-release-v0.3.0.py (Phase 31) is this job's
+  # successor for the new live state.
 
   # Phase 28: validates the committed CLI-UX evidence
   # (results/cli-ux/validation.json) and doc/CLI consistency (every
@@ -151,9 +149,19 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Phase 31: fetch-depth 0 (full history), not this job's previous
+      # default shallow (depth-1) checkout -- scripts/verify-
+      # distribution.py's version-consistency check now reads
+      # results/distribution/validation.json's own captured_at_commit
+      # via `git show <commit>:...` (a real historical commit, not
+      # necessarily this PR's HEAD or its immediate parent), which a
+      # shallow clone doesn't have -- confirmed as the real cause of
+      # this job's first failure on this exact change (fatal: path
+      # exists on disk, but not in <commit>).
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Verify distribution evidence
         run: python3 scripts/verify-distribution.py
 
@@ -185,11 +193,40 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Phase 31: fetch-depth 0 -- see distribution-check's own comment
+      # above for why (scripts/verify-first-run.py's version-
+      # consistency check has the same `git show <captured_at_commit>:
+      # ...` dependency on full history).
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Verify first-run UX evidence
         run: python3 scripts/verify-first-run.py
+
+  # Phase 31: validates v0.3.0 stable-release readiness (live tree
+  # state: MEMBRANE_VERSION, CITATION.cff, release notes, compatibility
+  # counts, official package policy, external-validation disclosure, no
+  # overclaim, README release status, and that the historical RC1/RC2/
+  # RC3 release docs/evidence remain untouched) -- python3 + checkout
+  # only, no GPU, no model download, no C/C++ build, no Docker. Same
+  # standalone-script/own-CI-job pattern as cli-ux-check/distribution-
+  # check/release-artifact-check/first-run-check above, not chained
+  # into verify-results.py -- see scripts/verify-release-v0.3.0.py's
+  # own docstring for why (this job is itself expected to need
+  # retirement once a future release supersedes v0.3.0, same as
+  # release-rc3-check before it -- see that job's removal in this same
+  # phase for the precedent).
+  release-v030-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify v0.3.0 stable-release readiness
+        run: python3 scripts/verify-release-v0.3.0.py
 
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without

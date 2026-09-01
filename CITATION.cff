@@ -9,20 +9,27 @@ authors:
   - family-names: Altıntaş
     given-names: Kadir Eren
 repository-code: "https://github.com/kadireren7/membrane"
-version: "0.2.0"
-date-released: "2026-08-13"
+version: "0.3.0"
+date-released: "2026-09-01"
 license: Apache-2.0
 abstract: >-
   MEMBRANE is an open-source llama.cpp runtime layer for KV-cache
   precision and CPU/GPU residency planning under constrained memory. It
   plans GPU layer offload, whole-cache Q8/Q5/adaptive KV precision, and
-  static CPU/GPU KV residency before generation, with plan-only
-  diagnostics and machine-readable JSON output, on CPU and Vulkan
-  backends. This citation targets the latest stable release, v0.2.0;
-  the repository's main branch may contain development changes beyond
-  it. Archived experiments, negative results, and benchmark/FPGA/CXL
-  simulation provenance live in the companion repository
-  kadireren7/membrane-research.
+  static CPU/GPU KV residency before generation (an --auto joint
+  planner with bounded apply-time fallback), with --plan-only/--doctor/
+  --list-devices/--inspect-model diagnostics and machine-readable JSON
+  output, on CPU and Vulkan backends. Compressed KV (q8/q5/adaptive) is
+  validated for LLM_ARCH_LLAMA and LLM_ARCH_QWEN2 models against real
+  local fixtures -- not a claim of universal architecture or hardware
+  coverage; see docs/compatibility.md for the current matrix. An
+  official Debian-family amd64 .deb package is available; independent
+  multi-host validation beyond the maintainer's own development
+  hardware remains limited as of this release. This citation targets
+  the latest stable release, v0.3.0; the repository's main branch may
+  contain development changes beyond it. Archived experiments, negative
+  results, and benchmark/FPGA/CXL simulation provenance live in the
+  companion repository kadireren7/membrane-research.
 keywords:
   - llama.cpp
   - LLM
