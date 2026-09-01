@@ -2,7 +2,7 @@
   "schema_version": 1,
   "label": "REAL",
   "version": "0.3.0",
-  "commit": "4f89b34ceb828e8eed10bc08bd72fe176f836cb2 (release-prep PR #41 head, pre-merge -- updated again to the exact post-merge main commit before tagging, Section 33-35 of the Phase 31 task)",
+  "commit": "d71a531fb02248a8c2a72ab69e4352f099c6450c (squash-merge of PR #41 into main -- the exact commit the v0.3.0 tag targets; CI/CodeQL re-verified SUCCESS against this exact SHA, see ci/codeql below)",
   "base_prerelease": "v0.3.0-rc3",
   "release_type": "stable",
   "compatibility_counts": {
@@ -63,9 +63,9 @@
       "/usr/share/membrane/LICENSE.txt"
     ],
     "no_forbidden_payload": "no models, tests, build-tree paths, or git metadata -- confirmed via dpkg-deb -c (the only install() rules anywhere in this CMake tree belong to tools/membrane-run/CMakeLists.txt)",
-    "note": "This is the PRE-MERGE release-prep-branch build, used for this evidence file's own package_content/dependency/install-test checks (Sections 13-17). The actual GitHub Release asset is rebuilt from the exact post-merge main commit before tagging (Section 35) -- its own sha256 is recorded in this same field once that happens, replacing the value below."
+    "note": "This is the FINAL release asset: built fresh from the exact post-merge main commit (d71a531fb02248a8c2a72ab69e4352f099c6450c, Section 35), not the earlier pre-merge branch build (that build's sha256 was 9c77d4a4b67bf1ac387ed54ef550501205f8f9be739724ed9ad1fed435f89f41 -- superseded, package content/control metadata identical, only the timestamp differs). Re-verified end to end after this rebuild: dpkg-deb -I/-c, sha256sum -c SHA256SUMS, and a fresh docker run ubuntu:24.04 install/version/doctor/list-devices/generation/remove cycle (0 files remaining) -- all real, all passing."
   },
-  "package_sha256": "9c77d4a4b67bf1ac387ed54ef550501205f8f9be739724ed9ad1fed435f89f41",
+  "package_sha256": "25d88e08fa03978f4fb27e59a6132518bddaa69da51b29da446ba097955b3f4c",
   "container_install": {
     "evidence_class": "REAL",
     "environment": "fresh docker run --rm ubuntu:24.04, no GPU passthrough",
