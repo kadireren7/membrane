@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "membrane_version": "0.3.0-rc3",
+  "phase": "30-first-run-polish",
+  "captured_at_commit": "c9cc145d67b6772215c36d19d531b9e2b07fbb2b",
+  "notes": "Every scenario below is REAL: either the actual build-vulkan/tools/membrane-run/membrane-run binary run directly on this host (real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H, real AMD Radeon iGPU + NVIDIA GTX 1650 visible over Vulkan) for the 'real local Vulkan environment' scenarios, or the official membrane_0.3.0~rc3_amd64.deb package actually apt-installed inside a fresh, isolated docker run ubuntu:24.04 container (no GPU passthrough) for the 'installed package' / 'CPU-only environment' scenarios -- never simulated or hand-written.",
+  "scenarios": [
+    {
+      "id": "installed-package-full-journey",
+      "environment": "official membrane_0.3.0~rc3_amd64.deb, apt-installed in a fresh docker run ubuntu:24.04 container, no GPU passthrough",
+      "steps": [
+        {"command": "membrane-run --version", "exit_code": 0, "stdout": "MEMBRANE 0.3.0-rc3"},
+        {"command": "membrane-run --doctor --model model.gguf", "exit_code": 0, "ux_properties": ["reports MEMBRANE version", "reports detected CPU", "one honest combined GPU warning (no false 'not compiled in' claim on this Vulkan-enabled build)", "reports host RAM", "reports model architecture (llama) and compressed-KV compatibility (q8, q5) without loading the model", "ends with a concrete, model-aware Next: command"]},
+        {"command": "membrane-run --list-devices", "exit_code": 0, "stdout_excerpt": "INDEX  BACKEND    TYPE  TOTAL MiB   FREE MiB  NAME\n0      CPU        cpu       5771.0     5771.0  CPU (AMD Ryzen 5 5600H with Radeon Graphics)"},
+        {"command": "membrane-run --model model.gguf --inspect-model --ctx 4096", "exit_code": 0, "stdout_excerpt": "Model\n  file: model.gguf\n  architecture: llama\n  layers: 30\n  embedding: 576\n  heads: 9\n  KV heads: 3\n\nMEMBRANE compatibility\n  native KV: supported\n  q8: supported\n  q5: supported\n  adaptive: supported\n\nEstimated KV @ ctx 4096\n  native: 90.00 MiB\n  q8: 47.81 MiB\n  q5: 33.75 MiB"},
+        {"command": "membrane-run --model model.gguf --ctx 2048 --auto --plan-only", "exit_code": 0, "ux_properties": ["no --prompt needed (Phase 30 fix -- --ctx is explicit, so auto-sizing never applies)", "no generation performed", "--auto gracefully resolves to CPU-only (reason: NO_GPU_DEVICE) since no GPU is visible in this container -- never fails closed the way an explicit --gpu-layers request would"]},
+        {"command": "membrane-run --model model.gguf --prompt Hello --ctx 2048 --auto --gen-tokens 8", "exit_code": 0, "generated_tokens": 8, "ux_properties": ["real end-to-end inference completed from the apt-installed binary alone, zero build tools present"]},
+        {"command": "membrane-run --bogus --json", "exit_code": 2, "stdout": "{\"schema_version\":1,\"membrane_version\":\"0.3.0-rc3\",\"ok\":false,\"exit_code\":2,\"reason_code\":\"CLI_PARSE_ERROR\",\"message\":\"unknown option: --bogus\",\"suggestions\":[\"Run 'membrane-run --help' for the full option list.\"]}", "ux_properties": ["stdout is exactly one valid JSON object even though --json never got parsed before --bogus caused the failure (Phase 28 fix, re-verified)"]},
+        {"command": "apt-get remove -y membrane", "exit_code": 0, "files_remaining": 0}
+      ]
+    },
+    {
+      "id": "cpu-only-environment-smoke",
+      "environment": "same as installed-package-full-journey -- explicitly the 'no visible GPU' case Section 24 asks to confirm",
+      "confirmed": ["--doctor works with zero visible GPU devices (no crash, one honest combined warning)", "--list-devices works with zero visible GPU devices (shows CPU only)", "basic CPU generation works end to end with the Vulkan-enabled official package"]
+    },
+    {
+      "id": "real-local-vulkan-environment",
+      "environment": "build-vulkan/tools/membrane-run/membrane-run run directly on this dev machine -- real AMD Radeon iGPU (RADV) + NVIDIA GTX 1650 visible over Vulkan",
+      "steps": [
+        {"command": "membrane-run --version", "exit_code": 0, "stdout": "MEMBRANE 0.3.0-rc3"},
+        {"command": "membrane-run --doctor", "exit_code": 0, "stdout_excerpt": "[OK] GPU backend compiled in\n[OK] GPU device: Vulkan0 (AMD Radeon Graphics (RADV RENOIR))\n[OK] GPU device: Vulkan1 (NVIDIA GeForce GTX 1650)\n...\nNext: membrane-run --model model.gguf --ctx 2048 --auto --plan-only", "ux_properties": ["Next: suggestion is GPU-aware since a real device is visible, unlike the CPU-only container's own Next: line"]},
+        {"command": "membrane-run --list-devices --json", "exit_code": 0, "stdout_excerpt": "{\"schema_version\":1,\"membrane_version\":\"0.3.0-rc3\",\"mode\":\"list-devices\",\"ok\":true,\"devices\":[{\"index\":0,\"backend\":\"Vulkan\",\"name\":\"Vulkan0\",\"description\":\"AMD Radeon Graphics (RADV RENOIR)\",\"type\":\"igpu\""},
+        {"command": "membrane-run --model model.gguf --inspect-model --ctx 2048 --json", "exit_code": 0, "stdout": "{\"schema_version\":1,\"membrane_version\":\"0.3.0-rc3\",\"mode\":\"inspect-model\",\"ok\":true,\"model\":{\"file\":\"SmolLM2-135M-Instruct-f16.gguf\",\"architecture\":\"llama\",\"layers\":30,\"embedding\":576,\"heads\":9,\"kv_heads\":3},\"compatibility\":{\"native\":true,\"q8\":true,\"q5\":true,\"adaptive\":true},\"kv_estimate_bytes\":{\"ctx\":2048,\"native\":47185920,\"q8\":25067520,\"q5\":17694720}}"},
+        {"command": "membrane-run --model model.gguf --ctx 2048 --auto --plan-only --json", "exit_code": 0, "ux_properties": ["mode: plan", "resolved.backend: Vulkan, resolved.device: Vulkan1, resolved.gpu_layers: 30 -- a real GPU offload plan, not a CPU fallback"]},
+        {"command": "membrane-run --model model.gguf --prompt Hello --ctx 2048 --auto --gen-tokens 8 --json --include-text", "exit_code": 0, "ux_properties": ["real GPU-accelerated generation: gpu.backend=Vulkan, gpu.device_selected=Vulkan1, gpu.gpu_layers_selected=30", "no_fallback_occurred: true", "generation_tok_per_s: 215.2 (real measured throughput)"]}
+      ]
+    },
+    {
+      "id": "model-inspection-unsupported-metadata",
+      "environment": "build-vulkan/tools/membrane-run/membrane-run, real local run against models/stories15M.gguf (a real, valid GGUF fixture in this repo that lacks the arch-prefixed hparam keys this tool reads)",
+      "command": "membrane-run --model stories15M.gguf --inspect-model --json",
+      "exit_code": 3,
+      "stdout": "{\"schema_version\":1,\"membrane_version\":\"0.3.0-rc3\",\"mode\":\"inspect-model\",\"ok\":false,\"exit_code\":3,\"error\":{\"reason_code\":\"MODEL_METADATA_UNAVAILABLE\",\"message\":\"'stories15M.gguf' is a readable GGUF file, but its architecture/hparams metadata could not be read -- compatibility can't be determined for it\"}}",
+      "ux_properties": ["message correctly distinguishes 'valid GGUF, unreadable hparams' from 'not a GGUF at all' -- confirmed as two genuinely different real cases, not guessed", "reuses compat_check.c's own MODEL_METADATA_UNAVAILABLE reason code (gpu_policy.h), never a second implementation"]
+    }
+  ],
+  "friction_audit": {
+    "method": "acted as a first-time Linux user through the full A-K journey (Section 1 of the Phase 30 task): obtain package -> install -> --version -> --doctor -> --list-devices -> point at a local GGUF -> inspect compatibility -> inspect plan -> run inference -> understand a failure -> uninstall",
+    "found_and_fixed_this_phase": [
+      "no lightweight way to check model compatibility before running it -- fixed with --inspect-model (reuses compat_check.c, no second implementation)",
+      "--doctor gave no next step -- fixed with a model/GPU-aware 'Next:' suggestion line",
+      "--doctor did not report model architecture or compatibility even when --model was given, despite the metadata read being cheap -- fixed (reuses the same GGUF-metadata-only read --inspect-model uses)",
+      "--doctor did not show the real detected CPU despite it already being in the same device enumeration it already fetched for the GPU count -- fixed (free, no new detection logic)",
+      "CPU and Vulkan CI packages shared the exact same filename (membrane_<version>_amd64.deb), a real collision risk for any future GitHub Release -- fixed with distinct package names (membrane vs membrane-cpu) and a documented official-package policy",
+      "--plan-only rejected the exact `--ctx N --auto --plan-only` invocation this project's own --help EXAMPLES text had shipped since Phase 13.2 (it requires --prompt, which plan-only never reads) -- fixed: an empty placeholder prompt is injected only when --ctx is explicit (so auto-sizing, the only real use of prompt content on this path, never applies) and only for --plan-only specifically"
+    ],
+    "found_not_fixed_this_phase": [
+      "membrane-run --help is long (~440 lines); QUICK START/EXAMPLES sections (Phase 28) already mitigate this for a first-time user, and shortening further risks losing genuinely load-bearing detail (KV precision/placement semantics) -- left as-is, matches Section 12's own 'deep docs stay deep' guidance"
+    ]
+  }
+}

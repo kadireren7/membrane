@@ -329,9 +329,24 @@ def _c17():
 	return len(bad) == 0, "; ".join(bad) if bad else "no unsafe install pattern found"
 
 
+@check("scripts/install.sh defaults build parallelism to a bounded "
+	"value (Section 14), never unrestricted nproc")
+def _c18():
+	install_sh = REPO_ROOT / "scripts" / "install.sh"
+	if not install_sh.exists():
+		return False, f"{install_sh} does not exist"
+	text = install_sh.read_text()
+	m = re.search(r'^JOBS=(\S+)', text, re.MULTILINE)
+	if not m:
+		return False, "no JOBS= default assignment found"
+	default = m.group(1)
+	ok = "nproc" not in default and default.strip('"').isdigit()
+	return ok, f"JOBS default = {default!r}"
+
+
 def main():
 	for fn in (_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12,
-			_c13, _c14, _c15, _c16, _c17):
+			_c13, _c14, _c15, _c16, _c17, _c18):
 		fn()
 	print(f"\n{CHECK_COUNT - len(FAILURES)}/{CHECK_COUNT} checks passed")
 	if FAILURES:

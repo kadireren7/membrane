@@ -23,6 +23,24 @@ files get onto disk (and, for Option C, whether root is needed at all).
 
 ## Option A — install a `.deb` package
 
+**Package policy** (decided Phase 30, `results/release-artifacts/manifest.json`):
+the ONE official package is `membrane_<version>_amd64.deb` — a
+Vulkan-enabled build. That may look surprising for a "CPU-first" tool,
+but it is the simplest honest choice: this exact build runs correctly
+CPU-only, handles a host with `libvulkan1` present but zero visible GPU
+devices cleanly (`--doctor` reports it accurately, `--list-devices`
+shows CPU only, generation still works), and never touches a GPU unless
+you ask for one (`--auto` or an explicit `--gpu-layers`/`--kv-placement`
+flag) — verified with real container tests, see
+`results/distribution/validation.json` and
+`results/first-run/validation.json`. Its only extra cost over a
+CPU-only build is one additional real runtime dependency
+(`libvulkan1`, resolved automatically by `apt`). A separate
+`membrane-cpu_<version>_amd64.deb` also exists (built and validated
+every CI run) but is a CI-validation/build-your-own artifact, not the
+official release asset — use it only if you specifically want to
+avoid the Vulkan/`libvulkan1` dependency.
+
 Release packages are produced by this project's build pipeline (see
 "Building a `.deb` package yourself" below) — none are hosted publicly
 yet (external multi-host validation is still in progress; see
@@ -34,10 +52,9 @@ sudo apt install ./membrane_0.3.0~rc3_amd64.deb
 ```
 
 (`apt install ./file.deb`, not `dpkg -i`, so apt resolves the package's
-declared runtime dependencies — `libvulkan1` for a Vulkan-enabled
-package, nothing beyond the standard C/C++/OpenMP runtime for a
-CPU-only one — instead of leaving them "half-installed" for you to fix
-by hand.)
+declared runtime dependencies — `libvulkan1` on the official package,
+nothing beyond the standard C/C++/OpenMP runtime on `membrane-cpu` —
+instead of leaving them "half-installed" for you to fix by hand.)
 
 Verify:
 
@@ -47,16 +64,25 @@ membrane-run --doctor
 membrane-run --list-devices
 ```
 
+Inspect a model before running it (no generation, cheap):
+
+```bash
+membrane-run --model model.gguf --inspect-model
+```
+
 Uninstall:
 
 ```bash
 sudo apt remove membrane
 ```
 
-removes exactly the files the package installed (`/usr/bin/membrane-run`,
-its bundled `libllama`/`libggml*` shared libraries, and
+(`sudo apt remove membrane-cpu` for that variant) removes exactly the
+files the package installed (`/usr/bin/membrane-run`, its bundled
+`libllama`/`libggml*` shared libraries, and
 `/usr/share/membrane/LICENSE.txt`) — nothing else. It never touches your
-model files, config, or unrelated system libraries.
+model files, config, or unrelated system libraries. The two packages
+use different `Package:` names specifically so they can never silently
+overwrite or shadow each other.
 
 ### Building a `.deb` package yourself
 
@@ -67,33 +93,33 @@ prerequisites (below):
 sudo apt install dpkg-dev
 ```
 
-CPU-only package:
+Official (Vulkan-enabled) package — needs the same Vulkan development
+files as Option B/C's Vulkan build below:
 
 ```bash
-cmake -S . -B build-package -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build-package \
+  -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-package -j2 --target package
 ```
 
-Vulkan package (needs the same Vulkan development files as Option
-B/C's Vulkan build below):
+produces `membrane_<version>_amd64.deb`. CPU-only variant (no Vulkan
+development files needed):
 
 ```bash
-cmake -S . -B build-package-vulkan \
-  -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-package-vulkan -j2 --target package
+cmake -S . -B build-package-cpu -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-package-cpu -j2 --target package
 ```
 
-Either produces `membrane_<version>_amd64.deb` in the build directory.
-Both are the SAME package definition (`membrane`, same name) — which
-variant you get is purely a build-time choice (`-DGGML_VULKAN=ON` or
-not), reflected honestly in the package's own declared dependencies
-(`dpkg-deb -I membrane_*.deb` shows `libvulkan1` only on the Vulkan
-build) — there is no separate `membrane-vulkan` package name to choose
-between.
+produces `membrane-cpu_<version>_amd64.deb`. Same underlying CPack
+definition either way — which package name/filename you get is purely
+the build-time `-DGGML_VULKAN=ON` choice (`CMakeLists.txt`), reflected
+honestly in each package's own declared dependencies
+(`dpkg-deb -I membrane_*.deb` shows `libvulkan1` only on the official
+build).
 
 The `--target package` build compiles every target in the tree (CMake's
 own default: the `package` target depends on `all`), not just
-`membrane-run` — simple and matches the two commands above exactly, but
+`membrane-run` — simple and matches the commands above exactly, but
 slower than it needs to be. If you already have `membrane-run` built
 (e.g. from Option B below) and just want to re-package it without
 rebuilding everything else, run `cpack -G DEB` directly from that build

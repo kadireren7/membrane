@@ -157,6 +157,40 @@ jobs:
       - name: Verify distribution evidence
         run: python3 scripts/verify-distribution.py
 
+  # Phase 30: validates the committed release-artifact naming/packaging
+  # POLICY (results/release-artifacts/manifest.json) -- no .deb file,
+  # no C/C++ build, no GPU, no Docker. Checks the policy's internal
+  # consistency and that CMakeLists.txt's CPack config actually
+  # implements what this file documents; does not build or publish
+  # anything.
+  release-artifact-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify release-artifact policy
+        run: python3 scripts/verify-release-artifacts.py
+
+  # Phase 30: validates the committed first-run UX evidence
+  # (results/first-run/validation.json) -- python3 + checkout only, no
+  # GPU, no model download, no C/C++ build, no Docker. This validates
+  # the committed evidence file (captured locally: a real build on real
+  # Vulkan hardware, and a real .deb install inside a container -- see
+  # docs/install.md), it does not regenerate it.
+  first-run-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify first-run UX evidence
+        run: python3 scripts/verify-first-run.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
@@ -324,7 +358,11 @@ jobs:
       # -- cpack (not `cmake --build --target package`) only re-runs
       # the install step + packaging, no rebuild of the rest of the
       # tree. CPU package is the mandatory candidate (Section 25); no
-      # release is published here, just a CI artifact.
+      # release is published here, just a CI artifact. Phase 30:
+      # CPACK_PACKAGE_NAME is "membrane-cpu" for a non-Vulkan configure
+      # (CMakeLists.txt) -- this variant is a CI-validation/build-your-
+      # own artifact, NOT the official release package (see
+      # docs/install.md and results/release-artifacts/manifest.json).
       - name: CPU build .deb package
         run: cd build-cpu-install && cpack -G DEB
 
@@ -332,7 +370,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: membrane-cpu-deb
-          path: build-cpu-install/membrane_*.deb
+          path: build-cpu-install/membrane-cpu_*.deb
           if-no-files-found: error
 
       - name: Vulkan configure
@@ -374,7 +412,11 @@ jobs:
       # Vulkan build has always been reliable here (Phase 17), so this
       # is built alongside the CPU one rather than skipped (Section 25
       # makes it mandatory only for CPU, optional for Vulkan "if the CI
-      # environment can build it reliably" -- it can).
+      # environment can build it reliably" -- it can). Phase 30: this
+      # is now the OFFICIAL release package candidate (CPACK_PACKAGE_
+      # NAME "membrane", unchanged filename) -- proven to run correctly
+      # CPU-only with zero devices visible (this very job has no GPU),
+      # see docs/install.md's package policy.
       - name: Vulkan build .deb package
         run: cd build-vulkan-install && cpack -G DEB
 

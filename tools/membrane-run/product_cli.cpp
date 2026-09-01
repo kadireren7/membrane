@@ -32,15 +32,20 @@ void	membrane_run_usage(FILE *out)
 		"hidden comparison work.\n"
 		"\n"
 		"QUICK START\n"
-		"  1. Point MEMBRANE at any local .gguf file and a prompt:\n"
+		"  1. Check what MEMBRANE sees on this host (no model needed):\n"
+		"       membrane-run --doctor\n"
+		"  2. Check whether your model supports compressed KV, without\n"
+		"     running it:\n"
+		"       membrane-run --model model.gguf --inspect-model\n"
+		"  3. Point MEMBRANE at that model and a prompt:\n"
 		"       membrane-run --model model.gguf --prompt \"Hello\"\n"
 		"     (CPU, full-precision KV -- no flags to learn first)\n"
-		"  2. Once that works, let MEMBRANE pick GPU offload and KV\n"
+		"  4. Once that works, let MEMBRANE pick GPU offload and KV\n"
 		"     memory settings for you (needs an explicit --ctx --\n"
 		"     see AUTOMATIC MODE below for why):\n"
 		"       membrane-run --model model.gguf --prompt \"Hello\" \\\n"
 		"           --ctx 2048 --auto\n"
-		"  3. See exactly what --auto would choose, without\n"
+		"  5. See exactly what --auto would choose, without\n"
 		"     generating anything:\n"
 		"       membrane-run --model model.gguf --ctx 2048 --auto \\\n"
 		"           --plan-only\n"
@@ -267,8 +272,13 @@ void	membrane_run_usage(FILE *out)
 		"                     resolve (e.g. unsupported KV, GPU memory\n"
 		"                     insufficient). Combine with --json for a\n"
 		"                     machine-readable plan (mode: \"plan\").\n"
-		"                     Mutually exclusive with --compare-kv/\n"
-		"                     --gpu-bench.\n"
+		"                     --prompt is NOT required when --ctx is also\n"
+		"                     given (nothing on the plan-only path reads\n"
+		"                     prompt content -- --ctx auto-sizing from a\n"
+		"                     real prompt is the only thing that would\n"
+		"                     need one, and that only applies when --ctx\n"
+		"                     itself is omitted). Mutually exclusive with\n"
+		"                     --compare-kv/--gpu-bench.\n"
 		"  --compare-kv       ADVANCED: run native AND a compressed mode\n"
 		"                     (plus an aligned quality comparison\n"
 		"                     pass) and report memory/quality/\n"
@@ -302,12 +312,28 @@ void	membrane_run_usage(FILE *out)
 		"                     print [OK]/[WARN] for each. No generation.\n"
 		"                     Always exits 0 -- a [WARN] line is\n"
 		"                     informational, not a failure.\n"
+		"  --inspect-model    with --model FILE: print the model's\n"
+		"                     architecture/shape and whether native/q8/\n"
+		"                     q5/adaptive KV are supported for it (the\n"
+		"                     same compatibility check a real run would\n"
+		"                     apply, not a second implementation), then\n"
+		"                     exit. Reads only GGUF metadata -- no model\n"
+		"                     load, no generation, cheap. --prompt is\n"
+		"                     NOT required. If --ctx is also given, adds\n"
+		"                     an estimated KV size at that context for\n"
+		"                     each mode; omitted entirely if --ctx is\n"
+		"                     not given (never a silently invented\n"
+		"                     default context). Mutually exclusive with\n"
+		"                     --compare-kv/--gpu-bench/--plan-only.\n"
 		"  --version          print version and exit\n"
 		"  --help             print this message and exit\n"
 		"\n"
 		"EXAMPLES\n"
 		"  CPU, minimal (no flags to learn first):\n"
 		"    membrane-run --model model.gguf --prompt \"Hello\"\n"
+		"\n"
+		"  Check whether a model supports compressed KV:\n"
+		"    membrane-run --model model.gguf --inspect-model\n"
 		"\n"
 		"  Automatic GPU offload + KV precision/placement:\n"
 		"    membrane-run --model model.gguf --prompt \"Hello\" \\\n"
@@ -407,6 +433,7 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 	o->want_help = 0;
 	o->want_list_devices = 0;
 	o->want_doctor = 0;
+	o->want_inspect_model = 0;
 	i = 1;
 	while (i < argc)
 	{
@@ -418,6 +445,8 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 			o->want_list_devices = 1;
 		else if (strcmp(argv[i], "--doctor") == 0)
 			o->want_doctor = 1;
+		else if (strcmp(argv[i], "--inspect-model") == 0)
+			o->want_inspect_model = 1;
 		else if (strcmp(argv[i], "--model") == 0 && i + 1 < argc)
 			o->model_path = argv[++i];
 		else if (strcmp(argv[i], "--prompt") == 0 && i + 1 < argc)
@@ -606,6 +635,47 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 	if (o->model_path == NULL)
 		return (fprintf(stderr, "membrane-run: --model is required\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
+	/* Phase 30, Section 5-8: --inspect-model needs --model (just
+	 * checked above, same required-ness as an ordinary run) but no
+	 * --prompt and none of the run-mode validation below (--ctx is
+	 * still accepted -- already stored in o->ctx by the parse loop
+	 * above -- but optional; --gpu-layers/--kv/--kv-placement/etc.
+	 * carry no meaning for a read-only inspection and are simply
+	 * unused if given, not rejected: this stays a single, simple
+	 * inspection mode rather than growing its own parallel validation
+	 * surface). Mutually exclusive with the other CLI "modes" below,
+	 * same as --plan-only is with --compare-kv/--gpu-bench. */
+	if (o->want_inspect_model)
+	{
+		if (o->compare_kv || o->gpu_bench || o->plan_only)
+			return (fprintf(stderr,
+					"membrane-run: --inspect-model is not supported "
+					"together with --compare-kv/--gpu-bench/--plan-only "
+					"-- pick one mode\n"), MEMBRANE_EXIT_CLI_ERROR);
+		return (MEMBRANE_EXIT_SUCCESS);
+	}
+	/* Phase 30, Section 1/11/20: a real, pre-existing friction point
+	 * this phase's own first-run audit surfaced -- --plan-only never
+	 * generates, so the prompt's TEXT is never used by it, yet the
+	 * generic prompt-required check below previously rejected
+	 * `--plan-only --ctx N --auto` outright (even this project's own
+	 * --help EXAMPLES text shipped exactly that command, unnoticed,
+	 * since Phase 13.2). The ONLY thing prompt content is ever used
+	 * for on the plan-only path is auto-sizing --ctx from its token
+	 * count when --ctx itself is NOT given -- when --ctx IS given
+	 * (this exact case), that need never arises, so an empty
+	 * placeholder prompt is safe and never silently invents anything
+	 * a real run would report back to the user (--plan-only's own
+	 * output never echoes prompt content). --ctx == 0 (would still
+	 * need real prompt tokens to auto-size) and every non-plan-only
+	 * mode are both completely unaffected -- normal runs and
+	 * --compare-kv/--gpu-bench still require an explicit --prompt. */
+	if (o->plan_only && o->prompt_mode == MEMBRANE_RUN_PROMPT_NONE
+		&& o->ctx > 0)
+	{
+		o->prompt_mode = MEMBRANE_RUN_PROMPT_TEXT;
+		o->prompt_text.clear();
+	}
 	if (o->prompt_mode == MEMBRANE_RUN_PROMPT_NONE)
 		return (fprintf(stderr, "membrane-run: one of --prompt, "
 				"--prompt-file, or --prompt - is required\n"),

@@ -222,6 +222,18 @@ typedef struct s_membrane_run_opts
 	 * so they can't be resolved inside this llama-free parser). */
 	int			want_list_devices;	/* --list-devices */
 	int			want_doctor;		/* --doctor */
+
+	/* Phase 30, Section 5-8: --inspect-model -- unlike want_list_
+	 * devices/want_doctor above, this one DOES need --model (checked
+	 * normally, same required-ness as an ordinary run) but does NOT
+	 * need --prompt and triggers no generation -- see main.cpp's
+	 * run_inspect_model_mode(), which reads only GGUF metadata
+	 * (membrane_gpu_estimate_model(), gpu_device.h) and never calls
+	 * llama_model_load_from_file() at all. o->ctx is honored if given
+	 * (enables the KV-byte-estimate section of the output) but never
+	 * defaulted/invented if omitted (Section 6: "Do not invent 2048
+	 * silently"). */
+	int			want_inspect_model;	/* --inspect-model */
 }	membrane_run_opts_t;
 
 void	membrane_run_usage(FILE *out);
