@@ -13,6 +13,22 @@ target_include_directories(membrane_gpu_device PUBLIC
 target_include_directories(membrane_gpu_device PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
 
+# Phase 33, Section 30: a dev-only real-evidence harness for the new
+# context recommendation core -- NOT installed, NOT a product CLI
+# surface (no --ctx auto ships this phase). Only built inside this
+# MEMBRANE_ENABLE_LLAMA block because it needs real ggml_row_size()/
+# GGUF device facts, exactly like membrane-run itself below.
+add_executable(context-recommender-dryrun context_recommender_dryrun.cpp)
+set_target_properties(context-recommender-dryrun PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(context-recommender-dryrun PRIVATE
+  membrane_context_recommender membrane_gpu_device
+  membrane_kv_store_telemetry llama)
+target_include_directories(context-recommender-dryrun PRIVATE
+  ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
 # Only evaluated when MEMBRANE_ENABLE_LLAMA=ON (see the top-level
 # CMakeLists.txt's if(MEMBRANE_ENABLE_LLAMA) block). Product Phase 8:
 # membrane-run, the user-facing entry point -- see main.cpp's header

@@ -264,6 +264,20 @@ target_link_libraries(membrane_joint_planner PUBLIC membrane_compat_check
   membrane_kv_residency_policy membrane_sanitizers)
 target_include_directories(membrane_joint_planner PUBLIC tools/membrane-run)
 
+# Phase 33: safe context recommendation's pure/testable core -- llama-
+# free (no ggml/llama header, no model load, no device access, no
+# /proc read), same testable-without-a-model/GPU pattern as
+# membrane_joint_planner above, whose exact, unchanged
+# membrane_joint_plan_resolve() it calls once per bounded candidate
+# context size (never a second planner -- see context_recommender.h's
+# own top comment). No CLI surface yet (--ctx auto ships in Phase 34).
+add_library(membrane_context_recommender STATIC
+  tools/membrane-run/context_recommender.c)
+target_link_libraries(membrane_context_recommender PUBLIC
+  membrane_joint_planner membrane_sanitizers)
+target_include_directories(membrane_context_recommender PUBLIC
+  tools/membrane-run)
+
 # Phase 21: the bounded apply-time fallback CONTROLLER -- llama-free,
 # same pattern as membrane_joint_planner above. Consumes (never
 # duplicates or regenerates) the ranked candidate array
@@ -748,6 +762,17 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_joint_planner PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_joint_planner COMMAND test_joint_planner)
+
+  # Phase 33: safe context recommendation core's own tests -- llama-
+  # free, synthetic model/device facts only (no model download, no
+  # GPU), same pattern as test_joint_planner above.
+  add_executable(test_context_recommender
+    tools/membrane-run/test_context_recommender.c)
+  target_link_libraries(test_context_recommender PRIVATE
+    membrane_context_recommender)
+  target_include_directories(test_context_recommender PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_context_recommender COMMAND test_context_recommender)
 
   # Phase 21: the bounded apply-time fallback controller's own tests --
   # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a
