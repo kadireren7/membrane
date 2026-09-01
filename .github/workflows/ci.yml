@@ -137,6 +137,26 @@ jobs:
       - name: Verify CLI-UX evidence
         run: python3 scripts/verify-cli-ux.py
 
+  # Phase 29: validates the committed distribution/.deb-packaging
+  # evidence (results/distribution/validation.json) and version-mapping
+  # consistency -- python3 + checkout only, no GPU, no model download,
+  # no C/C++ build, no Docker. This validates the committed evidence
+  # file (captured locally by actually building and installing both
+  # .deb variants in a container -- see docs/install.md), it does not
+  # regenerate it; the actual .deb build/install/uninstall smoke test
+  # lives in packaging-smoke above, which builds real artifacts (no
+  # .deb file itself is committed to this repository -- Section 24).
+  distribution-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify distribution evidence
+        run: python3 scripts/verify-distribution.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
@@ -251,7 +271,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libvulkan-dev glslc vulkan-tools \
-            spirv-headers
+            spirv-headers dpkg-dev
 
       - name: CPU configure
         run: |
@@ -290,6 +310,31 @@ jobs:
             exit 1
           fi
 
+      # Phase 29: deliberately AFTER uninstall above, not before --
+      # cpack's own internal install step re-runs this build directory's
+      # cmake_install.cmake into CPack's staging area, which overwrites
+      # this SAME build directory's install_manifest.txt (CMake always
+      # writes it to <build-dir>/install_manifest.txt, regardless of
+      # which --prefix produced it) -- running cpack before the
+      # uninstall step above corrupted the manifest the uninstall step
+      # needed, a real CI failure confirmed directly (uninstall then
+      # left 6 real files behind at /tmp/membrane-install-cpu because
+      # it was reading a manifest cpack had already replaced with its
+      # own staging paths). Reuses the already-built membrane-run above
+      # -- cpack (not `cmake --build --target package`) only re-runs
+      # the install step + packaging, no rebuild of the rest of the
+      # tree. CPU package is the mandatory candidate (Section 25); no
+      # release is published here, just a CI artifact.
+      - name: CPU build .deb package
+        run: cd build-cpu-install && cpack -G DEB
+
+      - name: Upload CPU .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: membrane-cpu-deb
+          path: build-cpu-install/membrane_*.deb
+          if-no-files-found: error
+
       - name: Vulkan configure
         run: |
           cmake -S . -B build-vulkan-install \
@@ -321,3 +366,21 @@ jobs:
             find /tmp/membrane-install-vulkan -type f
             exit 1
           fi
+
+      # Phase 29: deliberately AFTER uninstall above -- see the CPU
+      # leg's own comment for why (cpack's internal install step
+      # overwrites this build directory's install_manifest.txt, which
+      # the uninstall step above still needs to be correct). CI's
+      # Vulkan build has always been reliable here (Phase 17), so this
+      # is built alongside the CPU one rather than skipped (Section 25
+      # makes it mandatory only for CPU, optional for Vulkan "if the CI
+      # environment can build it reliably" -- it can).
+      - name: Vulkan build .deb package
+        run: cd build-vulkan-install && cpack -G DEB
+
+      - name: Upload Vulkan .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: membrane-vulkan-deb
+          path: build-vulkan-install/membrane_*.deb
+          if-no-files-found: error

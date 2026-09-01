@@ -3309,22 +3309,37 @@ static int	run_doctor_mode(const membrane_run_opts_t &o)
 	}
 	printf("MEMBRANE diagnostics\n\n");
 	printf("[OK] executable\n");
-	if (membrane_gpu_backend_available())
-		printf("[OK] GPU backend compiled in\n");
-	else
-		printf("[WARN] no GPU backend compiled in (CPU-only build -- "
-			"rebuild with e.g. -DGGML_VULKAN=ON for GPU offload)\n");
+	/* Phase 29: llama_supports_gpu_offload() (which membrane_gpu_
+	 * backend_available() wraps) checks for an actually-ENUMERATED GPU/
+	 * IGPU device (ggml_backend_dev_by_type() != NULL), not "was a GPU
+	 * backend compiled into this binary" -- confirmed directly against
+	 * third_party/llama.cpp/src/llama.cpp. A Vulkan-enabled build with
+	 * zero visible devices (a real, common case: a container with no
+	 * /dev/dri passthrough, discovered via this phase's own real
+	 * install/remove container validation) therefore makes
+	 * membrane_gpu_backend_available() return false for the SAME reason
+	 * gpu_count is 0 -- a prior version of this branch asserted "no GPU
+	 * backend compiled in" (with rebuild advice) in exactly that case,
+	 * which is false and actively misleading on an already-Vulkan-
+	 * enabled build. gpu_count alone -- not membrane_gpu_backend_
+	 * available() -- is the only ground truth this CLI can honestly
+	 * report; one combined message covers both real causes without
+	 * asserting which one it is. */
 	if (gpu_count > 0)
 	{
+		printf("[OK] GPU backend compiled in\n");
 		for (i = 0; i < n_devices; ++i)
 			if (devices[i].type == MEMBRANE_DEV_TYPE_GPU
 				|| devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
 				printf("[OK] GPU device: %s (%s)\n", devices[i].name,
 					devices[i].description);
 	}
-	else if (membrane_gpu_backend_available())
-		printf("[WARN] no GPU device found on this host at runtime "
-			"(driver/hardware not detected)\n");
+	else
+		printf("[WARN] no GPU device visible to this build -- either no "
+			"GPU backend is compiled in (rebuild with e.g. "
+			"-DGGML_VULKAN=ON), or a backend is compiled in but found no "
+			"usable device on this host at runtime (driver/hardware not "
+			"detected, or none passed through if this is a container)\n");
 	if (host.ok)
 		printf("[OK] host RAM detected: %.1f MiB total, %.1f MiB "
 			"available\n", (double)host.total_bytes / (1024.0 * 1024.0),

@@ -1,19 +1,122 @@
 # Install
 
-This covers getting from a fresh clone to an installed `membrane-run`
-binary, and removing it again. For CLI flag semantics see `membrane-run
---help` and the README; for the KV precision/placement mechanism see
+This covers getting from zero to an installed `membrane-run` binary, and
+removing it again. For CLI flag semantics see `membrane-run --help` and
+the README; for the KV precision/placement mechanism see
 `docs/live-runtime.md` and `docs/kv-residency.md`.
 
 Linux only — this has not been verified on macOS or Windows.
+Debian-family only (Ubuntu / Pop!_OS / Debian) for the `.deb` path below
+— no Fedora/RPM, Arch, Flatpak, Snap, or AppImage packaging exists.
 
-Every step below (CPU and Vulkan configure/build/install/run-outside-
-the-build-tree/uninstall) is exercised on every push and PR by
-`.github/workflows/ci.yml`'s `packaging-smoke` job — a continuously
-re-verified check, rather than a point-in-time log that could go stale
-as the codebase changes.
+Three ways to get `membrane-run` installed, easiest first:
 
-## Prerequisites
+- **Option A** — install a `.deb` package (Ubuntu/Debian/Pop!_OS, no
+  manual CMake).
+- **Option B** — build from source and `cmake --install` to a system
+  prefix.
+- **Option C** — build from source and install to a user-local prefix,
+  no root needed.
+
+All three produce the same binary behavior; they differ only in how the
+files get onto disk (and, for Option C, whether root is needed at all).
+
+## Option A — install a `.deb` package
+
+Release packages are produced by this project's build pipeline (see
+"Building a `.deb` package yourself" below) — none are hosted publicly
+yet (external multi-host validation is still in progress; see
+`docs/release-v0.3.0-rc3.md`). If you have a `membrane_<version>_amd64.deb`
+file already (built yourself, or attached to a future release):
+
+```bash
+sudo apt install ./membrane_0.3.0~rc3_amd64.deb
+```
+
+(`apt install ./file.deb`, not `dpkg -i`, so apt resolves the package's
+declared runtime dependencies — `libvulkan1` for a Vulkan-enabled
+package, nothing beyond the standard C/C++/OpenMP runtime for a
+CPU-only one — instead of leaving them "half-installed" for you to fix
+by hand.)
+
+Verify:
+
+```bash
+membrane-run --version
+membrane-run --doctor
+membrane-run --list-devices
+```
+
+Uninstall:
+
+```bash
+sudo apt remove membrane
+```
+
+removes exactly the files the package installed (`/usr/bin/membrane-run`,
+its bundled `libllama`/`libggml*` shared libraries, and
+`/usr/share/membrane/LICENSE.txt`) — nothing else. It never touches your
+model files, config, or unrelated system libraries.
+
+### Building a `.deb` package yourself
+
+Needs `dpkg-dev` in addition to this project's normal build
+prerequisites (below):
+
+```bash
+sudo apt install dpkg-dev
+```
+
+CPU-only package:
+
+```bash
+cmake -S . -B build-package -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-package -j2 --target package
+```
+
+Vulkan package (needs the same Vulkan development files as Option
+B/C's Vulkan build below):
+
+```bash
+cmake -S . -B build-package-vulkan \
+  -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-package-vulkan -j2 --target package
+```
+
+Either produces `membrane_<version>_amd64.deb` in the build directory.
+Both are the SAME package definition (`membrane`, same name) — which
+variant you get is purely a build-time choice (`-DGGML_VULKAN=ON` or
+not), reflected honestly in the package's own declared dependencies
+(`dpkg-deb -I membrane_*.deb` shows `libvulkan1` only on the Vulkan
+build) — there is no separate `membrane-vulkan` package name to choose
+between.
+
+The `--target package` build compiles every target in the tree (CMake's
+own default: the `package` target depends on `all`), not just
+`membrane-run` — simple and matches the two commands above exactly, but
+slower than it needs to be. If you already have `membrane-run` built
+(e.g. from Option B below) and just want to re-package it without
+rebuilding everything else, run `cpack -G DEB` directly from that build
+directory instead — it only re-runs the install step and packaging, not
+a build.
+
+Version mapping: `MEMBRANE_VERSION` (`tools/membrane-run/product_cli.h`)
+is the one source of truth `membrane-run --version` and the package
+version both derive from — never hand-edited in more than that one
+place. A prerelease like `0.3.0-rc3` is mapped to `0.3.0~rc3` for the
+package's own `Version:` field only (`membrane-run --version` still
+prints the unmapped `0.3.0-rc3`): Debian's version-ordering rules treat
+a bare hyphen as the upstream/revision separator and would otherwise
+sort `0.3.0-rc3` as newer than the real `0.3.0` release, making an
+`apt upgrade` from the RC to the final release look like a downgrade
+and get refused. `~` is the documented Debian convention for exactly
+this (Debian Policy §5.6.12) — it sorts before everything, including no
+suffix at all, so `0.3.0~rc3` correctly orders before `0.3.0`. A stable
+version with no hyphen (e.g. `0.2.0`) passes through unchanged.
+
+## Option B — build from source, system install
+
+### Prerequisites
 
 - A C11/C++17 compiler (GCC or Clang) and CMake ≥ 3.16.
 - `git`, including submodule support.
@@ -28,7 +131,7 @@ as the codebase changes.
   A CPU-only build needs none of this — no Vulkan SDK, no GPU, no
   GPU driver.
 
-## Clone and initialize the submodule
+### Clone and initialize the submodule
 
 ```bash
 git clone --recursive https://github.com/kadireren7/membrane
@@ -55,7 +158,7 @@ an unexpected patch-related configure error, the submodule is very
 likely already dirty in some other way (e.g. a manual edit); restore it
 with `git -C third_party/llama.cpp checkout -- .` before reconfiguring.
 
-## Build
+### Build
 
 CPU-only:
 
@@ -87,20 +190,13 @@ installing anything:
 ./build-vulkan/tools/membrane-run/membrane-run --help
 ```
 
-## Install
-
-```bash
-cmake --install build-vulkan --prefix "$HOME/.local"
-```
-
-or system-wide:
+### Install
 
 ```bash
 sudo cmake --install build-vulkan
 ```
 
-(with no `--prefix`, the default is `/usr/local`). Either way this
-installs:
+(with no `--prefix`, the default is `/usr/local`) installs:
 
 - `<prefix>/bin/membrane-run`
 - `<prefix>/<libdir>/libllama.so*`, `libggml*.so*` (`<libdir>` is
@@ -110,10 +206,6 @@ installs:
   statically into `membrane-run` and is never part of this list — see
   "Why install shared libraries" below.
 - `<prefix>/share/membrane/LICENSE.txt`
-
-If you used `--prefix "$HOME/.local"`, make sure `~/.local/bin` is on
-your `PATH` (most distributions already add it for you; if not, add
-`export PATH="$HOME/.local/bin:$PATH"` to your shell profile).
 
 ### Verifying the install
 
@@ -148,7 +240,7 @@ libraries carry an `$ORIGIN`-relative RPATH so the installed binary
 finds them at their installed location — no `LD_LIBRARY_PATH` needed,
 and no dependency on the build directory continuing to exist.
 
-## Uninstall
+### Uninstall
 
 ```bash
 cmake --build build-vulkan --target uninstall
@@ -164,14 +256,35 @@ absent, doesn't error). Running it against a build directory that was
 never installed (no `install_manifest.txt` yet) fails clearly instead
 of guessing.
 
+## Option C — build from source, user-local install (no root)
+
+Same Prerequisites/Clone/Build steps as Option B above, then install to
+a prefix inside your own home directory instead of a system path — no
+`sudo` anywhere in this path:
+
+```bash
+cmake --install build-vulkan --prefix "$HOME/.local"
+```
+
+Make sure `~/.local/bin` is on your `PATH` (most distributions already
+add it for you; if not, add `export PATH="$HOME/.local/bin:$PATH"` to
+your shell profile yourself — nothing in this project edits shell
+profile files on your behalf). Verifying and uninstalling work exactly
+as described in Option B above, just without `sudo`:
+
+```bash
+membrane-run --help
+cmake --build build-vulkan --target uninstall
+```
+
 ## Troubleshooting
 
 - **`llama.cpp submodule missing; run: git submodule update --init
   third_party/llama.cpp`** — exactly what it says; the submodule
   wasn't cloned.
 - **`Vulkan backend requested (-DGGML_VULKAN=ON) but Vulkan development
-  files were not found`** — install the packages listed under
-  Prerequisites, or drop `-DGGML_VULKAN=ON` for a CPU-only build.
+  files were not found`** — install the packages listed under Option
+  B's Prerequisites, or drop `-DGGML_VULKAN=ON` for a CPU-only build.
 - **`error while loading shared libraries` after installing** — this
   was a real bug found and fixed during Phase 17 packaging work (the
   Vulkan backend's shared library wasn't in the install list). If you
@@ -181,3 +294,14 @@ of guessing.
 - **Configure re-applies or complains about a patch** — see "Clone and
   initialize the submodule" above; the submodule is in an unexpected
   state and needs a clean checkout first.
+- **`cpack`/`cmake --build --target package` fails or warns about
+  `dpkg-shlibdeps`** — install `dpkg-dev` (`sudo apt install
+  dpkg-dev`); it provides `dpkg-shlibdeps`, which CPack uses to detect
+  the package's real runtime dependencies from the actual built binary
+  rather than a hand-maintained guess.
+- **`apt install ./membrane_*.deb` refuses with a dependency error**
+  — this means your system genuinely doesn't have a required runtime
+  library (e.g. no `libvulkan1` available for a Vulkan-enabled
+  package on a non-Debian-family system) — install it via your
+  distribution's normal package manager, or use the CPU-only package/
+  build instead.

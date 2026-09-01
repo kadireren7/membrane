@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "membrane_version": "0.3.0-rc3",
+  "package_version": "0.3.0~rc3",
+  "phase": "29-easy-install",
+  "captured_at_commit": "35a44c4403f63937b96ab118531ac00d5969ebe1",
+  "hardware": "real Pop!_OS 24.04 dev machine, AMD Ryzen 5 5600H, Docker 29.1.3 (containerized install/remove tests run in a fresh, unmodified ubuntu:24.04 image pulled from Docker Hub -- the developer's own system package state was never touched)",
+  "notes": "Every install/version/doctor/list-devices/generation/remove result below is REAL: captured by building both .deb variants on this host with CPack (`cpack -G DEB`) and then actually running `apt-get install`/`apt-get remove` against the real .deb file inside a fresh, isolated `docker run --rm ubuntu:24.04` container for each entry -- never simulated or hand-written. No package file itself is committed to this repository (git tracks this evidence file and the packaging scripts/CMake config only); see docs/install.md for how to reproduce a build.",
+  "packages": [
+    {
+      "id": "cpu",
+      "filename": "membrane_0.3.0~rc3_amd64.deb",
+      "build_command": "cmake -S . -B build-package-cpu -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build-package-cpu -j2 --target membrane-run && cpack -G DEB",
+      "product_version": "0.3.0-rc3",
+      "package_version": "0.3.0~rc3",
+      "architecture": "amd64",
+      "sha256": "640bc33f03c48bbad4ce9eeaea76babc27fbba3c684c1329119713cfb27ccce7",
+      "file_size_bytes": 2155216,
+      "installed_size_kib": 16288,
+      "runtime_dependencies": ["libc6 (>= 2.38)", "libgcc-s1 (>= 3.4)", "libgomp1 (>= 6)", "libstdc++6 (>= 11)"],
+      "runtime_dependencies_source": "dpkg-shlibdeps (CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON), auto-detected from the real installed ELF binaries -- not hand-maintained",
+      "contents": [
+        "/usr/bin/membrane-run",
+        "/usr/lib/libggml-base.so(.0)(.0.17.0)",
+        "/usr/lib/libggml-cpu.so(.0)(.0.17.0)",
+        "/usr/lib/libggml.so(.0)(.0.17.0)",
+        "/usr/lib/libllama.so(.0)(.0.0.1)",
+        "/usr/share/membrane/LICENSE.txt"
+      ],
+      "no_forbidden_payload": "no tests, benchmarks, model files, build directory, or git metadata -- confirmed via dpkg-deb -c (this package's install() rules are the ONLY install() rules in the entire CMake tree)",
+      "install_validation": {
+        "evidence_class": "REAL",
+        "environment": "fresh docker run --rm ubuntu:24.04 (no prior state)",
+        "command": "apt-get install -y ./membrane_0.3.0~rc3_amd64.deb",
+        "exit_code": 0,
+        "resolved_extra_dependency": "libgomp1 (auto-installed by apt)"
+      },
+      "version_result": {
+        "command": "membrane-run --version",
+        "stdout": "MEMBRANE 0.3.0-rc3",
+        "exit_code": 0
+      },
+      "doctor_result": {
+        "command": "membrane-run --doctor",
+        "exit_code": 0,
+        "stdout": "MEMBRANE diagnostics\n\n[OK] executable\n[WARN] no GPU device visible to this build -- either no GPU backend is compiled in (rebuild with e.g. -DGGML_VULKAN=ON), or a backend is compiled in but found no usable device on this host at runtime (driver/hardware not detected, or none passed through if this is a container)\n[OK] host RAM detected: 5771.0 MiB total, 847.1 MiB available\n[OK] LLM_ARCH_LLAMA and LLM_ARCH_QWEN2 compressed-KV compatibility available (see docs/compatibility.md)",
+        "note": "correct for a CPU-only build: no GPU backend compiled in is one of the two real causes this message covers -- see the bug_found note below for why the message covers both causes instead of asserting one"
+      },
+      "list_devices_result": {
+        "command": "membrane-run --list-devices",
+        "exit_code": 0,
+        "stdout": "INDEX  BACKEND    TYPE  TOTAL MiB   FREE MiB  NAME\n0      CPU        cpu       5771.0     5771.0  CPU (AMD Ryzen 5 5600H with Radeon Graphics)"
+      },
+      "generation_result": {
+        "evidence_class": "REAL",
+        "command": "membrane-run --model model.gguf --prompt 'Once upon a time' --gen-tokens 8",
+        "model": "stories15M.gguf (mounted read-only into the container, not shipped in the package)",
+        "exit_code": 0,
+        "generated_tokens": 8,
+        "note": "full end-to-end inference confirmed working from the apt-installed binary alone, in a container with zero build tools present"
+      },
+      "remove_validation": {
+        "evidence_class": "REAL",
+        "command": "apt-get remove -y membrane",
+        "exit_code": 0,
+        "files_remaining": 0,
+        "verification": "dpkg -L membrane afterward reports the package unknown; a filesystem search for membrane-run/libggml*/libllama* under /usr found nothing"
+      }
+    },
+    {
+      "id": "vulkan",
+      "filename": "membrane_0.3.0~rc3_amd64.deb",
+      "build_command": "cmake -S . -B build-vulkan -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release && cmake --build build-vulkan -j2 --target membrane-run && cpack -G DEB",
+      "product_version": "0.3.0-rc3",
+      "package_version": "0.3.0~rc3",
+      "architecture": "amd64",
+      "sha256": "a0fb73468120afa298182b2f9d5043058a30636d1346dbcfb534db607cc634b9",
+      "file_size_bytes": 15129434,
+      "installed_size_kib": 138123,
+      "runtime_dependencies": ["libc6 (>= 2.38)", "libgcc-s1 (>= 3.4)", "libgomp1 (>= 6)", "libstdc++6 (>= 13.1)", "libvulkan1 (>= 1.2.131.2)"],
+      "runtime_dependencies_source": "dpkg-shlibdeps (CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON), auto-detected -- libvulkan1 appears ONLY on this variant, never on the CPU package, because it is the real ELF NEEDED dependency of libggml-vulkan.so; glslc (a build-time-only shader compiler, never linked into the installed binary) never appears on either variant",
+      "contents": [
+        "/usr/bin/membrane-run",
+        "/usr/lib/libggml-base.so(.0)(.0.17.0)",
+        "/usr/lib/libggml-cpu.so(.0)(.0.17.0)",
+        "/usr/lib/libggml-vulkan.so(.0)(.0.17.0)",
+        "/usr/lib/libggml.so(.0)(.0.17.0)",
+        "/usr/lib/libllama.so(.0)(.0.0.1)",
+        "/usr/share/membrane/LICENSE.txt"
+      ],
+      "no_forbidden_payload": "same as the CPU package -- no tests, benchmarks, model files, build directory, or git metadata",
+      "install_validation": {
+        "evidence_class": "REAL",
+        "environment": "fresh docker run --rm ubuntu:24.04 (no prior state, no GPU passthrough)",
+        "command": "apt-get install -y ./membrane_0.3.0~rc3_amd64.deb",
+        "exit_code": 0,
+        "resolved_extra_dependencies": "libvulkan1 and its own transitive deps, mesa-vulkan-drivers (auto-installed by apt to satisfy the ICD loader)"
+      },
+      "version_result": {
+        "command": "membrane-run --version",
+        "stdout": "MEMBRANE 0.3.0-rc3",
+        "exit_code": 0
+      },
+      "doctor_result": {
+        "command": "membrane-run --doctor",
+        "exit_code": 0,
+        "stdout": "MEMBRANE diagnostics\n\n[OK] executable\n[WARN] no GPU device visible to this build -- either no GPU backend is compiled in (rebuild with e.g. -DGGML_VULKAN=ON), or a backend is compiled in but found no usable device on this host at runtime (driver/hardware not detected, or none passed through if this is a container)\n[OK] host RAM detected: 5771.0 MiB total, 853.4 MiB available\n[OK] LLM_ARCH_LLAMA and LLM_ARCH_QWEN2 compressed-KV compatibility available (see docs/compatibility.md)",
+        "note": "this build DOES have the GPU backend compiled in (libggml-vulkan.so is present and linked) -- the [WARN] here is the OTHER real cause the message covers: no usable device found at runtime, because the container has no /dev/dri passthrough. See bug_found below."
+      },
+      "list_devices_result": {
+        "command": "membrane-run --list-devices",
+        "exit_code": 0,
+        "stdout": "INDEX  BACKEND    TYPE  TOTAL MiB   FREE MiB  NAME\n0      CPU        cpu       5771.0     5771.0  CPU (AMD Ryzen 5 5600H with Radeon Graphics)",
+        "note": "0 GPU devices enumerated inside the container -- expected (no /dev/dri passthrough), not a packaging defect: the same binary, run directly on this host (real GPU present), enumerates 2 real Vulkan devices (see local_host_reference_check below)"
+      },
+      "local_host_reference_check": {
+        "evidence_class": "REAL",
+        "environment": "same binary, run directly on this host (not containerized) -- proves the .deb's install()/RPATH layout is not the cause of the container's 0-device result",
+        "command": "membrane-run --doctor (installed via cmake --install --prefix <local test prefix>)",
+        "stdout": "[OK] GPU backend compiled in\n[OK] GPU device: Vulkan0 (AMD Radeon Graphics (RADV RENOIR))"
+      },
+      "remove_validation": {
+        "evidence_class": "REAL",
+        "command": "apt-get remove -y membrane",
+        "exit_code": 0,
+        "files_remaining": 0
+      }
+    }
+  ],
+  "bug_found": {
+    "id": "doctor-gpu-backend-warning-conflation",
+    "discovered_via": "this phase's own real container install/doctor validation (Section 26) -- not present in Phase 28's own testing, which only ever ran --doctor on a host with a real GPU",
+    "root_cause": "llama_supports_gpu_offload() (third_party/llama.cpp/src/llama.cpp) checks for an actually-ENUMERATED GPU/IGPU ggml_backend device, not whether a GPU backend was compiled into the binary -- confirmed by reading the upstream source directly. A Vulkan-enabled build with zero visible devices at runtime (this phase's container: libvulkan1 + mesa-vulkan-drivers installed, but no /dev/dri passthrough) therefore reports the SAME false value as a build with no GPU backend compiled in at all.",
+    "prior_behavior": "tools/membrane-run/main.cpp's run_doctor_mode() (introduced in Phase 28) asserted \"[WARN] no GPU backend compiled in (CPU-only build -- rebuild with e.g. -DGGML_VULKAN=ON for GPU offload)\" whenever this conflated check was false -- false and actively misleading advice on an already-Vulkan-enabled build, as proven directly above (local_host_reference_check shows the SAME binary correctly finds 2 GPU devices with real hardware present).",
+    "fix": "run_doctor_mode() no longer asserts a specific unverifiable cause: both real causes (no backend compiled in vs. backend compiled in but 0 devices found) now share one honest combined [WARN] message. Scoped strictly to this phase's own --doctor presentation code (introduced last phase, owned by this project's CLI layer) -- the underlying resolve_gpu_config()/--gpu-layers auto planner code path (Phase 9B.1, pre-existing, out of this phase's no-planner-changes scope) was left untouched.",
+    "status": "fixed in this phase's commit, verified with the same real container reproduction both before and after the fix"
+  }
+}
