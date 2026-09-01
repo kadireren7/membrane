@@ -109,6 +109,23 @@ typedef struct s_membrane_gpu_model_estimate
 	 * read_model_shape() could supply an architecture string. Empty
 	 * string if hparams_available is 0. */
 	char		arch_name[MEMBRANE_GPU_ARCH_NAME_MAX];
+
+	/* Phase 33: the model's own training/metadata context-length
+	 * ceiling -- source-verified against the pinned llama.cpp
+	 * (llama-arch.cpp's LLM_KV_CONTEXT_LENGTH == "%s.context_length",
+	 * read the same way llama-model.cpp itself reads hparams.n_ctx_train:
+	 * `ml.get_key(LLM_KV_CONTEXT_LENGTH, hparams.n_ctx_train)`), read
+	 * from the SAME already-open gguf_context as every other hparam
+	 * above -- never a second gguf_init_from_file() open (see
+	 * membrane_gpu_estimate_model()'s own doc comment). Additive: every
+	 * existing field/caller above is unaffected by this field's
+	 * presence. model_max_context_available is 0 whenever the key is
+	 * missing, wrong-typed, or reads back as 0 -- callers (e.g.
+	 * context_recommender.h) must fail closed (MODEL_MAX_CONTEXT_UNKNOWN
+	 * or INVALID_MODEL_MAX_CONTEXT) rather than guess a ceiling, exactly
+	 * like hparams_available's own existing contract above. */
+	uint64_t	model_max_context;
+	int			model_max_context_available;
 }	membrane_gpu_model_estimate_t;
 
 /* Reads real per-tensor byte sizes AND hparams from GGUF metadata

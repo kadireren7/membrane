@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "phase": "33-context-recommendation-core",
+  "membrane_commit": "c8c996c6fb816744ab4997302af685a66ea4690d",
+  "generated_at": "2026-09-02T00:00:00Z",
+  "note": "Phase 33: the safe-context-recommendation PURE CORE (tools/membrane-run/context_recommender.h/.c), not yet wired to any CLI surface (--ctx auto ships in Phase 34). Every candidate-evaluation row below is produced by calling the existing, UNCHANGED membrane_joint_plan_resolve() once per candidate context size -- this module never re-implements GPU-layer/precision/placement ranking. real_metadata_reads/real_dry_runs are REAL (real GGUF files, real gpu_device.cpp scan, and -- for the Vulkan rows -- a real local AMD Radeon RADV RENOIR / NVIDIA GTX 1650 Vulkan device); unit_test_summary is SYNTHETIC (hand-built model/device facts, no model download, per Section 27 of the Phase 33 task). Never mixed: every row below is labeled.",
+  "policy": {
+    "recommendation_policy": "RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT",
+    "description": "recommended_context == hardware_fit_context exactly -- the largest evaluated candidate the existing joint planner accepted. Not described as OOM-free (see known_limitations).",
+    "min_candidate_justification": "llama.cpp's own third_party/llama.cpp/common/common.h: `fit_params_min_ctx = 4096; // minimum context size to set when trying to reduce memory use` -- reused directly, not an invented number."
+  },
+  "candidate_algorithm": {
+    "description": "geometric doubling from max(MEMBRANE_CTXREC_MIN_CANDIDATE=4096, minimum_required_context) up to model_max_context, which is always appended as the final candidate exactly (never dropped, never approximated by the nearest power of two).",
+    "function": "membrane_ctxrec_generate_candidates()",
+    "max_candidate_count": 20,
+    "overflow_behavior": "checked uint64_t arithmetic throughout; doubling stops (and model_max_context is appended directly) before any multiplication could wrap, verified up to model_max_context == UINT64_MAX in test_gen_huge_model_max_bounded_and_no_overflow"
+  },
+  "model_max_context_source": {
+    "gguf_key": "{arch}.context_length",
+    "source_verified_against": "third_party/llama.cpp/src/llama-arch.cpp: LLM_KV_CONTEXT_LENGTH == \"%s.context_length\"; llama-model.cpp: ml.get_key(LLM_KV_CONTEXT_LENGTH, hparams.n_ctx_train) reads the same uint32 key this phase's gpu_device.cpp now also reads, from the SAME already-open gguf_context as every other pre-load hparam (no second gguf_init_from_file open)."
+  },
+  "real_metadata_reads": [
+    {"label": "REAL", "model": "SmolLM2-135M-Instruct-f16.gguf", "arch": "llama", "model_max_context": 8192},
+    {"label": "REAL", "model": "SmolLM2-360M-Instruct-f16.gguf", "arch": "llama", "model_max_context": 8192},
+    {"label": "REAL", "model": "qwen2.5-1.5b-instruct-fp16.gguf", "arch": "qwen2", "model_max_context": 8192, "note": "3.5 GB file, metadata-only gguf_init_from_file(no_alloc=true) scan measured at 0.069s wall time -- no tensor data read, no model load, cheap even at this file size."},
+    {"label": "REAL", "model": "stories15M.gguf", "arch": "(hparams unavailable -- nonstandard tensor naming)", "model_max_context": 128, "note": "real edge-case fixture: model_max_context (128) is below MEMBRANE_CTXREC_MIN_CANDIDATE (4096) -- Section 8 of the Phase 33 task's own scenario, found in real data, not synthesized."}
+  ],
+  "real_dry_runs": [
+    {
+      "label": "REAL",
+      "harness": "tools/membrane-run/context_recommender_dryrun.cpp (dev-only, not installed, no CLI surface)",
+      "build": "build-llama-verify (MEMBRANE_ENABLE_LLAMA=ON, GGML_VULKAN=OFF -- CPU-only build, zero enumerated GPU devices)",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "precision_request": "explicit NATIVE (see known_limitations: adaptive precision has no CPU-only fallback in the existing joint planner at zero GPU budget)",
+      "device_free_bytes": 0,
+      "device_total_bytes": 0,
+      "candidates": [4096, 8192],
+      "status": "OK",
+      "hardware_fit_context": 8192,
+      "recommended_context": 8192,
+      "resolved_gpu_layers": 0,
+      "host_memory_unvalidated": true
+    },
+    {
+      "label": "REAL",
+      "harness": "tools/membrane-run/context_recommender_dryrun.cpp",
+      "build": "build-vulkan (MEMBRANE_ENABLE_LLAMA=ON, GGML_VULKAN=ON -- real local Vulkan devices enumerated: AMD Radeon Graphics RADV RENOIR, NVIDIA GeForce GTX 1650)",
+      "model": "SmolLM2-135M-Instruct-f16.gguf",
+      "gpu_device_used": "Vulkan0 (AMD Radeon Graphics, RADV RENOIR)",
+      "precision_request": "adaptive (MEMBRANE_JOINT_PRECISION_REQUEST_AUTO, matches bare --auto)",
+      "device_free_bytes": 3996528640,
+      "device_total_bytes": 5173133312,
+      "candidates": [4096, 8192],
+      "status": "OK",
+      "hardware_fit_context": 8192,
+      "recommended_context": 8192,
+      "resolved_gpu_layers": 30,
+      "resolved_kv_precision": "Q8_0 (full residency)",
+      "host_memory_unvalidated": false
+    },
+    {
+      "label": "REAL",
+      "harness": "tools/membrane-run/context_recommender_dryrun.cpp",
+      "build": "build-vulkan (same real Vulkan devices as above)",
+      "model": "SmolLM2-360M-Instruct-f16.gguf",
+      "gpu_device_used": "Vulkan0 (AMD Radeon Graphics, RADV RENOIR)",
+      "precision_request": "adaptive",
+      "device_free_bytes": 3988533248,
+      "device_total_bytes": 5173133312,
+      "candidates": [4096, 8192],
+      "status": "OK",
+      "hardware_fit_context": 8192,
+      "recommended_context": 8192,
+      "resolved_gpu_layers": 32,
+      "resolved_kv_precision": "Q8_0 (full residency)",
+      "host_memory_unvalidated": false
+    },
+    {
+      "label": "REAL",
+      "harness": "tools/membrane-run/context_recommender_dryrun.cpp",
+      "build": "build-vulkan (same real Vulkan devices as above)",
+      "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "gpu_device_used": "Vulkan0 (AMD Radeon Graphics, RADV RENOIR)",
+      "precision_request": "adaptive",
+      "device_free_bytes": 3988533248,
+      "device_total_bytes": 5173133312,
+      "candidates": [4096, 8192],
+      "status": "OK",
+      "hardware_fit_context": 8192,
+      "recommended_context": 8192,
+      "resolved_gpu_layers": 28,
+      "resolved_kv_precision": "Q8_0 (full residency)",
+      "host_memory_unvalidated": false
+    },
+    {
+      "label": "REAL",
+      "harness": "tools/membrane-run/context_recommender_dryrun.cpp",
+      "build": "build-llama-verify (CPU-only)",
+      "model": "stories15M.gguf",
+      "status": "NO_FEASIBLE_CONTEXT",
+      "candidates": [],
+      "note": "real edge case: model_max_context (128, real GGUF value) is below the effective floor (4096) -- Section 8's scenario reproduced with real fixture data, not synthesized. Never a fabricated recommendation."
+    }
+  ],
+  "unit_test_summary": {
+    "label": "SYNTHETIC",
+    "binary": "test_context_recommender",
+    "test_count": 34,
+    "sections_covered": [
+      "candidate generator (basic doubling, real SmolLM2/Qwen2.5 value, floor==model max, non-power-of-two, below-floor, minimum-exceeds-max, raised floor, small max_out, huge model max / no overflow, NULL safety)",
+      "resolve(): ample memory / multiple feasible / largest wins, non-power-of-two end-to-end, NO_FEASIBLE_CONTEXT (no candidates), PLANNER_REJECTED_ALL (unsupported architecture, malformed head shape), minimum_required_context filtering, MINIMUM_EXCEEDS_MODEL_MAX, MODEL_MAX_CONTEXT_UNKNOWN vs INVALID_MODEL_MAX_CONTEXT, CPU-only (explicit precision resolves; adaptive precision's real, disclosed non-resolution documented as its own test), GPU full residency, CPU KV spill, adaptive precision forwarding, explicit q8/q5/gpu-layers/placement hard constraints, ctx-overflow-past-uint32 fails closed, deterministic repeat, no-early-break / non-monotonicity proof, NULL request/out safety",
+      "Section 28 property invariants (recommended <= hardware fit <= model max, recommended >= minimum, selected plan feasible, candidate count bound, no candidate exceeds model max, strictly increasing order)"
+    ],
+    "result": "34/34 passed",
+    "sanitizers": "ASan+UBSan clean (build-asan, MEMBRANE_ENABLE_SANITIZERS=ON)"
+  },
+  "known_limitations": [
+    {
+      "id": "TRANSIENT_COMPUTE_BUFFER_NOT_MODELED",
+      "description": "Fit estimates cover model weights and the KV cache itself, not ggml's own transient compute-buffer allocation at context-creation time (Phase 32's own disclosed gap, audited again this phase -- no new evidence surfaced a safe, non-arbitrary headroom formula to close it, so it remains open and disclosed rather than papered over with an invented margin)."
+    },
+    {
+      "id": "NO_HOST_RAM_CAPACITY_GUARD",
+      "description": "The existing, unchanged joint planner has never had a real host-RAM capacity check (joint_planner.h's own candidate field comment: 'fits_host... always 1 today'; main.cpp's HOST_MEMORY_PRESSURE warning is explicitly observability-only, never a pass/fail decision). This module does not invent one (Section 12 forbids duplicating memory-fit logic no existing module owns; Section 5 forbids an unevidenced margin) -- instead it sets host_memory_unvalidated=true whenever the selected plan leaves any weight/KV bytes host-resident, so this is never silently claimed as safe."
+    },
+    {
+      "id": "ADAPTIVE_PRECISION_NO_CPU_FALLBACK_AT_ZERO_GPU_BUDGET",
+      "description": "Real, source-verified finding this phase: joint_planner.c's resolve_adaptive_precision() always calls membrane_adaptive_kv_resolve() with is_gpu_backend hardcoded to 1, and returns GPU_MEMORY_INSUFFICIENT (no CPU-only fallback) rather than a legal CPU-only plan when neither Q8 nor Q5 reaches even one GPU layer -- unlike resolve_single_precision() (explicit --kv native/q8/q5), which always includes a gpu_layers=0 fallback candidate. A genuinely GPU-less host must reach this module with an explicit precision request, matching main.cpp's own real gpu_layers==0 short-circuit (which never invokes the joint planner with an implicit adaptive request at all)."
+    }
+  ]
+}

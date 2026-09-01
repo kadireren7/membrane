@@ -247,6 +247,31 @@ jobs:
       - name: Verify v0.4 product-direction/roadmap documents
         run: python3 scripts/verify-v0.4-roadmap.py
 
+  # Phase 33: validates the safe-context-recommendation CORE's evidence
+  # and docs (results/context-recommendation/core-validation.json,
+  # docs/context-recommendation.md) -- no CLI surface exists yet
+  # (--ctx auto ships in Phase 34), so there is nothing product-facing
+  # to smoke-test here. python3 + checkout only, same shape as
+  # v04-roadmap-check above; no GPU, no model download, no benchmark.
+  # test_context_recommender itself needs no separate job: it is
+  # registered unconditionally (tools/membrane-run/context_recommender.c
+  # is llama-free -- no MEMBRANE_ENABLE_LLAMA needed), so the existing
+  # build-and-test job's Debug/ASan matrix and the thread-sanitizer job
+  # already build and ctest it on every run, with zero changes needed
+  # here -- confirmed directly: `ctest --test-dir build-debug` (no
+  # MEMBRANE_ENABLE_LLAMA) already runs and passes test_context_
+  # recommender.
+  context-recommendation-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify context recommendation core evidence and docs
+        run: python3 scripts/verify-context-recommendation.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered

@@ -140,6 +140,30 @@ static int	read_u32_key(struct gguf_context *ctx, const std::string &key,
 	return (1);
 }
 
+/* Phase 33: LLM_KV_CONTEXT_LENGTH's own real GGUF key shape
+ * ("%s.context_length", llama-arch.cpp), read the same UINT32 type
+ * llama-model.cpp's own `ml.get_key(LLM_KV_CONTEXT_LENGTH,
+ * hparams.n_ctx_train)` reads into its uint32_t n_ctx_train field --
+ * source-verified, not guessed. A present-but-zero value is left
+ * unavailable (0/0 is never a real model's context ceiling, and
+ * context_recommender.h's INVALID_MODEL_MAX_CONTEXT status exists
+ * specifically to distinguish "present but nonsensical" from "genuinely
+ * missing" one layer up -- this function itself only distinguishes
+ * "read a usable positive value" from "did not", exactly like every
+ * other key read in this file). */
+static void	read_model_max_context(struct gguf_context *ctx,
+				const std::string &arch, membrane_gpu_model_estimate_t *out)
+{
+	int32_t	v = 0;
+
+	out->model_max_context_available = 0;
+	out->model_max_context = 0;
+	if (!read_u32_key(ctx, arch + ".context_length", &v) || v <= 0)
+		return;
+	out->model_max_context = (uint64_t)v;
+	out->model_max_context_available = 1;
+}
+
 static void	read_hparams(struct gguf_context *ctx,
 				membrane_gpu_model_estimate_t *out)
 {
@@ -152,6 +176,12 @@ static void	read_hparams(struct gguf_context *ctx,
 	arch = gguf_get_val_str(ctx, arch_id);
 	if (arch.empty())
 		return;
+	/* Independent of hparams_available below (Section 26: additive,
+	 * never gated behind an unrelated field) -- a model could in
+	 * principle expose context_length without embedding_length/
+	 * head_count/head_count_kv naming this file recognizes, or vice
+	 * versa; each is its own honest "did I actually read this" signal. */
+	read_model_max_context(ctx, arch, out);
 	/* Same three fields native_kv_bytes()/q8_kv_bytes() need
 	 * (llama_model_n_embd/n_head/n_head_kv on an already-loaded
 	 * model) -- read here from the arch-prefixed GGUF keys llama.cpp
