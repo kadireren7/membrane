@@ -149,9 +149,19 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Phase 31: fetch-depth 0 (full history), not this job's previous
+      # default shallow (depth-1) checkout -- scripts/verify-
+      # distribution.py's version-consistency check now reads
+      # results/distribution/validation.json's own captured_at_commit
+      # via `git show <commit>:...` (a real historical commit, not
+      # necessarily this PR's HEAD or its immediate parent), which a
+      # shallow clone doesn't have -- confirmed as the real cause of
+      # this job's first failure on this exact change (fatal: path
+      # exists on disk, but not in <commit>).
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Verify distribution evidence
         run: python3 scripts/verify-distribution.py
 
@@ -183,9 +193,14 @@ jobs:
     permissions:
       contents: read
     steps:
+      # Phase 31: fetch-depth 0 -- see distribution-check's own comment
+      # above for why (scripts/verify-first-run.py's version-
+      # consistency check has the same `git show <captured_at_commit>:
+      # ...` dependency on full history).
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Verify first-run UX evidence
         run: python3 scripts/verify-first-run.py
 
