@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "phase": "32-v0.4-direction",
+  "decision_type": "planning-only",
+  "runtime_behavior_changed": false,
+  "version_bumped": false,
+  "release_created": false,
+  "based_on_stable_version": "0.3.0",
+  "primary_theme": "From configuration to recommendation",
+  "primary_feature": {
+    "id": "F1",
+    "name": "Safe context recommendation / auto-sizing",
+    "ux_surfaces": ["--ctx auto (opt-in run path)", "--inspect-model (extended, look-before-you-leap path)"],
+    "reuses_existing_planner": true,
+    "introduces_second_planner": false
+  },
+  "secondary_features": [
+    {"id": "F3", "name": "Model-family compatibility expansion", "max_targets": 2, "candidates": ["mistral", "phi-3-mini-class"], "excluded_with_reason": {"gemma2_gemma3": "known sliding-window attention (SWA), architectural mismatch with the current whole-cache compression model", "deepseek_family": "Multi-head Latent Attention (MLA) is a fundamentally different KV cache shape, likely incompatible with the current type-override mechanism"}},
+    {"id": "F4", "name": "Opportunistic hardware validation broadening", "blocking": false},
+    {"id": "F8", "name": "Upstream llama.cpp hook feasibility investigation", "opens_upstream_pr_this_cycle": false}
+  ],
+  "deferred_items": [
+    {"id": "F5", "name": "Config file / saved defaults", "target_version": "not planned"},
+    {"id": "F6", "name": "APT repository", "target_version": "0.5"},
+    {"id": "signed_releases", "name": "Signed tags / checksums / SBOM / reproducible builds", "target_version": "0.5"},
+    {"id": "F7", "name": "CUDA", "classification": "DEFERRED_NO_VALIDATION_HARDWARE"},
+    {"id": "F10", "name": "Performance work", "classification": "SECONDARY_DEFERRED_UNLESS_NEW_EVIDENCE"},
+    {"id": "F9", "name": "Diagnostics / issue-bundle export", "note": "nice-to-have, fold into hardening phase if time allows, not its own phase"}
+  ],
+  "non_goals": [
+    "CUDA without real local validation hardware",
+    "GUI",
+    "live/dynamic KV migration",
+    "performance rewrite without new evidence",
+    "all model architectures (max 2 new targets this cycle)",
+    "Windows/macOS support",
+    "model downloading on the user's behalf",
+    "serving/API daemon",
+    "distributed inference",
+    "config file / persistent user preferences",
+    "APT repository",
+    "signed/reproducible releases",
+    "an actual upstream llama.cpp pull request"
+  ],
+  "success_criteria": [
+    "one-command (or one-command-plus-optional-inspect) flow needs no manual GPU-layers/KV-type/KV-placement/context knowledge for the common case",
+    "at least one additional compressed-KV model family proven with real local evidence",
+    "official .deb remains installable, same Vulkan-enabled membrane policy, no regression",
+    "every existing validator/test stays green throughout",
+    "context-recommendation feature has real deterministic validation against real local model fixtures",
+    "independent external validation improves opportunistically if available, not a hard blocker"
+  ],
+  "maturity_ladder": [
+    {"version": "0.3", "milestone": "serious project", "status": "achieved"},
+    {"version": "0.4", "milestone": "useful product", "status": "planned"},
+    {"version": "0.5", "milestone": "mature OSS project", "status": "future"},
+    {"version": "1.0", "milestone": "stable product contract", "status": "future"}
+  ],
+  "phase_roadmap": [
+    {"phase": 33, "objective": "Context recommendation engine (core logic only, no CLI surface)"},
+    {"phase": 34, "objective": "CLI integration: --ctx auto, --inspect-model extension"},
+    {"phase": 35, "objective": "Recommendation UX polish, docs, and real evidence"},
+    {"phase": 36, "objective": "Model family expansion #1 (Mistral)"},
+    {"phase": 37, "objective": "Model family expansion #2 (Phi, stretch) OR hardware validation expansion"},
+    {"phase": 38, "objective": "Upstream-hook feasibility investigation (no PR)"},
+    {"phase": 39, "objective": "v0.4 release hardening"},
+    {"phase": 40, "objective": "v0.4 stable release"}
+  ],
+  "risk_register": [
+    {"id": "R1", "risk": "memory-estimate false confidence (unmodeled compute-buffer overhead)", "likelihood": "MEDIUM", "impact": "HIGH"},
+    {"id": "R2", "risk": "auto-context chooses too-large a context", "likelihood": "LOW-MEDIUM", "impact": "HIGH"},
+    {"id": "R3", "risk": "compatibility overclaim", "likelihood": "MEDIUM", "impact": "MEDIUM"},
+    {"id": "R4", "risk": "recommendation duplicates planner logic", "likelihood": "LOW", "impact": "HIGH"},
+    {"id": "R5", "risk": "package regressions", "likelihood": "LOW", "impact": "MEDIUM"},
+    {"id": "R6", "risk": "patch maintenance against llama.cpp", "likelihood": "MEDIUM", "impact": "MEDIUM"},
+    {"id": "R7", "risk": "host-specific Vulkan evidence", "likelihood": "HIGH", "impact": "MEDIUM"},
+    {"id": "R8", "risk": "CLI complexity growth", "likelihood": "MEDIUM", "impact": "MEDIUM"},
+    {"id": "R9", "risk": "JSON schema drift", "likelihood": "LOW", "impact": "HIGH"},
+    {"id": "R10", "risk": "scope creep", "likelihood": "MEDIUM", "impact": "MEDIUM"}
+  ],
+  "product_copy": {
+    "tagline_v04_target_not_yet_adopted_in_readme": "You give it a GGUF. MEMBRANE figures out how it fits.",
+    "technical_subtitle_accurate_today": "Hardware-aware KV and GPU planning for local llama.cpp inference.",
+    "v04_theme_phrase": "From configuration to recommendation"
+  },
+  "patch_set_unchanged": [
+    "llama.cpp-membrane-kv-type-override.patch",
+    "llama.cpp-membrane-kv-device-override.patch"
+  ],
+  "cuda_readiness_note": "llama.cpp/ggml already has a CUDA backend; MEMBRANE's own device-enumeration code is vendor-neutral (ggml_backend_dev_t abstraction, no Vulkan-specific branching found in MEMBRANE's own code); no CUDA driver/toolchain confirmed installed on the maintainer's host despite CUDA-capable hardware being present in principle -- classified DEFERRED_NO_VALIDATION_HARDWARE, not implemented without real validation."
+}
