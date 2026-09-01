@@ -2,7 +2,7 @@
   "schema_version": 1,
   "label": "REAL",
   "version": "0.3.0",
-  "commit": "PENDING -- updated to the release-prep PR's own commit once committed, then again to the exact post-merge main commit before tagging (Section 33-35 of the Phase 31 task)",
+  "commit": "4f89b34ceb828e8eed10bc08bd72fe176f836cb2 (release-prep PR #41 head, pre-merge -- updated again to the exact post-merge main commit before tagging, Section 33-35 of the Phase 31 task)",
   "base_prerelease": "v0.3.0-rc3",
   "release_type": "stable",
   "compatibility_counts": {
@@ -112,6 +112,18 @@
     "Debian-family Linux, amd64 only -- no Fedora/RPM, Arch, Flatpak, Snap, AppImage, macOS, or Windows"
   ],
   "external_validation_status": "Still limited -- disclosed explicitly in README.md and docs/release-v0.3.0.md, not hidden. The maintainer made an explicit, informed decision to ship v0.3.0 stable now rather than wait for independent-host testers. This is a documented known limitation of the release, not a blocker (per this phase's own explicit brief).",
-  "ci": "PENDING -- updated with real run IDs once the release-prep PR's CI actually runs (Section 23: do not pre-mark green checks before they happen)",
-  "codeql": "PENDING -- same as ci above"
+  "ci": {
+    "status": "SUCCESS",
+    "head_sha": "4f89b34ceb828e8eed10bc08bd72fe176f836cb2",
+    "run_ids": {
+      "pull_request": 33495656092,
+      "push": 33495649242
+    },
+    "note": "35/35 checks green on PR #41 at this head, including a real fix mid-PR: distribution-check/first-run-check initially failed (run IDs 33494871169/33494836246, head 9a083b84) because their new git-show-based version checks need full git history, which actions/checkout@v4's default shallow clone does not have -- fixed by adding fetch-depth: 0 to those two jobs, reproduced and confirmed fixed with a real local shallow clone before pushing the fix."
+  },
+  "codeql": {
+    "status": "SUCCESS",
+    "head_sha": "4f89b34ceb828e8eed10bc08bd72fe176f836cb2",
+    "run_id": 33495656058
+  }
 }
