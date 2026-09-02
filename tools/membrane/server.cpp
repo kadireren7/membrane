@@ -253,6 +253,41 @@ static void	handle_models(s_membrane_server_model_state *st,
 	res.set_content(root.dump(), "application/json");
 }
 
+/* Section 37 of the Mega Phase A task: a membrane-specific (not OpenAI)
+ * status surface for the new `membrane status` CLI command below --
+ * never claims a daemon/process-management capability this project does
+ * not have (`serve` stays foreground-only); this is a thin, honest
+ * "what does the currently-loaded session look like" read. */
+static void	handle_status(s_membrane_server_model_state *st,
+				const std::string &bind, int port, const httplib::Request &,
+				httplib::Response &res)
+{
+	json	j;
+
+	j["running"] = true;
+	j["version"] = MEMBRANE_VERSION;
+	j["endpoint"] = "http://" + bind + ":" + std::to_string(port);
+	std::lock_guard<std::mutex>	lock(st->mtx);
+
+	if (st->model_loaded)
+	{
+		const char	*kv_name;
+
+		membrane_kv_precision_name_to_json(
+			st->session.gs.adaptive_used ? st->session.gs.adaptive_selected_mode
+				: MEMBRANE_KV_STORE_NATIVE, &kv_name);
+		j["loaded_model"] = st->loaded_name;
+		j["backend"] = st->session.gs.requested
+			? st->session.gs.backend_selected : "CPU";
+		j["gpu_layers"] = st->session.gs.gpu_layers_selected;
+		j["kv_precision"] = kv_name;
+	}
+	else
+		j["loaded_model"] = nullptr;
+	j["context_policy"] = "automatic";
+	res.set_content(j.dump(), "application/json");
+}
+
 static void	handle_chat_completions(s_membrane_server_model_state *st,
 				const membrane_registry_t &reg, const httplib::Request &req,
 				httplib::Response &res)
@@ -481,15 +516,17 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	signal(SIGTERM, handle_signal);
 
 	httplib::Server	svr;
+	int				port = opts.port;
 
 	svr.Get("/health", handle_health);
 	svr.Get("/v1/models", [&](const httplib::Request &rq,
 			httplib::Response &rs) { handle_models(&state, reg, rq, rs); });
+	svr.Get("/v1/status", [&](const httplib::Request &rq,
+			httplib::Response &rs)
+		{ handle_status(&state, bind, port, rq, rs); });
 	svr.Post("/v1/chat/completions", [&](const httplib::Request &rq,
 			httplib::Response &rs)
 		{ handle_chat_completions(&state, reg, rq, rs); });
-
-	int	port = opts.port;
 
 	if (!svr.bind_to_port(bind, port))
 	{

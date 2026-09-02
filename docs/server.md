@@ -1,11 +1,20 @@
 # MEMBRANE local server
 
-Mega Phase A, PR A3. `membrane serve` starts a long-lived local HTTP
-process exposing an OpenAI-compatible subset on top of the same reusable
-runtime-session core (`tools/membrane-run/runtime_session.h`, PR A1) and
-model registry (`tools/membrane/registry_core.h`, PR A2) the CLI already
-uses. `membrane-run` remains the direct inference entry point, unchanged
-by this phase.
+Mega Phase A, PR A3 (server) + PR A4 (compat polish). `membrane serve`
+starts a long-lived local HTTP process exposing an OpenAI-compatible
+subset on top of the same reusable runtime-session core
+(`tools/membrane-run/runtime_session.h`, PR A1) and model registry
+(`tools/membrane/registry_core.h`, PR A2) the CLI already uses.
+`membrane-run` remains the direct inference entry point, unchanged by
+this phase.
+
+**Real compatibility evidence (PR A4):** the official Python `openai`
+SDK (`pip install openai`), pointed at a running `membrane serve`
+instance with no code changes beyond `base_url`/`api_key`, correctly
+calls `client.models.list()`, `client.chat.completions.create()` (real
+generation, real usage/finish_reason parsing), and correctly raises its
+own typed `NotFoundError` from this server's 404 response — see
+`results/runtime-service/validation.json`.
 
 ```
 membrane model add qwen /path/to/model.gguf
@@ -34,6 +43,15 @@ Then point any OpenAI-compatible client at `http://127.0.0.1:8642/v1`.
 - `GET /health` — `{"status":"ok","version":"0.3.0"}`.
 - `GET /v1/models` — every model currently in the registry
   (`membrane model add`), OpenAI `list` shape.
+- `GET /v1/status` — membrane-specific (not an OpenAI endpoint), backs
+  the `membrane status` CLI command (PR A4, Section 37 of the task): a
+  thin HTTP client against an already-running `serve` instance, never a
+  process-management/daemon capability this project doesn't have.
+  `{"running":true,"version":"...","endpoint":"http://...","loaded_model":
+  "qwen"|null,"backend":"CPU"|"Vulkan","gpu_layers":N,"kv_precision":
+  "native"|"q8"|"q5","context_policy":"automatic"}` (the last four
+  fields are omitted/null until the first generation request has loaded
+  a model).
 - `POST /v1/chat/completions` — see below.
 
 `POST /v1/completions` (the raw-prompt, non-chat endpoint) is not
@@ -140,8 +158,18 @@ JSON always: `{"error": {"code": "...", "message": "..."}}`.
 ## Not implemented this phase
 
 - `POST /v1/completions` (non-chat).
-- `stream: true` (SSE streaming).
+- `stream: true` (SSE streaming) — reevaluated at PR A4 (Section 36 of
+  the task) and deliberately deferred again, not merely carried over
+  unexamined: the existing generation path (`membrane_session_generate()`,
+  PR A1) drives its token callback in a **push** model (the decode loop
+  calls back per-token, synchronously, on the request's own worker
+  thread), while cpp-httplib's chunked content provider is **pull**-based
+  (httplib calls back to ask for the next chunk). Bridging the two safely
+  needs a background generation thread plus a synchronized queue and a
+  real client-disconnect/cancellation story — a genuine architecture
+  change, not a small addition, and out of proportion for a compat-polish
+  phase per Section 36's own "if not clean, defer" allowance. `stream:
+  true` still returns `400 STREAMING_NOT_SUPPORTED`, never faked.
 - Sampling beyond greedy decoding (temperature/top_p/etc. are accepted
   and ignored, never faked).
-- `membrane status` (a separate future command).
 - Multiple simultaneously-resident models.

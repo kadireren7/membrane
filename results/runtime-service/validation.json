@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "phase": "mega-phase-a-runtime-service",
+  "membrane_commit": "9f8c57c2a5a94d94c9f0e4ccb726d7eb3e9b9a43",
+  "generated_at": "2026-09-02T00:00:00Z",
+  "note": "Mega Phase A (PRs A1-A4): transforms MEMBRANE from a command-oriented local inference runtime into a persistent local AI backend an OpenAI-compatible application can talk to, without ever building a second runtime/planner implementation. Every REAL row is a genuine local invocation on this dev host (CPU-only build -- no GPU backend compiled into build-llama-final/build-llama-asan; the runtime-session/planner code paths are backend-agnostic and were already validated on real Vulkan hardware in earlier phases, see results/context-recommendation/cli-validation.json). SYNTHETIC rows are ctest-registered unit/integration tests with no real GGUF model dependency (CI-safe). SOURCE_ANALYSIS rows are direct code-reading confirmations, not runs.",
+  "runtime_session": {
+    "label": "REAL",
+    "pr": "A1",
+    "squash_sha": "74586e98b708d103384d0141c460781dd8b2cb69",
+    "evidence": [
+      "runtime-session-smoke (dev-local harness, real SmolLM2-135M): membrane_model_open() called once, membrane_session_generate() called 3 times sequentially -- the llama_model* pointer was identical across all 3 calls (proven via printed pointer value), confirming no reload.",
+      "The same 3-request smoke run, byte-diffed against the plain single-shot membrane-run CLI on the two prompts that produced empty output (immediate EOG under greedy decoding), confirmed identical behavior -- a genuine model/prompt property, not a session-reuse regression.",
+      "Real ASan-linked membrane-run CLI run (--auto --json) through the refactored code path: 0 findings.",
+      "test_runtime_session: 12 ctest-registered unit tests, CI-safe (no real model required), covering init/shutdown, deterministic KV-byte arithmetic, planner-branch composition, compat rejection, and clean failure on a nonexistent model path."
+    ]
+  },
+  "model_registry": {
+    "label": "REAL",
+    "pr": "A2",
+    "squash_sha": "1acd97865ee09ede1614f24c0552107d6eb30fbe",
+    "evidence": [
+      "Real CLI cycle (isolated MEMBRANE_MODELS_PATH, real local SmolLM2 fixtures): add, duplicate-name rejection, list (human + --json), inspect, invalid-GGUF rejection against a real non-GGUF file, nonexistent-path rejection, remove -- all confirmed against the actual persisted JSON file's content.",
+      "A real moved/deleted-file scenario correctly reported as MISSING by both `list` and `inspect`.",
+      "test_registry_core: 10 ctest-registered unit tests against real temp directories (never the user's own registry). As of PR A4, genuinely ASan/UBSan-instrumented (a real gap found and fixed this phase -- see known_limitations)."
+    ]
+  },
+  "http_server": {
+    "label": "REAL",
+    "pr": "A3",
+    "squash_sha": "9f8c57c2a5a94d94c9f0e4ccb726d7eb3e9b9a43",
+    "evidence": [
+      "Full real lifecycle: start, GET /health, GET /v1/models, a real POST /v1/chat/completions (real llama_chat_apply_template() applied, real context-recommendation+host-memory-guard+joint-planner plan resolved, real generation, real OpenAI-shaped JSON with the additive `membrane` object).",
+      "Model reuse: exactly 1 real weight load (confirmed via the real llama.cpp `load_tensors:` log line, not just an exit code) across 3 sequential requests to the same model.",
+      "Model switch: exactly 1 real weight load per switch across smol -> smol360 -> smol again.",
+      "No-usable-chat-template rejection proven against a real fixture (stories15M.gguf, independently confirmed via --inspect-model to genuinely lack readable hparams/template metadata) -- 500 CHAT_TEMPLATE_UNAVAILABLE.",
+      "Clean SIGTERM shutdown confirmed repeatedly, after fixing a real shutdown race (httplib::Server::is_running() startup race -- see known_limitations for the pre-fix failure mode).",
+      "test_server: 8 ctest-registered black-box HTTP tests against a real membrane_server_run() instance (isolated empty registry, no real model)."
+    ]
+  },
+  "openai_client_compat": {
+    "label": "REAL",
+    "pr": "A4",
+    "client": "official Python `openai` SDK, installed via pip into an isolated venv, version 3.7.0",
+    "evidence": [
+      "client.models.list() correctly parsed this server's /v1/models response and found the registered model.",
+      "client.chat.completions.create() (real generation against SmolLM2-135M) correctly parsed id/model/finish_reason/choices[0].message/usage -- no manual JSON handling on the client side.",
+      "An unknown model correctly raised the SDK's own typed openai.NotFoundError from this server's 404 response, confirming the error JSON shape is genuinely SDK-compatible, not just superficially close."
+    ]
+  },
+  "server_status_command": {
+    "label": "REAL",
+    "pr": "A4",
+    "evidence": [
+      "`membrane status` against a real running server before any request: running=true, loaded_model=null.",
+      "`membrane status` after a real chat completion: loaded_model, backend, gpu_layers, kv_precision all reflect the real resolved plan.",
+      "`membrane status` against no running server: running=false, no crash, no hang (bounded connection timeout)."
+    ]
+  },
+  "context_auto_in_server": {
+    "label": "REAL",
+    "pr": "A3",
+    "note": "A client never specifies ctx/gpu_layers/kv_precision/kv_placement -- the server internally runs the same context-recommendation + host-memory-guard + joint-planner pipeline --ctx auto uses (membrane_resolve_ctx_auto(), PR A1), using the request that triggers a model's first load as the real prompt input.",
+    "disclosed_limitation": "GPU layers/KV precision are fixed once, at first load, from whichever request triggered it -- they cannot replan without a model switch. A much larger subsequent request to an already-loaded model is not replanned. Documented in docs/server.md, not hidden."
+  },
+  "security_scope": {
+    "label": "SOURCE_ANALYSIS",
+    "facts": [
+      "Default bind is 127.0.0.1 -- confirmed in server.cpp's own option defaults and membrane_server_run()'s explicit refusal of any other bind address without --allow-non-loopback.",
+      "No authentication anywhere in the request path (confirmed: no Authorization-header check exists in server.cpp) -- only defensible for loopback-only binding, documented as such.",
+      "No telemetry, no outbound network call anywhere in tools/membrane/server.cpp (confirmed: the only network I/O is the httplib::Server's own inbound listener).",
+      "HTTP-facing error text is built independently in server.cpp (send_json_error()), never forwarding membrane_run_error_t's terminal-oriented text (which can include a real absolute path) verbatim -- confirmed by test_server's own filesystem-path-leak assertion on the MODEL_NOT_FOUND error."
+    ]
+  },
+  "model_cache_policy": {
+    "label": "REAL",
+    "policy": "one active model at a time",
+    "evidence": "See http_server.evidence above (model reuse and model switch rows) -- both directly measured, not assumed from the code alone."
+  },
+  "streaming_decision": {
+    "label": "SOURCE_ANALYSIS",
+    "decision": "DEFERRED (reevaluated at PR A4 per Section 36 of the task, not carried over unexamined)",
+    "reason": "membrane_session_generate()'s token callback is push-based (the decode loop calls back per-token, synchronously, on the request's own thread); cpp-httplib's chunked content provider is pull-based (httplib calls back to ask for the next chunk). Bridging the two safely requires a background generation thread plus a synchronized queue and a real client-disconnect/cancellation story -- a genuine architecture change, not a small addition. stream=true still returns a clear, honest 400 STREAMING_NOT_SUPPORTED, never faked."
+  },
+  "known_limitations": {
+    "label": "SOURCE_ANALYSIS",
+    "items": [
+      "Sampling is greedy-only (argmax) -- the existing decode loop (tools/membrane-llama-runtime/decode_loop.cpp's run_generation()) has no temperature/top_p support. Request fields are accepted and ignored, never faked; the response's own additive membrane.sampling field says so explicitly.",
+      "PR A2's own original 'ASan/UBSan clean' claim for test_registry_core was not actually testing anything -- membrane_registry_core linked no sanitizer flags at all (confirmed via `nm`: zero __asan_* symbols in the built binary even under -DMEMBRANE_ENABLE_SANITIZERS=ON). Fixed in PR A3 (retroactive correction, not carried forward silently) -- confirmed fixed via the same `nm` check, now showing real instrumentation.",
+      "PR A3's own original claim that 'CI's own existing thread-sanitizer job will cover' the new multi-threaded server code was also incorrect -- that job never sets MEMBRANE_ENABLE_LLAMA, so it built none of the new code. Fixed in PR A3 by adding a separate, target-scoped server-thread-sanitizer CI job (confirmed passing in CI on the merged PR).",
+      "A genuine shutdown deadlock was found and fixed during PR A3 development: httplib::Server::is_running() starts false until the listener thread's own listen_internal() actually begins running; without svr.wait_until_ready(), the main thread's poll loop could see is_running()==false on its very first check, exit immediately, make svr.stop() a silent no-op, and then block forever in listener.join() on a listener that, by then, had actually started serving. Confirmed directly with an instrumented build (SIGTERM delivered and handled, process never exited) before the fix.",
+      "A request-shape-validation-ordering bug was found and fixed during PR A3 development: malformed chat messages were validated AFTER the model-registry lookup, so a malformed message against an unregistered model name incorrectly returned 404 instead of 400. Reordered.",
+      "GPU-layers/KV-precision context-auto planning is fixed at first model load per docs/server.md's own disclosed limitation (see context_auto_in_server above) -- not re-planned per request against an already-loaded model."
+    ]
+  },
+  "no_oom_free_guarantee": "Recommendation/planning remains 'estimated safe fit,' never a guaranteed-no-OOM promise -- same wording discipline as Phase 33/34/35's own context-recommendation core this server reuses unchanged."
+}

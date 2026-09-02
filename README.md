@@ -78,6 +78,24 @@ membrane-run --model model.gguf --prompt "Hello" --ctx 2048 --auto
 
 ![--auto fans out into GPU layers, KV type, and KV residency, all automatically managed; an explicit --kv q8 override fixes only KV type, leaving the other two on auto](docs/assets/membrane-auto.svg)
 
+### As a local OpenAI-compatible backend
+
+Prefer talking to MEMBRANE over HTTP instead of the CLI directly (any
+OpenAI-compatible client/library, no code changes beyond `base_url`)?
+
+```bash
+membrane model add qwen /path/to/model.gguf
+membrane serve
+```
+
+Then point any OpenAI-compatible client at `http://127.0.0.1:8642/v1` —
+`ctx`, GPU layers, KV precision, and KV placement are all resolved
+automatically per model, exactly like `--auto` above. See
+[`docs/server.md`](docs/server.md) for the full endpoint/security/
+limitations reference and [`docs/model-registry.md`](docs/model-registry.md)
+for `membrane model`. `membrane-run` (below) remains the direct CLI
+entry point — nothing about it changes.
+
 You never need to know `q8`/`q5`, GPU layer counts, or KV placement to use
 `--auto` — see "Precision and placement are separate" below only if you
 want manual control. `membrane-run --list-devices` lists every backend
