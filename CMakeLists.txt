@@ -527,6 +527,12 @@ if(MEMBRANE_ENABLE_LLAMA)
   # membrane-llama-run remains the diagnostic/legacy tool (Phase 5/6
   # shadow/inject modes).
   add_subdirectory(tools/membrane-run)
+
+  # Mega Phase A, PR A2: `membrane`, the new product control CLI (model
+  # registry today; `membrane serve`/`membrane status` are future work,
+  # not this PR) -- a second binary alongside membrane-run, which stays
+  # the unchanged inference entry point.
+  add_subdirectory(tools/membrane)
 endif()
 
 if(MEMBRANE_BUILD_TESTS)

@@ -448,7 +448,7 @@ jobs:
       - name: CPU build
         run: |
           cmake --build build-cpu-install -j2 --target membrane-run \
-            test_runtime_session
+            membrane test_runtime_session test_registry_core
 
       # Mega Phase A, PR A1: this is the ONLY CI coverage test_runtime_
       # session gets (same pre-existing gap fallback-controller-tests
@@ -461,10 +461,10 @@ jobs:
       # CI-safe by construction: no real GGUF model file is required
       # (models/ is gitignored) -- see test_runtime_session.cpp's own
       # top comment.
-      - name: Test runtime-session core
+      - name: Test runtime-session core and model registry
         run: |
           ctest --test-dir build-cpu-install --output-on-failure \
-            -R test_runtime_session
+            -R 'test_runtime_session|test_registry_core'
 
       - name: CPU install to temp prefix
         run: |
@@ -481,6 +481,26 @@ jobs:
           # actually contains this phase's CLI change, not just that
           # --help doesn't crash.
           /tmp/membrane-install-cpu/bin/membrane-run --help | grep -q -- '--ctx N|auto'
+
+      # Mega Phase A, PR A2: the new `membrane` control CLI installs and
+      # runs outside the build tree too -- a real end-to-end model add/
+      # list/inspect/remove cycle against a temp registry (MEMBRANE_
+      # MODELS_PATH override, never the runner's own $HOME) using the
+      # already-installed membrane-run binary's own model file is not
+      # available here (no real GGUF model in CI -- models/ is
+      # gitignored), so this only proves the installed binary's CLI
+      # surface itself (--help/--version/error paths), matching --doctor's
+      # own no-model-needed precedent above.
+      - name: CPU installed membrane control CLI runs outside the build tree
+        run: |
+          cd /tmp
+          /tmp/membrane-install-cpu/bin/membrane --version
+          /tmp/membrane-install-cpu/bin/membrane --help
+          /tmp/membrane-install-cpu/bin/membrane model list --json > /dev/null
+          MEMBRANE_MODELS_PATH=/tmp/ci-membrane-models.json \
+            /tmp/membrane-install-cpu/bin/membrane model add ghost \
+            /nonexistent.gguf; test $? -eq 3
+          rm -f /tmp/ci-membrane-models.json
 
       - name: CPU uninstall removes exactly the installed files
         run: |
