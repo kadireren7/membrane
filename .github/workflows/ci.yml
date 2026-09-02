@@ -497,9 +497,20 @@ jobs:
           /tmp/membrane-install-cpu/bin/membrane --version
           /tmp/membrane-install-cpu/bin/membrane --help
           /tmp/membrane-install-cpu/bin/membrane model list --json > /dev/null
+          # A nonexistent model path is EXPECTED to exit 3 -- capture the
+          # real exit code explicitly rather than letting `set -e` (this
+          # step's own shell mode) abort the script on that expected
+          # nonzero exit before the check below ever runs.
+          set +e
           MEMBRANE_MODELS_PATH=/tmp/ci-membrane-models.json \
             /tmp/membrane-install-cpu/bin/membrane model add ghost \
-            /nonexistent.gguf; test $? -eq 3
+            /nonexistent.gguf
+          rc=$?
+          set -e
+          if [ "$rc" -ne 3 ]; then
+            echo "expected exit 3 for a nonexistent model path, got $rc"
+            exit 1
+          fi
           rm -f /tmp/ci-membrane-models.json
 
       - name: CPU uninstall removes exactly the installed files
