@@ -9,22 +9,81 @@
 # it is built here.
 set(MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/vendor)
+# Mega Phase A, PR A3: cpp-httplib -- also vendored inside the llama.cpp
+# submodule (same directory as nlohmann/json above), so `membrane serve`
+# adds zero new external dependencies (Section 17 of the task: "do not
+# import a huge web framework... casually"). Header-only, HTTP only (no
+# CPPHTTPLIB_OPENSSL_SUPPORT defined -- this server is loopback-only by
+# default and never needs TLS), so no extra system library beyond
+# pthread (already required by std::thread, used for the listener
+# thread).
+set(MEMBRANE_CPP_HTTPLIB_INCLUDE_DIR
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/vendor/cpp-httplib)
+find_package(Threads REQUIRED)
+
+# This vendored copy is split header+impl (httplib.h declares, httplib.cpp
+# defines -- confirmed directly: linking against the header alone produced
+# undefined references to every httplib::Server/Response member function),
+# not the classic single-header drop-in -- compiled once here as its own
+# static library, upstream's own -w (this is third-party code, not ours)
+# carried over from its own vendor/cpp-httplib/CMakeLists.txt.
+add_library(membrane_cpp_httplib STATIC
+  ${MEMBRANE_CPP_HTTPLIB_INCLUDE_DIR}/httplib.cpp)
+set_target_properties(membrane_cpp_httplib PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+  POSITION_INDEPENDENT_CODE ON)
+target_compile_options(membrane_cpp_httplib PRIVATE -w)
+target_include_directories(membrane_cpp_httplib PUBLIC
+  ${MEMBRANE_CPP_HTTPLIB_INCLUDE_DIR})
+target_link_libraries(membrane_cpp_httplib PUBLIC Threads::Threads)
 
 add_library(membrane_registry_core STATIC registry_core.cpp)
 set_target_properties(membrane_registry_core PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
+# Real bug found and fixed (Mega Phase A, PR A3): this library previously
+# linked nothing at all, so it was NEVER actually compiled with ASan/
+# UBSan/TSan instrumentation under a sanitizer configure -- confirmed
+# directly (`nm` on the built .a/test binary showed zero __asan_*
+# symbols) -- meaning PR A2's own "ASan/UBSan clean" claim for
+# test_registry_core was not actually testing anything. membrane_
+# sanitizers is the project's own INTERFACE library carrying the real
+# -fsanitize flags (see the root CMakeLists.txt's own top-of-file
+# comment) -- every other pure module links it PUBLIC; this one now
+# does too.
+target_link_libraries(membrane_registry_core PUBLIC membrane_sanitizers)
 target_include_directories(membrane_registry_core PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_registry_core PRIVATE
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
+# Mega Phase A, PR A3: the local OpenAI-compatible HTTP server (server.h's
+# own top comment has the full contract) -- its own library, not compiled
+# directly into the `membrane` executable, so test_server.cpp (below) can
+# link and drive a REAL membrane_server_run() instance without duplicating
+# any of its code.
+add_library(membrane_server STATIC server.cpp)
+set_target_properties(membrane_server PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_server PUBLIC membrane_registry_core
+  membrane_runtime_session membrane_cpp_httplib membrane_product_cli llama)
+target_include_directories(membrane_server PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+target_include_directories(membrane_server PRIVATE
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
 
 add_executable(membrane main.cpp model_cmd.cpp)
 set_target_properties(membrane PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane PRIVATE membrane_registry_core
-  membrane_gpu_device membrane_runtime_core membrane_product_cli llama)
+  membrane_gpu_device membrane_runtime_core membrane_product_cli
+  membrane_runtime_session membrane_server llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
   ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
@@ -56,4 +115,17 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_registry_core PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_registry_core COMMAND test_registry_core)
+
+  # Mega Phase A, PR A3: black-box HTTP tests (test_server.cpp's own top
+  # comment) against a real membrane_server_run() instance -- CI-safe, no
+  # real GGUF model (an isolated, empty temp-directory registry).
+  add_executable(test_server test_server.cpp)
+  set_target_properties(test_server PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_server PRIVATE membrane_server llama)
+  target_include_directories(test_server PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+  add_test(NAME test_server COMMAND test_server)
 endif()

@@ -1,17 +1,20 @@
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include "model_cmd.h"
+#include "server.h"
 #include "product_cli.h"
 
 /*
- * Mega Phase A, PR A2: `membrane`, the new product CONTROL CLI (Section
- * 10 of the task) -- distinct from `membrane-run`, which stays the
- * inference entry point (backwards compatible, unchanged by this PR).
- * `membrane model ...` is this phase's only subcommand; `membrane serve`/
- * `membrane status` are future Mega Phase A work (A3), not added here.
+ * Mega Phase A: `membrane`, the new product CONTROL CLI (Section 10) --
+ * distinct from `membrane-run`, which stays the inference entry point
+ * (backwards compatible, unchanged since PR A2). `membrane model ...`
+ * (PR A2) and `membrane serve` (PR A3, the local OpenAI-compatible HTTP
+ * server -- see server.h) are both here; `membrane status` is future
+ * work, not added yet.
  */
 
 static void	print_usage(FILE *out)
@@ -25,6 +28,18 @@ static void	print_usage(FILE *out)
 		"registered model\n");
 	fprintf(out, "  membrane model inspect NAME       show one "
 		"registered model's details\n");
+	fprintf(out, "  membrane serve                    start a local "
+		"OpenAI-compatible HTTP server\n");
+	fprintf(out, "\n");
+	fprintf(out, "serve options:\n");
+	fprintf(out, "  --port N                           listen port "
+		"(default 8642)\n");
+	fprintf(out, "  --bind ADDRESS                     bind address "
+		"(default 127.0.0.1 -- loopback only)\n");
+	fprintf(out, "  --allow-non-loopback                required to bind "
+		"any address other than 127.0.0.1/localhost;\n");
+	fprintf(out, "                                      the server has "
+		"NO authentication, see --help output above\n");
 	fprintf(out, "\n");
 	fprintf(out, "Options:\n");
 	fprintf(out, "  --json                             machine-readable "
@@ -74,6 +89,30 @@ int	main(int argc, char **argv)
 				args.end());
 
 		return (membrane_model_cmd_dispatch(model_args, want_json));
+	}
+	if (args[0] == "serve")
+	{
+		membrane_server_options_t	opts;
+
+		opts.bind_address = "127.0.0.1";
+		opts.port = 8642;
+		opts.allow_non_loopback = false;
+		for (i = 1; i < (int)args.size(); ++i)
+		{
+			if (args[i] == "--port" && i + 1 < (int)args.size())
+				opts.port = atoi(args[++i].c_str());
+			else if (args[i] == "--bind" && i + 1 < (int)args.size())
+				opts.bind_address = args[++i];
+			else if (args[i] == "--allow-non-loopback")
+				opts.allow_non_loopback = true;
+			else
+			{
+				fprintf(stderr, "membrane serve: unknown option '%s'\n",
+					args[i].c_str());
+				return (MEMBRANE_EXIT_CLI_ERROR);
+			}
+		}
+		return (membrane_server_run(opts));
 	}
 	fprintf(stderr, "membrane: unknown command '%s'\n", args[0].c_str());
 	print_usage(stderr);

@@ -68,6 +68,15 @@ typedef struct s_membrane_registry_error
  * HOME is set -- no invented default. */
 std::string	membrane_registry_default_path(void);
 
+/* membrane_registry_default_path(), but first honoring a MEMBRANE_MODELS_
+ * PATH environment variable override when set and non-empty. The ONE
+ * path-resolution function every real command (`membrane model ...`,
+ * `membrane serve`) uses -- never two independently-drifting copies of
+ * this same three-way fallback (this override exists specifically so
+ * tests/CI never touch a real user registry; see model_cmd.cpp's
+ * original standalone version of this function, which this replaces). */
+std::string	membrane_registry_resolve_path(void);
+
 /* Loads registry_path into *out. A NONEXISTENT file is NOT an error --
  * *out is left as an empty, valid registry (Section 10: the first `model
  * add` on a fresh machine must not require pre-creating the file/
