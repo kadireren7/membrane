@@ -33,6 +33,15 @@ std::string	membrane_registry_default_path(void)
 	return ("");
 }
 
+std::string	membrane_registry_resolve_path(void)
+{
+	const char	*override_path = getenv("MEMBRANE_MODELS_PATH");
+
+	if (override_path != NULL && override_path[0] != '\0')
+		return (std::string(override_path));
+	return (membrane_registry_default_path());
+}
+
 static void	set_err(membrane_registry_error_t *err, const char *code,
 				const std::string &message)
 {

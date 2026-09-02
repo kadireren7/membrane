@@ -18,14 +18,6 @@
 
 using json = nlohmann::json;
 
-static std::string	registry_path_or_default(void)
-{
-	const char	*override_path = getenv("MEMBRANE_MODELS_PATH");
-
-	if (override_path != NULL && override_path[0] != '\0')
-		return (std::string(override_path));
-	return (membrane_registry_default_path());
-}
 
 static bool	stat_file(const std::string &path,
 				e_membrane_registry_stat_status *status,
@@ -115,7 +107,7 @@ static int	cmd_add(const std::vector<std::string> &args, bool want_json)
 	entry.file_mtime_ns = mtime_ns;
 	entry.added_at_unix = (int64_t)time(NULL);
 
-	std::string				registry_path = registry_path_or_default();
+	std::string				registry_path = membrane_registry_resolve_path();
 	membrane_registry_t		reg;
 	membrane_registry_error_t	err;
 
@@ -166,7 +158,7 @@ static int	cmd_remove(const std::vector<std::string> &args, bool want_json)
 			"NAME");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
-	std::string				registry_path = registry_path_or_default();
+	std::string				registry_path = membrane_registry_resolve_path();
 	membrane_registry_t		reg;
 	membrane_registry_error_t	err;
 
@@ -218,7 +210,7 @@ static json	entry_status_json(const membrane_registry_entry_t &e)
 static int	cmd_list(const std::vector<std::string> &args, bool want_json)
 {
 	(void)args;
-	std::string				registry_path = registry_path_or_default();
+	std::string				registry_path = membrane_registry_resolve_path();
 	membrane_registry_t		reg;
 	membrane_registry_error_t	err;
 
@@ -263,7 +255,7 @@ static int	cmd_inspect(const std::vector<std::string> &args, bool want_json)
 			"NAME");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
-	std::string				registry_path = registry_path_or_default();
+	std::string				registry_path = membrane_registry_resolve_path();
 	membrane_registry_t		reg;
 	membrane_registry_error_t	err;
 

@@ -448,7 +448,7 @@ jobs:
       - name: CPU build
         run: |
           cmake --build build-cpu-install -j2 --target membrane-run \
-            membrane test_runtime_session test_registry_core
+            membrane test_runtime_session test_registry_core test_server
 
       # Mega Phase A, PR A1: this is the ONLY CI coverage test_runtime_
       # session gets (same pre-existing gap fallback-controller-tests
@@ -460,11 +460,13 @@ jobs:
       # controller-tests' cheaper target-scoped-without-llama trick).
       # CI-safe by construction: no real GGUF model file is required
       # (models/ is gitignored) -- see test_runtime_session.cpp's own
-      # top comment.
-      - name: Test runtime-session core and model registry
+      # top comment. PR A3's test_server joins the same list for the
+      # same reason (a real httplib::Server needs llama.h too, via
+      # membrane_server -> membrane_runtime_session).
+      - name: Test runtime-session core, model registry, and HTTP server
         run: |
           ctest --test-dir build-cpu-install --output-on-failure \
-            -R 'test_runtime_session|test_registry_core'
+            -R 'test_runtime_session|test_registry_core|test_server'
 
       - name: CPU install to temp prefix
         run: |
@@ -512,6 +514,44 @@ jobs:
             exit 1
           fi
           rm -f /tmp/ci-membrane-models.json
+
+      # Mega Phase A, PR A3: the installed `membrane serve` binary really
+      # starts, listens, answers /health, and stops cleanly on SIGTERM --
+      # no real GGUF model needed (empty registry; real chat-completion
+      # generation is covered by test_server's own request-validation
+      # suite above plus the dev-local end-to-end smoke, not CI).
+      - name: CPU installed membrane serve starts, answers, and stops cleanly
+        run: |
+          MEMBRANE_MODELS_PATH=/tmp/ci-serve-models.json \
+            /tmp/membrane-install-cpu/bin/membrane serve --port 18942 &
+          server_pid=$!
+          ready=0
+          for _ in $(seq 1 50); do
+            if curl -sf http://127.0.0.1:18942/health > /tmp/ci-health.json; then
+              ready=1
+              break
+            fi
+            sleep 0.1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "membrane serve never answered /health"
+            kill -KILL "$server_pid" 2>/dev/null || true
+            exit 1
+          fi
+          grep -q '"status":"ok"' /tmp/ci-health.json
+          kill -TERM "$server_pid"
+          for _ in $(seq 1 50); do
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 0.1
+          done
+          if kill -0 "$server_pid" 2>/dev/null; then
+            echo "membrane serve did not exit within 5s of SIGTERM"
+            kill -KILL "$server_pid" 2>/dev/null || true
+            exit 1
+          fi
+          rm -f /tmp/ci-serve-models.json /tmp/ci-health.json
 
       - name: CPU uninstall removes exactly the installed files
         run: |
