@@ -227,19 +227,31 @@ residual gaps:
    allocations can all still vary independently of anything estimated
    here.
 
-## Phase 35 CLI handoff
+## Phase 35 CLI handoff -- DONE
 
-Not implemented this phase. Expected scope, recorded for Phase 35:
+`--ctx auto` (Phase 35, `docs/context-auto-cli.md`) now reuses this
+exact guard, integrated via Phase 33's recommendation core. The
+explicit-run policy question left open above is resolved conservatively:
+an explicit `--ctx N` run still gets **no** host-memory check at all
+(`main.cpp` is otherwise unchanged) -- the guard only runs for `--ctx
+auto`. A fresh re-check immediately before the real, expensive model
+load (Section 18 of the Phase 35 task) was added specifically for
+`--ctx auto`, using this same guard against freshly-read host memory,
+failing clearly (`CTX_AUTO_HOST_MEMORY_STALE_AT_APPLY`) rather than
+proceeding on a stale snapshot.
 
-- `--ctx auto`, reusing this exact core (Phase 33's recommender +
-  Phase 34's host-memory guard together).
-- The explicit-run backward-compatibility policy left open above
-  (whether/how `--ctx N` should surface host-memory information).
-- Real, larger-model-scale host-memory evidence, if a suitable
-  environment becomes available, to validate or revise the reserve
-  policy's percentage term.
-- If Phase 35's own scope naturally touches `joint_planner.c` for CLI
-  integration reasons, revisit the CPU-only adaptive fix documented
-  above -- otherwise it remains open for a dedicated follow-up.
-- Human- and JSON-facing explanation output built from this core's
-  fields, no new planner ranking.
+Real, larger-model-scale host-memory evidence remains not gathered
+(same 5.6 GiB dev-host constraint as Phase 34) -- the reserve policy's
+percentage term is still unvalidated beyond SmolLM2-135M's own scale.
+
+The deferred CPU-only adaptive fix inside `joint_planner.c` itself is
+**still not implemented** -- Phase 35 did not touch `joint_planner.c`
+at all. Instead, `--ctx auto` routes the one broken combination
+(CPU-only, `--kv adaptive`) through a small, separate resolution path
+in `main.cpp` (`resolve_ctx_auto_cpu_adaptive()`) that composes the
+same underlying pure functions (`membrane_adaptive_kv_resolve()` with
+the real CPU-only argument, this guard) in a new outer loop -- proven
+working end-to-end via real local smoke (`results/context-
+recommendation/cli-validation.json`). The `joint_planner.c` fix
+documented above remains open for a dedicated follow-up if ever
+needed.

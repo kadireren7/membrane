@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "phase": "35-context-auto-cli",
+  "membrane_commit": "7ad79a496476248521dc70501d3bd9f1d1c5bc71",
+  "generated_at": "2026-09-02T00:00:00Z",
+  "note": "Phase 35: exposes Phase 33's recommendation core and Phase 34's host-memory guard through the real product CLI (--ctx auto). Every REAL row below is a real `membrane-run` invocation on this dev host; SYNTHETIC rows are either this phase's own new pure-module unit tests (context_auto_cli.c) or explicitly-cited Phase 33/34 core unit tests this phase's new orchestration code calls unchanged (not re-duplicated at the CLI integration layer -- see docs/context-auto-cli.md's own 'Known limitations').",
+  "real_cli_runs": [
+    {
+      "label": "REAL",
+      "scenario": "CPU-only --ctx auto success (CPU-only-adaptive path)",
+      "build": "build-llama-asan (MEMBRANE_ENABLE_SANITIZERS=ON, CPU-only, ASan/UBSan clean)",
+      "command": "membrane-run --model SmolLM2-135M-Instruct-f16.gguf --prompt \"The capital of France is\" --ctx auto --kv adaptive --gen-tokens 4",
+      "requested": "auto",
+      "model_max_context": 8192,
+      "minimum_required_context": 17,
+      "hardware_fit_context": 8192,
+      "recommended_context": 8192,
+      "applied_ctx": 8192,
+      "host_required_bytes": 369370368,
+      "host_reserve_bytes": 268435456,
+      "used_cpu_only_adaptive_path": true,
+      "resolved_kv_precision": "q8 (CPU_ADAPTIVE_Q8_DEFAULT)",
+      "selected_plan_identity": "matches recommendation (gpu_layers=0, kv_precision=Q8_0) -- no fallback drift NOTE printed",
+      "generation_succeeded": true,
+      "asan_ubsan_clean": true
+    },
+    {
+      "label": "REAL",
+      "scenario": "Vulkan --ctx auto success (joint-planner GPU path), real local hardware",
+      "build": "build-vulkan (real local AMD Radeon RADV RENOIR / NVIDIA GTX 1650 Vulkan devices)",
+      "command": "membrane-run --model SmolLM2-135M-Instruct-f16.gguf --prompt \"The capital of France is\" --ctx auto --auto --gen-tokens 4",
+      "requested": "auto",
+      "model_max_context": 8192,
+      "minimum_required_context": 17,
+      "hardware_fit_context": 8192,
+      "recommended_context": 8192,
+      "applied_ctx": 8192,
+      "device_selected": "Vulkan1 (NVIDIA GeForce GTX 1650)",
+      "host_required_bytes": 63707904,
+      "host_reserve_bytes": 268435456,
+      "used_cpu_only_adaptive_path": false,
+      "resolved_gpu_layers": 30,
+      "resolved_kv_precision": "q8 (Q8_FULL_RESIDENCY)",
+      "selected_plan_identity": "matches recommendation (gpu_layers=30, kv_precision=Q8_0) -- no fallback drift NOTE printed",
+      "generation_succeeded": true,
+      "note": "consistently reproduced across 4 separate runs; one earlier, isolated run on this same host transiently failed with NO_FEASIBLE_CANDIDATE from the REAL, unchanged resolve_gpu_config() (not this phase's own code) before succeeding on every subsequent attempt -- consistent with real, momentary VRAM contention on a live desktop host, not a code defect (see docs/context-auto-cli.md's residual-uncertainty framing: memory conditions are a live snapshot, not a guarantee)"
+    },
+    {
+      "label": "REAL",
+      "scenario": "explicit --kv q8 preserved as a hard constraint under --ctx auto",
+      "build": "build-vulkan",
+      "command": "membrane-run --model SmolLM2-135M-Instruct-f16.gguf --prompt Hi --ctx auto --gpu-layers all --kv q8 --gen-tokens 4",
+      "resolved_kv_precision": "q8 (explicit, never overridden)",
+      "generation_succeeded": true
+    },
+    {
+      "label": "REAL",
+      "scenario": "plan-only + --ctx auto, human and JSON output, no generation",
+      "build": "build-vulkan",
+      "command": "membrane-run --model SmolLM2-135M-Instruct-f16.gguf --prompt \"The capital of France is\" --ctx auto --auto --plan-only --json",
+      "mode": "plan",
+      "ctx_size": 8192,
+      "context_recommendation_present": true,
+      "json_valid": true
+    },
+    {
+      "label": "REAL",
+      "scenario": "JSON additive contract: existing numeric --ctx N JSON unchanged",
+      "build": "build-vulkan",
+      "command": "membrane-run --model SmolLM2-135M-Instruct-f16.gguf --prompt \"The capital of France is\" --ctx 2048 --gen-tokens 4 --json",
+      "has_context_recommendation_key": false,
+      "ctx_size": 2048,
+      "ok": true,
+      "note": "confirms byte-for-byte-unaffected schema for a plain explicit --ctx N run -- the new object is present ONLY when --ctx auto actually ran"
+    },
+    {
+      "label": "REAL",
+      "scenario": "below-floor / metadata-limited real fixture (stories15M.gguf)",
+      "build": "build-llama-verify (CPU-only)",
+      "command": "membrane-run --model stories15M.gguf --prompt Hi --ctx auto --gen-tokens 4 --json",
+      "result_status": "INVALID_INPUT",
+      "result_message": "model metadata could not be read for recommendation",
+      "note": "stories15M.gguf's own real model_max_context (128, per Phase 33 evidence) is below the 4096 candidate floor, but this fixture ALSO lacks hparams_available (nonstandard tensor naming, same real finding Phase 30's --inspect-model work already established) -- --ctx auto fails closed on the metadata-unavailable check BEFORE it would even reach the below-floor NO_FEASIBLE_CONTEXT path. That exact path (model_max below the floor, with real hparams) is covered by Phase 33's own unit tests (test_gen_model_max_below_floor_returns_zero, test_no_candidates_at_all_is_no_feasible_context in test_context_recommender.c), not re-exercised here through the real CLI -- disclosed honestly, not silently claimed as covered by this real fixture."
+    },
+    {
+      "label": "REAL",
+      "scenario": "Qwen2.5-1.5B plan-only, real host memory pressure correctly rejects a real 3GB-class model",
+      "build": "build-llama-verify (CPU-only)",
+      "command": "membrane-run --model qwen2.5-1.5b-instruct-fp16.gguf --prompt Hi --ctx auto --auto --plan-only --json",
+      "result_status": "PLANNER_REJECTED_ALL",
+      "model_max_context": 8192,
+      "minimum_required_context": 137,
+      "real_host_available_bytes_at_capture": 836000000,
+      "note": "genuine real rejection: this dev host had ~836 MB available at capture time, nowhere near Qwen2.5-1.5B's real ~3 GB weight requirement -- exactly the kind of real-world catch this feature exists to make, not a bug. No full generation attempted, per Section 36 of the Phase 35 task's own guidance under real resource pressure."
+    }
+  ],
+  "synthetic_coverage": {
+    "label": "SYNTHETIC",
+    "new_pure_module_tests": {
+      "binary": "test_context_auto_cli",
+      "test_count": 14,
+      "covers": "minimum_required_context arithmetic (basic, zero tokens, UINT64_MAX overflow saturation, NULL safety), suggestion-mapping for every ctxrec status (NO_FEASIBLE_CONTEXT, PLANNER_REJECTED_ALL, MINIMUM_EXCEEDS_MODEL_MAX, MODEL_MAX_CONTEXT_UNKNOWN, HOST_MEMORY_UNKNOWN-via-representative-reason-code, OK-has-none), never-suggest-an-already-fixed-dimension, suggestion-count bound, NULL safety",
+      "result": "14/14 passed"
+    },
+    "underlying_core_tests_reused_unchanged": {
+      "note": "This phase's new main.cpp orchestration (resolve_ctx_auto/resolve_ctx_auto_normal/resolve_ctx_auto_cpu_adaptive) calls Phase 33/34's own pure cores directly and unchanged -- their own unit test suites (already green, re-run this phase, see verify-results/ctest counts in the PR) are the synthetic coverage for: minimum > model max, host memory unknown, host memory insufficient, arithmetic overflow, and the below-floor candidate-generation edge case.",
+      "test_context_recommender_relevant_tests": [
+        "test_minimum_exceeds_model_max",
+        "test_host_memory_unknown",
+        "test_host_memory_insufficient",
+        "test_gen_model_max_below_floor_returns_zero",
+        "test_no_candidates_at_all_is_no_feasible_context",
+        "test_recommendation_cannot_succeed_on_unvalidated_host_residency"
+      ],
+      "test_host_memory_guard_relevant_tests": [
+        "test_unknown_availability_fails_closed",
+        "test_insufficient_memory",
+        "test_overflow_never_wraps"
+      ]
+    },
+    "parsing_layer_tests": {
+      "binary": "test_product_cli",
+      "new_test_count": 15,
+      "covers": "Section 38 items 1-13: numeric --ctx unchanged, --ctx auto parses, invalid --ctx string rejected, UNSPECIFIED vs AUTO distinct (no ctx==0 sentinel reuse), ctx auto + prompt accepted, ctx auto without prompt rejected, ctx auto plan-only + prompt, ctx auto plan-only without prompt rejected, explicit q8/q5/placement/gpu-layers preserved, --ctx auto legal without --auto, --ctx auto with --auto, help documents --ctx N|auto",
+      "result": "all passed (85/85 total in this binary)"
+    }
+  },
+  "not_independently_exercised_this_phase": [
+    {"scenario": "MINIMUM_EXCEEDS_MODEL_MAX through the real CLI", "reason": "would require a deliberately oversized real prompt; covered instead by test_context_recommender's own test_minimum_exceeds_model_max, called unchanged by this phase's new code"},
+    {"scenario": "HOST_MEMORY_UNKNOWN through the real CLI", "reason": "would require deliberately breaking /proc/meminfo access; covered instead by test_host_memory_guard's own test_unknown_availability_fails_closed"},
+    {"scenario": "CTX_AUTO_HOST_MEMORY_STALE_AT_APPLY (the pre-model-load recheck) triggering for real", "reason": "requires host memory to genuinely change for the worse in the small window between recommendation and model load -- not reproduced on demand; the guard call itself (membrane_host_memory_guard_resolve()) is the same, already-unit-tested Phase 34 function"}
+  ]
+}

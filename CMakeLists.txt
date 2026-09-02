@@ -291,6 +291,20 @@ target_link_libraries(membrane_context_recommender PUBLIC
 target_include_directories(membrane_context_recommender PUBLIC
   tools/membrane-run)
 
+# Phase 35: --ctx auto's own pure/testable CLI-adapter pieces --
+# minimum-required-context arithmetic and error-suggestion mapping.
+# llama-free, no model/device/host access (Section 14 of the Phase 35
+# task: "Do not put planning logic into CLI parsing" -- the llama-aware
+# fact-gathering itself lives in main.cpp, which calls this module with
+# already-gathered plain data).
+add_library(membrane_context_auto_cli STATIC
+  tools/membrane-run/context_auto_cli.c)
+target_link_libraries(membrane_context_auto_cli PUBLIC
+  membrane_context_recommender membrane_host_memory_guard
+  membrane_sanitizers)
+target_include_directories(membrane_context_auto_cli PUBLIC
+  tools/membrane-run)
+
 # Phase 21: the bounded apply-time fallback CONTROLLER -- llama-free,
 # same pattern as membrane_joint_planner above. Consumes (never
 # duplicates or regenerates) the ranked candidate array
@@ -796,6 +810,15 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_context_recommender PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_context_recommender COMMAND test_context_recommender)
+
+  # Phase 35: --ctx auto's own pure CLI-adapter tests -- llama-free.
+  add_executable(test_context_auto_cli
+    tools/membrane-run/test_context_auto_cli.c)
+  target_link_libraries(test_context_auto_cli PRIVATE
+    membrane_context_auto_cli)
+  target_include_directories(test_context_auto_cli PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_context_auto_cli COMMAND test_context_auto_cli)
 
   # Phase 21: the bounded apply-time fallback controller's own tests --
   # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a

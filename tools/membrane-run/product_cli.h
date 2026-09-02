@@ -74,6 +74,17 @@
  * `message` field, not `reason_code`, carries the specific cause). */
 # define MEMBRANE_REASON_CLI_PARSE_ERROR	"CLI_PARSE_ERROR"
 
+/* Phase 35: --ctx auto's own reason codes -- distinct from context_
+ * recommender.h's own MEMBRANE_CTXREC_STATUS_* (those are the pure
+ * core's internal taxonomy; these are what main.cpp's CLI-facing error
+ * path actually emits, echoing the core's status via `message`/
+ * `reason_code` verbatim where one exists, and using these only for
+ * CLI-layer-specific conditions the core has no concept of). Never
+ * change the meaning of an already-shipped code, only add new ones. */
+# define MEMBRANE_REASON_CTX_AUTO_NEEDS_PROMPT		"CTX_AUTO_NEEDS_PROMPT"
+# define MEMBRANE_REASON_CTX_AUTO_TOKENIZE_FAILED	"CTX_AUTO_TOKENIZE_FAILED"
+# define MEMBRANE_REASON_CTX_AUTO_HOST_MEMORY_STALE	"CTX_AUTO_HOST_MEMORY_STALE_AT_APPLY"
+
 /* Phase 13.2, Section 16: stable, machine-readable plan-warning codes --
  * informational, never errors (a warning never changes exit_code or
  * ok). Same never-change-the-meaning convention as every other reason-
@@ -102,6 +113,28 @@ typedef enum e_membrane_run_prompt_mode
 	MEMBRANE_RUN_PROMPT_STDIN		/* --prompt - */
 }	membrane_run_prompt_mode_t;
 
+/* Phase 35, Section 3: an explicit representation for --ctx's three
+ * real states -- deliberately NOT overloading ctx==0 (which already
+ * has a real, pre-existing, unrelated meaning: "not given, auto-size
+ * tightly to prompt length + --gen-tokens + 8", used throughout
+ * main.cpp/product_cli.cpp before this phase). MEMBRANE_RUN_CTX_AUTO
+ * is the NEW `--ctx auto` hardware-aware recommendation request;
+ * `ctx` itself stays 0 (unused placeholder) for AUTO until main.cpp's
+ * own recommendation step resolves it to a concrete value BEFORE any
+ * ctx==0-branching code runs -- every pre-existing `o.ctx == 0`/
+ * `o.ctx > 0` check in this codebase is left completely untouched by
+ * this phase (Section 4: byte-for-byte backward compatible), since by
+ * the time those checks run, ctx has already been resolved to a real
+ * positive number for both EXPLICIT and (post-resolution) AUTO. */
+typedef enum e_membrane_run_ctx_mode
+{
+	MEMBRANE_RUN_CTX_UNSPECIFIED = 0,	/* --ctx not given at all --
+										 * pre-existing ctx==0 auto-size-
+										 * from-prompt default, unchanged */
+	MEMBRANE_RUN_CTX_EXPLICIT,			/* --ctx N */
+	MEMBRANE_RUN_CTX_AUTO				/* --ctx auto (Phase 35) */
+}	membrane_run_ctx_mode_t;
+
 typedef struct s_membrane_run_opts
 {
 	const char					*model_path;
@@ -109,7 +142,16 @@ typedef struct s_membrane_run_opts
 	std::string					prompt_text;	/* PROMPT_TEXT only */
 	const char					*prompt_file;	/* PROMPT_FILE only */
 
-	uint32_t	ctx;			/* 0 = auto-size to prompt + gen_tokens + 8 */
+	uint32_t	ctx;			/* meaningful only when ctx_mode ==
+								 * EXPLICIT (the --ctx N value) OR after
+								 * main.cpp's own --ctx auto resolution
+								 * step has run (then holds the resolved
+								 * value) -- see ctx_mode's own doc
+								 * comment. 0 with ctx_mode UNSPECIFIED:
+								 * pre-existing, unchanged "auto-size to
+								 * prompt + gen_tokens + 8" default. */
+	membrane_run_ctx_mode_t	ctx_mode;	/* Phase 35 -- see its own
+								 * enum doc comment above */
 	int			kv_mode;		/* MEMBRANE_KV_STORE_NATIVE/Q8/Q5/ADAPTIVE (default
 								 * NATIVE -- Section 4: v0.2 never
 								 * unexpectedly changes model behavior).

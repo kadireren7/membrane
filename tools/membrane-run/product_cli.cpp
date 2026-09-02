@@ -40,14 +40,17 @@ void	membrane_run_usage(FILE *out)
 		"  3. Point MEMBRANE at that model and a prompt:\n"
 		"       membrane-run --model model.gguf --prompt \"Hello\"\n"
 		"     (CPU, full-precision KV -- no flags to learn first)\n"
-		"  4. Once that works, let MEMBRANE pick GPU offload and KV\n"
-		"     memory settings for you (needs an explicit --ctx --\n"
+		"  4. Let MEMBRANE pick a context size AND GPU offload/KV\n"
+		"     settings for you, hardware-aware, from your real prompt:\n"
+		"       membrane-run --model model.gguf --prompt \"Hello\" \\\n"
+		"           --ctx auto --auto\n"
+		"  5. Or size context manually (needs an explicit --ctx --\n"
 		"     see AUTOMATIC MODE below for why):\n"
 		"       membrane-run --model model.gguf --prompt \"Hello\" \\\n"
 		"           --ctx 2048 --auto\n"
-		"  5. See exactly what --auto would choose, without\n"
+		"  6. See exactly what either would choose, without\n"
 		"     generating anything:\n"
-		"       membrane-run --model model.gguf --ctx 2048 --auto \\\n"
+		"       membrane-run --model model.gguf --ctx auto --auto \\\n"
 		"           --plan-only\n"
 		"  You never need to know q8/q5, GPU layer counts, or KV\n"
 		"  placement to use --auto -- see EXAMPLES below for more,\n"
@@ -63,8 +66,25 @@ void	membrane_run_usage(FILE *out)
 		"                     mutually exclusive; exactly one required)\n"
 		"\n"
 		"GENERATION\n"
-		"  --ctx N            KV cache context size (default: prompt\n"
-		"                     length + --gen-tokens + 8)\n"
+		"  --ctx N|auto       KV cache context size (default: prompt\n"
+		"                     length + --gen-tokens + 8).\n"
+		"                     N: explicit context size.\n"
+		"                     auto: choose a bounded, hardware-aware\n"
+		"                     ESTIMATED context using the model's own\n"
+		"                     max context, a current host/GPU memory\n"
+		"                     snapshot, your other explicit flags (--kv/\n"
+		"                     --gpu-layers/--kv-placement/--device stay\n"
+		"                     hard constraints), and this run's own\n"
+		"                     prompt + --gen-tokens minimum. Requires a\n"
+		"                     real --prompt/--prompt-file/--prompt - so\n"
+		"                     MEMBRANE knows how much context this run\n"
+		"                     actually needs. This is an estimated fit\n"
+		"                     under the current memory snapshot and\n"
+		"                     MEMBRANE's safety reserve -- NOT a\n"
+		"                     guaranteed-no-OOM promise (allocator\n"
+		"                     fragmentation, other processes, and\n"
+		"                     driver-side allocations can still vary).\n"
+		"                     See docs/context-auto-cli.md.\n"
 		"  --gen-tokens N     tokens to generate (default 128)\n"
 		"  --threads N        decode thread count (default: let\n"
 		"                     llama.cpp choose)\n"
@@ -409,6 +429,7 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 	o->prompt_text.clear();
 	o->prompt_file = NULL;
 	o->ctx = 0;
+	o->ctx_mode = MEMBRANE_RUN_CTX_UNSPECIFIED;
 	o->kv_mode = MEMBRANE_KV_STORE_NATIVE;
 	o->want_kv_budget = 0;
 	o->kv_budget_bytes = 0;
@@ -477,8 +498,17 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 		else if (strcmp(argv[i], "--ctx") == 0 && i + 1 < argc)
 		{
 			++i;
-			if (!parse_u32(argv[i], &o->ctx, "--ctx"))
-				return (MEMBRANE_EXIT_CLI_ERROR);
+			if (strcmp(argv[i], "auto") == 0)
+			{
+				o->ctx_mode = MEMBRANE_RUN_CTX_AUTO;
+				o->ctx = 0;
+			}
+			else
+			{
+				if (!parse_u32(argv[i], &o->ctx, "--ctx"))
+					return (MEMBRANE_EXIT_CLI_ERROR);
+				o->ctx_mode = MEMBRANE_RUN_CTX_EXPLICIT;
+			}
 		}
 		else if (strcmp(argv[i], "--kv") == 0 && i + 1 < argc)
 		{
@@ -676,6 +706,22 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 		o->prompt_mode = MEMBRANE_RUN_PROMPT_TEXT;
 		o->prompt_text.clear();
 	}
+	/* Phase 35, Section 8: unlike explicit --ctx N (handled above),
+	 * --ctx auto ALWAYS needs a real prompt -- the recommendation must
+	 * know the minimum context the actual run will need (prompt tokens
+	 * + --gen-tokens), and that can never be invented. This applies to
+	 * --plan-only too (Section 8 explicitly requires this): the generic
+	 * "one of --prompt..." error below would otherwise fire for this
+	 * exact case (o->ctx stays 0 for AUTO until main.cpp's own
+	 * resolution step runs, so the plan-only placeholder-prompt branch
+	 * just above never triggers for AUTO either) -- this earlier,
+	 * specific check just gives it an actionable message first. */
+	if (o->ctx_mode == MEMBRANE_RUN_CTX_AUTO
+		&& o->prompt_mode == MEMBRANE_RUN_PROMPT_NONE)
+		return (fprintf(stderr,
+				"membrane-run: --ctx auto needs a prompt so MEMBRANE can "
+				"reserve enough context for the input and requested "
+				"generation.\n"), MEMBRANE_EXIT_CLI_ERROR);
 	if (o->prompt_mode == MEMBRANE_RUN_PROMPT_NONE)
 		return (fprintf(stderr, "membrane-run: one of --prompt, "
 				"--prompt-file, or --prompt - is required\n"),
@@ -696,7 +742,17 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 				"\"all\" or a positive count -- naming a device with "
 				"zero GPU layers requested is ambiguous\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
-	if (o->gpu_layers != 0 && o->ctx == 0)
+	/* Phase 35, Section 2/5: --ctx auto is exempt from the "GPU needs a
+	 * KNOWN ctx before load" constraint below -- main.cpp's own
+	 * recommendation step resolves o->ctx to a real, concrete value
+	 * BEFORE resolve_gpu_config() ever runs (using the exact same
+	 * pre-load GGUF metadata that constraint's own comment already
+	 * relies on, plus a real prompt-token count from a cheap vocab-only
+	 * tokenization pass -- see main.cpp's resolve_ctx_auto()). By the
+	 * time resolve_gpu_config() actually runs, ctx is never 0 for
+	 * AUTO either. */
+	if (o->gpu_layers != 0 && o->ctx == 0
+		&& o->ctx_mode != MEMBRANE_RUN_CTX_AUTO)
 	{
 		/* Phase 28, Section 4: --auto's OWN implicit gpu_layers=auto
 		 * (never an explicit --gpu-layers) hits this same underlying
@@ -731,6 +787,17 @@ int	membrane_run_parse_opts(int argc, char **argv, membrane_run_opts_t *o)
 				"single \"plan\" of their own (they compare two "
 				"resolved configurations, not report one)\n"),
 			MEMBRANE_EXIT_CLI_ERROR);
+	/* Phase 35, Section 24 (out of scope for this phase): --compare-kv/
+	 * --gpu-bench are explicit benchmark/diagnostic modes, not the
+	 * primary product path -- same "modes that don't mix" precedent as
+	 * --plan-only just above, kept deliberately conservative rather
+	 * than integrating recommendation into a mode this phase has not
+	 * analyzed end-to-end. */
+	if (o->ctx_mode == MEMBRANE_RUN_CTX_AUTO && (o->gpu_bench || o->compare_kv))
+		return (fprintf(stderr,
+				"membrane-run: --ctx auto is not yet supported together "
+				"with --compare-kv/--gpu-bench -- use an explicit --ctx N "
+				"with those modes\n"), MEMBRANE_EXIT_CLI_ERROR);
 	if (o->gpu_bench && o->gpu_layers == 0)
 		return (fprintf(stderr,
 				"membrane-run: --gpu-bench requires --gpu-layers to be "
