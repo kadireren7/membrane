@@ -264,6 +264,16 @@ target_link_libraries(membrane_joint_planner PUBLIC membrane_compat_check
   membrane_kv_residency_policy membrane_sanitizers)
 target_include_directories(membrane_joint_planner PUBLIC tools/membrane-run)
 
+# Phase 34: real host-RAM capacity check -- llama-free, no /proc read
+# (Section 9 of the Phase 34 task: reuse main.cpp's single existing
+# read_host_meminfo(), never a second path), same testable-without-a-
+# model/GPU pattern as gpu_policy.h.
+add_library(membrane_host_memory_guard STATIC
+  tools/membrane-run/host_memory_guard.c)
+target_link_libraries(membrane_host_memory_guard PUBLIC membrane_sanitizers)
+target_include_directories(membrane_host_memory_guard PUBLIC
+  tools/membrane-run)
+
 # Phase 33: safe context recommendation's pure/testable core -- llama-
 # free (no ggml/llama header, no model load, no device access, no
 # /proc read), same testable-without-a-model/GPU pattern as
@@ -271,10 +281,13 @@ target_include_directories(membrane_joint_planner PUBLIC tools/membrane-run)
 # membrane_joint_plan_resolve() it calls once per bounded candidate
 # context size (never a second planner -- see context_recommender.h's
 # own top comment). No CLI surface yet (--ctx auto ships in Phase 34).
+# Phase 34: also links membrane_host_memory_guard -- every candidate
+# the joint planner accepts is then checked against real host RAM
+# availability before being counted feasible.
 add_library(membrane_context_recommender STATIC
   tools/membrane-run/context_recommender.c)
 target_link_libraries(membrane_context_recommender PUBLIC
-  membrane_joint_planner membrane_sanitizers)
+  membrane_joint_planner membrane_host_memory_guard membrane_sanitizers)
 target_include_directories(membrane_context_recommender PUBLIC
   tools/membrane-run)
 
@@ -762,6 +775,16 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_joint_planner PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_joint_planner COMMAND test_joint_planner)
+
+  # Phase 34: host-memory guard's own tests -- llama-free, pure
+  # arithmetic, no model/GPU/proc access.
+  add_executable(test_host_memory_guard
+    tools/membrane-run/test_host_memory_guard.c)
+  target_link_libraries(test_host_memory_guard PRIVATE
+    membrane_host_memory_guard)
+  target_include_directories(test_host_memory_guard PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_host_memory_guard COMMAND test_host_memory_guard)
 
   # Phase 33: safe context recommendation core's own tests -- llama-
   # free, synthetic model/device facts only (no model download, no

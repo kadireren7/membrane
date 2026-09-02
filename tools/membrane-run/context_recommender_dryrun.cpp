@@ -22,6 +22,35 @@
 
 #include "ggml.h"
 
+/* Phase 34, Section 9: this harness is a separate binary from
+ * membrane-run, so it cannot literally call main.cpp's static
+ * read_host_meminfo() -- this is the SAME real /proc/meminfo parsing
+ * logic duplicated at this one additional real-evidence leaf, not a
+ * second path inside the product itself (main.cpp remains the single
+ * in-product source; nothing here ships in the installed binary). */
+static bool	read_host_meminfo(uint64_t *total_bytes, uint64_t *available_bytes)
+{
+	FILE				*f;
+	char				line[256];
+	unsigned long long	kb;
+	int					found = 0;
+
+	*total_bytes = 0;
+	*available_bytes = 0;
+	f = fopen("/proc/meminfo", "r");
+	if (f == NULL)
+		return (false);
+	while (fgets(line, sizeof(line), f) != NULL)
+	{
+		if (sscanf(line, "MemTotal: %llu kB", &kb) == 1)
+			*total_bytes = (uint64_t)kb * 1024, found |= 1;
+		else if (sscanf(line, "MemAvailable: %llu kB", &kb) == 1)
+			*available_bytes = (uint64_t)kb * 1024, found |= 2;
+	}
+	fclose(f);
+	return ((found & 3) == 3);
+}
+
 static uint64_t	real_kv_bytes(const membrane_gpu_model_estimate_t &m,
 					uint64_t ctx, enum ggml_type type)
 {
@@ -41,11 +70,16 @@ static void	print_evaluated(const membrane_ctxrec_evaluated_t *ev)
 	printf("      {\"ctx\":%llu,\"feasible\":%s,\"reason_code\":\"%s\"",
 		(unsigned long long)ev->ctx, ev->feasible ? "true" : "false",
 		ev->reason_code);
-	if (ev->feasible)
+	if (ev->feasible || ev->host_memory_checked)
 		printf(",\"gpu_layers\":%d,\"kv_precision\":%d,"
-			"\"kv_placement\":%d,\"host_resident\":%s",
+			"\"kv_placement\":%d,\"host_resident\":%s,"
+			"\"host_memory_checked\":%s,\"host_memory_fit\":%s,"
+			"\"host_required_bytes\":%llu",
 			ev->selected_gpu_layers, ev->selected_kv_precision,
-			ev->selected_kv_placement, ev->host_resident ? "true" : "false");
+			ev->selected_kv_placement, ev->host_resident ? "true" : "false",
+			ev->host_memory_checked ? "true" : "false",
+			ev->host_memory_fit ? "true" : "false",
+			(unsigned long long)ev->host_required_bytes);
 	printf("}");
 }
 
@@ -92,7 +126,10 @@ int	main(int argc, char **argv)
 	req.n_head_kv = m.n_head_kv;
 	req.model_max_context = m.model_max_context;
 	req.model_max_context_known = m.model_max_context_available;
+	req.total_weight_bytes = m.total_bytes;
 	req.kv_placement_mode = MEMBRANE_JOINT_PLACEMENT_DEFAULT;
+	req.host_available_known = read_host_meminfo(&req.host_total_bytes,
+			&req.host_available_bytes);
 	if (gpu_index >= 0)
 	{
 		/* Real GPU present: mirrors bare `--auto` (adaptive precision,
@@ -147,6 +184,12 @@ int	main(int argc, char **argv)
 		(unsigned long long)req.device_free_bytes);
 	printf("  \"device_total_bytes\":%llu,\n",
 		(unsigned long long)req.device_total_bytes);
+	printf("  \"host_available_known\":%s,\n",
+		req.host_available_known ? "true" : "false");
+	printf("  \"host_total_bytes\":%llu,\n",
+		(unsigned long long)req.host_total_bytes);
+	printf("  \"host_available_bytes\":%llu,\n",
+		(unsigned long long)req.host_available_bytes);
 	printf("  \"precision_request\":%d,\n", req.precision_request);
 	printf("  \"candidates\":[");
 	for (i = 0; i < n_ctxs; ++i)
@@ -161,6 +204,14 @@ int	main(int argc, char **argv)
 	printf("  \"recommendation_policy\":\"%s\",\n", res.recommendation_policy);
 	printf("  \"host_memory_unvalidated\":%s,\n",
 		res.host_memory_unvalidated ? "true" : "false");
+	printf("  \"host_memory_checked\":%s,\n",
+		res.host_memory_checked ? "true" : "false");
+	printf("  \"host_memory_fit\":%s,\n",
+		res.host_memory_fit ? "true" : "false");
+	printf("  \"host_required_bytes\":%llu,\n",
+		(unsigned long long)res.host_required_bytes);
+	printf("  \"host_reserve_bytes\":%llu,\n",
+		(unsigned long long)res.host_reserve_bytes);
 	printf("  \"explanation\":\"%s\",\n", res.explanation);
 	printf("  \"evaluated\":[\n");
 	for (i = 0; i < res.evaluated_count; ++i)

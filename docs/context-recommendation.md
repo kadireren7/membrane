@@ -46,9 +46,16 @@ constraints), plus:
 - `model_max_context` / `model_max_context_known`
 - `minimum_required_context` (a floor below which no candidate is ever
   generated -- reserved for a future prompt-token accounting layer,
-  Phase 34+; this core never tokenizes anything itself)
+  Phase 35+; this core never tokenizes anything itself)
 - `candidates[]` -- a caller-populated array of `(ctx, kv_bytes_native,
   kv_bytes_q8, kv_bytes_q5)` tuples, one per candidate context size.
+- **Phase 34 additions** (additive, source-compatible): `total_weight_
+  bytes` (the model's real total tensor-byte footprint, from
+  `gpu_device.h`'s own `total_bytes`) and `host_total_bytes`/
+  `host_available_bytes`/`host_available_known` (real host memory
+  facts, the same single source `main.cpp`'s own `read_host_meminfo()`
+  already reads) -- see `docs/host-memory-guard.md` for what these
+  feed into.
 
 This module is **llama-free** (no `ggml`/`llama` header, no file I/O,
 no model load, no GPU enumeration, no `/proc` read) -- every fact is a
@@ -123,6 +130,13 @@ confused with this one.
   minimum that exceeds it, an empty candidate set, or every candidate
   being rejected -- see the `MEMBRANE_CTXREC_STATUS_*` taxonomy in
   `context_recommender.h`.
+- **Phase 34: a candidate the joint planner accepts is then checked
+  against real host RAM availability** (`docs/host-memory-guard.md`)
+  whenever it leaves any weight or KV bytes host-resident -- status
+  can never be `OK` for such a candidate unless that host-memory
+  feasibility was actually validated. This closes (for host-resident
+  weight/KV bytes specifically) the gap this document's own "Known
+  limitation" section below used to describe as fully open.
 - Never exceeds `model_max_context`.
 - Never bypasses `compat_check.c`'s architecture allowlist (a
   compressed-KV request for an unsupported architecture fails closed
@@ -159,55 +173,69 @@ number:
    (Phase 32's own disclosed gap). No safe, evidence-backed headroom
    formula was found this phase to close it, so `RECOMMENDED_CONTEXT`
    remains **an estimated fit, not a guaranteed absence of OOM**.
-2. **No host-RAM capacity check exists anywhere in the product.**
-   Audited directly this phase: `joint_planner.h`'s own candidate
-   field comment already says `fits_host... always 1 today (no
-   host-RAM capacity guard exists in the product)`, and `main.cpp`'s
-   only host-memory signal (`HOST_MEMORY_PRESSURE`) is explicitly
-   observability-only -- "never influenced any pass/fail decision."
-   This module does not invent a host-RAM safety check to paper over
-   that gap (doing so would duplicate memory-fit logic no existing
-   module owns, and would need an unevidenced margin). Instead,
-   `membrane_ctxrec_result_t::host_memory_unvalidated` is set to `1`
-   whenever the selected plan leaves any weight or KV bytes CPU/host-
-   resident, so a future CLI surface can never silently claim a
-   host-memory guarantee that does not exist.
+2. **No host-RAM capacity check existed anywhere in the product --
+   CLOSED this phase, for host-resident weight/KV bytes specifically.**
+   Phase 34 (`docs/host-memory-guard.md`) added
+   `tools/membrane-run/host_memory_guard.h`/`.c`, evidence-derived from
+   real `membrane-run --json` measurements, and integrated it into
+   this module: status can never be `OK` for a candidate requiring
+   host memory unless that memory was actually validated. A residual
+   gap remains open and disclosed: process/backend baseline overhead
+   for a fully GPU-resident plan (e.g. real Vulkan driver overhead,
+   ~248 MiB observed with zero host-resident weight/KV bytes) is *not*
+   covered -- see `docs/host-memory-guard.md`'s own "Residual
+   uncertainty" section.
 3. **Adaptive (bare `--auto`) precision has no CPU-only fallback at
-   zero GPU budget, today.** Source-verified this phase:
-   `joint_planner.c`'s `resolve_adaptive_precision()` always calls
-   `membrane_adaptive_kv_resolve()` with `is_gpu_backend` hardcoded to
-   `1`, and returns `GPU_MEMORY_INSUFFICIENT` (not a CPU-only plan)
-   when neither Q8 nor Q5 reaches even one GPU layer --
-   `resolve_single_precision()` (explicit `--kv`) does not have this
-   gap, since it always builds a `gpu_layers=0` fallback candidate. A
-   genuinely GPU-less host must reach this module with an *explicit*
-   precision request, matching `main.cpp`'s own real `gpu_layers==0`
-   short-circuit (which never invokes the joint planner with an
-   implicit adaptive request either). See
+   zero GPU budget in `joint_planner.c`'s own pre-load candidate
+   generation, today.** Source-verified in Phase 33, root-caused in
+   Phase 34: `joint_planner.c`'s `resolve_adaptive_precision()` always
+   calls `membrane_adaptive_kv_resolve()` with `is_gpu_backend`
+   hardcoded to `1`. Phase 34 confirmed this is **accidental historical
+   coupling, not product policy** -- `main.cpp`'s own
+   `resolve_cpu_adaptive_kv()` already calls the same underlying
+   function with `is_gpu_backend=0` for the real, shipped bare `--auto`
+   CLI path, so **the real CLI already works correctly on a CPU-only
+   host today**; this gap is scoped to `joint_planner.c`'s pre-load
+   path specifically (which this recommendation core depends on). A
+   structurally clean fix was identified but deliberately deferred
+   (see `docs/host-memory-guard.md`'s "CPU-only adaptive decision") --
+   a genuinely GPU-less host must still reach this module with an
+   *explicit* precision request for now. See
    `results/context-recommendation/core-validation.json`'s
    `known_limitations` for the exact test names that pin this down.
 
-Phase 34/35 must preserve this wording unless new evidence improves it
-(Section 31 of the Phase 33 task).
+This wording must be preserved unless new evidence improves it
+(Section 31 of the Phase 33 task, extended by Phase 34's own
+disclosure obligations).
 
-## Phase 34 CLI handoff
+## Phase 35 CLI handoff
 
-Not implemented this phase (Section 24 of the Phase 33 task explicitly
-forbids it). Expected scope, recorded for Phase 34:
+Not implemented in Phase 33 or Phase 34 (both phases explicitly forbid
+a CLI surface this cycle). Expected scope, recorded for Phase 35:
 
 - `--ctx auto` (opt-in run path) and an extended `--inspect-model` (a
-  look-before-you-leap path), both built on this exact core.
-- Wiring the caller side: real GGUF `model_max_context` read (already
-  additive in `gpu_device.h`/`.cpp` this phase), real per-candidate
-  `kv_bytes_native/q8/q5` computation (`ggml_row_size()`-based, as
+  look-before-you-leap path), built on this exact core plus Phase 34's
+  host-memory guard.
+- Wiring the caller side: real GGUF `model_max_context`/
+  `total_weight_bytes` reads (already additive in `gpu_device.h`/`.cpp`
+  since Phase 33), real per-candidate `kv_bytes_native/q8/q5`
+  computation (`ggml_row_size()`-based, as
   `context_recommender_dryrun.cpp` already demonstrates), and real
-  device/host facts.
+  device/host facts (including `/proc/meminfo`, reused from `main.cpp`'s
+  existing `read_host_meminfo()`).
 - Preserving every explicit user constraint (`--kv`, `--gpu-layers`,
   `--kv-placement`, `--device`) as a hard constraint, exactly as this
   core's API already requires.
+- The explicit-run host-memory policy Phase 34 deliberately left open
+  (`docs/host-memory-guard.md`'s "Explicit-run scope"): whether/how an
+  explicit `--ctx N` run should also gain a host-memory check.
 - Human- and JSON-facing explanation output, built from this core's
-  `explanation`/`reason_code`/`evaluated[]` fields plus Phase 34's own
+  `explanation`/`reason_code`/`evaluated[]` fields plus Phase 35's own
   UX-layer prose -- no new planner policy.
-- Existing runtime JSON schema stays unchanged until Phase 34 actually
+- Existing runtime JSON schema stays unchanged until Phase 35 actually
   adds recommendation fields to it (additive-only, per this project's
   existing `schema_version: 1` convention).
+- Optionally revisit the deferred CPU-only adaptive fix
+  (`docs/host-memory-guard.md`'s "CPU-only adaptive decision") if
+  Phase 35's own scope naturally touches `joint_planner.c` for CLI
+  integration reasons.

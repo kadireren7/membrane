@@ -5,6 +5,7 @@
 # include <stdint.h>
 
 # include "joint_planner.h"
+# include "host_memory_guard.h"
 
 # ifdef __cplusplus
 extern "C" {
@@ -50,24 +51,34 @@ extern "C" {
  *                            exactly, never silently -- the result
  *                            always names which policy produced it.
  *
- * KNOWN, DISCLOSED SAFETY GAP (audited directly against source this
- * phase, not assumed -- Section 5/19 of the Phase 33 task): the joint
- * planner this module reuses has NEVER had a real host-RAM capacity
- * check (joint_planner.h's own candidate field comment: "fits_host...
- * always 1 today (no host-RAM capacity guard exists in the product)"),
- * and main.cpp's only host-memory signal
- * (MEMBRANE_WARNING_HOST_MEMORY_PRESSURE) is explicitly documented as
- * "observability only... never influenced any pass/fail decision."
- * This module does NOT invent a new host-RAM safety margin to paper
- * over that gap (Section 5 of the Phase 33 task explicitly forbids an
- * arbitrary invented margin, and Section 12 forbids duplicating memory-
- * fit logic outside the modules that already own it -- no existing
- * module owns a host-RAM capacity check to reuse). Instead it is
- * HONEST about the gap: membrane_ctxrec_result_t::host_memory_
- * unvalidated is set whenever the selected plan leaves any weight or
- * KV bytes CPU/host-resident, so a future CLI surface (Phase 34) can
- * never silently claim a host-memory guarantee that does not exist.
- * See docs/context-recommendation.md for the full disclosure.
+ * HOST-MEMORY SAFETY (Phase 34): Phase 33 disclosed, and audited
+ * directly against source, that the joint planner this module reuses
+ * never had a real host-RAM capacity check (joint_planner.h's own
+ * candidate field comment: "fits_host... always 1 today (no host-RAM
+ * capacity guard exists in the product)"), and main.cpp's only host-
+ * memory signal (MEMBRANE_WARNING_HOST_MEMORY_PRESSURE) is explicitly
+ * documented as "observability only... never influenced any pass/fail
+ * decision." Phase 34 closes this gap FOR THIS MODULE ONLY (no CLI
+ * surface exists yet -- explicit runs via main.cpp are entirely
+ * unaffected) by validating every candidate's host-resident weight/KV
+ * bytes against real host RAM availability via host_memory_guard.h --
+ * a candidate can no longer be reported feasible on host-resident
+ * memory this module never checked. See host_memory_guard.h's own top
+ * comment for the reserve policy's real evidence basis, and this
+ * header's host_memory_checked/host_memory_fit/host_required_bytes
+ * fields below.
+ *
+ * RESIDUAL, STILL-DISCLOSED GAP: the new guard validates host-resident
+ * WEIGHT and KV bytes only -- it does not (and, without further
+ * evidence, cannot yet) validate process/backend BASELINE host
+ * overhead that exists even for a fully GPU-resident plan (real
+ * evidence: a 100%-GPU Vulkan run with zero host-resident weight/KV
+ * bytes still showed ~248 MiB of real host RSS -- see host_memory_
+ * guard.h's own top comment). membrane_ctxrec_result_t::host_memory_
+ * unvalidated (kept from Phase 33) still means exactly what it always
+ * did -- see its own field comment below for how it now relates to
+ * the new fields. See docs/context-recommendation.md and docs/host-
+ * memory-guard.md for the full disclosure.
  */
 
 /* Section 8: llama.cpp's OWN documented minimum, not an invented
@@ -171,13 +182,32 @@ typedef struct s_membrane_ctxrec_evaluated
 											 * meaningful iff feasible */
 	int			selected_kv_placement;		/* MEMBRANE_JOINT_PLACEMENT_*,
 											 * meaningful iff feasible */
-	int			host_resident;				/* 1 iff feasible and the
-											 * selected plan leaves any
-											 * weight or KV bytes CPU/
-											 * host-resident -- see this
-											 * header's own top comment
-											 * on the disclosed host-RAM
-											 * gap */
+	int			host_resident;				/* 1 iff the joint planner
+											 * accepted this candidate
+											 * AND it leaves any weight
+											 * or KV bytes CPU/host-
+											 * resident -- independent of
+											 * whether that residency
+											 * then passed the Phase 34
+											 * host-memory guard (see
+											 * host_memory_fit below) */
+
+	/* Phase 34: this candidate's own host-memory guard outcome.
+	 * host_memory_checked is 1 whenever the guard actually ran
+	 * (joint-planner-feasible candidates only -- an infeasible
+	 * candidate's host bytes were never computed, matching Section 15:
+	 * this module never re-decides a candidate the joint planner
+	 * already rejected). host_memory_fit is only meaningful when
+	 * host_memory_checked is 1; a candidate with host_memory_checked=1
+	 * and host_memory_fit=0 is NEVER counted feasible (ev->feasible is
+	 * forced to 0 in that case -- Section 11 of the Phase 34 task's own
+	 * minimum requirement). host_required_bytes/host_reserve_bytes
+	 * mirror host_memory_guard_result_t's own fields for this exact
+	 * candidate. */
+	int			host_memory_checked;
+	int			host_memory_fit;
+	uint64_t	host_required_bytes;
+	uint64_t	host_reserve_bytes;
 }	membrane_ctxrec_evaluated_t;
 
 typedef struct s_membrane_ctxrec_request
@@ -194,6 +224,33 @@ typedef struct s_membrane_ctxrec_request
 	int32_t		n_head_kv;
 	uint64_t	device_free_bytes;
 	uint64_t	device_total_bytes;
+
+	/* Phase 34: the model's own real total tensor-byte footprint
+	 * (gpu_device.h's membrane_gpu_model_estimate_t::total_bytes,
+	 * every GGUF tensor summed -- NOT just the blk.N. layers
+	 * bytes_per_layer already covers). Needed to derive this
+	 * candidate's own host-resident weight bytes: total_weight_bytes
+	 * minus a GPU-offload credit that deliberately withholds
+	 * output_role_bytes (see context_recommender.c's
+	 * host_weight_bytes_for() doc comment for why withholding it is
+	 * the conservative, never-undercounts direction, not an invented
+	 * number), checked/clamped to >= 0. 0 (the zero-initialized
+	 * default) is treated the same as "unknown" would be --
+	 * host_weight_bytes then comes out 0 for every candidate, which
+	 * only under-counts a REAL run if the caller genuinely has this
+	 * real GGUF value and simply forgot to pass it; the dev harness
+	 * (context_recommender_dryrun.cpp) always passes the real value. */
+	uint64_t	total_weight_bytes;
+
+	/* Phase 34: real host memory facts -- the SAME single source
+	 * main.cpp's own read_host_meminfo() already reads (/proc/meminfo,
+	 * Section 9 of the Phase 34 task: reuse, never a second path).
+	 * host_available_known distinguishes "read and it was genuinely
+	 * this value" from "could not be read" -- see host_memory_guard.h's
+	 * own fail-closed contract. */
+	uint64_t	host_total_bytes;
+	uint64_t	host_available_bytes;
+	int			host_available_known;
 
 	/* Explicit user constraints (Section 10/6): forwarded UNCHANGED to
 	 * every candidate, so an explicit --kv/--gpu-layers/--kv-placement
@@ -255,11 +312,31 @@ typedef struct s_membrane_ctxrec_result
 											 * context -- meaningful iff
 											 * hardware_fit_index >= 0 */
 
-	/* Section 19 (this header's top comment): 1 iff the selected plan
+	/* Kept from Phase 33, meaning UNCHANGED: 1 iff the selected plan
 	 * leaves any weight or KV bytes CPU/host-resident -- i.e.
 	 * evaluated[hardware_fit_index].host_resident, echoed here so a
-	 * caller never has to re-derive it. Always 0 when !ok. */
+	 * caller never has to re-derive it. Always 0 when !ok. As of Phase
+	 * 34, that residency IS now validated against real host RAM (see
+	 * host_memory_checked/host_memory_fit below) -- this field staying
+	 * 1 no longer means "unchecked," only "host-resident, and process/
+	 * backend baseline overhead beyond weight+KV bytes remains
+	 * unvalidated" (this header's own top comment). */
 	int			host_memory_unvalidated;
+
+	/* Phase 34: echoed from evaluated[hardware_fit_index] for direct
+	 * access without re-indexing -- see membrane_ctxrec_evaluated_t's
+	 * own field comments above for exact meaning. All 0/false when
+	 * !ok. */
+	int			host_memory_checked;
+	int			host_memory_fit;
+	uint64_t	host_required_bytes;
+	uint64_t	host_available_bytes;		/* echoed request input --
+											 * identical for every
+											 * candidate (host memory
+											 * facts don't vary with
+											 * ctx), unlike
+											 * host_required_bytes */
+	uint64_t	host_reserve_bytes;
 
 	/* Section 23: enough structured information to build a human
 	 * sentence without embedding prose logic in this module -- e.g.
@@ -289,6 +366,16 @@ typedef struct s_membrane_ctxrec_result
  * rejected by the joint planner -- see the MEMBRANE_CTXREC_STATUS_*
  * constants above for which.
  *
+ * Phase 34: a candidate the joint planner itself accepted is THEN
+ * checked against host_memory_guard.h whenever it leaves any weight or
+ * KV bytes host-resident -- a candidate that fails that check is
+ * treated exactly like a joint-planner rejection (ineligible, not
+ * selected; PLANNER_REJECTED_ALL if every candidate fails this way).
+ * Section 11 of the Phase 34 task's own minimum requirement: this
+ * function never returns status OK for a candidate requiring host
+ * memory unless that host-memory feasibility was actually validated.
+ *
+
  * Deterministic: identical inputs always produce an identical result
  * (no time, randomness, or I/O anywhere in this module).
  *

@@ -52,6 +52,19 @@ static void	fill_base_request(membrane_ctxrec_request_t *req)
 	req->kv_placement_mode = MEMBRANE_JOINT_PLACEMENT_DEFAULT;
 	req->model_max_context = 32768;
 	req->model_max_context_known = 1;
+	/* Phase 34: real-shaped total weight footprint (10 blk layers +
+	 * the output-role tensor(s), matching this same synthetic shape's
+	 * n_layer_all/bytes_per_layer/output_role_bytes above) and AMPLE
+	 * host memory by default -- every pre-Phase-34 test in this file
+	 * keeps testing what it originally meant to test (GPU/precision/
+	 * placement behavior), with the new host-memory guard trivially
+	 * passing rather than silently gating everything on unknown
+	 * availability. Dedicated host-memory-specific tests below
+	 * override these fields explicitly. */
+	req->total_weight_bytes = 10 * 10 * MIB + 20 * MIB;
+	req->host_total_bytes = 8 * GIB;
+	req->host_available_bytes = 4 * GIB;
+	req->host_available_known = 1;
 }
 
 /* Generates the real candidate set via membrane_ctxrec_generate_
@@ -736,6 +749,179 @@ static void	test_null_req_and_out_are_safe(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Phase 34: host-memory guard integration -- Section 19 items 12-17  */
+/* ------------------------------------------------------------------ */
+
+/* 12. Host memory sufficient: ample host RAM, CPU-only explicit
+ * precision resolves and is reported as checked+fit. */
+static void	test_host_memory_sufficient(void)
+{
+	membrane_ctxrec_request_t	req;
+	membrane_ctxrec_result_t	res;
+
+	fill_base_request(&req);
+	req.precision_request = MEMBRANE_JOINT_KV_NATIVE;
+	req.device_free_bytes = 0;
+	req.device_total_bytes = 0;
+	req.host_available_bytes = 4 * GIB;	/* ample */
+	populate_candidates(&req);
+	TEST_ASSERT(membrane_ctxrec_resolve(&req, &res) == 1,
+		"resolves ok with ample host memory");
+	TEST_ASSERT(res.host_memory_checked == 1, "host memory was checked");
+	TEST_ASSERT(res.host_memory_fit == 1, "host memory fit");
+	TEST_ASSERT(res.host_required_bytes > 0,
+		"a genuinely CPU-only plan has a nonzero host requirement");
+}
+
+/* 13. Host memory insufficient: a real, small available amount that
+ * cannot cover this plan's host-resident weight+KV bytes. */
+static void	test_host_memory_insufficient(void)
+{
+	membrane_ctxrec_request_t	req;
+	membrane_ctxrec_result_t	res;
+
+	fill_base_request(&req);
+	req.precision_request = MEMBRANE_JOINT_KV_NATIVE;
+	req.device_free_bytes = 0;
+	req.device_total_bytes = 0;
+	req.host_available_bytes = 1 * MIB;	/* nowhere near enough */
+	populate_candidates(&req);
+	TEST_ASSERT(membrane_ctxrec_resolve(&req, &res) == 0,
+		"fails closed when host memory is genuinely insufficient");
+	TEST_ASSERT(strcmp(res.status,
+			MEMBRANE_CTXREC_STATUS_PLANNER_REJECTED_ALL) == 0,
+		"surfaces as PLANNER_REJECTED_ALL -- every candidate needed "
+		"host memory it did not have");
+}
+
+/* 14. Host memory unknown: availability could not be read at all. */
+static void	test_host_memory_unknown(void)
+{
+	membrane_ctxrec_request_t	req;
+	membrane_ctxrec_result_t	res;
+
+	fill_base_request(&req);
+	req.precision_request = MEMBRANE_JOINT_KV_NATIVE;
+	req.device_free_bytes = 0;
+	req.device_total_bytes = 0;
+	req.host_available_known = 0;
+	populate_candidates(&req);
+	TEST_ASSERT(membrane_ctxrec_resolve(&req, &res) == 0,
+		"never assumes infinite host RAM when availability is unknown");
+	TEST_ASSERT(res.host_memory_fit == 0,
+		"host_memory_fit is false, never silently defaulted to true");
+}
+
+/* 15. GPU-only (full residency) candidate: Phase 33's coarse host_
+ * resident flag says "not meaningfully host-resident" (every blk layer
+ * and the KV cache are GPU-resident), but this module's own real-
+ * physics-aware formula (host_weight_bytes_for()'s own doc comment)
+ * deliberately still counts a small residual -- llama.cpp's own real
+ * policy keeps the INPUT embedding tensor CPU-resident always,
+ * regardless of n_gpu_layers (gpu_device.h's own field comment: "the
+ * input token-embedding tensor is ALWAYS CPU-resident regardless of
+ * n_gpu_layers"). So "zero host residency" is not real even at full
+ * GPU offload -- this guard is checked (and, with ample host RAM,
+ * fits) rather than skipped, which is the CORRECT, more precise
+ * behavior, not a bug. */
+static void	test_host_memory_gpu_full_residency_small_residual(void)
+{
+	membrane_ctxrec_request_t	req;
+	membrane_ctxrec_result_t	res;
+
+	fill_base_request(&req);
+	req.device_free_bytes = (uint64_t)(3.9 * (double)GIB);
+	req.device_total_bytes = 4 * GIB;
+	populate_candidates(&req);
+	TEST_ASSERT(membrane_ctxrec_resolve(&req, &res) == 1, "resolves ok");
+	TEST_ASSERT(res.host_memory_unvalidated == 0,
+		"Phase 33's coarse flag: no NOTABLE host residency (full "
+		"GPU-layer and GPU-KV residency)");
+	TEST_ASSERT(res.host_memory_checked == 1, "guard still ran");
+	TEST_ASSERT(res.host_memory_fit == 1,
+		"the small real residual comfortably fits ample host RAM");
+	TEST_ASSERT(res.host_required_bytes > 0
+			&& res.host_required_bytes < req.total_weight_bytes,
+		"a small but nonzero residual, not the whole model, not zero");
+}
+
+/* 16. Mixed GPU/CPU candidate: weights GPU-resident, KV explicitly
+ * CPU-resident -- a real nonzero host requirement that must still be
+ * validated against real host memory (not skipped just because SOME
+ * of the plan is GPU-resident). */
+static void	test_host_memory_mixed_gpu_cpu_candidate(void)
+{
+	membrane_ctxrec_request_t	req;
+	membrane_ctxrec_result_t	res;
+
+	fill_base_request(&req);
+	req.kv_placement_mode = MEMBRANE_JOINT_PLACEMENT_CPU;
+	req.device_free_bytes = (uint64_t)(3.9 * (double)GIB);
+	req.device_total_bytes = 4 * GIB;
+	req.host_available_bytes = 4 * GIB;
+	populate_candidates(&req);
+	TEST_ASSERT(membrane_ctxrec_resolve(&req, &res) == 1,
+		"resolves ok with ample host memory for the CPU-resident KV");
+	TEST_ASSERT(res.host_memory_unvalidated == 1,
+		"KV is explicitly CPU-resident");
+	TEST_ASSERT(res.host_memory_checked == 1 && res.host_memory_fit == 1,
+		"that CPU-resident KV was actually checked and fit");
+	TEST_ASSERT(res.host_required_bytes > 0,
+		"nonzero host requirement for the CPU-resident KV portion");
+
+	/* Now shrink host availability until the SAME mixed plan no longer
+	 * fits -- proves the check is real, not a rubber stamp. */
+	req.host_available_bytes = 1 * MIB;
+	TEST_ASSERT(membrane_ctxrec_resolve(&req, &res) == 0,
+		"the same mixed plan correctly fails once host memory is too "
+		"small for the CPU-resident KV portion");
+}
+
+/* 17. Recommendation cannot succeed on unvalidated host residency:
+ * the exact Section 11 minimum requirement, proven directly by
+ * comparing against what the (unchanged) joint planner alone would
+ * have decided. */
+static void	test_recommendation_cannot_succeed_on_unvalidated_host_residency(void)
+{
+	membrane_ctxrec_request_t		req;
+	membrane_ctxrec_result_t		res;
+	membrane_joint_plan_request_t	jreq;
+	membrane_joint_plan_result_t	jres;
+
+	fill_base_request(&req);
+	req.precision_request = MEMBRANE_JOINT_KV_NATIVE;
+	req.device_free_bytes = 0;
+	req.device_total_bytes = 0;
+	req.host_available_known = 0;	/* unvalidatable */
+	populate_candidates(&req);
+
+	/* The bare joint planner, called directly with the same facts,
+	 * WOULD succeed (Phase 33 behavior, unchanged) -- proving the
+	 * failure below comes from the NEW host-memory gate, not from the
+	 * joint planner itself having changed. */
+	memset(&jreq, 0, sizeof(jreq));
+	jreq.n_layer_all = req.n_layer_all;
+	jreq.bytes_per_layer = req.bytes_per_layer;
+	jreq.output_role_bytes = req.output_role_bytes;
+	jreq.arch_name = req.arch_name;
+	jreq.n_embd = req.n_embd;
+	jreq.n_head = req.n_head;
+	jreq.n_head_kv = req.n_head_kv;
+	jreq.ctx_size = (uint32_t)req.candidates[0].ctx;
+	jreq.kv_bytes_native = req.candidates[0].kv_bytes_native;
+	jreq.precision_request = MEMBRANE_JOINT_KV_NATIVE;
+	jreq.gpu_layers_request = MEMBRANE_JOINT_GPU_LAYERS_REQUEST_AUTO;
+	jreq.kv_placement_mode = MEMBRANE_JOINT_PLACEMENT_DEFAULT;
+	TEST_ASSERT(membrane_joint_plan_resolve(&jreq, &jres) == 1,
+		"the bare, unchanged joint planner alone still succeeds here "
+		"(Phase 33 behavior) -- the planner itself was not changed");
+
+	TEST_ASSERT(membrane_ctxrec_resolve(&req, &res) == 0,
+		"but the RECOMMENDATION fails -- host residency exists and was "
+		"never validated, so status can never be OK (Section 11)");
+}
+
+/* ------------------------------------------------------------------ */
 /* Section 28: property/invariant tests                               */
 /* ------------------------------------------------------------------ */
 
@@ -759,6 +945,9 @@ static void	test_property_invariants_hold(void)
 	TEST_ASSERT(res.selected_plan.ok == 1, "selected plan is feasible");
 	TEST_ASSERT(res.candidate_count <= MEMBRANE_CTXREC_MAX_CANDIDATES,
 		"candidate count <= fixed maximum");
+	TEST_ASSERT(res.host_memory_checked == 1 && res.host_memory_fit == 1,
+		"Phase 34: status OK always implies host-memory was checked "
+		"and fit -- never OK on unvalidated host residency");
 	for (i = 0; i < res.evaluated_count; ++i)
 	{
 		TEST_ASSERT(res.evaluated[i].ctx <= res.model_max_context,
@@ -805,6 +994,12 @@ int	main(void)
 	test_no_monotonicity_assumption();
 	test_invalid_n_layer_all_fails_closed();
 	test_null_req_and_out_are_safe();
+	test_host_memory_sufficient();
+	test_host_memory_insufficient();
+	test_host_memory_unknown();
+	test_host_memory_gpu_full_residency_small_residual();
+	test_host_memory_mixed_gpu_cpu_candidate();
+	test_recommendation_cannot_succeed_on_unvalidated_host_residency();
 	test_property_invariants_hold();
 	printf("test_context_recommender: all tests passed\n");
 	return (0);
