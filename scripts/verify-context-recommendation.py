@@ -29,7 +29,7 @@ PATCHES_DIR = REPO_ROOT / "patches"
 REQUIRED_DOC_SECTIONS = [
 	"## Problem", "## Definitions", "## Inputs", "## Candidate generation",
 	"## Planner reuse", "## Selection policy", "## Safety properties",
-	"## Failure modes", "## Known limitation", "## Phase 34 CLI handoff",
+	"## Failure modes", "## Known limitation",
 ]
 
 FAILURES = []

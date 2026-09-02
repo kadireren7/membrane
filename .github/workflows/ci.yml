@@ -272,6 +272,26 @@ jobs:
       - name: Verify context recommendation core evidence and docs
         run: python3 scripts/verify-context-recommendation.py
 
+  # Phase 34: validates the host-memory safety guard's evidence and
+  # docs (results/host-memory-guard/validation.json, docs/host-memory-
+  # guard.md) -- python3 + checkout only, same shape as
+  # context-recommendation-check above; no GPU, no model download, no
+  # benchmark. test_host_memory_guard itself needs no separate job for
+  # the same reason test_context_recommender doesn't: it is registered
+  # unconditionally (host_memory_guard.c is llama-free), so the
+  # existing build-and-test job's Debug/ASan matrix and the thread-
+  # sanitizer job already build and ctest it on every run.
+  host-memory-guard-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify host-memory guard evidence and docs
+        run: python3 scripts/verify-host-memory-guard.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered

@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "phase": "34-host-memory-guard",
+  "membrane_commit": "e5aebe8111264b58978597b82bf99839a57b2e09",
+  "generated_at": "2026-09-02T00:00:00Z",
+  "note": "Phase 34: closes the host-RAM-capacity gap Phase 33 disclosed, SCOPED to host-resident model-weight and KV bytes only (see tools/membrane-run/host_memory_guard.h's own top comment for what remains out of scope -- process/backend baseline overhead for a fully GPU-resident plan). Integrated into context_recommender.c only; main.cpp/the real --auto CLI path is completely unchanged this phase (no CLI surface exists yet).",
+  "host_memory_policy": {
+    "components": {
+      "cpu_resident_model_weight_bytes": "ESTIMATED -- host_weight_bytes_for(), total_weight_bytes minus a GPU-offload credit that deliberately withholds output_role_bytes (see context_recommender.c's own doc comment; conservative for untied-embedding models, exact for tied-embedding models)",
+      "cpu_resident_kv_bytes": "KNOWN -- reused verbatim from the existing, unchanged joint planner's own candidate.estimated_host_kv_bytes field, never recomputed",
+      "process_runtime_baseline": "ESTIMATED, folded into the reserve floor (not modeled as a separate arithmetic term) -- see reserve_policy below",
+      "model_loader_overhead": "ESTIMATED, folded into the same reserve floor as process_runtime_baseline -- could not be cleanly isolated from runtime baseline in real measurements",
+      "context_transient_compute_buffer": "ESTIMATED, folded into the same reserve floor -- see evidence_basis.transient_buffer_conclusion below",
+      "safety_reserve": "the explicit, evidence-derived MEMBRANE_HOST_RESERVE_FIXED_BYTES/MEMBRANE_HOST_RESERVE_PCT formula -- see reserve_policy below"
+    }
+  },
+  "reserve_policy": {
+    "formula": "max(MEMBRANE_HOST_RESERVE_FIXED_BYTES, MEMBRANE_HOST_RESERVE_PCT% of (host_weight_bytes + host_kv_bytes))",
+    "fixed_bytes": 268435456,
+    "fixed_bytes_human": "256 MiB",
+    "pct": 10,
+    "pct_basis": "this phase's own fresh evidence suggested ~8-10%; kept as a minimal, deliberately conservative placeholder that does not bind for anything actually measured this phase (the fixed floor dominates in every real sample below) -- NOT validated at larger model scale",
+    "fixed_bytes_basis": "set to comfortably exceed the WORSE of two real, measured worst-case combined residuals for the identical model+config across two different sessions (see evidence_basis below) -- a real ~6x discrepancy, consistent with genuine RSS-measurement noise under real memory/swap pressure on this dev host, not a fixed per-model constant"
+  },
+  "evidence_basis": {
+    "note": "Real host-RSS evidence, labeled by source and REAL/SOURCE_ANALYSIS.",
+    "fresh_session_samples": {
+      "label": "REAL",
+      "method": "real `membrane-run --model ... --json --gpu-layers 0` invocations, this session, build-llama-verify (CPU-only build), model=SmolLM2-135M-Instruct-f16.gguf (real total weight bytes 269100288, from this model's own real GGUF tensor sum)",
+      "host_note": "5.6 GiB dev host, 4.3-4.6 GiB swap in use throughout this session's measurements -- real memory/swap pressure, not an idle machine",
+      "samples": [
+        {"kv_mode": "native", "ctx": 2048, "rss_after_model_load_kb": 284948, "rss_after_context_kb": 331516, "delta_kb": 46568, "predicted_kv_bytes": 47185920, "predicted_kv_kb": 46080, "residual_kb": 488, "loader_overhead_kb": 22131},
+        {"kv_mode": "native", "ctx": 2048, "rss_after_model_load_kb": 287928, "rss_after_context_kb": 335856, "delta_kb": 47928, "predicted_kv_bytes": 47185920, "predicted_kv_kb": 46080, "residual_kb": 1848, "loader_overhead_kb": 25107},
+        {"kv_mode": "q8", "ctx": 2048, "rss_after_model_load_kb": 287884, "rss_after_context_kb": 314472, "delta_kb": 26588, "predicted_kv_bytes": 25067520, "predicted_kv_kb": 24480, "residual_kb": 2108, "loader_overhead_kb": 25063},
+        {"kv_mode": "native", "ctx": 4096, "rss_after_model_load_kb": 287880, "rss_after_context_kb": 381908, "delta_kb": 94028, "predicted_kv_bytes": 94371840, "predicted_kv_kb": 92160, "residual_kb": 1868, "loader_overhead_kb": 25059}
+      ],
+      "combined_residual_range_mib": [22.2, 26.0]
+    },
+    "phase19_preexisting_samples": {
+      "label": "REAL",
+      "source": "results/planner-accuracy/measurements.json (Phase 19, DIFFERENT session/host-state, same exact model+config)",
+      "samples": [
+        {"label": "smollm2-135m_cpu_native", "rss_after_model_load_kb": 418280, "rss_after_context_kb": 466208, "delta_kb": 47928, "predicted_kv_kb": 46080, "residual_kb": 1848, "loader_overhead_kb": 149219},
+        {"label": "smollm2-135m_cpu_q8", "rss_after_model_load_kb": 418184, "rss_after_context_kb": 444640, "delta_kb": 26456, "predicted_kv_kb": 24480, "residual_kb": 1976, "loader_overhead_kb": 149121}
+      ],
+      "combined_residual_range_mib": [147.7, 149.6]
+    },
+    "discrepancy_note": "The two sample sets, same exact model+config, differ by roughly 6x (22.2-26.0 MiB vs 147.7-149.6 MiB) -- not explained by a code difference (both use the identical real ggml_row_size()-based KV formula and the identical model). Most likely explanation: RSS-based overhead measurement is noisy on this specific 5.6 GiB dev host under real swap pressure, which varies session to session. This is exactly why the reserve floor is set to exceed the WORSE observed case rather than trusting only the more favorable, more recent sample set.",
+    "transient_buffer_conclusion": "The context-creation-specific residual (RSS after context minus predicted KV bytes alone, isolating JUST the ctx-creation step) is small and consistent across BOTH sample sets (0.5-2.1 MiB) and does NOT scale with ctx size at this model scale (ctx=4096's residual was not roughly double ctx=2048's) -- source inspection of ggml/llama.cpp's own graph-allocator code was not performed this phase (Section 7 of the Phase 34 task asks whether a predictable, backend-specific, pre-context-creation estimate exists; that source-level question remains OPEN -- this phase answers only the EMPIRICAL question, 'is the transient overhead small and boundable in practice at small scale', with a qualified yes). The much larger loader-overhead component (the bulk of the combined residual) is NOT context-creation-specific at all -- it appears already at rss_after_model_load, before any context exists."
+  },
+  "real_dry_run_smoke": {
+    "label": "REAL",
+    "harness": "tools/membrane-run/context_recommender_dryrun.cpp (dev-only, not installed, no CLI surface)",
+    "note": "Same harness Phase 33 introduced, extended this phase with real /proc/meminfo host facts and the new host-memory-guard-integrated result fields.",
+    "runs": [
+      {
+        "build": "build-llama-verify (CPU-only)",
+        "model": "SmolLM2-135M-Instruct-f16.gguf",
+        "host_available_bytes": 517914624,
+        "status": "PLANNER_REJECTED_ALL",
+        "note": "correctly rejected under real, current memory pressure on this 5.6 GiB dev host (494 MiB available at capture time; ctx=4096 alone needed ~602.6 MiB including the 256 MiB reserve) -- the guard doing exactly its intended job, not a test failure"
+      },
+      {
+        "build": "build-llama-verify (CPU-only)",
+        "model": "SmolLM2-360M-Instruct-f16.gguf",
+        "host_available_bytes": 681046016,
+        "status": "PLANNER_REJECTED_ALL",
+        "note": "a real, larger model correctly rejected on this real, memory-constrained host"
+      },
+      {
+        "build": "build-llama-verify (CPU-only)",
+        "model": "qwen2.5-1.5b-instruct-fp16.gguf",
+        "host_available_bytes": 653189120,
+        "status": "PLANNER_REJECTED_ALL",
+        "required_bytes_ctx8192": 3789346816,
+        "note": "real ~3.5 GiB weight requirement vs ~623 MiB real available -- an unambiguous, correct real-world rejection this guard now catches that Phase 33's core would have silently reported as a feasible recommendation"
+      },
+      {
+        "build": "build-llama-verify (CPU-only)",
+        "model": "stories15M.gguf",
+        "status": "NO_FEASIBLE_CONTEXT",
+        "note": "unaffected by the host guard -- real model max (128) is below the candidate floor, exactly as in Phase 33"
+      },
+      {
+        "build": "build-vulkan (real local AMD Radeon RADV RENOIR + NVIDIA GTX 1650 Vulkan devices)",
+        "model": "SmolLM2-135M-Instruct-f16.gguf",
+        "device_free_bytes": 3973341184,
+        "host_available_bytes": 573599744,
+        "status": "OK",
+        "hardware_fit_context": 8192,
+        "host_required_bytes": 63707904,
+        "host_reserve_bytes": 268435456,
+        "host_memory_unvalidated": false,
+        "note": "full GPU residency: a small (63.7 MiB) real residual -- the conservatively-withheld output-role credit from host_weight_bytes_for(), representing llama.cpp's own always-CPU-resident input embedding tensor -- checked and fit"
+      }
+    ]
+  },
+  "recommendation_integration": {
+    "label": "SOURCE_ANALYSIS",
+    "description": "context_recommender.c's evaluate_one() now calls membrane_host_memory_guard_resolve() for every joint-planner-accepted candidate; a candidate is only counted feasible (ev->feasible) when BOTH the joint planner AND the host-memory guard accept it. membrane_ctxrec_result_t exposes host_memory_checked/host_memory_fit/host_required_bytes/host_available_bytes/host_reserve_bytes. Section 11 of the Phase 34 task's own minimum requirement -- status can never be OK for a candidate requiring host memory unless that memory was actually validated -- is enforced and unit-tested directly (test_recommendation_cannot_succeed_on_unvalidated_host_residency)."
+  },
+  "cpu_adaptive_decision": {
+    "label": "SOURCE_ANALYSIS",
+    "root_cause_classification": "B -- accidental historical coupling, not intentional policy or a semantic requirement",
+    "evidence": "joint_planner.c's resolve_adaptive_precision() always calls membrane_adaptive_kv_resolve() with is_gpu_backend hardcoded to 1. adaptive_kv_policy.c already has a COMPLETE, working is_gpu_backend=0 code path (resolve_cpu()). main.cpp's own resolve_cpu_adaptive_kv() (line ~1066) ALREADY calls membrane_adaptive_kv_resolve(&cand_q8, &cand_q5, 0, &ar) directly, entirely bypassing joint_planner.c, for the real gpu_layers==0 short-circuit case -- i.e. the REAL, SHIPPED bare `--auto` CLI path already works correctly on a CPU-only host TODAY, via a separate post-load path. The 'gap' Phase 33 found is scoped to joint_planner.c's own PRE-LOAD candidate generation specifically (which context_recommender.c depends on), not a real product-behavior gap in the shipped CLI.",
+    "decision": "DEFERRED, not implemented this phase",
+    "decision_reason": "The fix is structurally clean (mirror resolve_cpu_adaptive_kv()'s own simple cand_q8/cand_q5 construction -- valid=budget check only, full_residency=valid, selected_layers=0 -- inside resolve_adaptive_precision() when device_total_bytes==0, then call membrane_adaptive_kv_resolve() with is_gpu_backend=0 instead of 1) and semantically valid (the underlying policy function already fully supports this case). It was NOT implemented this phase because joint_planner.c is SHARED with the already-shipped --auto CLI path -- any change there needs full real-CLI regression validation, which is better scoped to Phase 35 (CLI integration), not a phase whose mandatory, primary focus is host-memory safety and whose task explicitly authorizes deferring this secondary objective when it is not clearly safe enough within scope.",
+    "opens_upstream_pr_this_cycle": false
+  },
+  "known_limitations": [
+    {"id": "BACKEND_BASELINE_OVERHEAD_NOT_MODELED", "description": "A fully GPU-resident plan's real process/backend baseline overhead (e.g. real Vulkan driver overhead, ~248 MiB observed in Phase 19 evidence with zero host-resident weight/KV bytes) is not validated by this guard -- out of this phase's scope (see host_memory_guard.h's own top comment)."},
+    {"id": "TRANSIENT_BUFFER_SOURCE_LEVEL_QUESTION_OPEN", "description": "Section 7 of the Phase 34 task's source-level question (can ggml/llama.cpp's own context-creation compute-buffer allocation be predicted/bounded before context creation) was not investigated at the source level this phase -- only empirically, at small scale (see evidence_basis.transient_buffer_conclusion)."},
+    {"id": "SINGLE_MODEL_SCALE_EVIDENCE", "description": "All real RSS evidence this phase is for ONE model (SmolLM2-135M) -- the reserve policy is not validated at larger model scale (a memory-constrained 5.6 GiB dev host made a larger-model CPU-only real RSS measurement unsafe this phase, per Section 6's own 'no huge sweep, no deliberate OOM' instruction)."},
+    {"id": "RSS_MEASUREMENT_NOISE", "description": "A real ~6x discrepancy was observed for the IDENTICAL model+config across two sessions -- RSS-based host-memory accounting is noisier on this real, memory-constrained dev host than the GPU-side driver-reported free-byte accounting this project's other evidence relies on."},
+    {"id": "CPU_ADAPTIVE_GAP_STILL_OPEN_IN_JOINT_PLANNER", "description": "joint_planner.c's own resolve_adaptive_precision() still has no CPU-only fallback (root cause understood, fix deferred -- see cpu_adaptive_decision above); the REAL, SHIPPED --auto CLI is unaffected (it never reaches this code path on a CPU-only host)."}
+  ]
+}
