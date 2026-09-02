@@ -316,6 +316,24 @@ jobs:
       - name: Verify --ctx auto CLI evidence and docs
         run: python3 scripts/verify-context-auto-cli.py
 
+  # Mega Phase A, PR A4: validates the committed runtime-service evidence
+  # (results/runtime-service/validation.json) and docs/server.md +
+  # docs/model-registry.md only -- python3 + checkout, no GPU, no model
+  # download, no C/C++ build. Same reasoning as every other *-check job:
+  # this checks the committed evidence file (and a handful of direct
+  # source-level regression guards for the real bugs this mega-phase
+  # found and fixed), it does not regenerate it.
+  runtime-service-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify runtime-service evidence and docs
+        run: python3 scripts/verify-runtime-service.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered

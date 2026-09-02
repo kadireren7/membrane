@@ -110,6 +110,23 @@ static void	test_models_empty_registry(void)
 		"data is an empty array for an empty registry");
 }
 
+static void	test_status_no_model_loaded(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	auto			res = cli.Get("/v1/status");
+
+	TEST_ASSERT(res != nullptr && res->status == 200,
+		"GET /v1/status returns 200");
+	json	body = json::parse(res->body);
+
+	TEST_ASSERT(body["running"] == true, "running is true");
+	TEST_ASSERT(body["loaded_model"].is_null(),
+		"loaded_model is null before any generation request");
+	TEST_ASSERT(body.contains("endpoint"), "endpoint field is present");
+	TEST_ASSERT(body["context_policy"] == "automatic",
+		"context_policy is \"automatic\"");
+}
+
 static void	test_chat_unknown_model(void)
 {
 	httplib::Client	cli("127.0.0.1", TEST_PORT);
@@ -195,6 +212,7 @@ int	main(void)
 	start_test_server(dir);
 	test_health();
 	test_models_empty_registry();
+	test_status_no_model_loaded();
 	test_chat_unknown_model();
 	test_chat_invalid_json();
 	test_chat_missing_required_fields();

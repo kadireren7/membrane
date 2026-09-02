@@ -4,17 +4,24 @@
 #include <string>
 #include <vector>
 
+#include <httplib.h>
+#include <nlohmann/json.hpp>
+
 #include "model_cmd.h"
 #include "server.h"
 #include "product_cli.h"
+
+using json = nlohmann::json;
 
 /*
  * Mega Phase A: `membrane`, the new product CONTROL CLI (Section 10) --
  * distinct from `membrane-run`, which stays the inference entry point
  * (backwards compatible, unchanged since PR A2). `membrane model ...`
- * (PR A2) and `membrane serve` (PR A3, the local OpenAI-compatible HTTP
- * server -- see server.h) are both here; `membrane status` is future
- * work, not added yet.
+ * (PR A2), `membrane serve` (PR A3, the local OpenAI-compatible HTTP
+ * server -- see server.h), and `membrane status` (PR A4, Section 37 --
+ * a thin HTTP CLIENT against a `serve` instance already running in the
+ * foreground elsewhere; this project has no daemon/process-management
+ * capability and does not claim one) are all here.
  */
 
 static void	print_usage(FILE *out)
@@ -30,6 +37,8 @@ static void	print_usage(FILE *out)
 		"registered model's details\n");
 	fprintf(out, "  membrane serve                    start a local "
 		"OpenAI-compatible HTTP server\n");
+	fprintf(out, "  membrane status                    check a running "
+		"`membrane serve` instance\n");
 	fprintf(out, "\n");
 	fprintf(out, "serve options:\n");
 	fprintf(out, "  --port N                           listen port "
@@ -40,6 +49,12 @@ static void	print_usage(FILE *out)
 		"any address other than 127.0.0.1/localhost;\n");
 	fprintf(out, "                                      the server has "
 		"NO authentication, see --help output above\n");
+	fprintf(out, "\n");
+	fprintf(out, "status options:\n");
+	fprintf(out, "  --port N                           port to check "
+		"(default 8642)\n");
+	fprintf(out, "  --bind ADDRESS                     address to check "
+		"(default 127.0.0.1)\n");
 	fprintf(out, "\n");
 	fprintf(out, "Options:\n");
 	fprintf(out, "  --json                             machine-readable "
@@ -113,6 +128,75 @@ int	main(int argc, char **argv)
 			}
 		}
 		return (membrane_server_run(opts));
+	}
+	if (args[0] == "status")
+	{
+		std::string	bind = "127.0.0.1";
+		int			port = 8642;
+
+		for (i = 1; i < (int)args.size(); ++i)
+		{
+			if (args[i] == "--port" && i + 1 < (int)args.size())
+				port = atoi(args[++i].c_str());
+			else if (args[i] == "--bind" && i + 1 < (int)args.size())
+				bind = args[++i];
+			else
+			{
+				fprintf(stderr, "membrane status: unknown option '%s'\n",
+					args[i].c_str());
+				return (MEMBRANE_EXIT_CLI_ERROR);
+			}
+		}
+		httplib::Client	cli(bind, port);
+
+		cli.set_connection_timeout(0, 500000);
+		cli.set_read_timeout(2, 0);
+		auto	res = cli.Get("/v1/status");
+
+		if (!res || res->status != 200)
+		{
+			if (want_json)
+				printf("{\"running\":false}\n");
+			else
+				printf("MEMBRANE server\n  running: no (no response from "
+					"http://%s:%d)\n", bind.c_str(), port);
+			return (MEMBRANE_EXIT_SUCCESS);
+		}
+		json	j;
+
+		try
+		{
+			j = json::parse(res->body);
+		}
+		catch (const json::parse_error &)
+		{
+			fprintf(stderr, "membrane status: server returned an "
+				"unparseable response\n");
+			return (MEMBRANE_EXIT_RUNTIME_ERROR);
+		}
+		if (want_json)
+			printf("%s\n", j.dump().c_str());
+		else
+		{
+			printf("MEMBRANE server\n");
+			printf("  running: yes\n");
+			printf("  endpoint: %s\n",
+				j.value("endpoint", std::string("?")).c_str());
+			if (j.contains("loaded_model") && !j["loaded_model"].is_null())
+			{
+				printf("  loaded model: %s\n",
+					j["loaded_model"].get<std::string>().c_str());
+				printf("  backend: %s\n",
+					j.value("backend", std::string("?")).c_str());
+				printf("  kv precision: %s\n",
+					j.value("kv_precision", std::string("?")).c_str());
+			}
+			else
+				printf("  loaded model: (none yet)\n");
+			printf("  context policy: %s\n",
+				j.value("context_policy", std::string("?")).c_str());
+		}
+		return (MEMBRANE_EXIT_SUCCESS);
 	}
 	fprintf(stderr, "membrane: unknown command '%s'\n", args[0].c_str());
 	print_usage(stderr);
