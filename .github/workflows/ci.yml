@@ -559,7 +559,9 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Vulkan build
-        run: cmake --build build-vulkan-install -j2 --target membrane-run
+        run: |
+          cmake --build build-vulkan-install -j2 --target membrane-run \
+            membrane
 
       - name: Vulkan install to temp prefix
         run: |
