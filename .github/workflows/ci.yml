@@ -292,6 +292,30 @@ jobs:
       - name: Verify host-memory guard evidence and docs
         run: python3 scripts/verify-host-memory-guard.py
 
+  # Phase 35: validates the --ctx auto CLI integration's evidence and
+  # docs (results/context-recommendation/cli-validation.json, docs/
+  # context-auto-cli.md) -- python3 + checkout only, same shape as
+  # context-recommendation-check/host-memory-guard-check above; no
+  # GPU, no model download, no benchmark. test_context_auto_cli and
+  # the extended test_product_cli need no separate job for the same
+  # reason the other pure-module tests don't: both are registered
+  # unconditionally (llama-free), so the existing build-and-test job's
+  # Debug/ASan matrix and the thread-sanitizer job already build and
+  # ctest them on every run. The real membrane-run binary itself
+  # (llama-linked, containing this phase's main.cpp changes) is
+  # exercised by the existing packaging-smoke job, which now also
+  # greps the installed --help output for "--ctx N|auto" (Section 45).
+  context-auto-cli-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify --ctx auto CLI evidence and docs
+        run: python3 scripts/verify-context-auto-cli.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
@@ -434,6 +458,11 @@ jobs:
           /tmp/membrane-install-cpu/bin/membrane-run --version
           /tmp/membrane-install-cpu/bin/membrane-run --help
           /tmp/membrane-install-cpu/bin/membrane-run --doctor
+          # Phase 35, Section 45: the installed binary must document the
+          # new --ctx N|auto value -- confirms the packaged build
+          # actually contains this phase's CLI change, not just that
+          # --help doesn't crash.
+          /tmp/membrane-install-cpu/bin/membrane-run --help | grep -q -- '--ctx N|auto'
 
       - name: CPU uninstall removes exactly the installed files
         run: |
@@ -493,6 +522,7 @@ jobs:
           cd /tmp
           /tmp/membrane-install-vulkan/bin/membrane-run --version
           /tmp/membrane-install-vulkan/bin/membrane-run --help
+          /tmp/membrane-install-vulkan/bin/membrane-run --help | grep -q -- '--ctx N|auto'
           /tmp/membrane-install-vulkan/bin/membrane-run --list-devices
           /tmp/membrane-install-vulkan/bin/membrane-run --doctor
 

@@ -208,34 +208,25 @@ This wording must be preserved unless new evidence improves it
 (Section 31 of the Phase 33 task, extended by Phase 34's own
 disclosure obligations).
 
-## Phase 35 CLI handoff
+## Phase 35 CLI handoff -- DONE
 
-Not implemented in Phase 33 or Phase 34 (both phases explicitly forbid
-a CLI surface this cycle). Expected scope, recorded for Phase 35:
-
-- `--ctx auto` (opt-in run path) and an extended `--inspect-model` (a
-  look-before-you-leap path), built on this exact core plus Phase 34's
-  host-memory guard.
-- Wiring the caller side: real GGUF `model_max_context`/
-  `total_weight_bytes` reads (already additive in `gpu_device.h`/`.cpp`
-  since Phase 33), real per-candidate `kv_bytes_native/q8/q5`
-  computation (`ggml_row_size()`-based, as
-  `context_recommender_dryrun.cpp` already demonstrates), and real
-  device/host facts (including `/proc/meminfo`, reused from `main.cpp`'s
-  existing `read_host_meminfo()`).
-- Preserving every explicit user constraint (`--kv`, `--gpu-layers`,
-  `--kv-placement`, `--device`) as a hard constraint, exactly as this
-  core's API already requires.
-- The explicit-run host-memory policy Phase 34 deliberately left open
-  (`docs/host-memory-guard.md`'s "Explicit-run scope"): whether/how an
-  explicit `--ctx N` run should also gain a host-memory check.
-- Human- and JSON-facing explanation output, built from this core's
-  `explanation`/`reason_code`/`evaluated[]` fields plus Phase 35's own
-  UX-layer prose -- no new planner policy.
-- Existing runtime JSON schema stays unchanged until Phase 35 actually
-  adds recommendation fields to it (additive-only, per this project's
-  existing `schema_version: 1` convention).
-- Optionally revisit the deferred CPU-only adaptive fix
-  (`docs/host-memory-guard.md`'s "CPU-only adaptive decision") if
-  Phase 35's own scope naturally touches `joint_planner.c` for CLI
-  integration reasons.
+Implemented in Phase 35: `--ctx auto` is now a real, public CLI
+surface, built on this exact core plus Phase 34's host-memory guard,
+with every explicit user constraint (`--kv`, `--gpu-layers`,
+`--kv-placement`, `--device`) preserved as a hard constraint exactly as
+this core's own API already required. See `docs/context-auto-cli.md`
+for the full CLI-facing contract (usage, human/JSON output, failure
+modes, safety wording). `--inspect-model` was extended only minimally
+(a note pointing to `--ctx auto` with a real prompt) -- it deliberately
+stayed a lightweight, read-only, no-prompt-required inspection, per
+Phase 35's own "do not create confusing overlapping modes" instruction.
+`schema_version` stayed `1`; the only JSON change is one new, additive
+`context_recommendation` object, present only for a `--ctx auto` run.
+The deferred CPU-only adaptive gap (`docs/host-memory-guard.md`'s
+"CPU-only adaptive decision") is still NOT fixed inside `joint_
+planner.c` -- `--ctx auto` instead routes that one specific
+combination (CPU-only, `--kv adaptive`) through a small, separate
+resolution path in `main.cpp` that composes the same underlying pure
+functions in a new outer loop, never touching or duplicating the joint
+planner's own ranking. See `docs/context-auto-cli.md`'s "How
+recommendation works" for the exact mechanism.

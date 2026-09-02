@@ -40,7 +40,9 @@ set_target_properties(membrane-run PROPERTIES
 target_link_libraries(membrane-run PRIVATE membrane_product_cli
   membrane_compat_check membrane_decode_loop membrane_gpu_policy
   membrane_adaptive_kv_policy membrane_kv_residency_policy
-  membrane_joint_planner membrane_auto_fallback membrane_gpu_device llama)
+  membrane_joint_planner membrane_auto_fallback membrane_gpu_device
+  membrane_context_recommender membrane_host_memory_guard
+  membrane_context_auto_cli membrane_kv_store_telemetry llama)
 target_include_directories(membrane-run PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)

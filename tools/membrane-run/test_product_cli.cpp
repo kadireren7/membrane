@@ -1457,6 +1457,292 @@ static void	test_help_documents_inspect_model(void)
 		"help documents --inspect-model");
 }
 
+/* ------------------------------------------------------------------ */
+/* Phase 35: --ctx auto -- Section 38 test matrix, items 1-13          */
+/* ------------------------------------------------------------------ */
+
+/* 1. --ctx numeric unchanged. */
+static void	test_ctx_numeric_still_explicit(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("2048");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS, "parses ok");
+	TEST_ASSERT(o.ctx == 2048, "numeric value stored exactly as before");
+	TEST_ASSERT(o.ctx_mode == MEMBRANE_RUN_CTX_EXPLICIT,
+		"ctx_mode reflects EXPLICIT, a new field, no behavior change");
+}
+
+/* 2. --ctx auto parses. */
+static void	test_ctx_auto_parses(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS, "parses ok");
+	TEST_ASSERT(o.ctx_mode == MEMBRANE_RUN_CTX_AUTO, "ctx_mode is AUTO");
+	TEST_ASSERT(o.ctx == 0, "numeric ctx stays 0 (unresolved placeholder, "
+		"never the auto-size sentinel's own meaning)");
+}
+
+/* 3. Invalid --ctx string rejected. */
+static void	test_ctx_invalid_string_rejected(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("bogus");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"a non-numeric, non-\"auto\" --ctx value is rejected");
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("Auto");	/* case-sensitive: not the same as "auto" */
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"\"Auto\" (wrong case) is rejected, not silently treated as auto");
+}
+
+/* 4. Auto mode represented explicitly, not via a ctx==0 sentinel --
+ * UNSPECIFIED (no --ctx at all) and AUTO (--ctx auto) are distinct
+ * ctx_mode values even though both leave numeric ctx at 0. */
+static void	test_ctx_unspecified_vs_auto_distinct(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o_unspecified;
+	membrane_run_opts_t			o_auto;
+
+	TEST_ASSERT(run_parse(base_args(), &o_unspecified) == MEMBRANE_EXIT_SUCCESS,
+		"no --ctx at all parses ok");
+	TEST_ASSERT(o_unspecified.ctx_mode == MEMBRANE_RUN_CTX_UNSPECIFIED,
+		"omitted --ctx is UNSPECIFIED, not AUTO");
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	TEST_ASSERT(run_parse(args, &o_auto) == MEMBRANE_EXIT_SUCCESS,
+		"--ctx auto parses ok");
+	TEST_ASSERT(o_auto.ctx_mode != o_unspecified.ctx_mode,
+		"AUTO and UNSPECIFIED are genuinely distinct values, never "
+		"conflated via a shared ctx==0 sentinel");
+}
+
+/* 5. ctx auto + prompt accepted. */
+static void	test_ctx_auto_with_prompt_accepted(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();	/* already has --prompt hello */
+	args.push_back("--ctx");
+	args.push_back("auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--ctx auto with a real prompt parses ok");
+}
+
+/* 6. ctx auto without prompt rejected. */
+static void	test_ctx_auto_without_prompt_rejected(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args.push_back("membrane-run");
+	args.push_back("--model");
+	args.push_back("/no/such/model.gguf");
+	args.push_back("--ctx");
+	args.push_back("auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--ctx auto without any --prompt/--prompt-file/--prompt - is a "
+		"CLI error -- recommendation cannot invent a prompt length");
+}
+
+/* 7. ctx auto plan-only + prompt. */
+static void	test_ctx_auto_plan_only_with_prompt(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	args.push_back("--plan-only");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--ctx auto --plan-only with a real prompt parses ok");
+	TEST_ASSERT(o.plan_only == 1, "plan_only set");
+	TEST_ASSERT(o.ctx_mode == MEMBRANE_RUN_CTX_AUTO, "ctx_mode is AUTO");
+}
+
+/* 8. ctx auto plan-only without prompt rejected -- unlike EXPLICIT
+ * --ctx N --plan-only (which legitimately never needs a prompt, tested
+ * by test_plan_only_no_prompt_ok_with_explicit_ctx above), AUTO always
+ * needs one (Section 8 of the Phase 35 task). */
+static void	test_ctx_auto_plan_only_without_prompt_rejected(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args.push_back("membrane-run");
+	args.push_back("--model");
+	args.push_back("/no/such/model.gguf");
+	args.push_back("--ctx");
+	args.push_back("auto");
+	args.push_back("--plan-only");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_CLI_ERROR,
+		"--ctx auto --plan-only without a prompt is still a CLI error");
+}
+
+/* 9/10. explicit q8/q5 preserved with --ctx auto (never overridden by
+ * auto-fill just because context is being recommended). */
+static void	test_ctx_auto_explicit_kv_q8_preserved(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	args.push_back("--kv");
+	args.push_back("q8");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS, "parses ok");
+	TEST_ASSERT(o.kv_mode == 1 /* MEMBRANE_KV_STORE_Q8 */,
+		"explicit q8 preserved");
+	TEST_ASSERT(o.want_kv_mode == 1, "want_kv_mode reflects explicit request");
+}
+
+static void	test_ctx_auto_explicit_kv_q5_preserved(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	args.push_back("--kv");
+	args.push_back("q5");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS, "parses ok");
+	TEST_ASSERT(o.kv_mode == 2 /* MEMBRANE_KV_STORE_Q5 */,
+		"explicit q5 preserved");
+}
+
+/* 11. explicit placement preserved with --ctx auto. */
+static void	test_ctx_auto_explicit_placement_preserved(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	args.push_back("--gpu-layers");
+	args.push_back("4");
+	args.push_back("--kv-placement");
+	args.push_back("cpu");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS, "parses ok");
+	TEST_ASSERT(o.kv_placement == MEMBRANE_KV_PLACEMENT_CPU,
+		"explicit --kv-placement cpu preserved");
+	TEST_ASSERT(o.want_kv_placement == 1,
+		"want_kv_placement reflects explicit request");
+}
+
+/* 12. explicit gpu layers preserved with --ctx auto -- and, critically,
+ * the pre-existing "--gpu-layers N requires --ctx" rejection does NOT
+ * fire for AUTO (Section 2/5: exempted so recommendation, not the
+ * user, supplies the context size before resolve_gpu_config() runs). */
+static void	test_ctx_auto_explicit_gpu_layers_preserved(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	args.push_back("--gpu-layers");
+	args.push_back("12");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--ctx auto --gpu-layers 12 parses ok -- NOT rejected by the "
+		"gpu-layers-requires-explicit-ctx check");
+	TEST_ASSERT(o.gpu_layers == 12, "explicit gpu-layers count preserved");
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	args.push_back("--gpu-layers");
+	args.push_back("all");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--ctx auto --gpu-layers all also parses ok (was previously "
+		"rejected without an explicit numeric --ctx)");
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	args.push_back("--gpu-layers");
+	args.push_back("auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--ctx auto --gpu-layers auto also parses ok");
+}
+
+/* --ctx auto alone (no --auto) is legal (Section 9, option B: the core
+ * already supports recommendation under fully-explicit/default
+ * constraints) -- recommends context for whatever gpu_layers/kv/
+ * kv_placement defaults or explicit flags are already in force. */
+static void	test_ctx_auto_without_auto_flag_is_legal(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--ctx auto without --auto parses ok -- not forced to require it");
+	TEST_ASSERT(o.auto_mode == 0, "--auto itself was not implied");
+	TEST_ASSERT(o.gpu_layers == 0, "gpu_layers keeps its own ordinary "
+		"CPU-only default, unaffected by --ctx auto alone");
+}
+
+/* --ctx auto + --auto together is the primary documented path. */
+static void	test_ctx_auto_with_auto_flag(void)
+{
+	std::vector<std::string>	args;
+	membrane_run_opts_t			o;
+
+	args = base_args();
+	args.push_back("--ctx");
+	args.push_back("auto");
+	args.push_back("--auto");
+	TEST_ASSERT(run_parse(args, &o) == MEMBRANE_EXIT_SUCCESS,
+		"--ctx auto --auto parses ok");
+	TEST_ASSERT(o.gpu_layers == MEMBRANE_GPU_LAYERS_AUTO,
+		"--auto's own gpu_layers auto-fill still applies normally");
+	TEST_ASSERT(o.kv_mode == MEMBRANE_KV_STORE_ADAPTIVE,
+		"--auto's own kv auto-fill still applies normally");
+}
+
+/* Help documents --ctx N|auto. */
+static void	test_help_documents_ctx_auto(void)
+{
+	char	buf[32768] = {0};
+	FILE	*f = fmemopen(buf, sizeof(buf), "w");
+
+	TEST_ASSERT(f != NULL, "fmemopen for capturing --help output");
+	membrane_run_usage(f);
+	fclose(f);
+	TEST_ASSERT(strstr(buf, "--ctx N|auto") != NULL
+		|| strstr(buf, "--ctx N | auto") != NULL,
+		"help documents --ctx N|auto");
+	TEST_ASSERT(strstr(buf, "OOM") == NULL
+		|| strstr(buf, "not") != NULL || strstr(buf, "never") != NULL,
+		"any OOM mention in --help is qualified (never an unqualified "
+		"OOM-proof claim)");
+}
+
 int	main(void)
 {
 	test_minimal_valid_invocation();
@@ -1524,6 +1810,21 @@ int	main(void)
 	test_inspect_model_flag_accepts_optional_ctx();
 	test_inspect_model_rejects_other_modes();
 	test_help_documents_inspect_model();
+	test_ctx_numeric_still_explicit();
+	test_ctx_auto_parses();
+	test_ctx_invalid_string_rejected();
+	test_ctx_unspecified_vs_auto_distinct();
+	test_ctx_auto_with_prompt_accepted();
+	test_ctx_auto_without_prompt_rejected();
+	test_ctx_auto_plan_only_with_prompt();
+	test_ctx_auto_plan_only_without_prompt_rejected();
+	test_ctx_auto_explicit_kv_q8_preserved();
+	test_ctx_auto_explicit_kv_q5_preserved();
+	test_ctx_auto_explicit_placement_preserved();
+	test_ctx_auto_explicit_gpu_layers_preserved();
+	test_ctx_auto_without_auto_flag_is_legal();
+	test_ctx_auto_with_auto_flag();
+	test_help_documents_ctx_auto();
 	printf("test_product_cli: all tests passed\n");
 	return (0);
 }
