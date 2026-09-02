@@ -42,6 +42,17 @@ add_library(membrane_registry_core STATIC registry_core.cpp)
 set_target_properties(membrane_registry_core PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
+# Real bug found and fixed (Mega Phase A, PR A3): this library previously
+# linked nothing at all, so it was NEVER actually compiled with ASan/
+# UBSan/TSan instrumentation under a sanitizer configure -- confirmed
+# directly (`nm` on the built .a/test binary showed zero __asan_*
+# symbols) -- meaning PR A2's own "ASan/UBSan clean" claim for
+# test_registry_core was not actually testing anything. membrane_
+# sanitizers is the project's own INTERFACE library carrying the real
+# -fsanitize flags (see the root CMakeLists.txt's own top-of-file
+# comment) -- every other pure module links it PUBLIC; this one now
+# does too.
+target_link_libraries(membrane_registry_core PUBLIC membrane_sanitizers)
 target_include_directories(membrane_registry_core PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_registry_core PRIVATE

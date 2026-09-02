@@ -407,6 +407,46 @@ jobs:
             setarch "$(uname -m)" -R ctest --test-dir build-tsan --output-on-failure
           fi
 
+  # Mega Phase A, PR A3: a SEPARATE job from thread-sanitizer above --
+  # that job never sets MEMBRANE_ENABLE_LLAMA, so it provides zero real
+  # coverage of test_server (a genuinely multi-threaded HTTP server: one
+  # background listener thread, httplib's own internal worker pool, one
+  # mutex guarding shared per-model state) -- confirmed directly by
+  # reading its own Configure step. Cannot use fallback-controller-tests'
+  # cheaper target-scoped-without-llama trick (test_server, unlike
+  # test_auto_fallback/test_joint_planner, genuinely needs llama.h via
+  # membrane_server -> membrane_runtime_session), so this pays the same
+  # real llama/ggml compile cost packaging-smoke already pays, just
+  # target-scoped to the one binary that needs TSan coverage.
+  server-thread-sanitizer:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake
+
+      - name: Configure (TSan + llama)
+        run: |
+          cmake -S . -B build-server-tsan -DMEMBRANE_ENABLE_LLAMA=ON \
+            -DCMAKE_BUILD_TYPE=Debug -DMEMBRANE_ENABLE_TSAN=ON
+
+      - name: Build (target-scoped)
+        run: cmake --build build-server-tsan -j2 --target test_server
+
+      - name: Test
+        run: |
+          if ! ctest --test-dir build-server-tsan --output-on-failure -R test_server; then
+            echo "Retrying under TSan with ASLR disabled (setarch -R)"
+            setarch "$(uname -m)" -R ctest --test-dir build-server-tsan \
+              --output-on-failure -R test_server
+          fi
+
   # Phase 17: catches install regressions like a backend shared library
   # (e.g. ggml-vulkan) missing from tools/membrane-run/CMakeLists.txt's
   # install rules -- the installed binary would build and link fine in
