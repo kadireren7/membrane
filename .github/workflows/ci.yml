@@ -446,7 +446,25 @@ jobs:
       # MEMBRANE_ENABLE_LLAMA, so they never compile llama.cpp/ggml at
       # all).
       - name: CPU build
-        run: cmake --build build-cpu-install -j2 --target membrane-run
+        run: |
+          cmake --build build-cpu-install -j2 --target membrane-run \
+            test_runtime_session
+
+      # Mega Phase A, PR A1: this is the ONLY CI coverage test_runtime_
+      # session gets (same pre-existing gap fallback-controller-tests
+      # documents for test_auto_fallback/test_joint_planner above -- the
+      # main build-and-test/thread-sanitizer jobs never set MEMBRANE_
+      # ENABLE_LLAMA) -- piggybacked on this job's own already-necessary
+      # llama/ggml build (this test genuinely needs llama.h, unlike
+      # test_auto_fallback/test_joint_planner, so it cannot use fallback-
+      # controller-tests' cheaper target-scoped-without-llama trick).
+      # CI-safe by construction: no real GGUF model file is required
+      # (models/ is gitignored) -- see test_runtime_session.cpp's own
+      # top comment.
+      - name: Test runtime-session core
+        run: |
+          ctest --test-dir build-cpu-install --output-on-failure \
+            -R test_runtime_session
 
       - name: CPU install to temp prefix
         run: |
