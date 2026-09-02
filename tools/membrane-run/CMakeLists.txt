@@ -13,6 +13,66 @@ target_include_directories(membrane_gpu_device PUBLIC
 target_include_directories(membrane_gpu_device PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
 
+# Mega Phase A, PR A1: the reusable runtime-session core (runtime_session.h's
+# own top comment has the full contract) -- model lifecycle, planner
+# orchestration (membrane_resolve_gpu_config()/membrane_resolve_cpu_
+# adaptive_kv()/membrane_resolve_kv_placement()/membrane_resolve_ctx_auto(),
+# extracted from main.cpp), and generation (membrane_session_generate(),
+# wrapping the existing bounded apply-time fallback controller). Needs
+# llama/ggml types (model/context lifetime, tokenize), so -- like
+# membrane_gpu_device/membrane_decode_loop -- only built here, inside the
+# MEMBRANE_ENABLE_LLAMA block. membrane-run (below) links this instead of
+# implementing its own copy of any of this; a future server links it too.
+add_library(membrane_runtime_session STATIC runtime_session.cpp)
+set_target_properties(membrane_runtime_session PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_runtime_session PUBLIC membrane_product_cli
+  membrane_compat_check membrane_decode_loop membrane_gpu_policy
+  membrane_adaptive_kv_policy membrane_kv_residency_policy
+  membrane_joint_planner membrane_auto_fallback membrane_gpu_device
+  membrane_context_recommender membrane_host_memory_guard
+  membrane_context_auto_cli membrane_kv_store_telemetry llama)
+target_include_directories(membrane_runtime_session PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run)
+target_include_directories(membrane_runtime_session PRIVATE
+  ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
+if(MEMBRANE_BUILD_TESTS)
+  # Mega Phase A, PR A1, Section 7: CI-safe unit tests for the
+  # runtime-session core -- no real GGUF model file required (see
+  # test_runtime_session.cpp's own top comment). The real small-model
+  # smoke ("3 sequential requests from one loaded model") is the separate
+  # runtime-session-smoke dev harness below, not this ctest target.
+  add_executable(test_runtime_session test_runtime_session.cpp)
+  set_target_properties(test_runtime_session PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_runtime_session PRIVATE membrane_runtime_session
+    llama)
+  target_include_directories(test_runtime_session PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_runtime_session COMMAND test_runtime_session)
+endif()
+
+# Mega Phase A, PR A1, Section 7: a dev-only real-evidence harness (same
+# precedent as context-recommender-dryrun below) proving "load model once,
+# generate multiple requests, keep model alive, free cleanly" against a
+# REAL local GGUF fixture -- not ctest-registered (needs a real model file
+# CI does not have), not installed. Run manually; its output is the real
+# evidence this phase's PR description/docs cite.
+add_executable(runtime-session-smoke runtime_session_smoke.cpp)
+set_target_properties(runtime-session-smoke PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(runtime-session-smoke PRIVATE membrane_runtime_session
+  llama)
+target_include_directories(runtime-session-smoke PRIVATE
+  ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
 # Phase 33, Section 30: a dev-only real-evidence harness for the new
 # context recommendation core -- NOT installed, NOT a product CLI
 # surface (no --ctx auto ships this phase). Only built inside this
@@ -37,9 +97,9 @@ add_executable(membrane-run main.cpp)
 set_target_properties(membrane-run PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
-target_link_libraries(membrane-run PRIVATE membrane_product_cli
-  membrane_compat_check membrane_decode_loop membrane_gpu_policy
-  membrane_adaptive_kv_policy membrane_kv_residency_policy
+target_link_libraries(membrane-run PRIVATE membrane_runtime_session
+  membrane_product_cli membrane_compat_check membrane_decode_loop
+  membrane_gpu_policy membrane_adaptive_kv_policy membrane_kv_residency_policy
   membrane_joint_planner membrane_auto_fallback membrane_gpu_device
   membrane_context_recommender membrane_host_memory_guard
   membrane_context_auto_cli membrane_kv_store_telemetry llama)

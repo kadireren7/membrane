@@ -28,6 +28,16 @@ GUARD_DOC_PATH = REPO_ROOT / "docs" / "host-memory-guard.md"
 PRODUCT_CLI_CPP_PATH = REPO_ROOT / "tools" / "membrane-run" / "product_cli.cpp"
 PRODUCT_CLI_H_PATH = REPO_ROOT / "tools" / "membrane-run" / "product_cli.h"
 MAIN_CPP_PATH = REPO_ROOT / "tools" / "membrane-run" / "main.cpp"
+# Mega Phase A, PR A1: resolve_ctx_auto_cpu_adaptive()/membrane_resolve_
+# gpu_config() (and the joint-planner call inside it) moved out of main.cpp
+# into the reusable runtime-session core, unchanged, so both the CLI and a
+# future server call the SAME implementation -- see runtime_session.cpp's
+# own top comment. _c13() below checks the union of both files, not
+# main.cpp alone, so this validator keeps checking the real invariant
+# (composition, never a second planner) rather than where the code
+# happens to physically live.
+RUNTIME_SESSION_CPP_PATH = (REPO_ROOT / "tools" / "membrane-run"
+	/ "runtime_session.cpp")
 
 REQUIRED_DOC_SECTIONS = [
 	"## Usage", "## How recommendation works",
@@ -189,17 +199,18 @@ def _c12():
 	return len(missing) == 0, f"missing: {missing}" if missing else "all three present"
 
 
-@check("main.cpp never touches joint_planner.c's own ranking for the "
-	"CPU-only-adaptive special case (composes existing primitives only)")
+@check("main.cpp/runtime_session.cpp never touch joint_planner.c's own "
+	"ranking for the CPU-only-adaptive special case (composes existing "
+	"primitives only)")
 def _c13():
-	text = MAIN_CPP_PATH.read_text()
+	text = MAIN_CPP_PATH.read_text() + RUNTIME_SESSION_CPP_PATH.read_text()
 	bad = []
 	if "membrane_adaptive_kv_resolve(&cand_q8, &cand_q5, 0, &ar)" not in text:
 		bad.append("resolve_ctx_auto_cpu_adaptive() does not reuse the "
 			"real is_gpu_backend=0 call")
 	if "membrane_joint_plan_resolve" not in text:
-		bad.append("main.cpp no longer calls the existing joint planner "
-			"at all for the normal path")
+		bad.append("neither file calls the existing joint planner at all "
+			"for the normal path")
 	return len(bad) == 0, "; ".join(bad) if bad else "composition confirmed, no duplication"
 
 
