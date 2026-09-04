@@ -437,6 +437,43 @@ static void	test_admission_gate_rejects_at_capacity_zero(void)
 	}
 }
 
+/* Mega Phase B, PR B4, Section 47 of the task ("startup robustness: port
+ * already in use"): a real bug found and fixed during this phase --
+ * cpp-httplib's own default socket options set SO_REUSEPORT (Linux),
+ * which let a second, independent membrane_server_run() call bind the
+ * SAME port successfully while the first was still actively listening,
+ * silently splitting traffic across two processes' own separate model
+ * state. server.cpp now overrides this to SO_REUSEADDR only. Called
+ * SYNCHRONOUSLY (not backgrounded) against the SAME TEST_PORT the
+ * shared server above is already listening on -- membrane_server_run()
+ * must return quickly with a real nonzero exit code, proving the bind
+ * failure, without ever disturbing the already-running shared
+ * instance (still answering requests immediately afterward). */
+static void	test_second_instance_same_port_fails_to_bind(
+				const std::string &dir)
+{
+	membrane_server_options_t	opts;
+
+	opts.bind_address = "127.0.0.1";
+	opts.port = TEST_PORT;
+	opts.allow_non_loopback = false;
+	opts.registry_path = dir + "/second-instance-models.json";
+
+	int	rc = membrane_server_run(opts);
+
+	TEST_ASSERT(rc != 0, "a second membrane_server_run() call against a "
+		"port another instance is already listening on returns a "
+		"nonzero exit code -- it must never silently succeed (Section "
+		"47 of the task: fail clearly on 'port already in use')");
+
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	auto			res = cli.Get("/health");
+
+	TEST_ASSERT(res != nullptr && res->status == 200,
+		"the ORIGINAL, still-running server instance is completely "
+		"unaffected -- still answers /health normally");
+}
+
 int	main(void)
 {
 	std::string	dir = make_temp_registry_dir();
@@ -453,6 +490,7 @@ int	main(void)
 	test_chat_stream_malformed_message_still_400();
 	test_chat_malformed_message_shape();
 	test_concurrent_requests_are_thread_safe();
+	test_second_instance_same_port_fails_to_bind(dir);
 	/* Mutates the shared registry permanently for the rest of this
 	 * process's run -- kept LAST among the TEST_PORT-based tests so no
 	 * earlier test's "empty registry" assumption breaks. */

@@ -82,19 +82,48 @@ membrane-run --model model.gguf --prompt "Hello" --ctx 2048 --auto
 
 Prefer talking to MEMBRANE over HTTP instead of the CLI directly (any
 OpenAI-compatible client/library, no code changes beyond `base_url`)?
+Register a model once, then let a systemd `--user` service keep it
+running in the background — no terminal needed for day-to-day use:
 
 ```bash
 membrane model add qwen /path/to/model.gguf
-membrane serve
+membrane service install
+membrane service start
+membrane service status
 ```
 
-Then point any OpenAI-compatible client at `http://127.0.0.1:8642/v1` —
+```bash
+curl http://127.0.0.1:8642/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+Streaming (`stream: true`, real Server-Sent Events):
+
+```bash
+curl -N http://127.0.0.1:8642/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen", "messages": [{"role": "user", "content": "Hello"}], "stream": true}'
+```
+
 `ctx`, GPU layers, KV precision, and KV placement are all resolved
-automatically per model, exactly like `--auto` above. See
-[`docs/server.md`](docs/server.md) for the full endpoint/security/
-limitations reference and [`docs/model-registry.md`](docs/model-registry.md)
-for `membrane model`. `membrane-run` (below) remains the direct CLI
-entry point — nothing about it changes.
+automatically per model, exactly like `--auto` above — no client-side
+tuning. See [`docs/service.md`](docs/service.md) for the service
+commands (`install`/`start`/`stop`/`status`/`logs`/`uninstall`),
+[`docs/server.md`](docs/server.md) for the full endpoint/streaming/
+security/limitations reference, and
+[`docs/model-registry.md`](docs/model-registry.md) for `membrane
+model`. Point Open WebUI, an OpenAI-compatible editor plugin (e.g.
+Continue), or the official `openai` Python/JS SDK at
+`http://127.0.0.1:8642/v1` with any placeholder API key — see
+`docs/server.md`'s own "Client integration" section for what has
+actually been tested versus configuration-only guidance.
+
+Prefer a single foreground process for debugging instead of the
+service? `membrane serve` (no service install needed) does exactly the
+same thing in a terminal you keep open — see `docs/server.md`.
+`membrane-run` (below) remains the direct, non-HTTP CLI entry point —
+nothing about it changes.
 
 You never need to know `q8`/`q5`, GPU layer counts, or KV placement to use
 `--auto` — see "Precision and placement are separate" below only if you

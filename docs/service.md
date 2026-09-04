@@ -190,6 +190,39 @@ file, and runs `daemon-reload`. It does not remove
 `~/.config/membrane/server.json` or the model registry — those are
 your data, not service-management state.
 
+## Startup robustness (PR B4)
+
+`membrane serve` (and therefore the service, which just runs it) starts
+in a healthy, degraded-but-valid state rather than refusing to start,
+for every one of these — all confirmed directly:
+
+| Condition | Real behavior |
+|---|---|
+| Registry file missing | Starts with an empty model list — not an error (Section 8 of Mega Phase A). |
+| Config file missing | Starts with defaults (`127.0.0.1:8642`, no default model). |
+| Config file malformed (invalid JSON) | A `WARNING` is printed to stderr; startup still proceeds with defaults. |
+| `default_model` configured but not (or no longer) registered | Starts normally, healthy — the dangling name only surfaces as a normal `404 MODEL_NOT_FOUND` on a request that actually omits `"model"` and falls back to it. |
+| Port already in use | **Fails to start**, a clear message to stderr, real nonzero exit code — this is the one case that IS a hard failure, by design (Section 47). A real bug was found and fixed here: cpp-httplib's own default socket options set `SO_REUSEPORT`, which used to let a second instance silently bind the same port while the first kept running; fixed to `SO_REUSEADDR` only (a legitimate quick restart, e.g. systemd's own `RestartSec=2`, still works). |
+| No Vulkan / CPU-only host | Runs correctly CPU-only — this is the default for every build without `-DGGML_VULKAN=ON`, exercised by essentially every real smoke test in this project. |
+
+## Service upgrade / config versioning (PR B4, Section 48 of the task)
+
+A package upgrade never touches `~/.config/membrane/server.json`, the
+model registry, or the generated systemd unit — all three are user
+data/state living outside the package's own install tree. `membrane
+service install` itself only ever writes the unit file (refusing to
+overwrite one it did not generate, see "The generated unit" above) and
+seeds a server config **only if none exists yet** — an existing config
+from a previous version is never rewritten.
+
+`server_config.h`'s own `schema_version` field exists precisely so a
+future, genuinely incompatible config shape can be rejected explicitly
+(a real, tested failure mode — see `docs/server.md`) rather than
+silently misinterpreted. No schema migration exists yet because
+`schema_version` has never needed to change since it was introduced —
+this is a real capability, not a promise this phase invented but did
+not build.
+
 ## Real evidence
 
 See `results/background-service/validation.json` for the real local

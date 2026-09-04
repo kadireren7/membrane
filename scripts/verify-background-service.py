@@ -56,9 +56,14 @@ REQUIRED_SERVICE_DOC_SECTIONS = [
 	"## Commands", "## The generated unit", "## Server config",
 	"## Status", "## Model registry and default-model reload",
 	"## Security scope", "## Uninstalling", "## Real evidence",
+	"## Startup robustness (PR B4)",
+	"## Service upgrade / config versioning (PR B4, Section 48 of the task)",
 ]
 REQUIRED_SERVER_DOC_STREAMING_SECTIONS = [
 	"## Streaming (`stream: true`) — PR B2",
+]
+REQUIRED_SERVER_DOC_CLIENT_SECTIONS = [
+	"## Client integration (PR B4)",
 ]
 REQUIRED_SERVER_DOC_LIFECYCLE_SECTIONS = [
 	"### Model-lifecycle state machine (PR B3)",
@@ -331,6 +336,40 @@ def _c20():
 		f"has_hot_reload={has_hot_reload}")
 
 
+@check("docs/server.md documents the PR B4 client-integration section")
+def _c4d():
+	text = SERVER_DOC_PATH.read_text()
+	missing = [s for s in REQUIRED_SERVER_DOC_CLIENT_SECTIONS if s not in text]
+	return len(missing) == 0, f"missing: {missing}" if missing else "all present"
+
+
+@check("regression guard: the server overrides cpp-httplib's default "
+	"socket options to avoid SO_REUSEPORT -- a real bug this phase found "
+	"and fixed (a second membrane serve instance could silently bind an "
+	"already-listening port)")
+def _c21():
+	text = SERVER_CPP_PATH.read_text()
+	has_override = "set_socket_options" in text and "SO_REUSEADDR" in text
+	return has_override, ("set_socket_options()/SO_REUSEADDR override "
+		"present" if has_override else "not found")
+
+
+@check("every new pure test binary AND the new port-conflict regression "
+	"test are registered as real ctest/test-suite entries")
+def _c22():
+	cmake_text = MEMBRANE_CMAKE_PATH.read_text()
+	missing = [t for t in NEW_PURE_TESTS
+		if f"add_test(NAME {t}" not in cmake_text]
+	test_server_text = (MEMBRANE_DIR / "test_server.cpp").read_text()
+	has_port_conflict_test = ("test_second_instance_same_port_fails_to_bind"
+		in test_server_text)
+	ok = len(missing) == 0 and has_port_conflict_test
+	return ok, (f"missing add_test(): {missing}" if missing
+		else "port-conflict regression test missing from test_server.cpp"
+			if not has_port_conflict_test
+		else "all present")
+
+
 @check("Mega Phase A's own evidence files are untouched by this PR's own "
 	"new commits (checked against origin/main)")
 def _c18():
@@ -346,8 +385,9 @@ def _c18():
 
 
 def main():
-	for fn in (_c1, _c2, _c3, _c4, _c4b, _c4c, _c5, _c6, _c7, _c8, _c9,
-			_c10, _c11, _c12, _c13, _c14, _c16, _c17, _c19, _c20, _c18):
+	for fn in (_c1, _c2, _c3, _c4, _c4b, _c4c, _c4d, _c5, _c6, _c7, _c8,
+			_c9, _c10, _c11, _c12, _c13, _c14, _c16, _c17, _c19, _c20,
+			_c21, _c22, _c18):
 		fn()
 	print(f"\n{CHECK_COUNT - len(FAILURES)}/{CHECK_COUNT} checks passed")
 	if FAILURES:

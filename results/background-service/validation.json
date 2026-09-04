@@ -5,7 +5,8 @@
   "generated_at": "2026-09-04T00:00:00Z",
   "pr_squash_shas": {
     "B1": "a88dfe4d7a8c519a6d1060c7291124aedb38690a",
-    "B2": "fbc2f3f697e17ec349b0335a5038534205e336b2"
+    "B2": "fbc2f3f697e17ec349b0335a5038534205e336b2",
+    "B3": "2c26fa45c01e5a74c57f49ed12e63f28ee6e57cb"
   },
   "note": "Mega Phase B (PRs B1-B4): turns MEMBRANE into a persistent local AI backend managed as a systemd --user service, with real streaming, model-lifecycle hardening, and client integration. This file is seeded during PR B1 and extended by B2/B3/B4 -- it is NOT rewritten from scratch each PR, only appended to/corrected, matching results/runtime-service/validation.json's own precedent from Mega Phase A. REAL rows are genuine local invocations on this dev host (CPU-only build). SYNTHETIC rows are ctest-registered unit/integration tests with no real GGUF model dependency (CI-safe). SOURCE_ANALYSIS rows are direct code-reading confirmations, not runs.",
   "service_lifecycle": {
@@ -104,7 +105,7 @@
   "model_lifecycle_state_machine": {
     "label": "REAL",
     "pr": "B3",
-    "squash_sha": "PENDING",
+    "squash_sha": "2c26fa45c01e5a74c57f49ed12e63f28ee6e57cb",
     "evidence": [
       "Explicit e_membrane_model_state (empty/loading/ready/generating/unloading/error) replaces the previous implicit \"model_loaded bool + name string\" -- reported by GET /v1/status as model_state, confirmed real via curl at every stage of the smoke sequence below (ready before/after every successful load, generating never observed at rest since the mutex holds it for the whole request as designed).",
       "Real recovery proof: with model A (SmolLM2-135M-Instruct) already loaded and serving, a real switch attempt to an oversized model (qwen2.5-1.5b, fp16, ~3.5GB) correctly failed with 503 NO_FEASIBLE_CONTEXT (the real host-memory-guard rejected it before any weight load was attempted -- host RSS/free memory measured stable across the attempt, no dangerous swap thrash). GET /v1/status immediately afterward still reported loaded_model=smolchat, model_state=ready -- never empty. A following real chat completion against smolchat succeeded normally. Reproduced a SECOND time, independently, switching to a different oversized model (SmolLM2-360M) under the same real memory pressure -- same result both times.",
@@ -136,6 +137,43 @@
     "label": "SOURCE_ANALYSIS",
     "pr": "B3",
     "note": "Already true before PR B3 (membrane_read_host_meminfo() was already called fresh inside ensure_model_loaded() on every single call, never a cached startup snapshot) -- PR B3 did not need to change this, only confirm and document it explicitly (Section 33 of the task). The real NO_FEASIBLE_CONTEXT evidence in model_lifecycle_state_machine above IS this behavior in action: the failure was a genuine reflection of this dev host's REAL, currently tight memory state at the moment of the request, not a stale figure."
+  },
+  "startup_robustness": {
+    "label": "REAL",
+    "pr": "B4",
+    "squash_sha": "PENDING",
+    "evidence": [
+      "Missing registry file: `membrane serve` started cleanly against a nonexistent MEMBRANE_MODELS_PATH, GET /v1/models returned an empty list, GET /health returned ok -- confirmed no registry file was ever created just by starting (only a real `membrane model add` writes one).",
+      "Missing config file: `membrane serve` started cleanly against a nonexistent MEMBRANE_SERVER_CONFIG_PATH, GET /health returned ok.",
+      "Malformed config file (`{ this is not valid json`): a real WARNING was printed to stderr (`could not read server config, using defaults: ... parse error ...`), startup still proceeded normally, GET /health returned ok.",
+      "Dangling default_model (configured in server.json, but not -- or no longer -- registered): `membrane serve` started cleanly and healthy; a real chat request omitting \"model\" correctly fell back to the dangling name and received a normal `404 MODEL_NOT_FOUND` with an honest message -- never a startup failure, never a crash.",
+      "Port already in use: a REAL BUG was found and fixed here -- cpp-httplib's own default_socket_options() sets SO_REUSEPORT (Linux), which let a second, fully independent `membrane serve` process bind_to_port() the SAME address:port successfully WHILE THE FIRST WAS STILL ACTIVELY LISTENING (confirmed directly: the second process printed 'MEMBRANE server listening' instead of failing). Fixed by overriding server.cpp's own socket options to SO_REUSEADDR only via httplib::Server::set_socket_options() -- re-tested: a second instance now correctly fails with a clear stderr message and exit code 1, while a legitimate quick restart (stop, then immediately start again on the same port) still works. A new CI-safe regression test (test_server.cpp's test_second_instance_same_port_fails_to_bind) calls membrane_server_run() a second time, synchronously, against the shared test server's own already-bound port, confirming a nonzero return and that the original instance remains completely unaffected.",
+      "No Vulkan / CPU-only: every real smoke test in this entire mega-phase (B1 through B4) ran on this dev host's own CPU-only build (no -DGGML_VULKAN=ON) -- this is not a special case exercised once, it is the default condition of essentially all real evidence in this file."
+    ]
+  },
+  "client_integration": {
+    "label": "SOURCE_ANALYSIS",
+    "pr": "B4",
+    "note": "Open WebUI and an OpenAI-compatible editor plugin (e.g. Continue) are documented in docs/server.md's new \"Client integration\" section as CONFIGURATION INSTRUCTIONS ONLY, explicitly not claimed as independently tested this phase -- the development host had real, concurrent resource pressure at the time (other unrelated Docker containers already running for a different project, and free memory measured as low as ~105MB/5.6GB total), making it unsafe to start an additional real container without risking those other already-running services. This is a deliberate, disclosed scope decision (Section 49 of the task explicitly allows 'configuration instructions' when real testing is not actually performed), not a silently-skipped claim of testing that didn't happen. The REAL, tested client evidence remains the official Python openai SDK -- both non-streaming (Mega Phase A, PR A4) and streaming (PR B2) -- documented in the same section as the actual validated baseline these configuration-only integrations build on."
+  },
+  "final_end_to_end_flow": {
+    "label": "REAL",
+    "pr": "B4",
+    "note": "The full combined flow the Mega Phase B task itself asks for as a final capstone check -- every step below was run in one continuous real session against the actual installed systemd --user service (never `membrane serve` run directly), on this dev host's own real, currently-loaded systemd --user session, with the pre-existing openclaw-gateway.service unit confirmed byte-identical (sha256) before and after.",
+    "steps": [
+      "1. `membrane model add smol models/SmolLM2-135M-Instruct-f16.gguf` -- real registry write.",
+      "2. `membrane service install` -- real unit written, real `systemctl --user daemon-reload`.",
+      "3. `membrane service start` -- real `systemctl --user start`.",
+      "4. `membrane service status` -- real systemd state (active/running/real pid) combined with a real GET /v1/status.",
+      "5. Real Python openai SDK (3.8.0) non-streaming `client.chat.completions.create()` -- real generated content, finish_reason=length.",
+      "6. Real streaming `stream=True` -- 21 real incremental chunks via the SDK's own typed interface.",
+      "7. A second non-streaming request to the same model -- 0.25s wall-clock, confirming reuse (no reload) even measured end-to-end through the real service.",
+      "8. Real registry hot-reload: `membrane model add smol360 ...` run from a separate terminal while the service was already running -- `client.models.list()` (SDK) immediately showed both models, no restart. A real model-switch attempt to smol360 then genuinely failed with 503 NO_FEASIBLE_CONTEXT under this dev host's real, tight memory at that moment (confirmed via `free -h`, not contrived) -- `membrane service status` immediately afterward still showed smol loaded and the service itself remained fully healthy, exactly the PR B3 recovery behavior exercised here as part of the real combined flow, not just in isolation. (A genuinely successful two-different-model switch was already proven real and separately, with more free memory available at the time, in Mega Phase A's own results/runtime-service/validation.json -- \"Model switch: exactly 1 real weight load per switch across smol -> smol360 -> smol again\" -- the underlying switch-success code path is unchanged since then.)",
+      "9. Real client-disconnect cancellation: a streaming request for 200 tokens was aborted via `curl --max-time 0.5` mid-generation. Real service CPU time (`ps -o cputime`) continued increasing for approximately 2 more real seconds after the abort (this dev host was under real, heavy concurrent load from other running software at the time) before stabilizing and staying flat for the following 5 seconds -- slower to detect than PR B2's own original quieter-host measurement (near-instantaneous), but still genuinely bounded, not a runaway/leak: generation demonstrably stopped, it did not merely have its TCP connection closed. A following real non-streaming request to the same model succeeded normally immediately afterward -- no leaked lock, no leaked thread, no corrupted session.",
+      "10. `membrane service stop` -- real `systemctl --user stop`, confirmed via a real connection-refused response on a following health check.",
+      "11. `membrane service uninstall` -- real unit file removed, confirmed absent afterward.",
+      "12. Full cleanup: both test models removed from the real registry, the seeded server config and now-empty registry file removed, confirmed `~/.config/systemd/user/openclaw-gateway.service` byte-identical (sha256) to its state before this entire mega-phase's work began, and no leftover `membrane` process of any kind."
+    ]
   },
   "known_limitations": {
     "label": "SOURCE_ANALYSIS",
