@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <deque>
@@ -23,8 +24,84 @@
 #include "product_cli.h"
 #include "utf8_stream.h"
 #include "stream_queue.h"
+#include "request_admission.h"
+
+#include <sys/stat.h>
 
 using json = nlohmann::json;
+
+/*
+ * Mega Phase B, PR B3, Section 27 of the task: an explicit model-lifecycle
+ * state machine -- replaces the previous implicit "model_loaded bool +
+ * loaded_name string" boolean soup with a named, observable state,
+ * synchronized the same way every other piece of st's mutable state
+ * already is (transitions only ever happen while st->mtx is held).
+ * EMPTY: no model has ever been loaded, or the last one was cleanly
+ * unloaded -- a healthy, normal state, never an error.
+ * LOADING / UNLOADING: a load/unload is in progress (both only ever
+ * observed transiently, since they happen while st->mtx is held for the
+ * whole request -- exposed anyway for /v1/status's own honesty and for
+ * a future phase that might narrow the lock).
+ * READY: a model is loaded and idle.
+ * GENERATING: a model is loaded and actively generating (streaming or
+ * not).
+ * ERROR: a model switch failed AND the attempt to restore the
+ * previously-loaded model (see ensure_model_loaded()'s own recovery
+ * logic) also failed -- distinct from EMPTY specifically so /v1/status
+ * can tell "never loaded anything" apart from "something went wrong".
+ */
+enum e_membrane_model_state
+{
+	MEMBRANE_MODEL_STATE_EMPTY = 0,
+	MEMBRANE_MODEL_STATE_LOADING,
+	MEMBRANE_MODEL_STATE_READY,
+	MEMBRANE_MODEL_STATE_GENERATING,
+	MEMBRANE_MODEL_STATE_UNLOADING,
+	MEMBRANE_MODEL_STATE_ERROR,
+};
+
+static const char	*membrane_model_state_name(int state)
+{
+	switch (state)
+	{
+		case MEMBRANE_MODEL_STATE_EMPTY: return ("empty");
+		case MEMBRANE_MODEL_STATE_LOADING: return ("loading");
+		case MEMBRANE_MODEL_STATE_READY: return ("ready");
+		case MEMBRANE_MODEL_STATE_GENERATING: return ("generating");
+		case MEMBRANE_MODEL_STATE_UNLOADING: return ("unloading");
+		case MEMBRANE_MODEL_STATE_ERROR: return ("error");
+		default: return ("unknown");
+	}
+}
+
+/* Section 29: a bounded pending-request admission gate for POST /v1/chat/
+ * completions -- see request_admission.h's own top comment. 8
+ * concurrently-admitted chat requests is generous headroom above the
+ * "1 active generation, the rest waiting on st->mtx" reality this
+ * server already has (no continuous batching), while still bounding how
+ * many requests can pile up before a caller gets an honest, immediate
+ * 503 instead of an ever-growing wait. This is deliberately NOT exposed
+ * as a documented/supported server_config.h setting (Section 8's own
+ * "keep minimal" convention) -- MEMBRANE_MAX_PENDING_CHAT_REQUESTS only
+ * exists so test_server.cpp can deterministically force admission
+ * rejection (capacity 0 -- the very first request always gets a real
+ * 503) without needing a real model or a timing-dependent flood of
+ * concurrent requests. */
+# define MEMBRANE_DEFAULT_MAX_PENDING_CHAT_REQUESTS	8
+
+static int	membrane_max_pending_chat_requests(void)
+{
+	const char	*env = getenv("MEMBRANE_MAX_PENDING_CHAT_REQUESTS");
+
+	if (env != NULL && env[0] != '\0')
+	{
+		int	parsed = atoi(env);
+
+		if (parsed >= 0)
+			return (parsed);
+	}
+	return (MEMBRANE_DEFAULT_MAX_PENDING_CHAT_REQUESTS);
+}
 
 /*
  * See server.h's own top comment for the full contract. This file never
@@ -87,6 +164,31 @@ struct s_membrane_server_model_state
 										 * configured; a chat request
 										 * omitting "model" falls back to
 										 * this, never proactively loaded */
+
+	/* Mega Phase B, PR B3, Section 27: only ever mutated while mtx is
+	 * held, but readable atomically (e.g. by /v1/status, itself also
+	 * under mtx today -- see handle_status()) without a data race
+	 * either way. */
+	std::atomic<int>			model_state{MEMBRANE_MODEL_STATE_EMPTY};
+
+	/* Section 29: bounded admission for POST /v1/chat/completions --
+	 * deliberately its OWN synchronization primitive, checked BEFORE
+	 * mtx is ever touched, so a caller past capacity gets an immediate
+	 * 503 instead of joining an ever-growing queue of threads blocked
+	 * on mtx. */
+	request_admission_gate_t	admission_gate{membrane_max_pending_chat_requests()};
+
+	/* Mega Phase B, PR B3, Section 32: the model registry now lives
+	 * HERE (moved out of membrane_server_run()'s own local variable)
+	 * so it can be hot-refreshed from an mtime check without any
+	 * caller needing to hold st->mtx for the whole operation --
+	 * registry_mtx is a separate, short-lived lock (registry lookups
+	 * are cheap and must never wait behind a long-running generation
+	 * just to list/resolve model names). */
+	std::mutex					registry_mtx;
+	membrane_registry_t			registry;
+	std::string					registry_path;
+	int64_t						registry_mtime_ns = 0;
 };
 
 static bool	load_chat_template(const std::string &model_path,
@@ -172,29 +274,24 @@ static int	membrane_kv_precision_name_to_json(int mode,
 	return (1);
 }
 
-/* Loads `name` (registry entry) as the server's one active model,
- * unloading whatever was loaded before (Section 23: one active model).
- * On the FIRST load of this model, runs the real context-recommendation
- * pipeline against `first_prompt` to decide gpu_layers/KV precision/ctx
- * (Section 21) -- this is a REAL, disclosed limitation (documented in
- * docs/server.md): that initial plan is sized for whichever request
- * happens to trigger the load, not a hypothetical future largest prompt;
- * gpu_layers/KV precision cannot change again without a reload. */
-static bool	ensure_model_loaded(s_membrane_server_model_state *st,
+/* Attempts to load exactly ONE candidate (`entry`) as the server's active
+ * model -- no unload/recovery logic of its own, just "try this one, real
+ * host-memory snapshot taken fresh right now" (Section 33 of the task:
+ * memory revalidation happens on EVERY call here, never a cached
+ * startup-time snapshot -- membrane_read_host_meminfo() is called fresh
+ * each time, so a switch attempted after the host's free memory changed
+ * -- e.g. another process using more RAM, or this same server having
+ * just freed the previous model's memory -- always sees that current
+ * reality, not stale data). Factored out of ensure_model_loaded() so the
+ * same real load path can be reused both for the actual requested switch
+ * and for automatically restoring a previous model after a failed one
+ * (see ensure_model_loaded()'s own recovery logic below). */
+static bool	try_load_one(s_membrane_server_model_state *st,
 				const membrane_registry_entry_t &entry,
 				const std::string &first_prompt, int gen_tokens,
 				std::string *err_code, std::string *err_message,
 				int *http_status)
 {
-	if (st->model_loaded && st->loaded_name == entry.name)
-		return (true);
-	if (st->model_loaded)
-	{
-		membrane_model_close(&st->session);
-		st->model_loaded = false;
-		st->loaded_name.clear();
-		st->cached_chat_template.clear();
-	}
 	membrane_run_opts_t	o;
 
 	fill_auto_opts(&o, entry.path.c_str(), gen_tokens);
@@ -231,6 +328,95 @@ static bool	ensure_model_loaded(s_membrane_server_model_state *st,
 	return (true);
 }
 
+/* Loads `entry` as the server's one active model, unloading whatever was
+ * loaded before (Section 23: one active model). On the FIRST load of
+ * this model, runs the real context-recommendation pipeline against
+ * `first_prompt` to decide gpu_layers/KV precision/ctx (Section 21) --
+ * this is a REAL, disclosed limitation (documented in docs/server.md):
+ * that initial plan is sized for whichever request happens to trigger
+ * the load, not a hypothetical future largest prompt; gpu_layers/KV
+ * precision cannot change again without a reload.
+ *
+ * Mega Phase B, PR B3, Section 31: model-switch FAILURE recovery -- a
+ * naive "unload A, then try to load B" leaves the server with NO model
+ * loaded at all if B fails, even though A was working fine a moment ago
+ * (a real regression this project would otherwise be silently
+ * introducing relative to "don't leave corrupted state"). This function
+ * instead remembers A's own name, and if B's load fails, automatically
+ * attempts to RELOAD A (a fresh try_load_one() call, re-validating
+ * memory again) before giving up -- the caller's own request for B is
+ * still correctly reported as a failure (err_code/err_message/
+ * http_status describe B's own failure, never silently swapped for a
+ * misleading "success"), but the SERVER itself ends up back in a known-
+ * good state (READY on A) rather than EMPTY, whenever that recovery
+ * itself succeeds. Only if BOTH B's load and A's own restore attempt
+ * fail does the server end up in the explicit ERROR state -- distinct
+ * from EMPTY specifically so /v1/status can tell "never loaded anything"
+ * apart from "a switch attempt left this host unable to serve anything
+ * right now". */
+static bool	ensure_model_loaded(s_membrane_server_model_state *st,
+				const membrane_registry_t &registry_snapshot,
+				const membrane_registry_entry_t &entry,
+				const std::string &first_prompt, int gen_tokens,
+				std::string *err_code, std::string *err_message,
+				int *http_status)
+{
+	if (st->model_loaded && st->loaded_name == entry.name)
+		return (true);
+
+	std::string	previous_name = st->loaded_name;
+	bool		had_previous = st->model_loaded;
+
+	if (st->model_loaded)
+	{
+		st->model_state.store(MEMBRANE_MODEL_STATE_UNLOADING,
+			std::memory_order_relaxed);
+		membrane_model_close(&st->session);
+		st->model_loaded = false;
+		st->loaded_name.clear();
+		st->cached_chat_template.clear();
+	}
+	st->model_state.store(MEMBRANE_MODEL_STATE_LOADING,
+		std::memory_order_relaxed);
+	if (try_load_one(st, entry, first_prompt, gen_tokens, err_code,
+			err_message, http_status))
+	{
+		st->model_state.store(MEMBRANE_MODEL_STATE_READY,
+			std::memory_order_relaxed);
+		return (true);
+	}
+	if (had_previous)
+	{
+		const membrane_registry_entry_t	*prev_entry
+				= membrane_registry_find(registry_snapshot, previous_name);
+
+		if (prev_entry != NULL)
+		{
+			std::string	restore_err_code;
+			std::string	restore_err_message;
+			int			restore_http_status = 500;
+
+			st->model_state.store(MEMBRANE_MODEL_STATE_LOADING,
+				std::memory_order_relaxed);
+			if (try_load_one(st, *prev_entry, first_prompt, gen_tokens,
+					&restore_err_code, &restore_err_message,
+					&restore_http_status))
+			{
+				st->model_state.store(MEMBRANE_MODEL_STATE_READY,
+					std::memory_order_relaxed);
+				/* The ORIGINAL request (for `entry`) is still a failure
+				 * -- err_code/err_message/http_status already describe
+				 * it and are left untouched -- only the server's own
+				 * resting state improved. */
+				return (false);
+			}
+		}
+	}
+	st->model_state.store(MEMBRANE_MODEL_STATE_ERROR,
+		std::memory_order_relaxed);
+	return (false);
+}
+
 static void	handle_health(const httplib::Request &, httplib::Response &res)
 {
 	json	j;
@@ -240,11 +426,58 @@ static void	handle_health(const httplib::Request &, httplib::Response &res)
 	res.set_content(j.dump(), "application/json");
 }
 
-static void	handle_models(s_membrane_server_model_state *st,
-				const membrane_registry_t &reg, const httplib::Request &,
-				httplib::Response &res)
+/* Mega Phase B, PR B3, Section 32 of the task: "the server should see
+ * registry updates without restart if cheap" -- an mtime check (a single
+ * stat(), not re-reading/re-parsing the file every request) followed by
+ * a real reload only when the file actually changed. Deliberately no
+ * file-watcher/inotify complexity (the task's own "no file-watcher
+ * complexity required" allowance) -- a plain poll-on-use is simpler and
+ * just as correct here, since registry changes are rare (an operator
+ * running `membrane model add`), not a hot path. A reload that fails to
+ * parse (e.g. caught mid-write) is silently ignored -- the OLD, still-
+ * good registry_snapshot is kept rather than corrupting server state
+ * over a transient race with another process's own atomic rename() (the
+ * same atomicity registry_core.h's own save() already provides, but a
+ * reader can still observe the pre-rename mtime one poll too early in
+ * principle). registry_mtx is a separate, short-lived lock -- a registry
+ * lookup never has to wait behind a long-running generation. */
+static membrane_registry_t	refresh_and_snapshot_registry(
+				s_membrane_server_model_state *st)
 {
-	(void)st;
+	struct stat	stat_buf;
+
+	if (stat(st->registry_path.c_str(), &stat_buf) == 0)
+	{
+		int64_t	mtime_ns = (int64_t)stat_buf.st_mtim.tv_sec * 1000000000LL
+				+ (int64_t)stat_buf.st_mtim.tv_nsec;
+
+		std::lock_guard<std::mutex>	lock(st->registry_mtx);
+
+		if (mtime_ns != st->registry_mtime_ns)
+		{
+			membrane_registry_t		reloaded;
+			membrane_registry_error_t	err;
+
+			if (membrane_registry_load(st->registry_path, &reloaded, &err))
+			{
+				st->registry = reloaded;
+				st->registry_mtime_ns = mtime_ns;
+			}
+		}
+		return (st->registry);
+	}
+	std::lock_guard<std::mutex>	lock(st->registry_mtx);
+
+	return (st->registry);	/* stat() failure (e.g. file momentarily
+							 * missing) -- keep whatever is already
+							 * cached, matching registry_core.h's own
+							 * "missing is not an error" convention */
+}
+
+static void	handle_models(s_membrane_server_model_state *st,
+				const httplib::Request &, httplib::Response &res)
+{
+	membrane_registry_t	reg = refresh_and_snapshot_registry(st);
 	json	arr = json::array();
 
 	for (const auto &e : reg.entries)
@@ -279,6 +512,8 @@ static void	handle_status(s_membrane_server_model_state *st,
 	j["endpoint"] = "http://" + bind + ":" + std::to_string(port);
 	std::lock_guard<std::mutex>	lock(st->mtx);
 
+	j["model_state"] = membrane_model_state_name(
+		st->model_state.load(std::memory_order_relaxed));
 	if (st->model_loaded)
 	{
 		const char	*kv_name;
@@ -381,14 +616,24 @@ struct s_stream_request_state
 	/* Owned here so it outlives handle_chat_completions()'s own return
 	 * (the worker thread and the content-provider/resource-releaser
 	 * callbacks below all run AFTER that function has already
-	 * returned). */
+	 * returned). model_path is a real std::string, NOT just req_o's own
+	 * raw model_path pointer copied verbatim -- Mega Phase B, PR B3
+	 * turned the registry entry handle_chat_completions resolves
+	 * `entry` from into a per-request SNAPSHOT COPY (registry hot-
+	 * reload, Section 32), so `entry->path.c_str()` itself is only
+	 * valid for handle_chat_completions()'s own stack frame; req_o.
+	 * model_path must point into storage that outlives it instead (set
+	 * from THIS string's own .c_str(), after this string is populated --
+	 * see the call site in handle_chat_completions()). */
 	membrane_run_opts_t			req_o;
+	std::string					model_path;
 	std::string					prompt_text;
 	std::string					model_name;
 	int							max_tokens = 0;
 	bool						include_usage = false;
 	s_membrane_server_model_state	*st = NULL;
 	std::string					id;
+	request_admission_ticket_t	admission_ticket;
 
 	s_stream_request_state() : queue(&cancel_flag) {}
 };
@@ -602,14 +847,41 @@ static void	stream_release(std::shared_ptr<s_stream_request_state> state,
 	state->cancel_flag.store(true, std::memory_order_relaxed);
 	if (state->worker.joinable())
 		state->worker.join();
+	/* Section 27: back to READY (never left at GENERATING) -- still
+	 * under state->server_lock (still held here, unlocked right below),
+	 * so this transition is exactly as synchronized as every other one. */
+	state->st->model_state.store(MEMBRANE_MODEL_STATE_READY,
+		std::memory_order_relaxed);
 	state->server_lock.unlock();
 }
 
 static void	handle_chat_completions(s_membrane_server_model_state *st,
-				const membrane_registry_t &reg, const httplib::Request &req,
-				httplib::Response &res)
+				const httplib::Request &req, httplib::Response &res)
 {
-	json	body;
+	/* Section 29 of the task: admission is checked FIRST, before any
+	 * other work (even JSON parsing) -- a server already at capacity
+	 * gives an immediate, cheap 503 rather than spending any more work
+	 * on a request it cannot serve promptly anyway. The ticket's own
+	 * RAII destructor releases the slot on every return path below
+	 * (including every early "return ;") for the non-streaming path;
+	 * for the streaming path, ownership is explicitly moved into the
+	 * async s_stream_request_state so the slot stays held for the
+	 * whole streamed response, not just this function's own synchronous
+	 * prefix. */
+	request_admission_ticket_t	admission_ticket
+			= membrane_try_admit(&st->admission_gate);
+
+	if (!admission_ticket.admitted())
+	{
+		res.set_header("Retry-After", "1");
+		send_json_error(res, 503, "SERVER_BUSY", "too many concurrent chat "
+			"completion requests are already being handled -- retry "
+			"shortly (this server has no continuous batching and fully "
+			"serializes generation, Section 24/29 of the task)");
+		return ;
+	}
+	membrane_registry_t	reg = refresh_and_snapshot_registry(st);
+	json				body;
 
 	try
 	{
@@ -728,8 +1000,8 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 	std::string	err_message;
 	int			err_status = 500;
 
-	if (!ensure_model_loaded(st, *entry, prompt_text, max_tokens, &err_code,
-			&err_message, &err_status))
+	if (!ensure_model_loaded(st, reg, *entry, prompt_text, max_tokens,
+			&err_code, &err_message, &err_status))
 	{
 		send_json_error(res, err_status, err_code, err_message);
 		return ;
@@ -752,13 +1024,32 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 		auto	state = std::make_shared<s_stream_request_state>();
 
 		state->st = st;
-		fill_auto_opts(&state->req_o, entry->path.c_str(), max_tokens);
+		state->model_path = entry->path;	/* a real copy -- `entry` points
+									 * into `reg`, a snapshot local to
+									 * THIS function, which is about to be
+									 * destroyed; req_o.model_path must
+									 * point into storage that outlives
+									 * it (this string, owned by `state`)
+									 * instead (Section 32's registry hot-
+									 * reload made `reg` a per-request
+									 * copy, not the long-lived registry
+									 * membrane_server_run() used to pass
+									 * by reference). */
+		fill_auto_opts(&state->req_o, state->model_path.c_str(), max_tokens);
 		state->prompt_text = prompt_text;
 		state->model_name = model_name;
 		state->max_tokens = max_tokens;
 		state->include_usage = want_usage_in_stream;
 		state->id = id_buf;
 		state->server_lock = std::move(lock);
+		state->admission_ticket = std::move(admission_ticket);	/* Section
+									 * 29: the slot stays held for the
+									 * whole async stream, released by
+									 * stream_release() -- not by this
+									 * function's own (already-passed)
+									 * return. */
+		st->model_state.store(MEMBRANE_MODEL_STATE_GENERATING,
+			std::memory_order_relaxed);
 		state->worker = std::thread(stream_worker_fn, state);
 		res.set_header("Cache-Control", "no-cache");
 		res.set_chunked_content_provider("text/event-stream",
@@ -783,7 +1074,11 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 							 * 5 of the task: "persistent model, new
 							 * context per request." */
 	gen_req.token_cb = NULL;
+	st->model_state.store(MEMBRANE_MODEL_STATE_GENERATING,
+		std::memory_order_relaxed);
 	membrane_session_generate(&st->session, gen_req, &gen_res);
+	st->model_state.store(MEMBRANE_MODEL_STATE_READY,
+		std::memory_order_relaxed);
 	if (!gen_res.ok)
 	{
 		if (gen_res.err.set)
@@ -834,10 +1129,26 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 
 int	membrane_server_run(const membrane_server_options_t &opts)
 {
+	/* Real bug found and fixed during PR B3 development: g_stop_requested
+	 * is a file-scope global (the only race-free way membrane_server_
+	 * request_stop()/a signal handler can reach into a running instance
+	 * from outside), but it was never reset here -- every OTHER piece of
+	 * per-run state (`state`, `svr`, ...) is a fresh local, so a SECOND
+	 * membrane_server_run() call in the same process (e.g. a test
+	 * harness running two differently-configured server instances
+	 * sequentially) would see a stale `true` left over from the
+	 * PREVIOUS instance's own shutdown and exit its poll loop
+	 * immediately, never actually serving a single request. Every real
+	 * product call site (the `membrane serve` CLI, one process per
+	 * invocation) happened to never hit this, since a fresh process
+	 * always starts with g_stop_requested's own static initializer
+	 * (false) -- confirmed as a real, previously-undetected gap, not a
+	 * hypothetical one, by test_server.cpp's own new admission-gate test
+	 * needing a second, differently-configured instance. */
+	g_stop_requested.store(false);
+
 	std::string	registry_path = opts.registry_path.empty()
 			? membrane_registry_resolve_path() : opts.registry_path;
-	membrane_registry_t		reg;
-	membrane_registry_error_t	reg_err;
 
 	if (registry_path.empty())
 	{
@@ -845,12 +1156,27 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 			"is set -- cannot locate the model registry\n");
 		return (1);
 	}
-	if (!membrane_registry_load(registry_path, &reg, &reg_err))
+
+	s_membrane_server_model_state	state;
+	membrane_registry_error_t		reg_err;
+
+	/* Mega Phase B, PR B3, Section 32: the registry now lives on `state`
+	 * itself (registry_path/registry_mtime_ns alongside it) so it can be
+	 * hot-refreshed per-request via refresh_and_snapshot_registry() --
+	 * this initial load is identical to before, just writing into
+	 * state.registry instead of a local variable the handlers used to
+	 * capture by reference. registry_mtime_ns is left at its default (0)
+	 * -- the first refresh_and_snapshot_registry() call will always see
+	 * a real mtime != 0 and reload from scratch anyway, so there is no
+	 * need to stat() the file twice here just to seed it "correctly". */
+	if (!membrane_registry_load(registry_path, &state.registry, &reg_err))
 	{
 		fprintf(stderr, "membrane serve: could not load the model "
 			"registry: %s\n", reg_err.message.c_str());
 		return (1);
 	}
+	state.registry_path = registry_path;
+
 	std::string	bind = opts.bind_address.empty() ? "127.0.0.1"
 			: opts.bind_address;
 
@@ -868,8 +1194,6 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 			"can reach this address can run inference as you.\n",
 			bind.c_str());
 
-	s_membrane_server_model_state	state;
-
 	state.default_model = opts.default_model;
 	membrane_runtime_init(&state.rt);
 	signal(SIGINT, handle_signal);
@@ -880,13 +1204,13 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 
 	svr.Get("/health", handle_health);
 	svr.Get("/v1/models", [&](const httplib::Request &rq,
-			httplib::Response &rs) { handle_models(&state, reg, rq, rs); });
+			httplib::Response &rs) { handle_models(&state, rq, rs); });
 	svr.Get("/v1/status", [&](const httplib::Request &rq,
 			httplib::Response &rs)
 		{ handle_status(&state, bind, port, rq, rs); });
 	svr.Post("/v1/chat/completions", [&](const httplib::Request &rq,
 			httplib::Response &rs)
-		{ handle_chat_completions(&state, reg, rq, rs); });
+		{ handle_chat_completions(&state, rq, rs); });
 
 	if (!svr.bind_to_port(bind, port))
 	{

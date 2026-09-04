@@ -437,16 +437,18 @@ jobs:
       # Mega Phase B, PR B2: test_utf8_stream/test_stream_queue (the
       # streaming token callback's UTF-8-boundary helper and its bounded
       # concurrency queue -- both llama-free, same target-scoped-without-
-      # llama trick) join the same cheap job.
+      # llama trick) join the same cheap job. PR B3: test_request_
+      # admission (the bounded pending-chat-request gate) joins too, same
+      # reasoning.
       - name: Build (target-scoped -- no llama/ggml compilation)
         run: |
           cmake --build build-service-lifecycle-tests -j2 --target \
             test_systemd_unit test_server_config test_fs_util test_subprocess \
-            test_utf8_stream test_stream_queue
+            test_utf8_stream test_stream_queue test_request_admission
       - name: Test
         run: |
           ctest --test-dir build-service-lifecycle-tests --output-on-failure \
-            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$|^test_utf8_stream$|^test_stream_queue$'
+            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$|^test_utf8_stream$|^test_stream_queue$|^test_request_admission$'
 
   # Mega Phase B, PR B2: TSan cannot be combined with the ASan/UBSan
   # configure service-lifecycle-tests above already uses (see this

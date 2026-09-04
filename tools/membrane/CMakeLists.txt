@@ -285,4 +285,18 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_stream_queue PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_stream_queue COMMAND test_stream_queue)
+
+  # Mega Phase B, PR B3: real multi-threaded tests for request_
+  # admission.h's bounded pending-request gate (test_request_admission.cpp's
+  # own top comment) -- header-only, no llama/httplib dependency, same
+  # Threads::Threads-only precedent as test_stream_queue above.
+  add_executable(test_request_admission test_request_admission.cpp)
+  set_target_properties(test_request_admission PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_request_admission PRIVATE membrane_sanitizers
+    Threads::Threads)
+  target_include_directories(test_request_admission PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_request_admission COMMAND test_request_admission)
 endif()
