@@ -294,6 +294,25 @@ typedef struct s_membrane_generation_request
 											 * existing ctx==0 sentinel
 											 * exactly */
 	membrane_token_cb_t			token_cb;	/* NULL = no streaming */
+	void						*token_cb_ud;	/* Mega Phase B, PR B2:
+											 * opaque, passed through to
+											 * every token_cb call
+											 * unchanged -- NULL (the
+											 * default, and every pre-B2
+											 * caller) for a callback
+											 * that needs no per-call
+											 * state (e.g. membrane-run's
+											 * own CLI stdout streaming) */
+	const std::atomic<bool>		*cancel_flag;	/* Mega Phase B, PR B2:
+											 * see decode_loop.h's own
+											 * run_generation() doc
+											 * comment for the full
+											 * contract -- NULL (the
+											 * default) means this
+											 * generate() call can never
+											 * be cancelled, byte-
+											 * identical to every pre-B2
+											 * caller */
 }	membrane_generation_request_t;
 
 typedef struct s_membrane_generation_result
@@ -312,6 +331,20 @@ typedef struct s_membrane_generation_result
 	bool						fallback_engaged;
 	membrane_fallback_trace_t	fallback_trace;	/* n_entries==0 iff
 											 * fallback was never engaged */
+
+	bool						cancelled = false;	/* Mega Phase B, PR B2:
+											 * true iff the request's own
+											 * cancel_flag stopped
+											 * generation early -- ok is
+											 * still true in this case (a
+											 * cancelled generation is not
+											 * a failure); text/gen_result
+											 * hold whatever was produced
+											 * before cancellation, never
+											 * discarded. Always written
+											 * (default false) whether or
+											 * not the request even set a
+											 * cancel_flag. */
 }	membrane_generation_result_t;
 
 /* Tokenizes the request's prompt against the session's already-loaded model,

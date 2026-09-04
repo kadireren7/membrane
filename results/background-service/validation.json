@@ -3,11 +3,14 @@
   "phase": "mega-phase-b-background-service",
   "membrane_commit": "PENDING -- updated when the final PR (B4) of this mega-phase is squash-merged; individual pr fields below are updated as each PR B1-B4 actually merges",
   "generated_at": "2026-09-04T00:00:00Z",
+  "pr_squash_shas": {
+    "B1": "a88dfe4d7a8c519a6d1060c7291124aedb38690a"
+  },
   "note": "Mega Phase B (PRs B1-B4): turns MEMBRANE into a persistent local AI backend managed as a systemd --user service, with real streaming, model-lifecycle hardening, and client integration. This file is seeded during PR B1 and extended by B2/B3/B4 -- it is NOT rewritten from scratch each PR, only appended to/corrected, matching results/runtime-service/validation.json's own precedent from Mega Phase A. REAL rows are genuine local invocations on this dev host (CPU-only build). SYNTHETIC rows are ctest-registered unit/integration tests with no real GGUF model dependency (CI-safe). SOURCE_ANALYSIS rows are direct code-reading confirmations, not runs.",
   "service_lifecycle": {
     "label": "REAL",
     "pr": "B1",
-    "squash_sha": "PENDING",
+    "squash_sha": "a88dfe4d7a8c519a6d1060c7291124aedb38690a",
     "evidence": [
       "Real end-to-end local smoke on this dev host's own real systemd --user session (not a container, not a mock): `membrane model add`, `membrane service install` (real unit written to $HOME/.config/systemd/user/membrane.service, real `systemctl --user daemon-reload`), `membrane service start` (real `systemctl --user start`), `membrane service status` (real ActiveState/SubState/MainPID from `systemctl --user show` combined with a real GET /v1/status against the actually-running server), a real GET /health and GET /v1/status via curl, a real POST /v1/chat/completions against SmolLM2-135M-Instruct served entirely through the installed systemd unit (not `membrane serve` directly) -- generated real text, correct OpenAI-compatible JSON shape.",
       "Registry-not-hot-reloaded confirmed directly: a model registered AFTER the service was already running was correctly reported MODEL_NOT_FOUND until `membrane service restart` -- an honest, observed gap (registry hot-reload is explicitly a B3 task, not silently assumed to already work).",
@@ -63,13 +66,48 @@
       "New packaging-smoke CI step ('CPU installed membrane service install/uninstall (isolated dirs)'): runs the real installed `membrane service install`/`uninstall` CLI dispatch against MEMBRANE_SYSTEMD_USER_DIR/MEMBRANE_SERVER_CONFIG_PATH pointed at isolated temp locations (never a real systemd --user session or this runner's own $HOME) -- verifies the generated unit's real on-disk content, that install refuses to overwrite a same-named unit lacking the MEMBRANE marker, and that uninstall removes it. `install` tolerates `systemctl --user daemon-reload` failing/being absent by design (its result is never checked); `service start/stop/status` themselves require a genuinely working systemd --user session and are intentionally NOT exercised in CI -- only in the real local smoke test above."
     ]
   },
+  "server_streaming": {
+    "label": "REAL",
+    "pr": "B2",
+    "squash_sha": "PENDING",
+    "evidence": [
+      "Real curl wire-format capture against a real running `membrane serve` instance (SmolLM2-135M-Instruct): Content-Type: text/event-stream, Cache-Control: no-cache, 21 real incremental `data: {...}` chunks (never the whole completion accumulated then sent as one chunk -- confirmed by inspecting each chunk's own `delta.content`, a few characters/one word at a time), a final `{\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}` chunk, then the literal `data: [DONE]`.",
+      "Real `stream_options: {\"include_usage\": true}` request: one extra chunk (`choices: []`, populated `usage.{prompt_tokens,completion_tokens,total_tokens}`) appended right before `[DONE]`, matching real OpenAI's own opt-in convention -- omitted entirely (confirmed) when not requested.",
+      "Real multilingual/emoji round trip: prompt asked the model to repeat '日本語 café 🎉' (3-byte CJK, 2-byte accented Latin, 4-byte emoji) verbatim; the real model echoed it, and the reconstructed streamed text (Python json.loads() on every single `data:` payload, which fails on invalid UTF-8) matched byte-for-byte -- no truncated/mangled character anywhere across the chunk boundaries.",
+      "Real disconnect-cancellation proof: a streaming request for 200 tokens was aborted via `curl --max-time 0.5` mid-generation. The server process's own CPU TIME (ps -o cputime) was IDENTICAL immediately after the abort and 2 seconds later -- proof generation genuinely stopped (not merely that the TCP connection closed) rather than continuing to burn CPU on a completion nobody would ever read.",
+      "Real sequential-request-after-cancellation proof: both a non-streaming and a second streaming request, issued immediately after the aborted one above against the SAME still-running server, completed successfully and quickly (0.19s for the non-streaming one) -- no leaked lock (st->mtx), no leaked thread, no corrupted session state.",
+      "Real OpenAI Python SDK streaming session (openai 3.8.0, isolated venv): client.chat.completions.create(..., stream=True) iterated 21 real chunks via the SDK's own typed interface (never manual JSON parsing), correctly reconstructed content across them, and correctly reported finish_reason -- a non-streaming request against the same server in the same session confirmed API parity.",
+      "Clean SIGTERM shutdown confirmed after all of the above (including the cancelled stream) -- no shutdown hang introduced by the new worker-thread/queue machinery."
+    ]
+  },
+  "utf8_boundary_safety": {
+    "label": "SYNTHETIC",
+    "pr": "B2",
+    "evidence": [
+      "utf8_stream.{h,cpp}: a pure, llama/httplib-free module extracted specifically for direct unit testing (never only exercised indirectly through a real model's own token boundaries, which cannot be relied on to hit every case on demand).",
+      "test_utf8_stream: 12 ctest-registered unit tests -- complete/incomplete 2/3/4-byte sequences (including the 4-byte emoji case), the empty string, malformed input (stray continuation bytes, an invalid lead byte), all bounded to never hold back more than 3 real incomplete bytes.",
+      "A REAL bug was found and fixed by this test suite before it ever reached the real-model smoke test: the initial implementation's own lookback window was 3 bytes deep, which correctly detects INCOMPLETE tails but misidentified a COMPLETE 4-byte sequence's own trailing 3 continuation bytes as incomplete (its lead byte sits 4 positions back, outside a 3-byte window) -- caught immediately by test_complete_4byte_emoji failing, fixed by widening the scan window to 4 bytes while keeping the returned incomplete-length bound at 3."
+    ]
+  },
+  "stream_queue_concurrency": {
+    "label": "SYNTHETIC",
+    "pr": "B2",
+    "evidence": [
+      "stream_queue.h: the bounded producer/consumer queue bridging the generation worker thread and the HTTP connection thread, extracted into its own header-only, llama/httplib-free module specifically so this project's own real concurrency (mutex + condition variable + a cross-thread atomic cancel flag) is unit-testable without a real model or a real HTTP round trip.",
+      "test_stream_queue: 6 ctest-registered tests using REAL std::thread producers/consumers (not single-threaded call sequences dressed up as concurrency tests) -- FIFO ordering, a real bounded wait timeout, real backpressure (a push beyond MEMBRANE_STREAM_QUEUE_CAPACITY=64 genuinely blocks, proven by confirming it is STILL blocked after 150ms before a consumer drains one slot), a real 500-event producer/consumer pair with zero loss/duplication/reordering.",
+      "A SECOND real bug was found and fixed by this test suite: the original push_blocking() used an unbounded std::condition_variable::wait() whose predicate included cancel_flag, but cancel_flag is a plain std::atomic<bool> set from OUTSIDE the queue (by server.cpp's stream_provide()/stream_release(), or by a test) -- nothing about setting it ever calls notify_all(), so a worker thread blocked on a full queue when a client disconnected would have hung FOREVER (a real deadlocked/leaked thread in production, not just a test artifact) -- caught directly by test_cancel_flag_wakes_blocked_push() hanging the whole test binary on first attempt. Fixed by polling with a bounded 50ms wait_for() instead of relying on every future cancel_flag setter to remember an explicit notify.",
+      "Both bugs above were found BEFORE any sanitizer even ran, by the tests' own real multi-threaded execution -- ASan/UBSan (via the target-scoped service-lifecycle-tests CI job) and a dedicated target-scoped TSan job (stream-queue-thread-sanitizer, llama-free, same ASLR-disabled-retry precedent as server-thread-sanitizer) both then confirmed 0 findings on the fixed code.",
+      "test_server (existing black-box HTTP suite, empty registry, no real model): 3 tests updated to reflect stream=true now being real (not rejected) -- every failure path reachable without a real model (unknown model, missing messages, malformed message) confirmed to still return a normal JSON error with Content-Type: application/json, never text/event-stream, proving headers are never committed to streaming until every pre-generation validation step has already succeeded."
+    ]
+  },
   "known_limitations": {
     "label": "SOURCE_ANALYSIS",
     "items": [
       "Model registry changes are not hot-reloaded by an already-running server/service -- confirmed directly (see service_lifecycle.evidence above). Deferred to PR B3 (Section 32 of the task).",
       "`membrane service start/stop/restart/status` genuinely require a real, working systemd --user session; there is no mock-systemctl layer -- `install`/`uninstall` alone are exercised in CI (see ci_integration), the full running-service lifecycle is validated locally only.",
-      "No streaming support yet (stream=true still returns 400 STREAMING_NOT_SUPPORTED, unchanged from Mega Phase A) -- PR B2's job.",
-      "No explicit model-lifecycle state machine or bounded request queue yet -- the existing full-request-serialization mutex from Mega Phase A is unchanged -- PR B3's job."
+      "No explicit model-lifecycle state machine or bounded pending-request queue yet -- the existing full-request-serialization mutex from Mega Phase A also serializes streaming requests behind non-streaming ones and vice versa (a second request, streaming or not, genuinely waits for a still-in-progress one) -- PR B3's job.",
+      "Sampling is still greedy-only -- streaming reuses the exact same decode loop as non-streaming, unchanged by this phase.",
+      "Cancellation is detected on the content-provider callback's own bounded poll (every 200ms while the queue is otherwise empty, or immediately on the next queue push/pop) -- not instantaneous, but bounded and proven to actually stop generation (see server_streaming.evidence above), not merely to close the connection."
     ]
   }
 }

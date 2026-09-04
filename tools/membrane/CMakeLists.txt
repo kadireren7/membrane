@@ -105,6 +105,18 @@ target_include_directories(membrane_registry_core PUBLIC
 target_include_directories(membrane_registry_core PRIVATE
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
 
+# Mega Phase B, PR B2: the streaming token callback's UTF-8-boundary
+# helper (utf8_stream.h's own top comment) -- pure, no httplib/llama
+# dependency, so multilingual/emoji fragment boundaries are unit-tested
+# directly rather than only through a real model's own real byte output.
+add_library(membrane_utf8_stream STATIC utf8_stream.cpp)
+set_target_properties(membrane_utf8_stream PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_utf8_stream PUBLIC membrane_sanitizers)
+target_include_directories(membrane_utf8_stream PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+
 # Mega Phase A, PR A3: the local OpenAI-compatible HTTP server (server.h's
 # own top comment has the full contract) -- its own library, not compiled
 # directly into the `membrane` executable, so test_server.cpp (below) can
@@ -115,7 +127,8 @@ set_target_properties(membrane_server PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_server PUBLIC membrane_registry_core
-  membrane_runtime_session membrane_cpp_httplib membrane_product_cli llama)
+  membrane_runtime_session membrane_cpp_httplib membrane_product_cli
+  membrane_utf8_stream llama)
 target_include_directories(membrane_server PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_server PRIVATE
@@ -248,4 +261,28 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_subprocess PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_subprocess COMMAND test_subprocess)
+
+  add_executable(test_utf8_stream test_utf8_stream.cpp)
+  set_target_properties(test_utf8_stream PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_utf8_stream PRIVATE membrane_utf8_stream)
+  target_include_directories(test_utf8_stream PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_utf8_stream COMMAND test_utf8_stream)
+
+  # Mega Phase B, PR B2: real multi-threaded tests for stream_queue.h's
+  # bounded blocking queue (test_stream_queue.cpp's own top comment) --
+  # header-only, no llama/httplib dependency, so this links only
+  # Threads::Threads (std::thread) directly, matching membrane_cpp_
+  # httplib's own precedent for that dependency.
+  add_executable(test_stream_queue test_stream_queue.cpp)
+  set_target_properties(test_stream_queue PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_stream_queue PRIVATE membrane_sanitizers
+    Threads::Threads)
+  target_include_directories(test_stream_queue PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_stream_queue COMMAND test_stream_queue)
 endif()

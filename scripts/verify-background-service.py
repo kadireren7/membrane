@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
-"""Validate Mega Phase B, PR B1's background-service evidence
-(results/background-service/validation.json): schema and REAL/SYNTHETIC/
-SOURCE_ANALYSIS labeling, docs/service.md exists with its required
-sections, no premature v0.4/v1.0 release claim, stable release still says
-v0.3.0, the llama.cpp patch set is unchanged, and a handful of direct
-source-level regression guards for this PR's own safety rules: the
-generated unit never targets a system-wide/root systemd path, no shell
-(system()/popen()) is used anywhere in the new subprocess/service-command
-modules, and `service install` really does refuse to overwrite a
-non-MEMBRANE-managed unit without --force.
+"""Validate Mega Phase B's background-service/streaming evidence
+(results/background-service/validation.json, extended across PRs B1-B4,
+matching results/runtime-service/validation.json's own precedent from
+Mega Phase A): schema and REAL/SYNTHETIC/SOURCE_ANALYSIS labeling,
+docs/service.md exists with its required sections, no premature
+v0.4/v1.0 release claim, stable release still says v0.3.0, the llama.cpp
+patch set is unchanged, and a handful of direct source-level regression
+guards:
+
+PR B1 (service lifecycle): the generated systemd unit never targets a
+system-wide/root path, no shell (system()/popen()) anywhere in the new
+subprocess/service-command modules, `service install`/`uninstall` really
+do refuse to touch a non-MEMBRANE-managed unit without --force.
+
+PR B2 (streaming): the server genuinely implements real SSE streaming
+(never left silently claiming STREAMING_NOT_SUPPORTED while also
+claiming real streaming), the cancellation flag is threaded all the way
+into the runtime core's own decode loop (never a server-only/fake
+cancellation), and every new pure library from both PRs actually links
+membrane_sanitizers.
 
 Same one-file-per-concern, check()-decorator convention as every other
 scripts/verify-*.py in this project (see verify-runtime-service.py).
@@ -31,6 +41,9 @@ SERVICE_CMD_CPP_PATH = MEMBRANE_DIR / "service_cmd.cpp"
 SUBPROCESS_CPP_PATH = MEMBRANE_DIR / "subprocess.cpp"
 SYSTEMD_UNIT_CPP_PATH = MEMBRANE_DIR / "systemd_unit.cpp"
 FS_UTIL_CPP_PATH = MEMBRANE_DIR / "fs_util.cpp"
+SERVER_CPP_PATH = MEMBRANE_DIR / "server.cpp"
+DECODE_LOOP_H_PATH = (REPO_ROOT / "tools" / "membrane-llama-runtime"
+	/ "decode_loop.h")
 MEMBRANE_CMAKE_PATH = MEMBRANE_DIR / "CMakeLists.txt"
 PRODUCT_CLI_H_PATH = REPO_ROOT / "tools" / "membrane-run" / "product_cli.h"
 PATCHES_DIR = REPO_ROOT / "patches"
@@ -44,15 +57,18 @@ REQUIRED_SERVICE_DOC_SECTIONS = [
 	"## Status", "## Model registry and default-model reload",
 	"## Security scope", "## Uninstalling", "## Real evidence",
 ]
+REQUIRED_SERVER_DOC_STREAMING_SECTIONS = [
+	"## Streaming (`stream: true`) — PR B2",
+]
 VALID_LABELS = {"REAL", "SYNTHETIC", "SOURCE_ANALYSIS"}
 
 NEW_PURE_LIBS = [
 	"membrane_fs_util", "membrane_subprocess", "membrane_systemd_unit",
-	"membrane_server_config",
+	"membrane_server_config", "membrane_utf8_stream",
 ]
 NEW_PURE_TESTS = [
 	"test_systemd_unit", "test_server_config", "test_fs_util",
-	"test_subprocess",
+	"test_subprocess", "test_utf8_stream", "test_stream_queue",
 ]
 
 FAILURES = []
@@ -113,6 +129,19 @@ def _c4():
 	text = SERVICE_DOC_PATH.read_text()
 	missing = [s for s in REQUIRED_SERVICE_DOC_SECTIONS if s not in text]
 	return len(missing) == 0, f"missing: {missing}" if missing else "all present"
+
+
+@check("docs/server.md documents real streaming (PR B2), not the "
+	"retired stream=true rejection")
+def _c4b():
+	text = SERVER_DOC_PATH.read_text()
+	missing = [s for s in REQUIRED_SERVER_DOC_STREAMING_SECTIONS
+		if s not in text]
+	has_stale_rejection_claim = "STREAMING_NOT_SUPPORTED` was requested" in text
+	ok = len(missing) == 0 and not has_stale_rejection_claim
+	return ok, (f"missing: {missing}" if missing
+		else "stale rejection claim still present" if has_stale_rejection_claim
+		else "all present, no stale claim")
 
 
 @check("no premature v0.4/v1.0 release claim anywhere in this PR's own "
@@ -204,29 +233,58 @@ def _c12():
 		else "all new pure libraries link membrane_sanitizers")
 
 
-@check("all four new pure test binaries are registered as real ctest "
-	"entries")
+@check("every new pure test binary (PR B1+B2) is registered as a real "
+	"ctest entry")
 def _c13():
 	text = MEMBRANE_CMAKE_PATH.read_text()
 	missing = [t for t in NEW_PURE_TESTS if f"add_test(NAME {t}" not in text]
 	return len(missing) == 0, (f"missing add_test(): {missing}" if missing
-		else "all four registered")
+		else "all registered")
 
 
-@check("CI wires the new service-lifecycle-tests job and the new "
-	"packaging-smoke install/uninstall integration step")
+@check("CI wires the new service-lifecycle-tests/stream-queue-thread-"
+	"sanitizer jobs and the new packaging-smoke install/uninstall "
+	"integration step")
 def _c14():
 	ci_path = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 	text = ci_path.read_text()
 	has_job = "service-lifecycle-tests:" in text
+	has_tsan_job = "stream-queue-thread-sanitizer:" in text
 	has_step = "membrane service install/uninstall (isolated dirs)" in text
-	ok = has_job and has_step
-	return ok, (f"has_job={has_job} has_step={has_step}")
+	ok = has_job and has_tsan_job and has_step
+	return ok, (f"has_job={has_job} has_tsan_job={has_tsan_job} "
+		f"has_step={has_step}")
+
+
+@check("regression guard: server.cpp implements real streaming (worker "
+	"thread + bounded queue + SSE), never left both claiming real "
+	"streaming AND rejecting it")
+def _c16():
+	text = SERVER_CPP_PATH.read_text()
+	has_sse = "text/event-stream" in text
+	has_worker_thread = "stream_worker_fn" in text
+	has_stale_rejection = "STREAMING_NOT_SUPPORTED" in text
+	ok = has_sse and has_worker_thread and not has_stale_rejection
+	return ok, (f"has_sse={has_sse} has_worker_thread={has_worker_thread} "
+		f"has_stale_rejection={has_stale_rejection}")
+
+
+@check("regression guard: cancellation is threaded all the way into the "
+	"runtime core's own decode loop (never a server-only/fake "
+	"cancellation that merely closes the HTTP connection)")
+def _c17():
+	server_text = SERVER_CPP_PATH.read_text()
+	decode_loop_text = DECODE_LOOP_H_PATH.read_text()
+	has_server_cancel_flag = "cancel_flag" in server_text
+	has_core_cancel_param = "cancel_flag" in decode_loop_text
+	ok = has_server_cancel_flag and has_core_cancel_param
+	return ok, (f"server.cpp has cancel_flag={has_server_cancel_flag} "
+		f"decode_loop.h has cancel_flag param={has_core_cancel_param}")
 
 
 @check("Mega Phase A's own evidence files are untouched by this PR's own "
 	"new commits (checked against origin/main)")
-def _c15():
+def _c18():
 	result = subprocess.run(["git", "diff", "--name-only", "origin/main"],
 		cwd=REPO_ROOT, capture_output=True, text=True, check=False)
 	if result.returncode != 0:
@@ -239,8 +297,8 @@ def _c15():
 
 
 def main():
-	for fn in (_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11,
-			_c12, _c13, _c14, _c15):
+	for fn in (_c1, _c2, _c3, _c4, _c4b, _c5, _c6, _c7, _c8, _c9, _c10,
+			_c11, _c12, _c13, _c14, _c16, _c17, _c18):
 		fn()
 	print(f"\n{CHECK_COUNT - len(FAILURES)}/{CHECK_COUNT} checks passed")
 	if FAILURES:

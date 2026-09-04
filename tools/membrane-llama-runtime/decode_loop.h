@@ -1,6 +1,7 @@
 #ifndef MEMBRANE_LLAMA_RUNTIME_DECODE_LOOP_H
 # define MEMBRANE_LLAMA_RUNTIME_DECODE_LOOP_H
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -61,6 +62,19 @@ typedef void (*membrane_token_cb_t)(const char *piece, size_t piece_len,
  * meaning there). One stage-boundary timestamp pair, not per-token
  * instrumentation (Section 25 of the Phase 24 task) -- every other
  * step's own duration is not captured here. */
+/* Mega Phase B, PR B2: cancel_flag, iff non-NULL, is polled once per
+ * free-running step (never mid-teacher-force, never mid-decode -- the
+ * in-flight decode of the CURRENT token always completes; only the
+ * NEXT step is skipped) via a plain relaxed atomic load -- this is the
+ * ENTIRE cancellation contract the runtime core understands: "caller
+ * requested cancellation," never anything server-specific (no socket,
+ * no HTTP awareness anywhere in this file). A caller with no
+ * cancellation concept (every pre-B2 call site) passes NULL and sees
+ * byte-identical behavior. out_cancelled, iff non-NULL, is always
+ * written on return (true iff the loop actually stopped early because
+ * of cancel_flag, false otherwise -- including on ordinary EOG/limit/
+ * decode-failure exits) -- same "always write an optional out-param"
+ * convention as out_first_token_ms above. */
 void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 			int32_t n_vocab, int gen_tokens,
 			membrane_runtime_collector_t *collector,
@@ -68,7 +82,9 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 			bool capture_logits, const std::vector<int32_t> *teacher_force,
 			uint64_t *abs_pos, std::string *text_out, gen_run_result_t *out,
 			membrane_token_cb_t token_cb = NULL, void *token_cb_ud = NULL,
-			double *out_first_token_ms = NULL);
+			double *out_first_token_ms = NULL,
+			const std::atomic<bool> *cancel_flag = NULL,
+			bool *out_cancelled = NULL);
 
 /* Phase 12H: optional static per-layer KV device residency map,
  * threaded through to llama_context_params.kv_dev_override at
@@ -125,6 +141,10 @@ ggml_backend_dev_t	kv_placement_dev_override_cb(int32_t il,
  * optional and additive, every pre-Phase-21 call site passes NULL and
  * is unaffected.
  */
+/* Mega Phase B, PR B2: cancel_flag/out_cancelled -- see run_generation()'s
+ * own doc comment above, threaded straight through to the one
+ * run_generation() call this function makes; NULL (every pre-B2 call
+ * site) is byte-identical to before. */
 bool	run_kv_store_pass(llama_model *model,
 			const std::vector<llama_token> &prompt_tokens, int gen_tokens,
 			int kv_store_mode, uint32_t ctx_size, int debug,
@@ -133,7 +153,9 @@ bool	run_kv_store_pass(llama_model *model,
 			membrane_kv_store_telemetry_t *tel, gen_run_result_t *out,
 			membrane_token_cb_t token_cb = NULL, void *token_cb_ud = NULL,
 			const membrane_kv_placement_map_t *kv_placement = NULL,
-			int *out_failure_stage = NULL);
+			int *out_failure_stage = NULL,
+			const std::atomic<bool> *cancel_flag = NULL,
+			bool *out_cancelled = NULL);
 
 /* Phase 7 analogue of the Phase 6 aligned-behavior comparison, for the
  * kv-store telemetry struct. `a` is the native-storage reference pass,

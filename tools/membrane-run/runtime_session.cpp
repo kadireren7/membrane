@@ -1060,6 +1060,16 @@ typedef struct s_real_apply_ctx
 	const std::vector<llama_token>		*prompt_tokens;
 	uint32_t							ctx_size;
 	membrane_token_cb_t					cb;
+	void								*cb_ud;			/* Mega Phase B,
+											 * PR B2: NULL for every
+											 * caller except the server's
+											 * own streaming worker */
+	const std::atomic<bool>				*cancel_flag;	/* Mega Phase B,
+											 * PR B2: see decode_loop.h's
+											 * run_generation() doc
+											 * comment; NULL = never
+											 * cancellable, unchanged for
+											 * every pre-B2 caller */
 	membrane_gpu_state_t				*gs;
 
 	/* Outputs -- meaningful only after a successful call. */
@@ -1067,6 +1077,12 @@ typedef struct s_real_apply_ctx
 	std::string							text;
 	gen_run_result_t					gen_result;
 	int									effective_kv_mode;
+	bool								cancelled;	/* Mega Phase B, PR B2:
+											 * see run_generation()'s own
+											 * out_cancelled doc comment
+											 * -- always written by
+											 * real_apply_fn on a
+											 * successful (ok=1) return */
 }	real_apply_ctx_t;
 
 /* Section 3: applies exactly ONE candidate. Reload policy (Section 10):
@@ -1183,10 +1199,12 @@ static int	real_apply_fn(const membrane_joint_candidate_t *c,
 	membrane_kv_store_read_rss(&ctx->tel.rss_after_model_load);
 	ctx->text.clear();
 	failure_stage = MEMBRANE_KV_PASS_STAGE_NONE;
+	ctx->cancelled = false;
 	ok = run_kv_store_pass(*ctx->model_ptr, *ctx->prompt_tokens,
 			ctx->o->gen_tokens, kv_mode, ctx->ctx_size, ctx->o->verbose,
 			NULL, false, 0, &ctx->text, &ctx->tel, &ctx->gen_result, ctx->cb,
-			NULL, placement_arg, &failure_stage);
+			ctx->cb_ud, placement_arg, &failure_stage, ctx->cancel_flag,
+			&ctx->cancelled);
 	if (!ok)
 	{
 		out->ok = 0;
@@ -1892,6 +1910,8 @@ bool	membrane_session_generate(membrane_model_session_t *session,
 		actx.prompt_tokens = &prompt_tokens;
 		actx.ctx_size = ctx_size;
 		actx.cb = req.token_cb;
+		actx.cb_ud = req.token_cb_ud;
+		actx.cancel_flag = req.cancel_flag;
 		actx.gs = &session->gs;
 		session->gs.fallback_engaged = true;
 		out->fallback_engaged = true;
@@ -1920,6 +1940,7 @@ bool	membrane_session_generate(membrane_model_session_t *session,
 		out->text = actx.text;
 		out->gen_result = actx.gen_result;
 		out->effective_kv_mode = actx.effective_kv_mode;
+		out->cancelled = actx.cancelled;
 	}
 	else
 	{
@@ -1941,10 +1962,12 @@ bool	membrane_session_generate(membrane_model_session_t *session,
 			placement_map.layer_on_gpu = session->gs.kv_placement.layer_on_gpu;
 			placement_arg = &placement_map;
 		}
+		out->cancelled = false;
 		if (!run_kv_store_pass(session->model, prompt_tokens, o.gen_tokens,
 				effective_o.kv_mode, ctx_size, o.verbose, NULL, false, 0,
-				&out->text, &out->tel, &out->gen_result, req.token_cb, NULL,
-				placement_arg))
+				&out->text, &out->tel, &out->gen_result, req.token_cb,
+				req.token_cb_ud, placement_arg, NULL, req.cancel_flag,
+				&out->cancelled))
 		{
 			membrane_set_err(&out->err, MEMBRANE_EXIT_RUNTIME_ERROR,
 				MEMBRANE_REASON_GENERATION_FAILED,

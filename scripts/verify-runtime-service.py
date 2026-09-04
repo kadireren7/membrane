@@ -37,7 +37,7 @@ EXPECTED_PATCHES = {
 REQUIRED_SERVER_DOC_SECTIONS = [
 	"## Security scope", "## Endpoints", "## `POST /v1/chat/completions`",
 	"## Model cache policy", "## Errors", "## Graceful shutdown",
-	"## Not implemented this phase",
+	"## Not implemented",
 ]
 VALID_LABELS = {"REAL", "SYNTHETIC", "SOURCE_ANALYSIS"}
 
@@ -169,11 +169,21 @@ def _c10():
 		else f"has_default={has_default} has_refusal={has_refusal}")
 
 
-@check("regression guard: stream=true is honestly rejected, never faked")
+@check("regression guard: stream=true is either honestly rejected or "
+	"genuinely implemented, never silently faked either way -- Mega "
+	"Phase B, PR B2 replaced this phase's own STREAMING_NOT_SUPPORTED "
+	"rejection with real SSE streaming (scripts/verify-background-"
+	"service.py's own regression guards cover THAT implementation's "
+	"specifics; this check only asserts the code no longer claims BOTH "
+	"things could be simultaneously true, which would mean one of the "
+	"two claims is a lie)")
 def _c11():
 	text = SERVER_CPP_PATH.read_text()
-	ok = "STREAMING_NOT_SUPPORTED" in text
-	return ok, "STREAMING_NOT_SUPPORTED present" if ok else "not found"
+	has_rejection = "STREAMING_NOT_SUPPORTED" in text
+	has_real_streaming = "text/event-stream" in text and "cancel_flag" in text
+	ok = has_rejection != has_real_streaming	# exactly one, never both/neither
+	return ok, (f"has_rejection={has_rejection} has_real_streaming="
+		f"{has_real_streaming}")
 
 
 @check("regression guard: HTTP-facing errors never forward "
