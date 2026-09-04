@@ -318,6 +318,47 @@ SSE `data: {"error": {...}}` event — see "Streaming" above.
 | 503 | `NO_FEASIBLE_CONTEXT` | no context/hardware plan could be resolved (e.g. insufficient host memory) |
 | 503 | `SERVER_BUSY` | too many chat completion requests are already in flight (PR B3, "Bounded request admission" above) — includes a `Retry-After` header |
 
+## Client integration (PR B4)
+
+MEMBRANE ships no client of its own — any OpenAI-compatible client
+works against `http://127.0.0.1:8642/v1` with a placeholder API key
+(this server has no authentication, see "Security scope" above).
+
+**Real, tested evidence:** the official Python `openai` SDK —
+`client.models.list()`, `client.chat.completions.create()` both
+non-streaming (Mega Phase A, PR A4) and streaming
+(`stream=True`, PR B2) — real generation, real usage/finish_reason
+parsing, real incremental chunks, all via the SDK's own typed
+interface, never manual JSON handling. See
+`results/background-service/validation.json`/
+`results/runtime-service/validation.json`.
+
+**Configuration instructions (not independently validated this
+phase):** the following are standard OpenAI-compatible integrations
+that should work against this server based on its own protocol
+compliance above, but were not run end-to-end this phase — real Docker
+resource pressure on the development host at the time (other unrelated
+services already running, tight free memory) made starting an
+additional real container unsafe to attempt without risking those
+other services, so this is disclosed as configuration guidance, not a
+tested claim, rather than silently skipped or falsely claimed "tested".
+
+- **Open WebUI**: `docker run` it with its own `OPENAI_API_BASE_URL`
+  environment variable set to `http://127.0.0.1:8642/v1` (or
+  `http://host.docker.internal:8642/v1` if Open WebUI itself runs
+  inside Docker and needs to reach the host) and any placeholder value
+  for `OPENAI_API_KEY`. Open WebUI should then list and chat with
+  whatever model(s) `membrane model list` shows.
+- **An OpenAI-compatible editor plugin** (e.g. Continue for VS
+  Code/JetBrains): configure a custom OpenAI-compatible provider with
+  `apiBase` (or equivalent) set to `http://127.0.0.1:8642/v1`, model
+  name matching a `membrane model add` name, and any placeholder API
+  key. Since these plugins are themselves typically thin wrappers
+  around the same OpenAI client conventions already validated above
+  (chat completions, streaming), real incompatibility would be
+  surprising, but is not itself a substitute for having actually run
+  one against this server.
+
 ## Graceful shutdown
 
 `SIGINT`/`SIGTERM` stop the listener, join it, free the loaded model

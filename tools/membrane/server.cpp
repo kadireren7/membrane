@@ -1202,6 +1202,27 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	httplib::Server	svr;
 	int				port = opts.port;
 
+	/* Mega Phase B, PR B4, Section 47 of the task: real bug found and
+	 * fixed while testing "port already in use" startup robustness --
+	 * cpp-httplib's own default_socket_options() sets SO_REUSEPORT (not
+	 * just SO_REUSEADDR) whenever the platform has it (Linux does),
+	 * which lets a SECOND, completely independent membrane serve
+	 * process bind_to_port() the exact SAME address:port successfully
+	 * WHILE THE FIRST IS STILL ACTIVELY LISTENING -- the kernel then
+	 * load-balances incoming connections across both processes'
+	 * completely separate model state, a silent, confusing multi-
+	 * instance situation this project never wants (Section 23: "one
+	 * active model" is a promise about ONE process's own state, not
+	 * something a caller can accidentally defeat by starting a second
+	 * instance). Confirmed directly: a second `membrane serve` on an
+	 * already-bound port used to print "MEMBRANE server listening"
+	 * successfully instead of failing. Overriding the socket options to
+	 * SO_REUSEADDR only (still lets a clean restart quickly rebind a
+	 * port stuck in TIME_WAIT, e.g. systemd's own RestartSec=2) fixes
+	 * this: a second instance now correctly fails with EADDRINUSE. */
+	svr.set_socket_options([](socket_t sock)
+		{ httplib::set_socket_opt(sock, SOL_SOCKET, SO_REUSEADDR, 1); });
+
 	svr.Get("/health", handle_health);
 	svr.Get("/v1/models", [&](const httplib::Request &rq,
 			httplib::Response &rs) { handle_models(&state, rq, rs); });
