@@ -4,7 +4,8 @@
   "membrane_commit": "PENDING -- updated when the final PR (B4) of this mega-phase is squash-merged; individual pr fields below are updated as each PR B1-B4 actually merges",
   "generated_at": "2026-09-04T00:00:00Z",
   "pr_squash_shas": {
-    "B1": "a88dfe4d7a8c519a6d1060c7291124aedb38690a"
+    "B1": "a88dfe4d7a8c519a6d1060c7291124aedb38690a",
+    "B2": "fbc2f3f697e17ec349b0335a5038534205e336b2"
   },
   "note": "Mega Phase B (PRs B1-B4): turns MEMBRANE into a persistent local AI backend managed as a systemd --user service, with real streaming, model-lifecycle hardening, and client integration. This file is seeded during PR B1 and extended by B2/B3/B4 -- it is NOT rewritten from scratch each PR, only appended to/corrected, matching results/runtime-service/validation.json's own precedent from Mega Phase A. REAL rows are genuine local invocations on this dev host (CPU-only build). SYNTHETIC rows are ctest-registered unit/integration tests with no real GGUF model dependency (CI-safe). SOURCE_ANALYSIS rows are direct code-reading confirmations, not runs.",
   "service_lifecycle": {
@@ -69,7 +70,7 @@
   "server_streaming": {
     "label": "REAL",
     "pr": "B2",
-    "squash_sha": "PENDING",
+    "squash_sha": "fbc2f3f697e17ec349b0335a5038534205e336b2",
     "evidence": [
       "Real curl wire-format capture against a real running `membrane serve` instance (SmolLM2-135M-Instruct): Content-Type: text/event-stream, Cache-Control: no-cache, 21 real incremental `data: {...}` chunks (never the whole completion accumulated then sent as one chunk -- confirmed by inspecting each chunk's own `delta.content`, a few characters/one word at a time), a final `{\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}` chunk, then the literal `data: [DONE]`.",
       "Real `stream_options: {\"include_usage\": true}` request: one extra chunk (`choices: []`, populated `usage.{prompt_tokens,completion_tokens,total_tokens}`) appended right before `[DONE]`, matching real OpenAI's own opt-in convention -- omitted entirely (confirmed) when not requested.",
@@ -100,14 +101,51 @@
       "test_server (existing black-box HTTP suite, empty registry, no real model): 3 tests updated to reflect stream=true now being real (not rejected) -- every failure path reachable without a real model (unknown model, missing messages, malformed message) confirmed to still return a normal JSON error with Content-Type: application/json, never text/event-stream, proving headers are never committed to streaming until every pre-generation validation step has already succeeded."
     ]
   },
+  "model_lifecycle_state_machine": {
+    "label": "REAL",
+    "pr": "B3",
+    "squash_sha": "PENDING",
+    "evidence": [
+      "Explicit e_membrane_model_state (empty/loading/ready/generating/unloading/error) replaces the previous implicit \"model_loaded bool + name string\" -- reported by GET /v1/status as model_state, confirmed real via curl at every stage of the smoke sequence below (ready before/after every successful load, generating never observed at rest since the mutex holds it for the whole request as designed).",
+      "Real recovery proof: with model A (SmolLM2-135M-Instruct) already loaded and serving, a real switch attempt to an oversized model (qwen2.5-1.5b, fp16, ~3.5GB) correctly failed with 503 NO_FEASIBLE_CONTEXT (the real host-memory-guard rejected it before any weight load was attempted -- host RSS/free memory measured stable across the attempt, no dangerous swap thrash). GET /v1/status immediately afterward still reported loaded_model=smolchat, model_state=ready -- never empty. A following real chat completion against smolchat succeeded normally. Reproduced a SECOND time, independently, switching to a different oversized model (SmolLM2-360M) under the same real memory pressure -- same result both times.",
+      "Real GGUF corruption attempts (three separate truncations of a real model file, from severe to minimal -- 2KB, 60%, and all-but-4KB-of-98MB) were all caught by the EARLIER chat-template pre-check (a real vocab-only llama_model_load_from_file() call) before ever reaching the model-open/recovery code path at all -- real evidence that llama.cpp's own GGUF loader is strict enough that most real corruption never even reaches try_load_one(), and that a failed switch never touches A's own loaded state in that case either (A remained loaded_model/ready throughout all three attempts).",
+      "The ERROR state (reached only if BOTH the new model's load AND the restore-of-the-previous-model attempt fail) was not reached in real testing -- this dev host's memory pressure was sufficient to trigger real NO_FEASIBLE_CONTEXT failures for the new model, but never for the already-smaller, already-resident previous model's own restore attempt. Verified via direct source review only (SOURCE_ANALYSIS) for this one specific sub-path -- the recovery logic itself (try_load_one() called identically for both the primary and the restore attempt) is not a separate/different code path that could plausibly behave differently.",
+      "Real graceful shutdown (SIGTERM) confirmed clean after the full sequence above (multiple switches, multiple real failures, multiple successful requests) -- no hang, no crash."
+    ]
+  },
+  "bounded_request_admission": {
+    "label": "SYNTHETIC",
+    "pr": "B3",
+    "evidence": [
+      "request_admission.h: a bounded pending-chat-request gate (a single atomic counter, CAS-based try_admit()/release(), an RAII ticket) extracted into its own header-only, httplib/llama-free module for direct multi-threaded testing, matching stream_queue.h's own PR B2 precedent.",
+      "test_request_admission: 6 ctest-registered tests, including a REAL 50-thread concurrent contention test against a capacity of 4 -- exactly 4 threads admitted, exactly 46 rejected, no lost update, no over-admission under real contention. ASan/UBSan and TSan both confirmed 0 findings (folded into the existing service-lifecycle-tests/no separate TSan job needed -- this primitive has no condition-variable wait to race on, unlike stream_queue_t).",
+      "test_server: a new deterministic (not timing-dependent) integration test forces the admission gate's capacity to 0 via a test-only MEMBRANE_MAX_PENDING_CHAT_REQUESTS environment override on a SEPARATE server instance -- the very first request is guaranteed a real 503 SERVER_BUSY with a Retry-After header, proving the server-level wiring (not just the underlying primitive) end-to-end without any race.",
+      "test_server: a new real-concurrency test (16 real std::thread clients hitting the same running server instance simultaneously) confirms every one receives a correct response under real thread contention on the admission gate/generation mutex/registry snapshot -- no crash, no corrupted shared state. Passed repeatably (5 consecutive full test-binary runs) and under real TSan (4 consecutive runs, ASLR-disabled per this dev host's own pre-existing environmental accommodation) with 0 findings."
+    ]
+  },
+  "registry_hot_reload": {
+    "label": "REAL",
+    "pr": "B3",
+    "evidence": [
+      "Real CLI-driven proof: with a `membrane serve` instance already running (no restart), `membrane model add` was run against its exact registry file from a separate terminal -- the newly added model appeared in a subsequent real GET /v1/models call. Confirmed twice more (two more models added while the same server instance kept running throughout the whole B3 smoke sequence).",
+      "test_server: a new deterministic test writes directly to the registry file (via registry_core.h's own real add/save API, not a hand-crafted JSON string) while the shared test server is already running, then polls GET /v1/models with a bounded retry budget (never a fixed sleep guess, matching this file's existing readiness-polling convention) until the new entry appears -- proving the mtime-based reload, not just the CLI-level real evidence above.",
+      "A malformed/mid-write registry file is never adopted -- membrane_registry_load()'s own existing parse-error path causes refresh_and_snapshot_registry() to silently keep the previous, still-good in-memory registry (confirmed via direct source review; a race this narrow -- reading exactly mid-atomic-rename -- is not independently reproducible on demand, SOURCE_ANALYSIS for this one specific sub-case)."
+    ]
+  },
+  "memory_revalidation": {
+    "label": "SOURCE_ANALYSIS",
+    "pr": "B3",
+    "note": "Already true before PR B3 (membrane_read_host_meminfo() was already called fresh inside ensure_model_loaded() on every single call, never a cached startup snapshot) -- PR B3 did not need to change this, only confirm and document it explicitly (Section 33 of the task). The real NO_FEASIBLE_CONTEXT evidence in model_lifecycle_state_machine above IS this behavior in action: the failure was a genuine reflection of this dev host's REAL, currently tight memory state at the moment of the request, not a stale figure."
+  },
   "known_limitations": {
     "label": "SOURCE_ANALYSIS",
     "items": [
-      "Model registry changes are not hot-reloaded by an already-running server/service -- confirmed directly (see service_lifecycle.evidence above). Deferred to PR B3 (Section 32 of the task).",
       "`membrane service start/stop/restart/status` genuinely require a real, working systemd --user session; there is no mock-systemctl layer -- `install`/`uninstall` alone are exercised in CI (see ci_integration), the full running-service lifecycle is validated locally only.",
-      "No explicit model-lifecycle state machine or bounded pending-request queue yet -- the existing full-request-serialization mutex from Mega Phase A also serializes streaming requests behind non-streaming ones and vice versa (a second request, streaming or not, genuinely waits for a still-in-progress one) -- PR B3's job.",
       "Sampling is still greedy-only -- streaming reuses the exact same decode loop as non-streaming, unchanged by this phase.",
-      "Cancellation is detected on the content-provider callback's own bounded poll (every 200ms while the queue is otherwise empty, or immediately on the next queue push/pop) -- not instantaneous, but bounded and proven to actually stop generation (see server_streaming.evidence above), not merely to close the connection."
+      "Cancellation is detected on the content-provider callback's own bounded poll (every 200ms while the queue is otherwise empty, or immediately on the next queue push/pop) -- not instantaneous, but bounded and proven to actually stop generation (see server_streaming.evidence above), not merely to close the connection.",
+      "A queued (not yet generating) request cannot be individually cancelled by its own client disconnecting -- only an already-generating request can (PR B2). Evaluated for PR B3 and deliberately deferred (Section 30's own \"if applicable\" hedge) -- documented in docs/server.md's own \"Not implemented\" section, not silently assumed to work.",
+      "An idle-model timeout (auto-unload after N minutes idle) was evaluated for PR B3 and deliberately deferred -- no clear evidence it is worth the added complexity for this project's current single-long-lived-backend usage pattern. Candidate for v0.5+.",
+      "The model-lifecycle ERROR state (both the new model's load AND the previous model's own restore both failing) was not reached in real testing on this dev host -- verified via direct source review only, not a real repro (see model_lifecycle_state_machine.evidence above)."
     ]
   }
 }

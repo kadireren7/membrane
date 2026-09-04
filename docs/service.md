@@ -151,13 +151,19 @@ value.
 
 ## Model registry and default-model reload
 
-Neither the model registry nor the server config is hot-reloaded by an
-already-running server. A model registered with `membrane model add`
-after the service is already running will not be visible to it until
-`membrane service restart`; the same is true of a newly set
-`default_model`. This is a known, disclosed gap — see
-`results/background-service/validation.json`'s `known_limitations` —
-targeted for a future phase, not silently assumed to already work.
+As of PR B3, the model registry **is** hot-reloaded: a model registered
+or removed with `membrane model add`/`remove` while the service is
+already running becomes visible on the next `GET /v1/models` or
+`POST /v1/chat/completions` call, no restart needed (a cheap `stat()`
+poll, real reload only on an actual mtime change — see
+`docs/server.md`'s own "Model registry hot-reload" section for the full
+detail and real evidence).
+
+The server **config** (`~/.config/membrane/server.json`, including
+`default_model`) is still read only once, at `membrane serve` startup —
+a newly set `default_model` (`membrane model use NAME`) takes effect on
+the next `membrane serve`/`membrane service restart`, not live. This
+remains a disclosed limitation, not silently assumed to already work.
 
 ## Security scope
 

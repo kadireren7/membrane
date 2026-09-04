@@ -60,6 +60,12 @@ REQUIRED_SERVICE_DOC_SECTIONS = [
 REQUIRED_SERVER_DOC_STREAMING_SECTIONS = [
 	"## Streaming (`stream: true`) — PR B2",
 ]
+REQUIRED_SERVER_DOC_LIFECYCLE_SECTIONS = [
+	"### Model-lifecycle state machine (PR B3)",
+	"### Model-switch failure recovery (PR B3, Section 31 of the task)",
+	"### Bounded request admission (Section 29 of the task)",
+	"### Model registry hot-reload (Section 32 of the task)",
+]
 VALID_LABELS = {"REAL", "SYNTHETIC", "SOURCE_ANALYSIS"}
 
 NEW_PURE_LIBS = [
@@ -69,6 +75,7 @@ NEW_PURE_LIBS = [
 NEW_PURE_TESTS = [
 	"test_systemd_unit", "test_server_config", "test_fs_util",
 	"test_subprocess", "test_utf8_stream", "test_stream_queue",
+	"test_request_admission",
 ]
 
 FAILURES = []
@@ -141,6 +148,23 @@ def _c4b():
 	ok = len(missing) == 0 and not has_stale_rejection_claim
 	return ok, (f"missing: {missing}" if missing
 		else "stale rejection claim still present" if has_stale_rejection_claim
+		else "all present, no stale claim")
+
+
+@check("docs/server.md documents the PR B3 model-lifecycle state "
+	"machine/switch-recovery/admission/registry-reload sections, and "
+	"docs/service.md no longer claims registry changes need a restart")
+def _c4c():
+	server_text = SERVER_DOC_PATH.read_text()
+	missing = [s for s in REQUIRED_SERVER_DOC_LIFECYCLE_SECTIONS
+		if s not in server_text]
+	service_text = SERVICE_DOC_PATH.read_text()
+	has_stale_no_hot_reload_claim = ("Neither the model registry nor the "
+		"server config is hot-reloaded" in service_text)
+	ok = len(missing) == 0 and not has_stale_no_hot_reload_claim
+	return ok, (f"missing: {missing}" if missing
+		else "docs/service.md still claims no registry hot-reload"
+			if has_stale_no_hot_reload_claim
 		else "all present, no stale claim")
 
 
@@ -233,7 +257,7 @@ def _c12():
 		else "all new pure libraries link membrane_sanitizers")
 
 
-@check("every new pure test binary (PR B1+B2) is registered as a real "
+@check("every new pure test binary (PR B1+B2+B3) is registered as a real "
 	"ctest entry")
 def _c13():
 	text = MEMBRANE_CMAKE_PATH.read_text()
@@ -282,6 +306,31 @@ def _c17():
 		f"decode_loop.h has cancel_flag param={has_core_cancel_param}")
 
 
+@check("regression guard: server.cpp has an explicit model-lifecycle "
+	"state machine (never left as implicit bool-soup) and a real "
+	"switch-failure recovery path (never a naive unload-then-maybe-empty)")
+def _c19():
+	text = SERVER_CPP_PATH.read_text()
+	has_state_enum = "e_membrane_model_state" in text
+	has_error_state = "MEMBRANE_MODEL_STATE_ERROR" in text
+	has_recovery = "had_previous" in text and "previous_name" in text
+	ok = has_state_enum and has_error_state and has_recovery
+	return ok, (f"has_state_enum={has_state_enum} "
+		f"has_error_state={has_error_state} has_recovery={has_recovery}")
+
+
+@check("regression guard: chat completions are admitted through a "
+	"bounded gate before any other work, and the registry is hot-"
+	"refreshed rather than captured once at server startup")
+def _c20():
+	text = SERVER_CPP_PATH.read_text()
+	has_admission = "admission_gate" in text and "SERVER_BUSY" in text
+	has_hot_reload = "refresh_and_snapshot_registry" in text
+	ok = has_admission and has_hot_reload
+	return ok, (f"has_admission={has_admission} "
+		f"has_hot_reload={has_hot_reload}")
+
+
 @check("Mega Phase A's own evidence files are untouched by this PR's own "
 	"new commits (checked against origin/main)")
 def _c18():
@@ -297,8 +346,8 @@ def _c18():
 
 
 def main():
-	for fn in (_c1, _c2, _c3, _c4, _c4b, _c5, _c6, _c7, _c8, _c9, _c10,
-			_c11, _c12, _c13, _c14, _c16, _c17, _c18):
+	for fn in (_c1, _c2, _c3, _c4, _c4b, _c4c, _c5, _c6, _c7, _c8, _c9,
+			_c10, _c11, _c12, _c13, _c14, _c16, _c17, _c19, _c20, _c18):
 		fn()
 	print(f"\n{CHECK_COUNT - len(FAILURES)}/{CHECK_COUNT} checks passed")
 	if FAILURES:

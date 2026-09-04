@@ -232,7 +232,71 @@ One active model at a time (Section 23 of the task):
 
 Every request to the currently-loaded model is served on a serialized
 path (one internal mutex) — no continuous batching, no concurrent
-generation. Correctness first, matching Section 24 of the task.
+generation, streaming included. Correctness first, matching Section 24
+of the task. A concurrent request for a DIFFERENT model simply waits on
+that same mutex — a switch is never a special case, it is the same
+serialization every request already goes through.
+
+### Model-lifecycle state machine (PR B3)
+
+An explicit state, not "loaded bool + name string" — `empty` (never
+loaded, or cleanly unloaded), `loading`, `ready`, `generating`,
+`unloading`, `error`. Reported by `/v1/status` as `model_state`. All
+transitions happen only while the same mutex above is held, so they are
+exactly as synchronized as everything else. `error` is distinct from
+`empty` — see the recovery behavior below for when it is reached.
+
+### Model-switch failure recovery (PR B3, Section 31 of the task)
+
+A naive "unload A, then try to load B" would leave the server with NO
+model at all if B's own load fails, even though A was working a moment
+ago. Instead: if B fails to load, the server automatically attempts to
+**reload A** before giving up. The client's own request for B is still
+correctly reported as a failure (its real error code/message, never
+silently swapped for a misleading success) — only the server's own
+resting state improves, ending up back at `ready` on A rather than
+`empty`. Only if BOTH B's load and A's own restore attempt fail does the
+server end up in the explicit `error` state.
+
+Real evidence: with model A already loaded, a real switch attempt to an
+oversized model correctly failed with `503 NO_FEASIBLE_CONTEXT` (the
+host genuinely could not fit it) — `/v1/status` immediately afterward
+still reported A as `loaded_model`/`ready`, and a following real request
+to A succeeded normally. Reproduced twice, independently, with two
+different oversized models. See
+`results/background-service/validation.json`.
+
+### Memory revalidation (Section 33 of the task)
+
+Host memory is read **fresh, every time** a model is (re)loaded or
+switched — never a cached snapshot from server startup or from the
+previously-loaded model. A switch attempted after available memory has
+changed (another process using more RAM, or this same server having
+just freed the previous model) always sees that current reality.
+
+### Bounded request admission (Section 29 of the task)
+
+`POST /v1/chat/completions` admits at most 8 concurrent requests (a
+single atomic counter, checked before any other work, including before
+the registry lookup) — past that bound, a request gets an immediate
+`503 SERVER_BUSY` with a `Retry-After` header, rather than joining an
+ever-growing queue of threads blocked on the generation mutex. Given
+this server's own full serialization (above), 8 is generous headroom
+above the "1 active generation, the rest waiting" reality — this bound
+exists to fail closed under real overload, not to constrain ordinary
+use.
+
+### Model registry hot-reload (Section 32 of the task)
+
+The registry is polled (a single `stat()`, not a re-read) on every
+`GET /v1/models` and `POST /v1/chat/completions` call; a real mtime
+change triggers a real reload. `membrane model add`/`remove` while the
+server is already running becomes visible on the very next request —
+no restart needed. Real evidence: a model added via the real CLI while
+a server was already serving requests appeared in `GET /v1/models`
+without any restart. A registry file that fails to parse (e.g. caught
+mid-write) is silently ignored — the previous, still-good registry is
+kept rather than corrupting server state over a transient race.
 
 ## Errors
 
@@ -252,6 +316,7 @@ SSE `data: {"error": {...}}` event — see "Streaming" above.
 | 500 | `MODEL_LOAD_FAILED` | the model file could not be loaded |
 | 500 | (a real planner reason code) | generation failed after loading (non-streaming only) |
 | 503 | `NO_FEASIBLE_CONTEXT` | no context/hardware plan could be resolved (e.g. insufficient host memory) |
+| 503 | `SERVER_BUSY` | too many chat completion requests are already in flight (PR B3, "Bounded request admission" above) — includes a `Retry-After` header |
 
 ## Graceful shutdown
 
@@ -264,7 +329,18 @@ SSE `data: {"error": {...}}` event — see "Streaming" above.
 - Sampling beyond greedy decoding (temperature/top_p/etc. are accepted
   and ignored, never faked).
 - Multiple simultaneously-resident models.
-- No explicit model-lifecycle state machine or bounded pending-request
-  queue yet — the existing full-request-serialization mutex (unchanged
-  since PR A3) also serializes streaming requests behind non-streaming
-  ones and vice versa; targeted for PR B3.
+- An idle-model timeout (unload after N minutes of no requests) —
+  evaluated for PR B3 and deliberately deferred: no clear evidence yet
+  that it is worth the added complexity for this project's own current
+  usage pattern (a single long-lived local backend, not a multi-tenant
+  service under memory pressure from many idle models). Candidate for
+  v0.5+.
+- A queued (not yet generating) request cannot be individually
+  cancelled by its own client disconnecting — cancellation (PR B2) only
+  covers a request that is ALREADY streaming/generating. A request still
+  waiting on the generation mutex has no separate polling point to
+  detect a dead client; implementing one would need a materially more
+  complex architecture for a rare case (this server has no continuous
+  batching, so the wait is normally short). Evaluated for PR B3,
+  deliberately deferred with this disclosure rather than silently
+  assumed to work.
