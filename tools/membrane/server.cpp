@@ -77,6 +77,10 @@ struct s_membrane_server_model_state
 										 * model before this cache existed)
 										 * on every request past the first
 										 * to a given model */
+	std::string					default_model;	/* Section 9 -- "" = none
+										 * configured; a chat request
+										 * omitting "model" falls back to
+										 * this, never proactively loaded */
 };
 
 static bool	load_chat_template(const std::string &model_path,
@@ -304,13 +308,22 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 			"valid JSON");
 		return ;
 	}
-	if (!body.is_object() || !body.contains("model")
-		|| !body["model"].is_string() || !body.contains("messages")
-		|| !body["messages"].is_array() || body["messages"].empty())
+	/* Section 9 of the Mega Phase B task: a request may omit "model"
+	 * entirely (or send it as an empty string) iff a default_model is
+	 * configured -- substituted below, once, right after this shape
+	 * check. A request with no "model" field AND no configured default
+	 * is still a 400, exactly as before this phase. */
+	bool	has_model_field = body.is_object() && body.contains("model")
+			&& body["model"].is_string() && !body["model"].get<std::string>()
+				.empty();
+
+	if (!body.is_object() || (!has_model_field && st->default_model.empty())
+		|| !body.contains("messages") || !body["messages"].is_array()
+		|| body["messages"].empty())
 	{
 		send_json_error(res, 400, "INVALID_REQUEST", "request must be a "
-			"JSON object with a string \"model\" and a non-empty "
-			"\"messages\" array");
+			"JSON object with a string \"model\" (or a configured default "
+			"model) and a non-empty \"messages\" array");
 		return ;
 	}
 	if (body.contains("stream") && body["stream"].is_boolean()
@@ -346,7 +359,8 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 		role_storage.push_back(msg["role"]);
 		content_storage.push_back(msg["content"]);
 	}
-	std::string	model_name = body["model"];
+	std::string	model_name = has_model_field ? body["model"].get<std::string>()
+			: st->default_model;
 	const membrane_registry_entry_t	*entry = membrane_registry_find(reg,
 			model_name);
 
@@ -511,6 +525,7 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 
 	s_membrane_server_model_state	state;
 
+	state.default_model = opts.default_model;
 	membrane_runtime_init(&state.rt);
 	signal(SIGINT, handle_signal);
 	signal(SIGTERM, handle_signal);

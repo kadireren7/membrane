@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "phase": "mega-phase-b-background-service",
+  "membrane_commit": "PENDING -- updated when the final PR (B4) of this mega-phase is squash-merged; individual pr fields below are updated as each PR B1-B4 actually merges",
+  "generated_at": "2026-09-04T00:00:00Z",
+  "note": "Mega Phase B (PRs B1-B4): turns MEMBRANE into a persistent local AI backend managed as a systemd --user service, with real streaming, model-lifecycle hardening, and client integration. This file is seeded during PR B1 and extended by B2/B3/B4 -- it is NOT rewritten from scratch each PR, only appended to/corrected, matching results/runtime-service/validation.json's own precedent from Mega Phase A. REAL rows are genuine local invocations on this dev host (CPU-only build). SYNTHETIC rows are ctest-registered unit/integration tests with no real GGUF model dependency (CI-safe). SOURCE_ANALYSIS rows are direct code-reading confirmations, not runs.",
+  "service_lifecycle": {
+    "label": "REAL",
+    "pr": "B1",
+    "squash_sha": "PENDING",
+    "evidence": [
+      "Real end-to-end local smoke on this dev host's own real systemd --user session (not a container, not a mock): `membrane model add`, `membrane service install` (real unit written to $HOME/.config/systemd/user/membrane.service, real `systemctl --user daemon-reload`), `membrane service start` (real `systemctl --user start`), `membrane service status` (real ActiveState/SubState/MainPID from `systemctl --user show` combined with a real GET /v1/status against the actually-running server), a real GET /health and GET /v1/status via curl, a real POST /v1/chat/completions against SmolLM2-135M-Instruct served entirely through the installed systemd unit (not `membrane serve` directly) -- generated real text, correct OpenAI-compatible JSON shape.",
+      "Registry-not-hot-reloaded confirmed directly: a model registered AFTER the service was already running was correctly reported MODEL_NOT_FOUND until `membrane service restart` -- an honest, observed gap (registry hot-reload is explicitly a B3 task, not silently assumed to already work).",
+      "`membrane service stop` confirmed via a subsequent curl connection failure (ECONNREFUSED) and `systemctl --user status` reporting the unit not found immediately after `membrane service uninstall`.",
+      "`membrane service uninstall` confirmed to remove exactly the generated unit file and nothing else -- the pre-existing, unrelated `openclaw-gateway.service` unit already present in this same systemd --user directory was confirmed byte-identical (sha256) before and after the entire smoke sequence.",
+      "No leftover `membrane serve` process after uninstall (confirmed via `pgrep`/journalctl's own real 'MEMBRANE server stopped' log line, not just an exit code).",
+      "`membrane service install` correctly refuses to overwrite a same-named unit it did not generate (no MEMBRANE marker line) unless --force is passed -- confirmed both in this local smoke and in a CI-safe isolated-directory integration step (see ci_integration below).",
+      "All test artifacts (registry entries, seeded server config, installed unit) were removed at the end of the smoke session -- the dev host's real $HOME/.config/membrane and $HOME/.local/share/membrane were confirmed empty/absent again afterward, matching their state before the smoke test began."
+    ]
+  },
+  "systemd_unit_generation": {
+    "label": "REAL",
+    "pr": "B1",
+    "evidence": [
+      "Generated unit content directly inspected on-disk during the local smoke test: `[Unit]`/`[Service]`/`[Install]` sections present, `Type=simple`, `ExecStart=\"<real absolute exec path>\" serve` (quoted, no --port/--bind baked in), `Restart=on-failure`, `RestartSec=2`, `WantedBy=default.target`, and the MEMBRANE marker comment line.",
+      "test_systemd_unit: 5 ctest-registered unit tests (pure, no filesystem access) covering unit-file shape, a custom Description override, an exec_path containing a space (systemd's own ExecStart= quoting, not a shell), the marker-detection predicate used by the overwrite-refusal check, and MEMBRANE_SYSTEMD_USER_DIR/XDG_CONFIG_HOME/HOME path-resolution precedence."
+    ]
+  },
+  "server_config": {
+    "label": "REAL",
+    "pr": "B1",
+    "evidence": [
+      "Real seeded config file inspected on-disk during the local smoke test (written by `membrane service install` only when no config already existed).",
+      "`membrane model use NAME` confirmed to persist default_model into the real config file and a subsequent `membrane serve`/service start picks it up (a chat request omitting \"model\" falls back to it) -- server.cpp's handle_chat_completions() request-validation change verified against the running service.",
+      "test_server_config: 7 ctest-registered unit tests (pure, real temp files) covering defaults, nonexistent-file-is-defaults-not-error, atomic save+load round trip (no leftover .tmp.* file), malformed JSON / missing schema_version / unsupported schema_version all failing closed, and MEMBRANE_SERVER_CONFIG_PATH/XDG_CONFIG_HOME/HOME path-resolution precedence."
+    ]
+  },
+  "fs_util": {
+    "label": "SYNTHETIC",
+    "pr": "B1",
+    "evidence": [
+      "test_fs_util: 5 ctest-registered unit tests covering mkdir -p semantics (including EEXIST-is-not-an-error on a repeat call), atomic write creating missing parent directories, no leftover .tmp.* file after a successful write, and a second write cleanly overwriting (not appending to) the first."
+    ]
+  },
+  "subprocess_safety": {
+    "label": "SYNTHETIC",
+    "pr": "B1",
+    "evidence": [
+      "test_subprocess: 8 ctest-registered unit tests against real fork()/execvp() (ordinary coreutils -- echo/sh/sleep, never systemctl itself). Two tests specifically prove Section 11's 'no shell injection' requirement: a value containing shell metacharacters ($(), ;, |, &&, backticks) and a value containing an embedded newline are both delivered to the child as a single literal argv element, byte-for-byte, with zero shell interpretation -- confirmed by echoing them back and comparing exactly. Also covers stdout/stderr captured separately (never merged), a nonzero exit code propagating correctly, command-not-found reported as exit_code 127 rather than crashing the parent, an empty argv rejected before any fork(), and a real wall-clock timeout killing a long-running child (SIGKILL, waited-for, never left a zombie)."
+    ]
+  },
+  "default_model_config": {
+    "label": "REAL",
+    "pr": "B1",
+    "note": "Section 9 of the task: `membrane model use NAME` sets a persistent default so a chat request MAY omit \"model\" -- never forces one. Verified: a chat completion request against the real running service with no \"model\" field, after `membrane model use smolchat`, was correctly served by smolchat.",
+    "disclosed_limitation": "default_model is read once, at `membrane serve`'s own startup (from server_config.h) -- changing it while the service is already running requires `membrane service restart` to take effect, exactly like the existing bind/port config fields. Documented in the CLI's own success message ('Takes effect on the next `membrane serve`/service restart'), not hidden."
+  },
+  "ci_integration": {
+    "label": "SYNTHETIC",
+    "pr": "B1",
+    "evidence": [
+      "New CI job service-lifecycle-tests: target-scoped build (no llama/ggml compilation, same trick as the pre-existing fallback-controller-tests job) of test_systemd_unit/test_server_config/test_fs_util/test_subprocess under ASan+UBSan.",
+      "New packaging-smoke CI step ('CPU installed membrane service install/uninstall (isolated dirs)'): runs the real installed `membrane service install`/`uninstall` CLI dispatch against MEMBRANE_SYSTEMD_USER_DIR/MEMBRANE_SERVER_CONFIG_PATH pointed at isolated temp locations (never a real systemd --user session or this runner's own $HOME) -- verifies the generated unit's real on-disk content, that install refuses to overwrite a same-named unit lacking the MEMBRANE marker, and that uninstall removes it. `install` tolerates `systemctl --user daemon-reload` failing/being absent by design (its result is never checked); `service start/stop/status` themselves require a genuinely working systemd --user session and are intentionally NOT exercised in CI -- only in the real local smoke test above."
+    ]
+  },
+  "known_limitations": {
+    "label": "SOURCE_ANALYSIS",
+    "items": [
+      "Model registry changes are not hot-reloaded by an already-running server/service -- confirmed directly (see service_lifecycle.evidence above). Deferred to PR B3 (Section 32 of the task).",
+      "`membrane service start/stop/restart/status` genuinely require a real, working systemd --user session; there is no mock-systemctl layer -- `install`/`uninstall` alone are exercised in CI (see ci_integration), the full running-service lifecycle is validated locally only.",
+      "No streaming support yet (stream=true still returns 400 STREAMING_NOT_SUPPORTED, unchanged from Mega Phase A) -- PR B2's job.",
+      "No explicit model-lifecycle state machine or bounded request queue yet -- the existing full-request-serialization mutex from Mega Phase A is unchanged -- PR B3's job."
+    ]
+  }
+}

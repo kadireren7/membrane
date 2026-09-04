@@ -38,6 +38,52 @@ target_include_directories(membrane_cpp_httplib PUBLIC
   ${MEMBRANE_CPP_HTTPLIB_INCLUDE_DIR})
 target_link_libraries(membrane_cpp_httplib PUBLIC Threads::Threads)
 
+# Mega Phase B, PR B1: the shared "mkdir -p + atomic write" helper (fs_util.h's
+# own top comment) -- registry_core.cpp, server_config.cpp, and
+# service_cmd.cpp's unit-file write all link this instead of each carrying
+# their own copy.
+add_library(membrane_fs_util STATIC fs_util.cpp)
+set_target_properties(membrane_fs_util PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_fs_util PUBLIC membrane_sanitizers)
+target_include_directories(membrane_fs_util PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+
+# Mega Phase B, PR B1: minimal safe subprocess runner (subprocess.h's own
+# top comment) -- fork()+execvp(), never system()/popen().
+add_library(membrane_subprocess STATIC subprocess.cpp)
+set_target_properties(membrane_subprocess PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_subprocess PUBLIC membrane_sanitizers)
+target_include_directories(membrane_subprocess PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+
+# Mega Phase B, PR B1: pure systemd --user unit-file generation (systemd_
+# unit.h's own top comment) -- no filesystem/systemctl access here.
+add_library(membrane_systemd_unit STATIC systemd_unit.cpp)
+set_target_properties(membrane_systemd_unit PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_systemd_unit PUBLIC membrane_sanitizers)
+target_include_directories(membrane_systemd_unit PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+
+# Mega Phase B, PR B1: the persistent `membrane serve` config (server_
+# config.h's own top comment) -- listen_address/port/default_model/
+# log_level, atomically written via membrane_fs_util.
+add_library(membrane_server_config STATIC server_config.cpp)
+set_target_properties(membrane_server_config PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_server_config PUBLIC membrane_sanitizers
+  membrane_fs_util)
+target_include_directories(membrane_server_config PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+target_include_directories(membrane_server_config PRIVATE
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
 add_library(membrane_registry_core STATIC registry_core.cpp)
 set_target_properties(membrane_registry_core PROPERTIES
   CXX_STANDARD 17
@@ -52,7 +98,8 @@ set_target_properties(membrane_registry_core PROPERTIES
 # -fsanitize flags (see the root CMakeLists.txt's own top-of-file
 # comment) -- every other pure module links it PUBLIC; this one now
 # does too.
-target_link_libraries(membrane_registry_core PUBLIC membrane_sanitizers)
+target_link_libraries(membrane_registry_core PUBLIC membrane_sanitizers
+  membrane_fs_util)
 target_include_directories(membrane_registry_core PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_registry_core PRIVATE
@@ -77,13 +124,44 @@ target_include_directories(membrane_server PRIVATE
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
 
+# Mega Phase B, PR B1: a thin HTTP client against a running `membrane
+# serve`/service instance's own GET /v1/status (status_client.h's own top
+# comment) -- shared by `membrane status` (existing, A4) and `membrane
+# service status` (new, this PR).
+add_library(membrane_status_client STATIC status_client.cpp)
+set_target_properties(membrane_status_client PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_status_client PUBLIC membrane_sanitizers
+  membrane_cpp_httplib)
+target_include_directories(membrane_status_client PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+target_include_directories(membrane_status_client PRIVATE
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
+# Mega Phase B, PR B1: `membrane service ...` itself (service_cmd.h's own
+# top comment) -- installs/manages membrane.service as a systemd --user
+# unit; never a second daemon-supervision implementation.
+add_library(membrane_service_cmd STATIC service_cmd.cpp)
+set_target_properties(membrane_service_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_service_cmd PUBLIC membrane_sanitizers
+  membrane_systemd_unit membrane_server_config membrane_subprocess
+  membrane_status_client membrane_fs_util membrane_product_cli)
+target_include_directories(membrane_service_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+target_include_directories(membrane_service_cmd PRIVATE
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
 add_executable(membrane main.cpp model_cmd.cpp)
 set_target_properties(membrane PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_gpu_device membrane_runtime_core membrane_product_cli
-  membrane_runtime_session membrane_server llama)
+  membrane_runtime_session membrane_server membrane_service_cmd
+  membrane_status_client membrane_server_config llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
   ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
@@ -128,4 +206,46 @@ if(MEMBRANE_BUILD_TESTS)
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
   add_test(NAME test_server COMMAND test_server)
+
+  # Mega Phase B, PR B1, Section 13: pure tests for the new service-
+  # lifecycle modules -- unit generation/path handling, config
+  # serialization, atomic write, and subprocess injection safety. None of
+  # these touch a real systemd/journalctl (that is the real local smoke
+  # test's job, run manually -- see docs/service.md), so they are CI-safe
+  # and hermetic like every other test in this file.
+  add_executable(test_systemd_unit test_systemd_unit.cpp)
+  set_target_properties(test_systemd_unit PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_systemd_unit PRIVATE membrane_systemd_unit)
+  target_include_directories(test_systemd_unit PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_systemd_unit COMMAND test_systemd_unit)
+
+  add_executable(test_server_config test_server_config.cpp)
+  set_target_properties(test_server_config PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_server_config PRIVATE membrane_server_config)
+  target_include_directories(test_server_config PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_server_config COMMAND test_server_config)
+
+  add_executable(test_fs_util test_fs_util.cpp)
+  set_target_properties(test_fs_util PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_fs_util PRIVATE membrane_fs_util)
+  target_include_directories(test_fs_util PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_fs_util COMMAND test_fs_util)
+
+  add_executable(test_subprocess test_subprocess.cpp)
+  set_target_properties(test_subprocess PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_subprocess PRIVATE membrane_subprocess)
+  target_include_directories(test_subprocess PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_subprocess COMMAND test_subprocess)
 endif()
