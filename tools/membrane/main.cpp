@@ -4,24 +4,28 @@
 #include <string>
 #include <vector>
 
-#include <httplib.h>
 #include <nlohmann/json.hpp>
 
 #include "model_cmd.h"
 #include "server.h"
+#include "server_config.h"
+#include "service_cmd.h"
+#include "status_client.h"
 #include "product_cli.h"
 
 using json = nlohmann::json;
 
 /*
- * Mega Phase A: `membrane`, the new product CONTROL CLI (Section 10) --
- * distinct from `membrane-run`, which stays the inference entry point
- * (backwards compatible, unchanged since PR A2). `membrane model ...`
- * (PR A2), `membrane serve` (PR A3, the local OpenAI-compatible HTTP
- * server -- see server.h), and `membrane status` (PR A4, Section 37 --
- * a thin HTTP CLIENT against a `serve` instance already running in the
- * foreground elsewhere; this project has no daemon/process-management
- * capability and does not claim one) are all here.
+ * `membrane`, the product CONTROL CLI -- distinct from `membrane-run`,
+ * which stays the inference entry point (backwards compatible, unchanged
+ * since Mega Phase A, PR A2). `membrane model ...` (A2), `membrane serve`
+ * (A3, the local OpenAI-compatible HTTP server -- see server.h),
+ * `membrane status` (A4 -- a thin HTTP client against a running
+ * instance), and `membrane service ...` (Mega Phase B, PR B1 -- manages
+ * membrane.service as a systemd --user unit, see service_cmd.h) are all
+ * here. `membrane serve` itself is completely unchanged by PR B1 --
+ * still the direct foreground/debug entry point service_cmd.cpp's
+ * generated unit's own ExecStart calls.
  */
 
 static void	print_usage(FILE *out)
@@ -35,10 +39,28 @@ static void	print_usage(FILE *out)
 		"registered model\n");
 	fprintf(out, "  membrane model inspect NAME       show one "
 		"registered model's details\n");
+	fprintf(out, "  membrane model use NAME           set NAME as the "
+		"default model for `membrane serve`\n");
 	fprintf(out, "  membrane serve                    start a local "
-		"OpenAI-compatible HTTP server\n");
+		"OpenAI-compatible HTTP server (foreground)\n");
 	fprintf(out, "  membrane status                    check a running "
-		"`membrane serve` instance\n");
+		"`membrane serve`/service instance\n");
+	fprintf(out, "  membrane service install           install membrane."
+		"service as a systemd --user unit\n");
+	fprintf(out, "  membrane service uninstall         remove it\n");
+	fprintf(out, "  membrane service start|stop|restart\n");
+	fprintf(out, "                                      control the "
+		"installed service\n");
+	fprintf(out, "  membrane service status             systemd state + "
+		"live HTTP status combined\n");
+	fprintf(out, "  membrane service logs [-n N]       recent journalctl "
+		"output (default 50 lines)\n");
+	fprintf(out, "\n");
+	fprintf(out, "service install options:\n");
+	fprintf(out, "  --exec-path PATH                    use PATH instead "
+		"of this binary's own real path\n");
+	fprintf(out, "  --force                              overwrite a "
+		"same-named unit MEMBRANE did not create\n");
 	fprintf(out, "\n");
 	fprintf(out, "serve options:\n");
 	fprintf(out, "  --port N                           listen port "
@@ -107,10 +129,35 @@ int	main(int argc, char **argv)
 	}
 	if (args[0] == "serve")
 	{
+		/* Section 8 of the Mega Phase B task: `membrane serve` (no
+		 * flags) reads listen_address/port from the persistent config
+		 * so a `membrane service install`-generated unit's own
+		 * ExecStart can stay a plain "<path> serve" -- changing the
+		 * port/bind later never requires regenerating/reinstalling the
+		 * unit. An explicit --port/--bind on the command line always
+		 * wins (checked via want_port/want_bind, same "explicit beats
+		 * implicit" convention every other flag in this project uses).
+		 * A missing/malformed config is never fatal here -- membrane_
+		 * server_config_load() itself already falls back to defaults
+		 * for "file does not exist"; a genuinely malformed config
+		 * (parse error/bad schema) is reported but does not block
+		 * startup, since sensible defaults are always available. */
+		membrane_server_config_t		cfg
+				= membrane_server_config_defaults();
+		membrane_server_config_error_t	cfg_err;
+		std::string						config_path
+				= membrane_server_config_resolve_path();
+
+		if (!config_path.empty()
+			&& !membrane_server_config_load(config_path, &cfg, &cfg_err))
+			fprintf(stderr, "membrane serve: WARNING -- could not read "
+				"server config, using defaults: %s\n",
+				cfg_err.message.c_str());
 		membrane_server_options_t	opts;
 
-		opts.bind_address = "127.0.0.1";
-		opts.port = 8642;
+		opts.bind_address = cfg.listen_address;
+		opts.port = cfg.port;
+		opts.default_model = cfg.default_model;
 		opts.allow_non_loopback = false;
 		for (i = 1; i < (int)args.size(); ++i)
 		{
@@ -128,6 +175,13 @@ int	main(int argc, char **argv)
 			}
 		}
 		return (membrane_server_run(opts));
+	}
+	if (args[0] == "service")
+	{
+		std::vector<std::string>	service_args(args.begin() + 1,
+				args.end());
+
+		return (membrane_service_cmd_dispatch(service_args, want_json));
 	}
 	if (args[0] == "status")
 	{
@@ -147,13 +201,9 @@ int	main(int argc, char **argv)
 				return (MEMBRANE_EXIT_CLI_ERROR);
 			}
 		}
-		httplib::Client	cli(bind, port);
+		json	j;
 
-		cli.set_connection_timeout(0, 500000);
-		cli.set_read_timeout(2, 0);
-		auto	res = cli.Get("/v1/status");
-
-		if (!res || res->status != 200)
+		if (!membrane_fetch_server_status(bind, port, &j))
 		{
 			if (want_json)
 				printf("{\"running\":false}\n");
@@ -162,39 +212,12 @@ int	main(int argc, char **argv)
 					"http://%s:%d)\n", bind.c_str(), port);
 			return (MEMBRANE_EXIT_SUCCESS);
 		}
-		json	j;
-
-		try
-		{
-			j = json::parse(res->body);
-		}
-		catch (const json::parse_error &)
-		{
-			fprintf(stderr, "membrane status: server returned an "
-				"unparseable response\n");
-			return (MEMBRANE_EXIT_RUNTIME_ERROR);
-		}
 		if (want_json)
 			printf("%s\n", j.dump().c_str());
 		else
 		{
 			printf("MEMBRANE server\n");
-			printf("  running: yes\n");
-			printf("  endpoint: %s\n",
-				j.value("endpoint", std::string("?")).c_str());
-			if (j.contains("loaded_model") && !j["loaded_model"].is_null())
-			{
-				printf("  loaded model: %s\n",
-					j["loaded_model"].get<std::string>().c_str());
-				printf("  backend: %s\n",
-					j.value("backend", std::string("?")).c_str());
-				printf("  kv precision: %s\n",
-					j.value("kv_precision", std::string("?")).c_str());
-			}
-			else
-				printf("  loaded model: (none yet)\n");
-			printf("  context policy: %s\n",
-				j.value("context_policy", std::string("?")).c_str());
+			membrane_print_server_status_human(j);
 		}
 		return (MEMBRANE_EXIT_SUCCESS);
 	}

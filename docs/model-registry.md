@@ -7,8 +7,17 @@ pass a filesystem model path with every request/CLI invocation.
 membrane model add qwen /path/to/model.gguf
 membrane model list
 membrane model inspect qwen
+membrane model use qwen
 membrane model remove qwen
 ```
+
+`membrane model use NAME` (Mega Phase B, PR B1) sets a persistent
+default model for `membrane serve`/`membrane service` — see
+`docs/server.md`'s "Default model" section and `docs/service.md`. It
+never forces a model to load; it only changes what an omitted
+`"model"` field in a chat request falls back to, and it writes to the
+separate server config file (`~/.config/membrane/server.json`), not
+this registry.
 
 ## Location
 
@@ -50,4 +59,6 @@ Never stored: prompt history, secrets, API keys.
 - `membrane model ...` itself (`tools/membrane/model_cmd.cpp`).
 - `membrane serve` (`docs/server.md`) — every `model` field in a chat
   request is resolved through this same registry, never a raw
-  filesystem path from an HTTP client.
+  filesystem path from an HTTP client. A server that has already
+  started does not see a registry change until restarted (`docs/
+  service.md`'s "Model registry and default-model reload" section).

@@ -1,4 +1,5 @@
 #include "registry_core.h"
+#include "fs_util.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -48,47 +49,6 @@ static void	set_err(membrane_registry_error_t *err, const char *code,
 	err->set = true;
 	err->code = code;
 	err->message = message;
-}
-
-/* mkdir -p semantics for the immediate parent of `path` only (registry
- * files live one directory level under XDG_DATA_HOME, never deeper) --
- * creates each missing path component in order; EEXIST on any component
- * is not an error (another process/a prior run already created it). */
-static bool	mkdir_parents(const std::string &dir, membrane_registry_error_t
-				*err)
-{
-	std::string	partial;
-	size_t		pos = 0;
-
-	if (dir.empty())
-		return (true);
-	if (dir[0] == '/')
-	{
-		partial = "/";
-		pos = 1;
-	}
-	while (pos <= dir.size())
-	{
-		size_t	next = dir.find('/', pos);
-		std::string	component = dir.substr(pos, next == std::string::npos
-				? std::string::npos : next - pos);
-
-		if (!component.empty())
-		{
-			partial += component;
-			if (mkdir(partial.c_str(), 0755) != 0 && errno != EEXIST)
-			{
-				set_err(err, "IO_ERROR", std::string("could not create "
-					"directory '") + partial + "': " + strerror(errno));
-				return (false);
-			}
-			partial += "/";
-		}
-		if (next == std::string::npos)
-			break ;
-		pos = next + 1;
-	}
-	return (true);
 }
 
 static json	entry_to_json(const membrane_registry_entry_t &e)
@@ -183,47 +143,18 @@ bool	membrane_registry_save(const std::string &registry_path,
 			const membrane_registry_t &reg, membrane_registry_error_t *err)
 {
 	*err = membrane_registry_error_t();
-	size_t	slash = registry_path.find_last_of('/');
-	std::string	dir = slash == std::string::npos ? "."
-			: registry_path.substr(0, slash);
-
-	if (!mkdir_parents(dir, err))
-		return (false);
 	json	root;
 
 	root["schema_version"] = 1;
 	root["models"] = json::array();
 	for (const auto &e : reg.entries)
 		root["models"].push_back(entry_to_json(e));
-	std::string	tmp_path = registry_path + ".tmp."
-			+ std::to_string((long long)getpid());
-	FILE	*f = fopen(tmp_path.c_str(), "wb");
 
-	if (f == NULL)
-	{
-		set_err(err, "IO_ERROR", std::string("could not create temp file "
-			"'") + tmp_path + "': " + strerror(errno));
-		return (false);
-	}
-	std::string	dump = root.dump(2);
-	size_t		written = fwrite(dump.data(), 1, dump.size(), f);
-	bool		flush_ok = (fflush(f) == 0);
-	int			fd = fileno(f);
-	bool		sync_ok = (fd >= 0 && fsync(fd) == 0);
+	membrane_fs_error_t	fs_err;
 
-	fclose(f);
-	if (written != dump.size() || !flush_ok || !sync_ok)
+	if (!membrane_atomic_write_file(registry_path, root.dump(2), &fs_err))
 	{
-		unlink(tmp_path.c_str());
-		set_err(err, "IO_ERROR", std::string("could not write '") + tmp_path
-			+ "': " + strerror(errno));
-		return (false);
-	}
-	if (rename(tmp_path.c_str(), registry_path.c_str()) != 0)
-	{
-		unlink(tmp_path.c_str());
-		set_err(err, "IO_ERROR", std::string("could not atomically "
-			"replace '") + registry_path + "': " + strerror(errno));
+		set_err(err, fs_err.code.c_str(), fs_err.message);
 		return (false);
 	}
 	return (true);

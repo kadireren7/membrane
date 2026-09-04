@@ -33,6 +33,15 @@ typedef struct s_membrane_server_options
 									 * "just trust me" flag parsing */
 	std::string	registry_path;		/* "" = registry_core's own XDG
 									 * default */
+	std::string	default_model;		/* Mega Phase B, PR B1, Section 9:
+									 * "" = none configured. A chat
+									 * request that omits "model" (or
+									 * sends it empty) falls back to
+									 * this name instead of a hard 400 --
+									 * never proactively loaded at
+									 * startup ("Server may start:
+									 * healthy, no model loaded" stays
+									 * true either way). */
 }	membrane_server_options_t;
 
 /* Blocks until the server is stopped (SIGINT/SIGTERM -- Section 38 -- or

@@ -8,6 +8,18 @@ subset on top of the same reusable runtime-session core
 `membrane-run` remains the direct inference entry point, unchanged by
 this phase.
 
+**Mega Phase B, PR B1:** for normal day-to-day use, prefer
+`membrane service install && membrane service start` over running
+`membrane serve` by hand in a terminal — see `docs/service.md`.
+`membrane serve` itself is unchanged and still exactly what a
+`membrane service install`-generated systemd unit's own `ExecStart`
+invokes; it remains the right tool for foreground/debug use. With no
+`--port`/`--bind` flags, it now reads `listen_address`/`port`/
+`default_model` from `~/.config/membrane/server.json` first (an
+explicit CLI flag always overrides) — see `docs/service.md`'s "Server
+config" section for the file's shape and `membrane model use NAME` /
+Section 9 below for `default_model`.
+
 **Real compatibility evidence (PR A4):** the official Python `openai`
 SDK (`pip install openai`), pointed at a running `membrane serve`
 instance with no code changes beyond `base_url`/`api_key`, correctly
@@ -65,7 +77,9 @@ Minimum request:
 {"model": "qwen", "messages": [{"role": "user", "content": "Hello"}]}
 ```
 
-Supported request fields: `model` (required, a registered name),
+Supported request fields: `model` (required, a registered name, unless
+a `default_model` is configured server-side — see below —, in which
+case an omitted or empty `"model"` field falls back to it),
 `messages` (required, non-empty array of `{role, content}`),
 `max_tokens` / `max_completion_tokens` (optional, default 512).
 `temperature`/`top_p`/other sampling fields are accepted and **ignored**
@@ -121,6 +135,16 @@ Mega Phase A task: "persistent model, new context per request"). This
 can mean a later, larger request fails to fit where an earlier, smaller
 one succeeded. A future phase may revisit this; documented honestly
 here rather than silently accepted.
+
+## Default model (PR B1)
+
+`membrane model use NAME` sets a persistent `default_model` in
+`~/.config/membrane/server.json` (Section 9 of the Mega Phase B task).
+It never forces a model to load — the server still starts "healthy, no
+model loaded" either way — it only changes what an omitted `"model"`
+field in a chat request falls back to. Takes effect on the next
+`membrane serve` invocation or `membrane service restart`; an
+already-running process does not pick it up live.
 
 ## Model cache policy
 

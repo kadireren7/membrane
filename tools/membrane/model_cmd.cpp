@@ -15,6 +15,7 @@
 #include "gpu_device.h"
 #include "runtime_core.h"
 #include "product_cli.h"
+#include "server_config.h"
 
 using json = nlohmann::json;
 
@@ -316,13 +317,74 @@ static int	cmd_inspect(const std::vector<std::string> &args, bool want_json)
 	return (MEMBRANE_EXIT_SUCCESS);
 }
 
+/* Mega Phase B, PR B1, Section 9 of the task: sets the persistent server
+ * config's default_model -- a fallback the server MAY use for a chat
+ * request that omits "model" (Section 21 of Mega Phase A's own server.md
+ * still requires "model" when no default is configured; this only adds
+ * an optional fallback, never forces one -- "Server may start: healthy,
+ * no model loaded" stays true even with a default_model configured,
+ * since this never proactively loads anything). */
+static int	cmd_use(const std::vector<std::string> &args, bool want_json)
+{
+	if (args.size() != 1)
+	{
+		print_err(want_json, "CLI_ERROR", "usage: membrane model use "
+			"NAME");
+		return (MEMBRANE_EXIT_CLI_ERROR);
+	}
+	std::string				registry_path = membrane_registry_resolve_path();
+	membrane_registry_t		reg;
+	membrane_registry_error_t	reg_err;
+
+	if (!membrane_registry_load(registry_path, &reg, &reg_err))
+	{
+		print_err(want_json, reg_err.code, reg_err.message);
+		return (MEMBRANE_EXIT_MODEL_ERROR);
+	}
+	if (membrane_registry_find(reg, args[0]) == NULL)
+	{
+		print_err(want_json, "NOT_FOUND", std::string("no model named '")
+			+ args[0] + "' is registered -- add it first with `membrane "
+			"model add`");
+		return (MEMBRANE_EXIT_CLI_ERROR);
+	}
+	std::string						config_path
+			= membrane_server_config_resolve_path();
+	membrane_server_config_t		cfg;
+	membrane_server_config_error_t	cfg_err;
+
+	if (config_path.empty())
+	{
+		print_err(want_json, "IO_ERROR", "neither XDG_CONFIG_HOME nor "
+			"HOME is set");
+		return (MEMBRANE_EXIT_MODEL_ERROR);
+	}
+	if (!membrane_server_config_load(config_path, &cfg, &cfg_err))
+	{
+		print_err(want_json, cfg_err.code, cfg_err.message);
+		return (MEMBRANE_EXIT_MODEL_ERROR);
+	}
+	cfg.default_model = args[0];
+	if (!membrane_server_config_save(config_path, cfg, &cfg_err))
+	{
+		print_err(want_json, cfg_err.code, cfg_err.message);
+		return (MEMBRANE_EXIT_MODEL_ERROR);
+	}
+	if (want_json)
+		printf("{\"ok\":true,\"default_model\":\"%s\"}\n", args[0].c_str());
+	else
+		printf("Default model set to '%s'. Takes effect on the next "
+			"`membrane serve`/service restart.\n", args[0].c_str());
+	return (MEMBRANE_EXIT_SUCCESS);
+}
+
 int	membrane_model_cmd_dispatch(const std::vector<std::string> &args,
 			bool want_json)
 {
 	if (args.empty())
 	{
 		print_err(want_json, "CLI_ERROR", "usage: membrane model "
-			"add|remove|list|inspect ...");
+			"add|remove|list|inspect|use ...");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
 	std::vector<std::string>	rest(args.begin() + 1, args.end());
@@ -335,7 +397,9 @@ int	membrane_model_cmd_dispatch(const std::vector<std::string> &args,
 		return (cmd_list(rest, want_json));
 	if (args[0] == "inspect")
 		return (cmd_inspect(rest, want_json));
+	if (args[0] == "use")
+		return (cmd_use(rest, want_json));
 	print_err(want_json, "CLI_ERROR", std::string("unknown subcommand '")
-		+ args[0] + "' -- expected add|remove|list|inspect");
+		+ args[0] + "' -- expected add|remove|list|inspect|use");
 	return (MEMBRANE_EXIT_CLI_ERROR);
 }

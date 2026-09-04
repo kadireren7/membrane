@@ -334,6 +334,27 @@ jobs:
       - name: Verify runtime-service evidence and docs
         run: python3 scripts/verify-runtime-service.py
 
+  # Mega Phase B, PR B1: validates the committed background-service
+  # evidence (results/background-service/validation.json), docs/
+  # service.md, and a handful of direct source-level regression guards
+  # (no /etc/systemd/system reference, no system()/popen() anywhere in
+  # the new subprocess/service-command modules, install/uninstall's own
+  # overwrite/ownership refusal logic, every new pure library actually
+  # linking membrane_sanitizers) -- python3 + checkout only, no GPU, no
+  # model download, no C/C++ build. Same reasoning as every other
+  # *-check job: this validates the committed evidence file and source
+  # tree, it does not regenerate or rebuild anything.
+  background-service-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify background-service evidence and docs
+        run: python3 scripts/verify-background-service.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
@@ -375,6 +396,52 @@ jobs:
         run: |
           ctest --test-dir build-fallback-tests --output-on-failure \
             -R 'test_auto_fallback|test_joint_planner'
+
+  # Mega Phase B, PR B1: same cheap target-scoped trick as fallback-
+  # controller-tests above -- test_systemd_unit/test_server_config/
+  # test_fs_util/test_subprocess (service_cmd.cpp's own pure building
+  # blocks: unit-file generation, config serialization, atomic write,
+  # subprocess injection safety) are all registered inside the
+  # MEMBRANE_ENABLE_LLAMA CMake block (tools/membrane/CMakeLists.txt),
+  # but none of their own libraries link llama/ggml at all, so a
+  # target-scoped build compiles only these few translation units --
+  # ASan/UBSan-affordable in the main CI matrix without paying the real
+  # llama.cpp/ggml compile cost packaging-smoke/server-thread-sanitizer
+  # already pay for the parts that genuinely need it (membrane_server,
+  # via membrane_runtime_session -> llama.h). No real systemd/journalctl
+  # is invoked by any of these four (test_subprocess exercises real
+  # fork()/execvp() against ordinary coreutils -- echo/sh/sleep -- never
+  # systemctl itself); the real `membrane service install/start/status/
+  # stop/uninstall` integration path is covered separately by
+  # packaging-smoke's own isolated-directory smoke step below, and the
+  # real systemd --user lifecycle (this project targets Linux desktops/
+  # workstations, where a --user session is normally already active) is
+  # validated locally, not in CI -- see docs/service.md's own evidence
+  # section.
+  service-lifecycle-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake
+      - name: Configure (ASan/UBSan)
+        run: |
+          cmake -S . -B build-service-lifecycle-tests \
+            -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Debug \
+            -DMEMBRANE_ENABLE_SANITIZERS=ON
+      - name: Build (target-scoped -- no llama/ggml compilation)
+        run: |
+          cmake --build build-service-lifecycle-tests -j2 --target \
+            test_systemd_unit test_server_config test_fs_util test_subprocess
+      - name: Test
+        run: |
+          ctest --test-dir build-service-lifecycle-tests --output-on-failure \
+            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$'
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -459,10 +526,19 @@ jobs:
 
       - name: Test
         run: |
-          if ! ctest --test-dir build-server-tsan --output-on-failure -R test_server; then
+          # Anchored regex: since Mega Phase B, PR B1 added test_server_
+          # config (prefix collision with test_server) as another test
+          # registered in this same CMakeLists.txt, a bare, unanchored
+          # "-R test_server" would also match it as "Not Run" (this job
+          # only builds --target test_server, so test_server_config's own
+          # binary was never built here) and fail the job for a reason
+          # that has nothing to do with TSan -- confirmed as a real bug
+          # this PR introduced and fixed in the same change, never left
+          # for a later phase to trip over.
+          if ! ctest --test-dir build-server-tsan --output-on-failure -R '^test_server$'; then
             echo "Retrying under TSan with ASLR disabled (setarch -R)"
             setarch "$(uname -m)" -R ctest --test-dir build-server-tsan \
-              --output-on-failure -R test_server
+              --output-on-failure -R '^test_server$'
           fi
 
   # Phase 17: catches install regressions like a backend shared library
@@ -521,10 +597,19 @@ jobs:
       # top comment. PR A3's test_server joins the same list for the
       # same reason (a real httplib::Server needs llama.h too, via
       # membrane_server -> membrane_runtime_session).
+      # Anchored alternation: Mega Phase B, PR B1 added test_server_config
+      # (prefix collision with test_server) to this same CMakeLists.txt --
+      # an unanchored "test_server" alternative would also match it as
+      # "Not Run" here (this step only builds test_runtime_session/test_
+      # registry_core/test_server above, not test_server_config), failing
+      # this job for a reason unrelated to any of the three real tests it
+      # means to run. Each alternative anchored individually so future
+      # test names sharing a prefix with any of these three don't
+      # silently reintroduce the same bug.
       - name: Test runtime-session core, model registry, and HTTP server
         run: |
           ctest --test-dir build-cpu-install --output-on-failure \
-            -R 'test_runtime_session|test_registry_core|test_server'
+            -R '^test_runtime_session$|^test_registry_core$|^test_server$'
 
       - name: CPU install to temp prefix
         run: |
@@ -610,6 +695,61 @@ jobs:
             exit 1
           fi
           rm -f /tmp/ci-serve-models.json /tmp/ci-health.json
+
+      # Mega Phase B, PR B1: real `membrane service install/uninstall`
+      # through the installed binary's own CLI dispatch -- MEMBRANE_
+      # SYSTEMD_USER_DIR/MEMBRANE_SERVER_CONFIG_PATH point at isolated
+      # temp locations (never a real systemd --user unit directory or
+      # this runner's own $HOME), so this is CI-safe with no assumption
+      # that a real systemd --user session/journalctl is available or
+      # working here. `install` still runs a real `systemctl --user
+      # daemon-reload` internally, but its result is intentionally
+      # never checked (see service_cmd.cpp's cmd_install) -- so install
+      # succeeds here whether or not this runner has a working --user
+      # session, exactly the "mock command runner if systemd
+      # unavailable in CI" allowance Section 13 of the Mega Phase B
+      # task calls for, minus an actual mock: the real code path
+      # already tolerates a real absence gracefully, so no separate
+      # mock layer was needed. `service start/stop/status` themselves
+      # DO require a real, working systemd --user session (they check
+      # systemctl's exit code) and are NOT exercised here -- that real
+      # lifecycle is validated locally against this project's own dev
+      # workstation, see docs/service.md's evidence section.
+      - name: CPU installed membrane service install/uninstall (isolated dirs)
+        run: |
+          export MEMBRANE_SYSTEMD_USER_DIR=/tmp/ci-membrane-systemd-user
+          export MEMBRANE_SERVER_CONFIG_PATH=/tmp/ci-membrane-server.json
+          mkdir -p "$MEMBRANE_SYSTEMD_USER_DIR"
+          /tmp/membrane-install-cpu/bin/membrane service install --exec-path \
+            /tmp/membrane-install-cpu/bin/membrane
+          grep -q 'Generated by `membrane service install`' \
+            "$MEMBRANE_SYSTEMD_USER_DIR/membrane.service"
+          grep -q 'ExecStart="/tmp/membrane-install-cpu/bin/membrane" serve' \
+            "$MEMBRANE_SYSTEMD_USER_DIR/membrane.service"
+          test -f "$MEMBRANE_SERVER_CONFIG_PATH"
+          # A second install without --force must refuse to clobber a unit
+          # this project did not generate (Section 12's own safety rule) --
+          # simulate that by seeding an unrelated, unmarked unit first.
+          mkdir -p /tmp/ci-membrane-systemd-user-2
+          printf '[Unit]\nDescription=Not MEMBRANE\n' \
+            > /tmp/ci-membrane-systemd-user-2/membrane.service
+          set +e
+          MEMBRANE_SYSTEMD_USER_DIR=/tmp/ci-membrane-systemd-user-2 \
+            /tmp/membrane-install-cpu/bin/membrane service install --exec-path \
+            /tmp/membrane-install-cpu/bin/membrane
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "install must refuse to overwrite a non-MEMBRANE-managed unit without --force"
+            exit 1
+          fi
+          /tmp/membrane-install-cpu/bin/membrane service uninstall
+          if [ -f "$MEMBRANE_SYSTEMD_USER_DIR/membrane.service" ]; then
+            echo "uninstall did not remove the unit file"
+            exit 1
+          fi
+          rm -rf /tmp/ci-membrane-systemd-user /tmp/ci-membrane-systemd-user-2 \
+            /tmp/ci-membrane-server.json
 
       - name: CPU uninstall removes exactly the installed files
         run: |
