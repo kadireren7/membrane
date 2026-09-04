@@ -133,7 +133,8 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 				const std::vector<int32_t> *teacher_force,
 				uint64_t *abs_pos, std::string *text_out,
 				gen_run_result_t *out, membrane_token_cb_t token_cb,
-				void *token_cb_ud, double *out_first_token_ms)
+				void *token_cb_ud, double *out_first_token_ms,
+				const std::atomic<bool> *cancel_flag, bool *out_cancelled)
 {
 	int			step;
 	int			limit;
@@ -147,11 +148,25 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 
 	if (out_first_token_ms != NULL)
 		*out_first_token_ms = -1.0;
+	if (out_cancelled != NULL)
+		*out_cancelled = false;
 	out->ok = true;
 	limit = teacher_force != NULL ? (int)teacher_force->size() : gen_tokens;
 	step = 0;
 	while (step < limit)
 	{
+		/* Mega Phase B, PR B2: checked once per free-running step, never
+		 * mid-decode -- see this function's own header doc comment for
+		 * the full contract. Never checked for a teacher-forced replay
+		 * (that path has no server-facing caller and no cancellation
+		 * concept of its own). */
+		if (cancel_flag != NULL && teacher_force == NULL
+			&& cancel_flag->load(std::memory_order_relaxed))
+		{
+			if (out_cancelled != NULL)
+				*out_cancelled = true;
+			break ;
+		}
 		/* Phase 24: only the free-running path (never teacher-forced --
 		 * that replays a reference sequence, not "generation") and only
 		 * step 0 (Section 25: one stage boundary, not per-step timing). */
@@ -237,7 +252,8 @@ bool	run_kv_store_pass(llama_model *model,
 				std::string *text_out, membrane_kv_store_telemetry_t *tel,
 				gen_run_result_t *out, membrane_token_cb_t token_cb,
 				void *token_cb_ud, const membrane_kv_placement_map_t *kv_placement,
-				int *out_failure_stage)
+				int *out_failure_stage, const std::atomic<bool> *cancel_flag,
+				bool *out_cancelled)
 {
 	llama_context				*ctx;
 	llama_context_params		cp;
@@ -339,7 +355,7 @@ bool	run_kv_store_pass(llama_model *model,
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 	run_generation(ctx, vocab, n_vocab, gen_tokens, collector, NULL, debug,
 		capture_logits, teacher_force, &abs_pos, text_out, out, token_cb,
-		token_cb_ud, &tel->first_token_ms);
+		token_cb_ud, &tel->first_token_ms, cancel_flag, out_cancelled);
 	gen_seconds = seconds_since(&t0);
 	membrane_kv_store_read_rss(&tel->rss_final);
 	tel->prompt_ms = prompt_seconds * 1000.0;

@@ -434,14 +434,53 @@ jobs:
           cmake -S . -B build-service-lifecycle-tests \
             -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Debug \
             -DMEMBRANE_ENABLE_SANITIZERS=ON
+      # Mega Phase B, PR B2: test_utf8_stream/test_stream_queue (the
+      # streaming token callback's UTF-8-boundary helper and its bounded
+      # concurrency queue -- both llama-free, same target-scoped-without-
+      # llama trick) join the same cheap job.
       - name: Build (target-scoped -- no llama/ggml compilation)
         run: |
           cmake --build build-service-lifecycle-tests -j2 --target \
-            test_systemd_unit test_server_config test_fs_util test_subprocess
+            test_systemd_unit test_server_config test_fs_util test_subprocess \
+            test_utf8_stream test_stream_queue
       - name: Test
         run: |
           ctest --test-dir build-service-lifecycle-tests --output-on-failure \
-            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$'
+            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$|^test_utf8_stream$|^test_stream_queue$'
+
+  # Mega Phase B, PR B2: TSan cannot be combined with the ASan/UBSan
+  # configure service-lifecycle-tests above already uses (see this
+  # file's own build-and-test job comment / CMakeLists.txt's FATAL_ERROR
+  # on combining MEMBRANE_ENABLE_SANITIZERS and MEMBRANE_ENABLE_TSAN), so
+  # test_stream_queue's real multi-threaded producer/consumer coverage
+  # -- the one piece of genuinely new concurrent code this PR adds --
+  # gets its own separate, equally cheap (llama-free, target-scoped) TSan
+  # job rather than being folded in. Same ASLR-retry precedent as
+  # thread-sanitizer/server-thread-sanitizer above.
+  stream-queue-thread-sanitizer:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake
+      - name: Configure (TSan)
+        run: |
+          cmake -S . -B build-stream-queue-tsan -DMEMBRANE_ENABLE_LLAMA=ON \
+            -DCMAKE_BUILD_TYPE=Debug -DMEMBRANE_ENABLE_TSAN=ON
+      - name: Build (target-scoped -- no llama/ggml compilation)
+        run: cmake --build build-stream-queue-tsan -j2 --target test_stream_queue
+      - name: Test
+        run: |
+          if ! ctest --test-dir build-stream-queue-tsan --output-on-failure -R '^test_stream_queue$'; then
+            echo "Retrying under TSan with ASLR disabled (setarch -R)"
+            setarch "$(uname -m)" -R ctest --test-dir build-stream-queue-tsan \
+              --output-on-failure -R '^test_stream_queue$'
+          fi
 
   build-and-test:
     runs-on: ubuntu-latest

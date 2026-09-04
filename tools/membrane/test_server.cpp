@@ -174,22 +174,63 @@ static void	test_chat_missing_required_fields(void)
 		"a request missing \"messages\" returns 400");
 }
 
-static void	test_chat_stream_true_rejected(void)
+/* Mega Phase B, PR B2: `stream: true` is now supported (real SSE
+ * streaming, docs/server.md) -- these tests cover exactly what this
+ * EMPTY-registry, no-real-model harness CAN cover: every failure path
+ * that happens BEFORE headers are ever committed to text/event-stream
+ * (Section 18 of the task) behaves identically whether stream is true
+ * or false, since none of them reach the streaming code at all. Real
+ * SSE wire-format/token-content/UTF-8/cancellation coverage needs a
+ * real model and is covered by the separate, non-ctest-registered
+ * dev-local end-to-end smoke (same precedent as the rest of this
+ * file's own top comment) -- see results/background-service/
+ * validation.json's sibling streaming evidence file for that. */
+static void	test_chat_stream_unknown_model_still_404(void)
 {
 	httplib::Client	cli("127.0.0.1", TEST_PORT);
-	json			req = {{"model", "smol"},
+	json			req = {{"model", "nonexistent"},
 			{"messages", json::array({{{"role", "user"},
 				{"content", "hi"}}})}, {"stream", true}};
 	auto			res = cli.Post("/v1/chat/completions", req.dump(),
 			"application/json");
 
 	TEST_ASSERT(res != nullptr, "got an HTTP response");
-	TEST_ASSERT(res->status == 400, "stream=true returns 400 (Section 29: "
-		"never fake streaming)");
+	TEST_ASSERT(res->status == 404, "stream=true against an unregistered "
+		"model still returns a normal 404 JSON error -- the registry "
+		"lookup happens before any streaming decision");
 	json	body = json::parse(res->body);
 
-	TEST_ASSERT(body["error"]["code"] == "STREAMING_NOT_SUPPORTED",
-		"error code is STREAMING_NOT_SUPPORTED");
+	TEST_ASSERT(body["error"]["code"] == "MODEL_NOT_FOUND",
+		"error code is MODEL_NOT_FOUND");
+	TEST_ASSERT(res->get_header_value("Content-Type").find("application/json")
+		!= std::string::npos, "the response is still plain JSON, not "
+		"text/event-stream -- headers were never committed to streaming");
+}
+
+static void	test_chat_stream_missing_messages_still_400(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json			req = {{"model", "smol"}, {"stream", true}};
+	auto			res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 400,
+		"stream=true with no \"messages\" still returns a normal 400 "
+		"JSON error");
+}
+
+static void	test_chat_stream_malformed_message_still_400(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json			req = {{"model", "smol"},
+			{"messages", json::array({{{"role", "user"}}})},
+			{"stream", true}};	/* missing "content" */
+	auto			res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 400,
+		"stream=true with a malformed message still returns a normal "
+		"400 JSON error");
 }
 
 static void	test_chat_malformed_message_shape(void)
@@ -216,7 +257,9 @@ int	main(void)
 	test_chat_unknown_model();
 	test_chat_invalid_json();
 	test_chat_missing_required_fields();
-	test_chat_stream_true_rejected();
+	test_chat_stream_unknown_model_still_404();
+	test_chat_stream_missing_messages_still_400();
+	test_chat_stream_malformed_message_still_400();
 	test_chat_malformed_message_shape();
 	stop_test_server();
 	{

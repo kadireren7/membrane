@@ -1,10 +1,14 @@
 #include "server.h"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <deque>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -17,6 +21,8 @@
 #include "registry_core.h"
 #include "gpu_policy.h"
 #include "product_cli.h"
+#include "utf8_stream.h"
+#include "stream_queue.h"
 
 using json = nlohmann::json;
 
@@ -292,6 +298,313 @@ static void	handle_status(s_membrane_server_model_state *st,
 	res.set_content(j.dump(), "application/json");
 }
 
+/*
+ * Mega Phase B, PR B2: `stream: true` support.
+ *
+ * Architecture (Section 16-18 of the task): membrane_session_generate()'s
+ * token callback is push-based (called synchronously, per-token, from
+ * inside the decode loop); cpp-httplib's chunked content provider is
+ * pull-based (httplib calls back to ask for the next chunk). Bridged
+ * here with a dedicated generation WORKER thread (runs membrane_session_
+ * generate() with a token_cb that pushes onto a bounded queue) plus this
+ * queue itself, which the HTTP connection thread's own content-provider
+ * callback pops from. Never the whole completion accumulated before
+ * streaming starts -- the first queued token can reach the client before
+ * generation finishes.
+ *
+ * Backpressure (Section 24): the queue is BOUNDED (MEMBRANE_STREAM_QUEUE_
+ * CAPACITY). A slow client blocks the worker thread's own push, never
+ * grows memory unboundedly -- generation pauses, it does not buffer
+ * ahead of what the client has actually consumed.
+ *
+ * Cancellation (Section 20): the content-provider callback is the ONLY
+ * place able to detect a dead client (via DataSink::is_writable(), which
+ * cpp-httplib itself backs with a real socket liveness check) -- on
+ * detecting one, it sets a shared std::atomic<bool> cancel_flag, which
+ * (a) wakes the worker thread's own blocked queue push immediately
+ * (never waits for the next token) and (b) is the SAME flag threaded all
+ * the way down into run_generation()'s own per-step check
+ * (decode_loop.h) -- the runtime core itself only ever sees "the caller
+ * asked to stop," never any HTTP/socket-specific concept.
+ *
+ * st->mtx (Section 24's existing full-request-serialization mutex) is
+ * held for the ENTIRE request, streaming tail included -- not just the
+ * synchronous prefix -- via a std::unique_lock moved into the stream
+ * state and released only in the resource_releaser once the whole
+ * chunked response (success or failure) is complete. This preserves the
+ * exact same "one generation at a time" policy streaming already had to
+ * honor for non-streaming requests; a second concurrent request genuinely
+ * waits for a still-streaming one to finish, exactly as it already waits
+ * for a non-streaming one today.
+ */
+
+struct s_stream_worker_ctx
+{
+	stream_queue_t				*queue;
+	const std::atomic<bool>	*cancel_flag;
+	std::string					utf8_pending;	/* worker-thread-only, no
+											 * synchronization needed */
+};
+
+/* The one bridge from the push-based decode loop (this runs on the
+ * WORKER thread, synchronously inside run_generation()'s own loop) into
+ * the pull-based HTTP queue above. */
+static void	stream_token_cb(const char *piece, size_t piece_len, int step,
+				void *user_data)
+{
+	(void)step;
+	s_stream_worker_ctx	*wctx = (s_stream_worker_ctx *)user_data;
+
+	wctx->utf8_pending.append(piece, piece_len);
+	size_t	incomplete = membrane_utf8_incomplete_suffix_len(wctx->utf8_pending);
+	size_t	emit_len = wctx->utf8_pending.size() - incomplete;
+
+	if (emit_len == 0)
+		return ;
+	s_stream_event	ev;
+
+	ev.type = MEMBRANE_STREAM_EVENT_TOKEN;
+	ev.text = wctx->utf8_pending.substr(0, emit_len);
+	wctx->utf8_pending.erase(0, emit_len);
+	wctx->queue->push_blocking(std::move(ev));
+}
+
+struct s_stream_request_state
+{
+	stream_queue_t				queue;
+	std::atomic<bool>			cancel_flag{false};
+	std::thread					worker;
+	std::unique_lock<std::mutex>	server_lock;	/* holds st->mtx for the
+											 * whole request -- see this
+											 * section's own top comment */
+
+	/* Owned here so it outlives handle_chat_completions()'s own return
+	 * (the worker thread and the content-provider/resource-releaser
+	 * callbacks below all run AFTER that function has already
+	 * returned). */
+	membrane_run_opts_t			req_o;
+	std::string					prompt_text;
+	std::string					model_name;
+	int							max_tokens = 0;
+	bool						include_usage = false;
+	s_membrane_server_model_state	*st = NULL;
+	std::string					id;
+
+	s_stream_request_state() : queue(&cancel_flag) {}
+};
+
+/* Runs entirely on the dedicated worker thread this request's own
+ * s_stream_request_state::worker owns -- never touches httplib/DataSink
+ * directly (Section 20: "runtime core only understands 'caller requested
+ * cancellation'... no server-specific socket logic"), only the queue and
+ * the shared cancel_flag. */
+static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
+{
+	s_stream_worker_ctx	wctx;
+
+	wctx.queue = &state->queue;
+	wctx.cancel_flag = &state->cancel_flag;
+
+	membrane_generation_request_t	gen_req = {};
+	membrane_generation_result_t	gen_res;
+
+	gen_req.o = &state->req_o;
+	gen_req.prompt_text = state->prompt_text;
+	gen_req.ctx_size = 0;
+	gen_req.token_cb = stream_token_cb;
+	gen_req.token_cb_ud = &wctx;
+	gen_req.cancel_flag = &state->cancel_flag;
+	membrane_session_generate(&state->st->session, gen_req, &gen_res);
+	/* Flush whatever partial UTF-8 tail never resolved -- better to emit
+	 * it than to silently drop real generated bytes (Section 21: only
+	 * reachable if generation stopped (limit/EOG/cancellation) exactly
+	 * mid-character, a rare edge case, never treated as an excuse to
+	 * lose output). */
+	if (!wctx.utf8_pending.empty())
+	{
+		s_stream_event	flush_ev;
+
+		flush_ev.type = MEMBRANE_STREAM_EVENT_TOKEN;
+		flush_ev.text = wctx.utf8_pending;
+		state->queue.push_blocking(std::move(flush_ev));
+	}
+	s_stream_event	terminal;
+
+	if (gen_res.cancelled)
+		terminal.type = MEMBRANE_STREAM_EVENT_CANCELLED;
+	else if (!gen_res.ok)
+	{
+		terminal.type = MEMBRANE_STREAM_EVENT_ERROR;
+		terminal.error_code = (gen_res.err.set
+				&& gen_res.err.reason_code[0] != '\0')
+			? gen_res.err.reason_code : "GENERATION_FAILED";
+		terminal.error_message = "generation failed for this request";
+	}
+	else
+	{
+		terminal.type = MEMBRANE_STREAM_EVENT_DONE;
+		terminal.finish_reason = ((size_t)gen_res.gen_result.tokens.size()
+				>= (size_t)state->max_tokens) ? "length" : "stop";
+		terminal.prompt_tokens = gen_res.prompt_tokens.size();
+		terminal.completion_tokens = gen_res.gen_result.tokens.size();
+		terminal.include_usage = state->include_usage;
+	}
+	/* Best-effort: if the queue is full AND cancel_flag is already true
+	 * (the only way push_blocking() returns false), there is no reader
+	 * left to care about this terminal event anyway -- dropping it here
+	 * is correct, not a leak (the content-provider side never blocks on
+	 * "a terminal event must eventually arrive" once it has itself
+	 * already detected the disconnect and returned). */
+	state->queue.push_blocking(std::move(terminal));
+}
+
+static std::string	sse_frame(const json &payload)
+{
+	return ("data: " + payload.dump() + "\n\n");
+}
+
+static json	stream_chunk_json(const std::string &id,
+				const std::string &model_name, const json &delta,
+				const char *finish_reason)
+{
+	json	chunk;
+
+	chunk["id"] = id;
+	chunk["object"] = "chat.completion.chunk";
+	chunk["created"] = (int64_t)time(NULL);
+	chunk["model"] = model_name;
+	json	choice;
+
+	choice["index"] = 0;
+	choice["delta"] = delta;
+	choice["finish_reason"] = finish_reason == NULL ? json(nullptr)
+			: json(finish_reason);
+	chunk["choices"] = json::array({choice});
+	return (chunk);
+}
+
+/* The pull side: called repeatedly by cpp-httplib's own chunked-write
+ * loop (write_content_chunked(), httplib.cpp) until it returns false or
+ * calls sink.done(). Never blocks forever: pop_wait()'s own bounded
+ * timeout is the only way this function regains control to check
+ * sink.is_writable() (Section 20 -- there is no other hook cpp-httplib
+ * exposes for "has the peer gone away" while no data is ready to write). */
+static bool	stream_provide(std::shared_ptr<s_stream_request_state> state,
+				size_t offset, httplib::DataSink &sink)
+{
+	(void)offset;
+	s_stream_event	ev;
+
+	if (!state->queue.pop_wait(std::chrono::milliseconds(200), &ev))
+	{
+		if (!sink.is_writable())
+		{
+			state->cancel_flag.store(true, std::memory_order_relaxed);
+			return (false);
+		}
+		return (true);	/* nothing ready yet, peer still alive -- httplib
+						 * calls this function again immediately */
+	}
+	switch (ev.type)
+	{
+		case MEMBRANE_STREAM_EVENT_TOKEN:
+		{
+			json	delta;
+
+			delta["content"] = ev.text;
+			std::string	frame = sse_frame(stream_chunk_json(state->id,
+					state->model_name, delta, NULL));
+			return (sink.write(frame.data(), frame.size()));
+		}
+		case MEMBRANE_STREAM_EVENT_DONE:
+		{
+			json	empty_delta = json::object();
+			std::string	frame = sse_frame(stream_chunk_json(state->id,
+					state->model_name, empty_delta,
+					ev.finish_reason.c_str()));
+
+			if (!sink.write(frame.data(), frame.size()))
+				return (false);
+			if (ev.include_usage)
+			{
+				json	usage_chunk;
+
+				usage_chunk["id"] = state->id;
+				usage_chunk["object"] = "chat.completion.chunk";
+				usage_chunk["created"] = (int64_t)time(NULL);
+				usage_chunk["model"] = state->model_name;
+				usage_chunk["choices"] = json::array();
+				usage_chunk["usage"] = {
+					{"prompt_tokens", ev.prompt_tokens},
+					{"completion_tokens", ev.completion_tokens},
+					{"total_tokens", ev.prompt_tokens + ev.completion_tokens},
+				};
+				std::string	usage_frame = sse_frame(usage_chunk);
+
+				if (!sink.write(usage_frame.data(), usage_frame.size()))
+					return (false);
+			}
+			static const char	done_marker[] = "data: [DONE]\n\n";
+
+			if (!sink.write(done_marker, sizeof(done_marker) - 1))
+				return (false);
+			sink.done();
+			return (true);
+		}
+		case MEMBRANE_STREAM_EVENT_ERROR:
+		{
+			/* Section 18: after streaming has begun, a failure is a
+			 * terminal SSE event, never a status-code change (headers
+			 * are already committed to text/event-stream) and never a
+			 * crash. Same {"error": {"code", "message"}} shape as a
+			 * pre-stream JSON error, so a client parsing every `data:`
+			 * payload as JSON can distinguish it from a normal chunk by
+			 * the presence of the "error" key alone. */
+			json	err_payload;
+
+			err_payload["error"] = {{"code", ev.error_code},
+				{"message", ev.error_message}};
+			std::string	frame = sse_frame(err_payload);
+
+			if (!sink.write(frame.data(), frame.size()))
+				return (false);
+			static const char	done_marker[] = "data: [DONE]\n\n";
+
+			if (!sink.write(done_marker, sizeof(done_marker) - 1))
+				return (false);
+			sink.done();
+			return (true);
+		}
+		case MEMBRANE_STREAM_EVENT_CANCELLED:
+		default:
+			/* No reader is meant to observe this in practice (our only
+			 * cancellation trigger IS this same function detecting a
+			 * dead peer, at which point nothing further is written) --
+			 * closing cleanly rather than writing anything is still the
+			 * correct behavior if it is ever reached some other way. */
+			sink.done();
+			return (true);
+	}
+}
+
+static void	stream_release(std::shared_ptr<s_stream_request_state> state,
+				bool success)
+{
+	(void)success;
+	/* Regardless of how the stream ended (client finished reading
+	 * normally, a write failed, or the server itself is shutting down --
+	 * cpp-httplib's own is_shutting_down() path can exit write_content_
+	 * chunked()'s loop WITHOUT ever calling stream_provide() again, so
+	 * this cancel_flag store is the only guaranteed signal in that case),
+	 * a still-running generation serves no purpose once the Response
+	 * object is being destroyed -- always request cancellation before
+	 * joining, so this never blocks waiting on a runaway generation. */
+	state->cancel_flag.store(true, std::memory_order_relaxed);
+	if (state->worker.joinable())
+		state->worker.join();
+	state->server_lock.unlock();
+}
+
 static void	handle_chat_completions(s_membrane_server_model_state *st,
 				const membrane_registry_t &reg, const httplib::Request &req,
 				httplib::Response &res)
@@ -326,14 +639,17 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 			"model) and a non-empty \"messages\" array");
 		return ;
 	}
-	if (body.contains("stream") && body["stream"].is_boolean()
-		&& body["stream"].get<bool>() == true)
-	{
-		send_json_error(res, 400, "STREAMING_NOT_SUPPORTED", "stream=true "
-			"is not currently supported -- omit \"stream\" or set it to "
-			"false");
-		return ;
-	}
+	bool	want_stream = body.contains("stream") && body["stream"].is_boolean()
+			&& body["stream"].get<bool>() == true;
+	/* Real OpenAI convention (Section 19 of the Mega Phase B task,
+	 * "usage handling"): a streaming response never includes usage
+	 * unless the request explicitly opts in via stream_options.
+	 * include_usage -- ignored entirely (never an error) when stream is
+	 * false, matching every other unsupported-but-harmless request field
+	 * this endpoint already tolerates (e.g. temperature/top_p). */
+	bool	want_usage_in_stream = want_stream && body.contains("stream_options")
+			&& body["stream_options"].is_object()
+			&& body["stream_options"].value("include_usage", false);
 	/* Request-shape validation (this loop) runs BEFORE the registry
 	 * lookup below -- a malformed request is a 400 regardless of
 	 * whether the named model happens to exist, never a 404 that
@@ -388,7 +704,7 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 	if (max_tokens < 1)
 		max_tokens = 1;
 
-	std::lock_guard<std::mutex>	lock(st->mtx);
+	std::unique_lock<std::mutex>	lock(st->mtx);
 	std::string					tmpl;
 	std::string					tmpl_err;
 
@@ -420,6 +736,38 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 	}
 	st->cached_chat_template = tmpl;
 
+	char	id_buf[64];
+
+	snprintf(id_buf, sizeof(id_buf), "chatcmpl-%llx",
+		(unsigned long long)time(NULL) ^ (unsigned long long)(size_t)&res);
+	if (want_stream)
+	{
+		/* Section 18: everything that can fail with a normal JSON
+		 * status-code error has already happened above (parse, shape,
+		 * model lookup, chat template, model load) -- from this point on,
+		 * headers are about to commit to text/event-stream, so any LATER
+		 * failure (only reachable from generation itself, on the worker
+		 * thread) becomes a terminal SSE event instead (stream_provide()'s
+		 * MEMBRANE_STREAM_EVENT_ERROR case), never a status-code change. */
+		auto	state = std::make_shared<s_stream_request_state>();
+
+		state->st = st;
+		fill_auto_opts(&state->req_o, entry->path.c_str(), max_tokens);
+		state->prompt_text = prompt_text;
+		state->model_name = model_name;
+		state->max_tokens = max_tokens;
+		state->include_usage = want_usage_in_stream;
+		state->id = id_buf;
+		state->server_lock = std::move(lock);
+		state->worker = std::thread(stream_worker_fn, state);
+		res.set_header("Cache-Control", "no-cache");
+		res.set_chunked_content_provider("text/event-stream",
+			[state](size_t offset, httplib::DataSink &sink)
+			{ return (stream_provide(state, offset, sink)); },
+			[state](bool success) { stream_release(state, success); });
+		return ;
+	}
+
 	membrane_run_opts_t	req_o;
 
 	fill_auto_opts(&req_o, entry->path.c_str(), max_tokens);
@@ -449,10 +797,7 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 	}
 
 	json	response;
-	char	id_buf[64];
 
-	snprintf(id_buf, sizeof(id_buf), "chatcmpl-%llx",
-		(unsigned long long)time(NULL) ^ (unsigned long long)(size_t)&res);
 	response["id"] = id_buf;
 	response["object"] = "chat.completion";
 	response["created"] = (int64_t)time(NULL);

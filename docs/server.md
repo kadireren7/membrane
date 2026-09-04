@@ -86,7 +86,7 @@ case an omitted or empty `"model"` field falls back to it),
 — the underlying decode loop is greedy-only (argmax) today, no sampling
 support exists in this project yet; the response's own `membrane.sampling`
 field says so explicitly rather than silently claiming otherwise.
-`stream: true` returns `400 STREAMING_NOT_SUPPORTED` — never faked.
+`stream: true` — see "Streaming" below.
 
 Response (OpenAI shape plus one additive `membrane` object):
 
@@ -136,6 +136,80 @@ can mean a later, larger request fails to fit where an earlier, smaller
 one succeeded. A future phase may revisit this; documented honestly
 here rather than silently accepted.
 
+## Streaming (`stream: true`) — PR B2
+
+Real SSE streaming, not the `400 STREAMING_NOT_SUPPORTED` earlier phases
+returned. Add `"stream": true` to a chat completion request:
+
+```
+curl -N http://127.0.0.1:8642/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen", "messages": [{"role": "user", "content": "Hello"}], "stream": true}'
+```
+
+Response: `Content-Type: text/event-stream`, one `data: {...}\n\n` frame
+per incremental text delta (OpenAI `chat.completion.chunk` shape),
+terminated by a final `data: {"choices":[{"delta":{},"finish_reason":
+"stop"|"length", ...}]}` chunk and then the literal `data: [DONE]\n\n`.
+`stream_options: {"include_usage": true}` (the same real OpenAI
+convention non-streaming responses always include unconditionally) adds
+one extra chunk — `choices: []`, a populated `usage` object — right
+before `[DONE]`; omitted by default, matching real OpenAI's own
+streaming behavior.
+
+**Architecture:** `membrane_session_generate()`'s token callback is
+push-based (called synchronously per-token from inside the decode
+loop); cpp-httplib's chunked content provider is pull-based. Bridged by
+a dedicated generation worker thread (owns the push side) plus a
+**bounded** (64-entry) thread-safe queue the HTTP connection thread's
+own content-provider callback pulls from — the first token can reach
+the client before generation finishes; a slow client's own queue
+capacity naturally backpressures the worker thread rather than letting
+memory grow unboundedly.
+
+**Cancellation:** if the client disconnects mid-stream, the HTTP
+connection thread detects it (`cpp-httplib`'s own real socket-liveness
+check) and sets a shared `std::atomic<bool>` cancel flag — the *only*
+concept the runtime core itself understands ("the caller asked to
+stop"; the decode loop, `run_generation()` in
+`tools/membrane-llama-runtime/decode_loop.h`, has no HTTP/socket
+awareness of any kind). Generation genuinely stops within one decode
+step of the flag being set — confirmed directly: a disconnected
+client's own server process showed **zero** additional CPU time
+consumed in the following two seconds, versus continuing to burn CPU
+generating the rest of a 200-token request nobody was reading. A
+following request (streaming or not) to the same server works
+correctly immediately afterward — no leaked lock, no leaked thread, no
+corrupted session state.
+
+**UTF-8 safety:** a single generated token's own bytes do not always
+align to a complete UTF-8 character (common for CJK/emoji/accented
+text) — an internal accumulator holds back an incomplete trailing byte
+sequence (at most 3 bytes) until it completes, rather than ever
+emitting a truncated character over the wire. Verified with real
+multi-byte content (Japanese, café's `é`, an emoji) through a real
+model: every SSE `data:` payload parsed as valid UTF-8 JSON, and the
+reconstructed text matched the model's real output exactly.
+
+**Errors after streaming has begun:** everything that can fail with a
+normal JSON status-code error (parse, request shape, unknown model, no
+usable chat template, model load failure) happens *before* headers
+commit to `text/event-stream`. A failure from generation itself, which
+can only happen after that point, becomes a terminal SSE event instead
+— `data: {"error": {"code": "...", "message": "..."}}` followed by
+`data: [DONE]` — never a crash, never a silently truncated stream.
+
+**Real evidence:** `results/background-service/validation.json`'s
+`server_streaming` section — real curl wire-format capture, real
+disconnect-cancellation CPU-time proof, real multilingual/emoji
+content, and a real OpenAI Python SDK streaming session
+(`client.chat.completions.create(..., stream=True)`, real incremental
+chunks, correct `finish_reason`). `test_stream_queue.cpp` (real
+multi-threaded producer/consumer tests, TSan-clean) and
+`test_utf8_stream.cpp` (12 pure unit tests, including the exact 4-byte
+emoji edge case that caught a real off-by-one bug during development)
+cover the underlying primitives in CI.
+
 ## Default model (PR B1)
 
 `membrane model use NAME` sets a persistent `default_model` in
@@ -162,16 +236,21 @@ generation. Correctness first, matching Section 24 of the task.
 
 ## Errors
 
-JSON always: `{"error": {"code": "...", "message": "..."}}`.
+JSON always: `{"error": {"code": "...", "message": "..."}}`. This
+table covers every failure that can still change the HTTP status code
+— all of them happen before headers commit to `text/event-stream`, so
+they apply identically whether or not the request set `stream: true`.
+A failure from generation itself, reachable only for a streaming
+request (after headers are already committed), is instead a terminal
+SSE `data: {"error": {...}}` event — see "Streaming" above.
 
 | HTTP status | code | meaning |
 |---|---|---|
 | 400 | `INVALID_REQUEST` | malformed JSON or missing/malformed required fields |
-| 400 | `STREAMING_NOT_SUPPORTED` | `stream: true` was requested |
 | 404 | `MODEL_NOT_FOUND` | the named model is not registered |
 | 500 | `CHAT_TEMPLATE_UNAVAILABLE` / `CHAT_TEMPLATE_FAILED` | the model has no usable chat template, or applying it failed |
 | 500 | `MODEL_LOAD_FAILED` | the model file could not be loaded |
-| 500 | (a real planner reason code) | generation failed after loading |
+| 500 | (a real planner reason code) | generation failed after loading (non-streaming only) |
 | 503 | `NO_FEASIBLE_CONTEXT` | no context/hardware plan could be resolved (e.g. insufficient host memory) |
 
 ## Graceful shutdown
@@ -179,21 +258,13 @@ JSON always: `{"error": {"code": "...", "message": "..."}}`.
 `SIGINT`/`SIGTERM` stop the listener, join it, free the loaded model
 (if any) and the llama backend, then exit 0.
 
-## Not implemented this phase
+## Not implemented
 
 - `POST /v1/completions` (non-chat).
-- `stream: true` (SSE streaming) — reevaluated at PR A4 (Section 36 of
-  the task) and deliberately deferred again, not merely carried over
-  unexamined: the existing generation path (`membrane_session_generate()`,
-  PR A1) drives its token callback in a **push** model (the decode loop
-  calls back per-token, synchronously, on the request's own worker
-  thread), while cpp-httplib's chunked content provider is **pull**-based
-  (httplib calls back to ask for the next chunk). Bridging the two safely
-  needs a background generation thread plus a synchronized queue and a
-  real client-disconnect/cancellation story — a genuine architecture
-  change, not a small addition, and out of proportion for a compat-polish
-  phase per Section 36's own "if not clean, defer" allowance. `stream:
-  true` still returns `400 STREAMING_NOT_SUPPORTED`, never faked.
 - Sampling beyond greedy decoding (temperature/top_p/etc. are accepted
   and ignored, never faked).
 - Multiple simultaneously-resident models.
+- No explicit model-lifecycle state machine or bounded pending-request
+  queue yet — the existing full-request-serialization mutex (unchanged
+  since PR A3) also serializes streaming requests behind non-streaming
+  ones and vice versa; targeted for PR B3.
