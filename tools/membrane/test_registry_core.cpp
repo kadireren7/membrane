@@ -321,6 +321,43 @@ static void	test_default_path_xdg_and_fallback(void)
 		setenv("XDG_DATA_HOME", saved_xdg.c_str(), 1);
 }
 
+/* Mega Phase D, PR D1: models_install_dir() mirrors default_path()'s
+ * own XDG resolution exactly, as a sibling "models/" directory, plus
+ * its own MEMBRANE_MODELS_INSTALL_DIR override. */
+static void	test_models_install_dir_xdg_override_and_fallback(void)
+{
+	std::string	saved_xdg;
+	const char	*old_xdg = getenv("XDG_DATA_HOME");
+	bool		had_xdg = old_xdg != NULL;
+	std::string	saved_override;
+	const char	*old_override = getenv("MEMBRANE_MODELS_INSTALL_DIR");
+	bool		had_override = old_override != NULL;
+
+	if (had_xdg)
+		saved_xdg = old_xdg;
+	if (had_override)
+		saved_override = old_override;
+	unsetenv("MEMBRANE_MODELS_INSTALL_DIR");
+	setenv("XDG_DATA_HOME", "/tmp/xdgtest", 1);
+	TEST_ASSERT(membrane_registry_models_install_dir()
+		== "/tmp/xdgtest/membrane/models",
+		"XDG_DATA_HOME is honored, sibling to models.json's own dir");
+	setenv("MEMBRANE_MODELS_INSTALL_DIR", "/tmp/override-dir", 1);
+	TEST_ASSERT(membrane_registry_models_install_dir() == "/tmp/override-dir",
+		"MEMBRANE_MODELS_INSTALL_DIR overrides XDG when set");
+	unsetenv("MEMBRANE_MODELS_INSTALL_DIR");
+	unsetenv("XDG_DATA_HOME");
+	std::string	fallback = membrane_registry_models_install_dir();
+
+	TEST_ASSERT(fallback.find("/.local/share/membrane/models")
+		!= std::string::npos,
+		"falls back to $HOME/.local/share/membrane/models");
+	if (had_xdg)
+		setenv("XDG_DATA_HOME", saved_xdg.c_str(), 1);
+	if (had_override)
+		setenv("MEMBRANE_MODELS_INSTALL_DIR", saved_override.c_str(), 1);
+}
+
 int	main(void)
 {
 	test_load_nonexistent_is_empty_not_error();
@@ -334,6 +371,7 @@ int	main(void)
 	test_load_unsupported_schema_version_fails_closed();
 	test_check_identity_all_states();
 	test_default_path_xdg_and_fallback();
+	test_models_install_dir_xdg_override_and_fallback();
 	printf("test_registry_core: all tests passed\n");
 	return (0);
 }

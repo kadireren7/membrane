@@ -43,6 +43,23 @@ std::string	membrane_registry_resolve_path(void)
 	return (membrane_registry_default_path());
 }
 
+std::string	membrane_registry_models_install_dir(void)
+{
+	const char	*override_dir = getenv("MEMBRANE_MODELS_INSTALL_DIR");
+
+	if (override_dir != NULL && override_dir[0] != '\0')
+		return (std::string(override_dir));
+	const char	*xdg_data_home = getenv("XDG_DATA_HOME");
+
+	if (xdg_data_home != NULL && xdg_data_home[0] != '\0')
+		return (std::string(xdg_data_home) + "/membrane/models");
+	const char	*home = getenv("HOME");
+
+	if (home != NULL && home[0] != '\0')
+		return (std::string(home) + "/.local/share/membrane/models");
+	return ("");
+}
+
 static void	set_err(membrane_registry_error_t *err, const char *code,
 				const std::string &message)
 {

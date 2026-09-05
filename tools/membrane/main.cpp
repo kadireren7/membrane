@@ -43,6 +43,14 @@ static void	print_usage(FILE *out)
 		"registered model's details\n");
 	fprintf(out, "  membrane model use NAME           set NAME as the "
 		"default model for `membrane serve`\n");
+	fprintf(out, "  membrane model search [QUERY]     search the built-in "
+		"model catalog (offline, no network)\n");
+	fprintf(out, "  membrane model info NAME          show one catalog "
+		"model's full detail (variants, sizes, license)\n");
+	fprintf(out, "  membrane model install NAME       download and "
+		"register a catalog model (see install options)\n");
+	fprintf(out, "  membrane model uninstall NAME     delete a "
+		"catalog-installed model's file and unregister it\n");
 	fprintf(out, "  membrane serve                    start a local "
 		"OpenAI-compatible HTTP server (foreground)\n");
 	fprintf(out, "  membrane status                    check a running "
@@ -77,6 +85,13 @@ static void	print_usage(FILE *out)
 		"defaults, never prompt (for automation)\n");
 	fprintf(out, "  --no-service                         skip service "
 		"install/start (e.g. no systemd in this environment)\n");
+	fprintf(out, "\n");
+	fprintf(out, "install options:\n");
+	fprintf(out, "  --quant QUANT                       exact variant to "
+		"install, e.g. Q4_K_M (default: the smallest available --\n");
+	fprintf(out, "                                       "
+		"no hardware-aware selection yet, see docs/model-catalog.md)\n");
+	fprintf(out, "  --variant QUANT                     alias for --quant\n");
 	fprintf(out, "\n");
 	fprintf(out, "serve options:\n");
 	fprintf(out, "  --port N                           listen port "
