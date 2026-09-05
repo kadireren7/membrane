@@ -2,7 +2,7 @@
   "schema_version": 1,
   "label": "REAL",
   "version": "0.4.0",
-  "commit": "PENDING -- filled in with this PR's own real branch HEAD once committed (this file is finalized in a follow-up commit on the same PR branch, before merge -- never a post-merge direct-main commit)",
+  "commit": "1c90b2f (release/v0.4.0-prep branch HEAD at the time of the real container/ctest evidence above; the eventual squash-merge commit is content-identical, git history only)",
   "base_prerelease": "v0.3.0",
   "release_type": "stable",
   "compatibility_counts": {
