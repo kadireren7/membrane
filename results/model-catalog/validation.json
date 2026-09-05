@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "phase": "mega-phase-d-model-catalog",
+  "membrane_commit": "PENDING -- updated as PR D1 actually merges",
+  "generated_at": "2026-09-05T14:00:00Z",
+  "pr_squash_shas": {
+    "D1": "PENDING"
+  },
+  "note": "Mega Phase D (PRs D1-D8): 'Install Once, Use It' -- model catalog, auto download, quant selection, cross-platform backends, client compatibility. This file covers PR D1 (model catalog + download manager) specifically. REAL rows are genuine local invocations (including a real HTTPS download against a real Hugging Face repository) on this dev host. SOURCE_ANALYSIS rows are direct code-reading confirmations, not runs.",
+  "catalog_data_verification": {
+    "label": "REAL",
+    "evidence": [
+      "Every one of the 3 catalog families (SmolLM2-135M-Instruct, SmolLM2-360M-Instruct, Qwen2.5-1.5B-Instruct) was verified this phase against its real, current Hugging Face repository: a real `curl`/urllib call to `https://huggingface.co/api/models/<repo>?blobs=true` for real filenames, real Content-Length sizes, and real SHA-256 digests (siblings[].lfs.sha256) -- generated programmatically into the compiled-in catalog JSON, not hand-transcribed (avoiding manual copy errors).",
+      "Cross-checked: the real, current SmolLM2-135M-Instruct-F16.gguf and Qwen2.5-1.5B-Instruct-fp16.gguf sizes reported by the Hugging Face API match this project's own pre-existing local fixtures (models/SmolLM2-135M-Instruct-f16.gguf, models/qwen2.5-1.5b-instruct-fp16.gguf) byte-for-byte.",
+      "A real, non-obvious finding during verification: Hugging Face's own redirect chain (a small JSON-like 'pointer' response, HTTP 302, then the real CDN URL) means the un-followed response's own Content-Length is NOT the real file size -- confirmed directly by comparing curl -sI (unfollowed, small) vs curl -sIL (followed, real) against the same URL. The download manager's own real transfer path follows this same redirect (CURLOPT_FOLLOWLOCATION), for the same reason."
+    ]
+  },
+  "download_manager": {
+    "label": "REAL",
+    "pr": "D1",
+    "squash_sha": "PENDING",
+    "evidence": [
+      "libcurl (not cpp-httplib+OpenSSL) chosen specifically because this dev host had no root access to install libssl-dev this session, while libcurl4-openssl-dev's dev headers were already present -- a real, available system dependency, not a new one requiring root.",
+      "Real end-to-end install: `membrane model install smollm2-135m-instruct --quant Q4_K_M` in an isolated environment (MEMBRANE_MODELS_PATH/MEMBRANE_MODELS_INSTALL_DIR test-hook overrides). Real ~100 MiB HTTPS download from https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF, completed in ~100s. Real file size (105454144 bytes) and real SHA-256 (ed5fa30c...) both matched the catalog's own recorded values exactly. Real GGUF validation succeeded (arch=llama, model_max_context=8192). Real registry entry created.",
+      "Real idempotence proof: re-running the identical install command completed in 0.4s (vs ~100s for the real download) -- confirmed it skipped the download and instead re-verified the existing file's real checksum.",
+      "Real corruption-detection proof: after deliberately tampering 9 bytes of the already-installed, same-size file, re-running install correctly detected the checksum mismatch and refused (exit code 3, clear message), never silently accepting a corrupted file.",
+      "Real uninstall proof: `membrane model uninstall smollm2-135m-instruct` removed both the registry entry and the real downloaded file from disk; confirmed via a follow-up `ls` and reading models.json directly.",
+      "A real bug was found and fixed during this same testing: the original install path always re-downloaded even when a correct file already existed (no idempotence check at all) -- fixed with a real stat()-based pre-check.",
+      "A second real bug was found and fixed: the initial progress-callback implementation printed on every single libcurl callback invocation (which fires many times per second, and once per response in Hugging Face's own redirect chain, each briefly resetting dltotal/dlnow to a confusing near-zero value) -- a single real install produced a 3.4 MB, thousands-of-lines log. Fixed with a ~100ms wall-clock throttle (clock_gettime) and proper line-padding so a shorter new line always fully overwrites a longer previous one under the same \\r -- confirmed via a re-run producing a ~22 KB log with a clean, monotonically-increasing progress sequence.",
+      "A third real bug was found and fixed: the idempotent (skip-download) path always reported 'checksum could not be verified... sha256sum unavailable' even when sha256sum WAS available and had just been used successfully moments earlier during the real download -- it conflated 'we never attempted verification' with 'the tool is missing'. Fixed by actually running the real checksum check on the idempotent path too (see corruption-detection proof above, which exercises this exact fixed code path).",
+      "No host OOM during any real download (checked via journalctl); this dev host's own severe, recurring memory pressure (documented throughout this project's history) did not affect a real network-bound (not memory-bound) download.",
+      "Real resumability proof: seeded a real 8.2 MiB partial file (via a real HTTP Range request against the same upstream), ran install again, and confirmed the progress display started at 7.8%/8 MiB (not 0%) -- the download genuinely resumed rather than restarting -- and completed with the exact correct final SHA-256, confirming CURLOPT_RESUME_FROM_LARGE works end to end against this real upstream.",
+      "Real uninstall-refusal proof: registered a model via plain `membrane model add` (a path outside the managed install directory), then attempted `membrane model uninstall` on it -- correctly refused (exit code 2, clear message pointing at `model remove` instead), and the file was confirmed still present afterward."
+    ]
+  },
+  "cli_commands": {
+    "label": "REAL",
+    "evidence": [
+      "`membrane model search` (no argument) lists all 3 real catalog families. `membrane model search qwen` correctly filters to exactly the 1 matching family (case-insensitive substring match across name/aliases/display_name/arch/provider).",
+      "`membrane model info smollm2-135m-instruct` prints full real detail (arch, parameters, provider, license, chat-template status, compatibility status + real evidence pointer, repo URL, every real variant with its real size) -- confirmed both human and --json output shapes.",
+      "test_model_catalog (9 pure unit tests: load, resolve by canonical name, resolve by alias case-insensitively, unknown-name returns NULL, empty-query search, provider search, variant lookup, unknown-variant returns NULL, every family/variant has required fields) -- CI-safe, no network. ASan/UBSan clean.",
+      "test_download_manager (6 CI-safe unit tests: disk-space check passes/fails/fails-closed-on-nonexistent-dir, sha256 computation against a real local file with an independently-verified expected digest, HTTPS-only URL rejection for both a plain http:// URL and a non-URL string) -- no real network call in this suite; the real network path is covered by the manual evidence above, matching this project's own established 'no real network/GGUF dependency in CI' convention."
+    ]
+  },
+  "storage_and_offline": {
+    "label": "REAL",
+    "evidence": [
+      "membrane_registry_models_install_dir() (registry_core.h) mirrors membrane_registry_default_path()'s own exact XDG resolution as a sibling 'models/' directory -- confirmed via a new, real unit test (test_registry_core.cpp).",
+      "uninstall's own real safety check (path-prefix comparison against the managed install dir): real test above (a plain `membrane model add` against an arbitrary path is correctly refused by `uninstall`, file confirmed untouched)."
+    ]
+  },
+  "known_limitations": {
+    "label": "SOURCE_ANALYSIS",
+    "items": [
+      "No hardware-aware variant/quant selection yet -- `install` with no --quant picks the smallest available variant, an honest, documented, conservative default. Mega Phase D, PR D2 is the real, separate work for hardware-aware selection.",
+      "Only 3 catalog families this PR (SmolLM2-135M/360M-Instruct, Qwen2.5-1.5B-Instruct) -- all models this project already had real compatibility evidence for. Broader family expansion (Mistral, Phi, Gemma per Section 23 of the task) needs its own real GGUF fixture + CPU/GPU test + compatibility-matrix evidence, not done in this PR."
+    ]
+  }
+}

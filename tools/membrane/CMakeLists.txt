@@ -205,6 +205,34 @@ target_include_directories(membrane_setup_cmd PUBLIC
 target_include_directories(membrane_setup_cmd PRIVATE
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
 
+# Mega Phase D, PR D1: the built-in model catalog (model_catalog.h's own
+# top comment) -- pure, no filesystem/network access, parses the
+# compiled-in catalog JSON once per call. nlohmann::json is its one real
+# dependency (same vendored copy every other *_core module already
+# uses).
+add_library(membrane_model_catalog STATIC model_catalog.cpp)
+set_target_properties(membrane_model_catalog PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_model_catalog PUBLIC membrane_sanitizers)
+target_include_directories(membrane_model_catalog PRIVATE
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
+# Mega Phase D, PR D1: real HTTPS downloads (download_manager.h's own
+# top comment) -- libcurl, not cpp-httplib+OpenSSL (this dev host had no
+# root access to install libssl-dev, but libcurl4-openssl-dev was
+# already present; libcurl is also the de facto standard C library for
+# exactly this use case). find_package(CURL) uses CMake's own bundled
+# FindCURL module -- no new vendored dependency, a real system library
+# already linked by countless other Debian packages.
+find_package(CURL REQUIRED)
+add_library(membrane_download_manager STATIC download_manager.cpp)
+set_target_properties(membrane_download_manager PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_download_manager PUBLIC membrane_sanitizers
+  membrane_fs_util membrane_subprocess CURL::libcurl)
+
 add_executable(membrane main.cpp model_cmd.cpp)
 set_target_properties(membrane PROPERTIES
   CXX_STANDARD 17
@@ -213,7 +241,8 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_gpu_device membrane_runtime_core membrane_product_cli
   membrane_runtime_session membrane_server membrane_service_cmd
   membrane_status_client membrane_server_config membrane_doctor_cmd
-  membrane_setup_cmd llama)
+  membrane_setup_cmd membrane_model_catalog membrane_download_manager
+  llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
   ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
@@ -245,6 +274,32 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_registry_core PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_registry_core COMMAND test_registry_core)
+
+  # Mega Phase D, PR D1: pure, no-network, no-filesystem unit tests for
+  # the built-in model catalog.
+  add_executable(test_model_catalog test_model_catalog.cpp)
+  set_target_properties(test_model_catalog PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_model_catalog PRIVATE membrane_model_catalog)
+  target_include_directories(test_model_catalog PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_model_catalog COMMAND test_model_catalog)
+
+  # Mega Phase D, PR D1: CI-safe (no real network) unit tests for the
+  # download manager -- disk-space checking, sha256 computation against
+  # a real local file, and the HTTPS-only URL guard. See
+  # test_download_manager.cpp's own top comment for why the real,
+  # network-dependent transfer path is verified manually, not here.
+  add_executable(test_download_manager test_download_manager.cpp)
+  set_target_properties(test_download_manager PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_download_manager PRIVATE
+    membrane_download_manager)
+  target_include_directories(test_download_manager PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_download_manager COMMAND test_download_manager)
 
   # Mega Phase A, PR A3: black-box HTTP tests (test_server.cpp's own top
   # comment) against a real membrane_server_run() instance -- CI-safe, no
@@ -289,7 +344,8 @@ if(MEMBRANE_BUILD_TESTS)
     CXX_STANDARD_REQUIRED ON)
   target_link_libraries(test_setup_cmd PRIVATE membrane_setup_cmd
     membrane_registry_core membrane_server_config membrane_product_cli
-    membrane_gpu_device membrane_runtime_core llama)
+    membrane_gpu_device membrane_runtime_core membrane_model_catalog
+    membrane_download_manager llama)
   target_include_directories(test_setup_cmd PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${CMAKE_SOURCE_DIR}/tools/membrane-run

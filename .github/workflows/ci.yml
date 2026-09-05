@@ -386,6 +386,25 @@ jobs:
       - name: Verify product-onboarding evidence and docs
         run: python3 scripts/verify-product-onboarding.py
 
+  # Mega Phase D, PR D1: validates the committed model-catalog/download-
+  # manager evidence and a handful of source-level regression guards
+  # (HTTPS-only enforcement, no exec of a downloaded file, the
+  # idempotence/checksum/progress-throttle bug fixes, no premature
+  # hardware-aware-selection claim) -- python3 + checkout only, no
+  # C/C++ build, no real network call. This validates the committed
+  # evidence file (captured locally via a real HTTPS download against a
+  # real Hugging Face repository), it does not regenerate it.
+  model-catalog-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify model-catalog evidence and docs
+        run: python3 scripts/verify-model-catalog.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
@@ -414,7 +433,7 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake
+        run: sudo apt-get update && sudo apt-get install -y cmake libcurl4-openssl-dev
       # ASan/UBSan: target-scoped (see the Build step below), so
       # llama/ggml itself is never compiled at all, sanitized or not.
       - name: Configure (ASan/UBSan)
@@ -459,7 +478,7 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake
+        run: sudo apt-get update && sudo apt-get install -y cmake libcurl4-openssl-dev
       - name: Configure (ASan/UBSan)
         run: |
           cmake -S . -B build-service-lifecycle-tests \
@@ -476,17 +495,23 @@ jobs:
       # llama/ggml files) joins too. test_setup_cmd is llama-LINKED
       # (setup_cmd.cpp calls into model_cmd.cpp, which needs real GGUF
       # validation via gpu_device.h) and lives in packaging-smoke below
-      # instead, alongside test_registry_core/test_server.
+      # instead, alongside test_registry_core/test_server. Mega Phase D,
+      # PR D1: test_model_catalog (pure, no filesystem/network) and
+      # test_download_manager (libcurl-based, but CI-safe/no-real-
+      # network checks only -- disk-space/sha256/URL-guard, see that
+      # file's own top comment for why the real network path is
+      # verified manually instead) both confirmed llama-free the same
+      # way test_doctor_cmd was -- join this same cheap job.
       - name: Build (target-scoped -- no llama/ggml compilation)
         run: |
           cmake --build build-service-lifecycle-tests -j2 --target \
             test_systemd_unit test_server_config test_fs_util test_subprocess \
             test_utf8_stream test_stream_queue test_request_admission \
-            test_doctor_cmd
+            test_doctor_cmd test_model_catalog test_download_manager
       - name: Test
         run: |
           ctest --test-dir build-service-lifecycle-tests --output-on-failure \
-            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$|^test_utf8_stream$|^test_stream_queue$|^test_request_admission$|^test_doctor_cmd$'
+            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$|^test_utf8_stream$|^test_stream_queue$|^test_request_admission$|^test_doctor_cmd$|^test_model_catalog$|^test_download_manager$'
 
   # Mega Phase B, PR B2: TSan cannot be combined with the ASan/UBSan
   # configure service-lifecycle-tests above already uses (see this
@@ -507,7 +532,7 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake
+        run: sudo apt-get update && sudo apt-get install -y cmake libcurl4-openssl-dev
       - name: Configure (TSan)
         run: |
           cmake -S . -B build-stream-queue-tsan -DMEMBRANE_ENABLE_LLAMA=ON \
@@ -593,7 +618,7 @@ jobs:
           persist-credentials: false
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake
+        run: sudo apt-get update && sudo apt-get install -y cmake libcurl4-openssl-dev
 
       - name: Configure (TSan + llama)
         run: |
@@ -643,7 +668,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libvulkan-dev glslc vulkan-tools \
-            spirv-headers dpkg-dev
+            spirv-headers dpkg-dev libcurl4-openssl-dev
 
       - name: CPU configure
         run: |
@@ -953,7 +978,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake dpkg-dev
+          sudo apt-get install -y cmake dpkg-dev libcurl4-openssl-dev
 
       - name: Run scripts/build-release.sh (CPU backend)
         run: |

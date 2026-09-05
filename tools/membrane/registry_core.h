@@ -85,6 +85,20 @@ std::string	membrane_registry_default_path(void);
  * original standalone version of this function, which this replaces). */
 std::string	membrane_registry_resolve_path(void);
 
+/* Mega Phase D, PR D1 (Section 7 of the task: "Use the XDG data
+ * directory... Organize cleanly by model / variant. Do not store
+ * inside repository checkout."): the directory `membrane model
+ * install` downloads files into -- the exact same XDG base directory
+ * as membrane_registry_default_path() (a sibling "models/" directory
+ * next to models.json, never a second, independently-resolved base),
+ * honoring a MEMBRANE_MODELS_INSTALL_DIR override for tests/CI (same
+ * override convention as MEMBRANE_MODELS_PATH above). Returns an empty
+ * string only if neither XDG_DATA_HOME nor HOME is set. The caller is
+ * responsible for creating this directory (fs_util.h's
+ * membrane_mkdir_parents()) -- this function only resolves the path,
+ * matching every other resolve_path()-style function in this project. */
+std::string	membrane_registry_models_install_dir(void);
+
 /* Loads registry_path into *out. A NONEXISTENT file is NOT an error --
  * *out is left as an empty, valid registry (Section 10: the first `model
  * add` on a fresh machine must not require pre-creating the file/
