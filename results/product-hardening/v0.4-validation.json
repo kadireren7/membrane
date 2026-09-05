@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "phase": "mega-phase-c-product-hardening",
+  "membrane_commit": "PENDING -- updated as PR C3 actually merges",
+  "generated_at": "2026-09-05T09:30:00Z",
+  "pr_squash_shas": {
+    "C1": "3db0fe58b8fdf92536c238b072b967f30d6e2cdb",
+    "C2": "161ba7e76b6c9a212d84e60be27f28eac645289e",
+    "C3": "PENDING"
+  },
+  "note": "Mega Phase C, PR C3: API/runtime hardening + real client validation. C1/C2's own real squash SHAs backfilled here (not as standalone post-merge main commits), matching the B1-in-B2 / C1-in-C2 convention. C3's own squash SHA gets backfilled the same way inside PR C4.",
+  "api_contract": {
+    "label": "SOURCE_ANALYSIS",
+    "evidence": [
+      "docs/api-contract.md added: 'compatible subset, never complete' scope statement, API versioning policy (/v1/ additive-only, a breaking change would need a new prefix), MEMBRANE-extension summary, v0.4.0-not-v1.0 versioning decision.",
+      "Frozen error contract: docs/server.md's pre-existing Errors table (8 codes: INVALID_REQUEST, MODEL_NOT_FOUND, CHAT_TEMPLATE_UNAVAILABLE, CHAT_TEMPLATE_FAILED, MODEL_LOAD_FAILED, NO_FEASIBLE_CONTEXT, SERVER_BUSY, GENERATION_FAILED-as-fallback) is now bidirectionally checked against server.cpp's own real emission sites by scripts/verify-api-contract.py -- code cannot silently drift from docs again.",
+      "4 of 8 codes (INVALID_REQUEST, MODEL_NOT_FOUND, SERVER_BUSY, and the port-collision test) already had real ctest coverage (test_server.cpp) confirmed unchanged this PR; the remaining 4 require a real model and are validated via real dev-host testing below."
+    ]
+  },
+  "soak_test": {
+    "label": "REAL",
+    "evidence": [
+      "scripts/soak-test-server.py: real membrane serve process, real SmolLM2-135M-Instruct model, bounded sequential requests, /proc-based RSS/thread/FD sampling. Thread count stayed completely flat across every run. FD count stayed flat under normal memory conditions (direct /proc/<pid>/fd inspection, 6 requests, 0 growth).",
+      "Real, disclosed finding: this dev host's own severe, transient real memory pressure (heavy swap usage from unrelated concurrent processes sharing this host) made the host-memory-guard's fixed 256 MiB reserve (host_memory_guard.h) infeasible for even this tiny model's minimum context at several points during testing -- confirmed independently via `membrane-run --ctx auto --plan-only` showing a real PLANNER_REJECTED_ALL outcome. The soak script was extended to run as a rejection-path stability check in that case (server stayed healthy, no crash, RSS fluctuated non-monotonically -- inconsistent with a real leak, consistent with real swap-thrashing) rather than silently reporting a real-generation soak that did not actually happen.",
+      "A real bug was found and fixed in the soak script itself: a socket read timeout raises a bare TimeoutError, not caught by the original (too-narrow) except clause -- fixed to catch (URLError, ConnectionError, TimeoutError, OSError).",
+      "See docs/soak-and-concurrency-testing.md for full narrative."
+    ]
+  },
+  "concurrency_soak": {
+    "label": "REAL",
+    "evidence": [
+      "test_server.cpp's test_concurrent_requests_are_thread_safe (16 real simultaneous in-process connections) re-run and confirmed PASS under a -DMEMBRANE_ENABLE_TSAN=ON build (build-b1-tsan) this PR, via `setarch $(uname -m) -R ctest ...` (the known ASLR/TSan shadow-mapping workaround this project's own CI already documents) -- clean, no race.",
+      "New scripts/concurrency-soak-server.py: a real, external OS-process membrane serve instance hit with real concurrent HTTP requests clustered around the bounded-admission limit (8). Run against a regular (non-TSan) build specifically due to real, severe observed host memory pressure at test time -- disclosed, not silently mixed with the TSan result above.",
+      "A real bug was found and fixed in the soak script itself, not in MEMBRANE: an earlier version required Retry-After on every 503 response. Real runs showed two distinct, both-correct 503 codes side by side (SERVER_BUSY, which carries Retry-After, and NO_FEASIBLE_CONTEXT, which does not and is not documented to) -- fixed to parse the real response body's error.code and only require Retry-After on SERVER_BUSY. After the fix: 0 SERVER_BUSY responses missing Retry-After, across all real runs.",
+      "Real, disclosed finding (same root cause as the soak test's own finding above): under this dev host's severe real memory pressure, some concurrent requests timed out entirely rather than receiving even a 503 -- a real host-memory-guard evaluation latency issue under extreme swap-thrashing, not a MEMBRANE crash/hang and not addressed with a code change this phase (would require a materially more complex async/timeout-bounded architecture, out of this hardening phase's scope; see docs/soak-and-concurrency-testing.md)."
+    ]
+  },
+  "additional_real_client": {
+    "label": "REAL",
+    "evidence": [
+      "scripts/node-client-check.mjs: Node.js built-in fetch (no npm dependency), real GET /health, real GET /v1/models (OpenAI list shape), real POST /v1/chat/completions against an unregistered model confirming the real 404 MODEL_NOT_FOUND shape. All 3 checks passed against a real running membrane serve instance.",
+      "Chosen specifically to avoid endangering this project's own memory-constrained dev host (no new heavy runtime/container, Node already installed) while still exercising real protocol compliance from a second, independent language ecosystem beyond the existing Python openai SDK evidence.",
+      "docs/client-compatibility.md consolidates this alongside the pre-existing Python SDK and curl evidence, and the pre-existing, still-disclosed (not independently tested) Open WebUI/editor-plugin guidance."
+    ]
+  },
+  "privacy_security_audit": {
+    "label": "REAL",
+    "evidence": [
+      "Real grep-based source audit (not a restatement of intent): no fprintf/cerr/cout in server.cpp embeds message/content/prompt data; the one content-adjacent log string (decode_loop.cpp) is a fixed diagnostic message, never the real prompt text.",
+      "No external (non-loopback) network call exists anywhere in tools/membrane*/tools/membrane-run* -- every http:// reference either builds the server's own local bind-address string or is doctor_cmd.cpp's own local HTTP client.",
+      "No send_json_error() call site embeds a filesystem path. No fopen/ofstream targets a log file anywhere in server.cpp/runtime_session.cpp. server_config.h's log_level field is defined but unused in server.cpp today -- noted honestly, not treated as a finding.",
+      "Full writeup: docs/privacy-security-audit.md. Regression guard added to scripts/verify-api-contract.py (no future fprintf/cerr/cout may reference req./messages/.content/prompt_text in server.cpp)."
+    ]
+  },
+  "port_collision_regression": {
+    "label": "REAL",
+    "evidence": [
+      "Confirmed (not re-implemented): test_server.cpp's test_second_instance_same_port_fails_to_bind (pre-existing, PR B4's own SO_REUSEPORT->SO_REUSEADDR fix) is still present, still ctest-registered, still covered by both the packaging-smoke and server-thread-sanitizer CI jobs. No new code needed -- this requirement was already permanently satisfied."
+    ]
+  },
+  "versioning_decision": {
+    "label": "SOURCE_ANALYSIS",
+    "evidence": [
+      "v0.4.0, not v1.0 -- documented in docs/api-contract.md. v1.0 implies a stability promise not yet honestly earned (no real external usage history); docs/v1.0-readiness.md (written after PR C4) makes this explicit with evidence rather than assumed."
+    ]
+  },
+  "known_limitations": {
+    "label": "SOURCE_ANALYSIS",
+    "items": [
+      "Under severe, sustained host memory pressure (this project's own shared dev host, not a normal deployment target), a chat-completion request's host-memory-guard evaluation can be slow enough to time out a client before even a fast 503 is returned -- disclosed in docs/soak-and-concurrency-testing.md, not addressed with an architecture change this phase.",
+      "The external-process concurrency soak (scripts/concurrency-soak-server.py) was run against a non-TSan build due to real host memory constraints at test time; TSan coverage of the equivalent concurrent code path comes from test_server.cpp's own in-process test instead (confirmed clean this PR).",
+      "Open WebUI and OpenAI-compatible editor plugins remain disclosed-but-not-independently-tested (unchanged from PR B4) -- real Docker/environment resource pressure on this same shared dev host made a new real container test judged not worth the risk this phase either."
+    ]
+  }
+}

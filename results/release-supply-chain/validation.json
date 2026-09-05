@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "phase": "mega-phase-c-release-supply-chain",
-  "membrane_commit": "PENDING -- updated as PR C2 actually merges",
+  "membrane_commit": "161ba7e76b6c9a212d84e60be27f28eac645289e",
   "generated_at": "2026-09-05T08:00:00Z",
   "pr_squash_shas": {
     "C1": "3db0fe58b8fdf92536c238b072b967f30d6e2cdb",
-    "C2": "PENDING"
+    "C2": "161ba7e76b6c9a212d84e60be27f28eac645289e"
   },
   "note": "Mega Phase C, PR C2: packaging/upgrade/supply-chain maturity. This file covers C2 specifically; C1's own real squash SHA is backfilled here (not as a standalone post-merge main commit -- Mega Phase C's own explicit 'do not make a post-merge direct-main evidence commit' rule) rather than left PENDING, matching the same convention Mega Phase B used to backfill B1's SHA inside B2's own commit. C2's own squash SHA gets backfilled the same way inside PR C3.",
   "package_content_audit": {
@@ -47,7 +47,7 @@
   "release_automation_script": {
     "label": "REAL",
     "pr": "C2",
-    "squash_sha": "PENDING",
+    "squash_sha": "161ba7e76b6c9a212d84e60be27f28eac645289e",
     "evidence": [
       "scripts/build-release.sh: configure+build+cpack per requested backend (cpu/vulkan/both), SOURCE_DATE_EPOCH-pinned for reproducibility, one SBOM per built .deb, one SHA256SUMS covering all built .debs. Never touches git in any way (no tag, no push, no `gh release create`).",
       "A real bug was found and fixed while testing this script: the first real run silently produced a near-empty, functionally broken .deb (994 bytes, Installed-Size: 4, no membrane/membrane-run binaries at all) because the script never passed -DMEMBRANE_ENABLE_LLAMA=ON (default OFF) -- fixed, and a permanent sanity check added (`dpkg-deb -c` confirms both real binaries are present before a package is ever copied to the output directory, refusing to publish an empty one again).",
