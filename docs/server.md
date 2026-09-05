@@ -314,7 +314,7 @@ SSE `data: {"error": {...}}` event — see "Streaming" above.
 | 404 | `MODEL_NOT_FOUND` | the named model is not registered |
 | 500 | `CHAT_TEMPLATE_UNAVAILABLE` / `CHAT_TEMPLATE_FAILED` | the model has no usable chat template, or applying it failed |
 | 500 | `MODEL_LOAD_FAILED` | the model file could not be loaded |
-| 500 | (a real planner reason code) | generation failed after loading (non-streaming only) |
+| 500 | (a real planner reason code, or `GENERATION_FAILED` if none was set) | generation failed after loading (non-streaming only) |
 | 503 | `NO_FEASIBLE_CONTEXT` | no context/hardware plan could be resolved (e.g. insufficient host memory) |
 | 503 | `SERVER_BUSY` | too many chat completion requests are already in flight (PR B3, "Bounded request admission" above) — includes a `Retry-After` header |
 
