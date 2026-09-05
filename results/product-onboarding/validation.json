@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "phase": "mega-phase-c-product-onboarding",
-  "membrane_commit": "PENDING -- updated as PR C1 actually merges",
+  "membrane_commit": "3db0fe58b8fdf92536c238b072b967f30d6e2cdb",
   "generated_at": "2026-09-05T00:00:00Z",
   "pr_squash_shas": {
-    "C1": "PENDING"
+    "C1": "3db0fe58b8fdf92536c238b072b967f30d6e2cdb"
   },
-  "note": "Mega Phase C (PRs C1-C4): turns the development tree into a coherent, installable, diagnosable, upgradeable, release-quality local AI product culminating in v0.4.0 stable. This file covers PR C1 (product onboarding: `membrane setup`/`membrane doctor`) specifically -- C2 (packaging/supply chain), C3 (API/runtime hardening), and C4 (v0.4.0 release) each get their own scoped evidence file, matching this mega-phase's own PR structure (four distinct product areas, not one continuously-extended feature) rather than Mega Phase B's single shared file. REAL rows are genuine local invocations on this dev host (or a real, isolated Docker container for the fresh-environment audit). SYNTHETIC rows are ctest-registered unit tests with no real GGUF model dependency (CI-safe). SOURCE_ANALYSIS rows are direct code-reading confirmations, not runs.",
+  "note": "Mega Phase C (PRs C1-C4): turns the development tree into a coherent, installable, diagnosable, upgradeable, release-quality local AI product culminating in v0.4.0 stable. This file covers PR C1 (product onboarding: `membrane setup`/`membrane doctor`) specifically -- C2 (packaging/supply chain), C3 (API/runtime hardening), and C4 (v0.4.0 release) each get their own scoped evidence file, matching this mega-phase's own PR structure (four distinct product areas, not one continuously-extended feature) rather than Mega Phase B's single shared file. REAL rows are genuine local invocations on this dev host (or a real, isolated Docker container for the fresh-environment audit). SYNTHETIC rows are ctest-registered unit tests with no real GGUF model dependency (CI-safe). SOURCE_ANALYSIS rows are direct code-reading confirmations, not runs. C1's real squash SHA was backfilled here as part of PR C2's own commit (never a standalone post-merge direct-main commit), matching the convention Mega Phase B used to backfill B1's SHA inside B2.",
   "first_product_audit": {
     "label": "REAL",
     "note": "Section 2 of the task: performed BEFORE writing any C1 code, from a REAL fresh `ubuntu:24.04` Docker container (memory-bounded to 768MB to protect this dev host's own tight real memory, never touching the two other, unrelated, already-running containers on this host) -- a real .deb built from this project's own build tree, installed via `apt-get install ./membrane.deb`, walked through exactly the flow a genuinely new user would follow.",
@@ -45,7 +45,7 @@
   "membrane_doctor": {
     "label": "REAL",
     "pr": "C1",
-    "squash_sha": "PENDING",
+    "squash_sha": "3db0fe58b8fdf92536c238b072b967f30d6e2cdb",
     "evidence": [
       "Orchestrates (never duplicates) membrane-run --doctor --json for hardware/RAM (real subprocess call, real CPU/GPU/RAM data confirmed against this dev host's own real values), registry_core.h for the model registry (real stat()-based staleness check, same primitive `membrane model list` already uses), server_config.h for config/default_model, systemd_unit.h/subprocess.h for the installed service, status_client.h for live HTTP status.",
       "Real invocation against an isolated, empty environment: overall OK (with MEMBRANE_RUN_EXEC_PATH set to the real co-located membrane-run binary, matching real packaging). Real invocation against a genuinely low-memory moment on this dev host (measured ~508MB available) correctly WARNed on the hardware check with an honest, actionable message.",
@@ -57,7 +57,7 @@
   "membrane_setup": {
     "label": "REAL",
     "pr": "C1",
-    "squash_sha": "PENDING",
+    "squash_sha": "3db0fe58b8fdf92536c238b072b967f30d6e2cdb",
     "evidence": [
       "Orchestrates membrane_doctor_collect() (hardware/registry/service state), membrane_model_cmd_dispatch() (real GGUF-validating model add, real default_model set), and membrane_service_cmd_dispatch() (real systemd --user install/start) -- all as real in-process function calls, never a second implementation of any of them.",
       "Real full end-to-end run on this dev host's own real systemd --user session: version -> hardware/RAM summary -> real model registration (SmolLM2-135M-Instruct) -> real default-model set -> real service install -> real service start -> real GET /health and GET /v1/models both answering correctly -> final endpoint summary. Confirmed via `membrane doctor` immediately afterward: every check OK.",

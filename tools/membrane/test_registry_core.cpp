@@ -243,6 +243,33 @@ static void	test_load_wrong_shape_fails_closed(void)
 	rmdir_recursive(dir);
 }
 
+/* Mega Phase C, PR C2 (registry schema versioning): a well-formed
+ * {schema_version, models[]} file with a schema_version this build does
+ * not recognize must fail closed with a clear, actionable error -- never
+ * silently parsed as if it were the current version (this project's own
+ * server_config.h already had this exact protection; the registry did
+ * not until this PR, a real gap found while auditing schema handling for
+ * release readiness). */
+static void	test_load_unsupported_schema_version_fails_closed(void)
+{
+	std::string	dir = make_temp_dir();
+	std::string	path = dir + "/models.json";
+	FILE		*f = fopen(path.c_str(), "w");
+
+	TEST_ASSERT(f != NULL, "could open the test file for writing");
+	fprintf(f, "{\"schema_version\": 999, \"models\": []}");
+	fclose(f);
+
+	membrane_registry_t		reg;
+	membrane_registry_error_t	err;
+
+	TEST_ASSERT(membrane_registry_load(path, &reg, &err) == false,
+		"loading an unsupported schema_version fails");
+	TEST_ASSERT(err.set && err.code == "UNSUPPORTED_SCHEMA",
+		"error code is UNSUPPORTED_SCHEMA");
+	rmdir_recursive(dir);
+}
+
 /* 6. check_identity(): OK, MISSING, MODIFIED, UNREADABLE. */
 static void	test_check_identity_all_states(void)
 {
@@ -304,6 +331,7 @@ int	main(void)
 	test_save_load_round_trip_and_atomic();
 	test_load_malformed_json_fails_closed();
 	test_load_wrong_shape_fails_closed();
+	test_load_unsupported_schema_version_fails_closed();
 	test_check_identity_all_states();
 	test_default_path_xdg_and_fallback();
 	printf("test_registry_core: all tests passed\n");

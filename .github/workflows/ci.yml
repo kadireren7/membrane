@@ -915,3 +915,47 @@ jobs:
           name: membrane-vulkan-deb
           path: build-vulkan-install/membrane_*.deb
           if-no-files-found: error
+
+  # Mega Phase C, PR C2: smoke-tests the release AUTOMATION SCRIPT
+  # itself (scripts/build-release.sh) end to end -- real configure/
+  # build/cpack, real SBOM generation, real SHA256SUMS -- on every push/
+  # PR, never a real release. This job never calls `gh release create`
+  # and never touches git in any way; publishing a real GitHub release
+  # stays a separate, manual, primary-agent-performed step (see
+  # docs/release-supply-chain.md). CPU-only here (same 2-vCPU/~7GiB
+  # runner constraint packaging-smoke's own comment documents) -- the
+  # script's --backend both/vulkan path is exercised manually, on a
+  # host with the Vulkan SDK, at actual release-tagging time.
+  release-candidate-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake dpkg-dev
+
+      - name: Run scripts/build-release.sh (CPU backend)
+        run: |
+          bash scripts/build-release.sh --backend cpu --out-dir dist --jobs 2
+
+      - name: Verify real artifacts were produced
+        run: |
+          test -f dist/membrane-cpu_*.deb
+          test -f dist/membrane-cpu_*.sbom.json
+          test -f dist/SHA256SUMS
+          sha256sum -c dist/SHA256SUMS
+          python3 -c "import json; d = json.load(open([p for p in __import__('glob').glob('dist/*.sbom.json')][0])); assert d['bomFormat'] == 'CycloneDX'; assert len(d['components']) > 0"
+
+      - name: Upload release-candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-smoke-artifacts
+          path: dist/
+          if-no-files-found: error
