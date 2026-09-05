@@ -1026,3 +1026,70 @@ jobs:
           name: release-candidate-smoke-artifacts
           path: dist/
           if-no-files-found: error
+
+  # Mega Phase D, PR D3: validates the committed real-CUDA-hardware
+  # evidence (results/cuda-backend/validation.json) and a handful of
+  # source-level regression guards (the GGML_CUDA pre-check mirrors
+  # GGML_VULKAN's, ggml-cuda joined the install/RPATH foreach loop, no
+  # CUDA-specific string leaked into any backend-agnostic planner/
+  # policy module, no "every NVIDIA GPU" overclaim) -- python3 +
+  # checkout only, no GPU, no C/C++ build.
+  cuda-backend-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify CUDA backend evidence and docs
+        run: python3 scripts/verify-cuda-backend.py
+
+  # Mega Phase D, PR D3: a BUILD-ONLY leg -- confirms -DGGML_CUDA=ON
+  # actually configures and compiles on a real CUDA Toolkit (installed
+  # here via apt, real sudo, on the GitHub-hosted runner), never a
+  # claim about real generation: this runner has no GPU device at all.
+  # The genuine hardware validation (device enumeration, --doctor,
+  # real generation, real GPU-memory deltas) lives only in
+  # results/cuda-backend/validation.json, captured on this project's
+  # own real dev host (a GTX 1650) -- see docs/cuda-backend.md.
+  #
+  # With no GPU present at configure time, ggml-cuda/CMakeLists.txt's
+  # own GGML_NATIVE detection correctly falls back to its default
+  # virtual/real architecture list rather than "native" (confirmed by
+  # reading that file directly: it guards against exactly this "no
+  # GPUs connected at build time" case, only using
+  # CMAKE_CUDA_ARCHITECTURES_NATIVE when that variable is well-formed).
+  cuda-backend-build-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install dependencies (real CUDA Toolkit via apt)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake nvidia-cuda-toolkit libcurl4-openssl-dev
+
+      - name: CUDA configure
+        run: |
+          cmake -S . -B build-cuda-smoke \
+            -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_CUDA=ON \
+            -DCMAKE_BUILD_TYPE=Release
+
+      # -j2, not unbounded -j: same 2-vCPU/~7GiB GitHub-hosted runner
+      # constraint packaging-smoke's own comment documents, and
+      # ggml-cuda's device translation units are at least as
+      # memory-hungry as ggml-vulkan's.
+      - name: CUDA build (compile-only -- no GPU on this runner)
+        run: |
+          cmake --build build-cuda-smoke -j2 --target membrane-run membrane
+
+      - name: Built binary reports CUDA compiled in (no device present)
+        run: |
+          ./build-cuda-smoke/tools/membrane-run/membrane-run --doctor
+          ./build-cuda-smoke/tools/membrane-run/membrane-run --list-devices

@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "phase": "mega-phase-d-model-variant-selection",
-  "membrane_commit": "PENDING -- updated as PR D2 actually merges",
+  "membrane_commit": "f923c8fcf6e95d1da73068bd5130d50af1ac1711",
   "generated_at": "2026-09-05T15:00:00Z",
   "pr_squash_shas": {
     "D1": "e0dbad7abbe963730b6846d97eabbc8d47d15d99",
-    "D2": "PENDING"
+    "D2": "f923c8fcf6e95d1da73068bd5130d50af1ac1711"
   },
-  "note": "Mega Phase D, PR D2: hardware-aware quant/model variant selection. D1's own real squash SHA backfilled here (not as a standalone post-merge main commit), matching this mega-phase's own convention.",
+  "note": "Mega Phase D, PR D2: hardware-aware quant/model variant selection. D1's own real squash SHA backfilled here (not as a standalone post-merge main commit), matching this mega-phase's own convention. D2's own real squash SHA backfilled here in turn by PR D3's own commit, matching the same convention.",
   "policy_and_reuse": {
     "label": "SOURCE_ANALYSIS",
     "evidence": [

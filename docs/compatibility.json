@@ -1,7 +1,15 @@
 {
   "schema_version": 1,
-  "status_values": ["SUPPORTED", "UNSUPPORTED", "NOT_YET_VALIDATED"],
-  "hardware_scope_values": ["tested", "backend-level", "not-hardware-specific"],
+  "status_values": [
+    "SUPPORTED",
+    "UNSUPPORTED",
+    "NOT_YET_VALIDATED"
+  ],
+  "hardware_scope_values": [
+    "tested",
+    "backend-level",
+    "not-hardware-specific"
+  ],
   "notes": "Compatibility, not performance: this matrix answers works / intentionally rejected / not yet validated. It does not carry tok/s, latency, or VRAM numbers -- see README's 'Measured results' and the cited evidence files for those. SUPPORTED requires direct product-path evidence (a test, a real-model smoke, or committed evidence already in the repo); it is never inferred from 'llama.cpp supports it' or 'compilation succeeds'. See docs/compatibility.md for the human-readable summary and scripts/verify-compatibility.py for the schema/evidence validator.",
   "rows": [
     {
@@ -405,13 +413,12 @@
       "gpu_layers_mode": "any",
       "context_class": "n/a",
       "hardware_scope": "backend-level",
-      "status": "UNSUPPORTED",
-      "reason_code": "NOT_A_PRODUCT_BACKEND",
+      "status": "SUPPORTED",
+      "reason_code": "CANDIDATE_SELECTED",
       "evidence": [
-        "README.md#current-scope",
-        "CMakeLists.txt"
+        "results/cuda-backend/validation.json"
       ],
-      "notes": "CUDA is not a build option anywhere in this repository's CMake -- there is no CUDA code path to fail closed from, it simply is not compiled. Vulkan is the only product GPU backend."
+      "notes": "Mega Phase D, PR D3: CUDA is now a real, compiled-in build option (GGML_CUDA=ON) -- this row's own scope is backend-level (the build option exists and compiles cleanly, no planner/policy code needed any change, matching gpu_device.h's own long-standing design promise), not a claim about any specific model/precision combination. MC-27/MC-28 carry the specific real, tested combinations; MC-29 discloses what was not yet exercised."
     },
     {
       "id": "MC-24",
@@ -466,6 +473,55 @@
         "tools/membrane-run/test_compat_check.c#test_native_always_ok"
       ],
       "notes": "compat_check.c runs zero checks for native mode regardless of architecture (confirmed with an intentionally nonsense arch string in test_native_always_ok), and llama.cpp itself implements many more architectures than llama/qwen2. Neither fact is evidence of MEMBRANE product support: no MEMBRANE evidence file or smoke has ever exercised any architecture besides llama and qwen2. Do not read compat_check.c's permissiveness as a support claim."
+    },
+    {
+      "id": "MC-27",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "cuda",
+      "kv_precision": "native",
+      "kv_placement": "default",
+      "gpu_layers_mode": "auto",
+      "context_class": "small (2048)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "CANDIDATE_SELECTED",
+      "evidence": [
+        "results/cuda-backend/validation.json"
+      ],
+      "notes": "Tested hardware: real GTX 1650 (Turing, compute capability 7.5), real CUDA 12.6 toolkit. --gpu-layers auto selected 30/30 layers GPU-resident; real generation completed (175.7 decode tok/s), real driver-reported GPU memory delta confirmed. Mega Phase D, PR D3."
+    },
+    {
+      "id": "MC-28",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "cuda",
+      "kv_precision": "adaptive",
+      "kv_placement": "auto",
+      "gpu_layers_mode": "auto",
+      "context_class": "small (2048)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "Q8_FULL_RESIDENCY",
+      "evidence": [
+        "results/cuda-backend/validation.json"
+      ],
+      "notes": "Tested hardware: real GTX 1650. Adaptive KV selected q8 (Q8_FULL_RESIDENCY), 30/30 layers GPU-resident, real generation completed (167.8 decode tok/s). Mega Phase D, PR D3."
+    },
+    {
+      "id": "MC-29",
+      "model_family": "any",
+      "model_arch": "any",
+      "backend": "cuda",
+      "kv_precision": "q5",
+      "kv_placement": "any",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "NOT_YET_VALIDATED",
+      "reason_code": "",
+      "evidence": [],
+      "notes": "q5 compressed KV on CUDA was not separately exercised this phase (only native and adaptive-selected-q8 were tested) -- the same compat_check.c allowlist logic that already validates q5 on CPU/Vulkan applies unchanged (backend-agnostic), but no real q5-on-CUDA generation run exists yet. Disclosed, not assumed."
     }
   ]
 }

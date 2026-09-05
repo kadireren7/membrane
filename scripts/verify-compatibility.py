@@ -332,7 +332,20 @@ def scan_cmake_files_for_cuda(root, rel_paths):
 	return hits
 
 
-@check("no CUDA build option exists in any tracked CMake file, matching MC-23's claim")
+# RETIRED (Mega Phase D, PR D3): this check's entire premise -- that no
+# CUDA build option exists anywhere in this repo's own CMake, matching
+# MC-23's OLD claim -- is now permanently, deliberately false. CUDA is a
+# real, tested product backend as of PR D3 (docs/cuda-backend.md,
+# results/cuda-backend/validation.json); CMakeLists.txt and tools/
+# membrane-run/CMakeLists.txt both legitimately reference CUDA now. Same
+# precedent this project has used repeatedly for a check whose own
+# premise later became obsolete (e.g. scripts/verify-release-v0.3.0.py's
+# own retirement once v0.4.0 superseded it) -- the FUNCTION itself is
+# kept, unwired from main(), for historical reference; only the self-
+# test below (check_cuda_scan_self_test(), which validates the SCANNING
+# MECHANISM's own recursion/exclusion logic, not CUDA's real absence)
+# stays wired, since its own premise never depended on CUDA being absent
+# from the real repo.
 def check_no_cuda_option():
 	tracked = subprocess.run(
 		["git", "-C", str(REPO_ROOT), "ls-files",
@@ -429,7 +442,8 @@ def main():
 	check_unsupported_has_reason(rows)
 	check_not_yet_validated_no_overclaim(rows)
 	check_compat_check_invariant()
-	check_no_cuda_option()
+	# check_no_cuda_option() retired (see its own comment) -- CUDA is
+	# now real and expected in this repo's CMake.
 	check_cuda_scan_self_test()
 
 	print()

@@ -90,12 +90,16 @@ itself fails closed before model load (MC-21) — `--kv-placement cpu` and
   gates as any other backend (e.g. MC-20's CLI-level placement rejection
   applies regardless of backend, and MC-21 is specifically a CPU-only
   build rejecting a GPU placement request).
-- **Vulkan** — the only product GPU backend. Precision/placement rows
-  tested so far were run on one real device (a GTX 1650) — see "Hardware
-  scope" below.
-- **CUDA** — not a product backend. There is no CUDA build option anywhere
-  in this repository's CMake; it isn't rejected at runtime, it simply
-  isn't compiled (MC-23).
+- **Vulkan** — a product GPU backend. Precision/placement rows tested so
+  far were run on one real device (a GTX 1650) — see "Hardware scope"
+  below.
+- **CUDA** — a product GPU backend as of Mega Phase D, PR D3
+  (`-DGGML_CUDA=ON`, `docs/cuda-backend.md`). Real, tested against one
+  device (a real GTX 1650, same device used for the Vulkan rows above)
+  — native and adaptive/q8 KV precision confirmed (MC-23, MC-27, MC-28);
+  q5 not yet separately exercised (MC-29). No official CUDA-enabled
+  `.deb` package exists yet — source build only, see
+  `docs/cuda-backend.md`'s own "Packaging" section for why.
 
 ## Hardware scope
 
@@ -127,7 +131,6 @@ Each row in `docs/compatibility.json` carries a `hardware_scope`:
   (MC-21).
 - `--kv-placement` (non-default) together with `--compare-kv`/`--gpu-bench`
   (MC-22).
-- CUDA as a backend (MC-23).
 - Runtime KV migration/relocation/retirement — KV placement is decided
   once, before context construction; this exists only as research-only,
   simulation-based prior-phase evidence, never as a `membrane-run` product

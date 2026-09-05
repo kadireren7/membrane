@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "phase": "mega-phase-d-cuda-backend",
+  "membrane_commit": "PENDING -- updated as PR D3 actually merges",
+  "generated_at": "2026-09-06T00:00:00Z",
+  "pr_squash_shas": {
+    "D1": "e0dbad7abbe963730b6846d97eabbc8d47d15d99",
+    "D2": "f923c8fcf6e95d1da73068bd5130d50af1ac1711",
+    "D3": "PENDING"
+  },
+  "note": "Mega Phase D, PR D3: real CUDA backend. D1/D2's own real squash SHAs backfilled here, matching this mega-phase's own convention.",
+  "hardware": {
+    "label": "REAL",
+    "gpu": "NVIDIA GeForce GTX 1650 (Turing, compute capability 7.5), 4096 MiB VRAM",
+    "driver": "580.159.03 (nvidia-smi confirmed working)",
+    "cuda_toolkit": "12.6.20 (real nvcc/cicc/cudart/cublas, installed to a user-local, no-root prefix via the official NVIDIA .run installer's --toolkit --toolkitpath= mode -- this dev host had no sudo password available)",
+    "host": "this project's own real dev host, AMD Ryzen 5 5600H, 5.6 GiB RAM"
+  },
+  "build_integration": {
+    "label": "REAL",
+    "evidence": [
+      "Real CMake configure with -DGGML_CUDA=ON -DCUDAToolkit_ROOT=<local toolkit prefix>: 'Found CUDAToolkit: ... (found version 12.6.20)', 'CMAKE_CUDA_ARCHITECTURES=75-real' -- CORRECTLY auto-detected this exact GPU's real compute capability via GGML_NATIVE, no manual architecture flag needed.",
+      "A new, MEMBRANE-level CMakeLists.txt pre-check (mirroring the existing GGML_VULKAN one exactly) fails clearly, before ever descending into third_party/llama.cpp's own ggml-cuda/CMakeLists.txt, if -DGGML_CUDA=ON is requested but no CUDA Toolkit is found -- confirmed this is the same real pattern already established for Vulkan, not a new design.",
+      "ggml-cuda joined tools/membrane-run/CMakeLists.txt's existing install/RPATH TARGET-guarded foreach loop the same way ggml-vulkan already does -- confirmed the CPU/Vulkan build (build-b1, no GGML_CUDA) is completely unaffected (full local rebuild + 88/88 ctest still pass after this change).",
+      "A real, genuine linker issue was found and fixed during this work: the final membrane-run/membrane executable link failed with 'undefined reference' to every cudart/cublas symbol, even though ggml-cuda.so itself built successfully -- root-caused directly (`ld` warned '... not found (try using -rpath or -rpath-link)') to the CUDA runtime libraries living in this non-standard, user-local install prefix, not on the linker's default search path. Fixed by setting LD_LIBRARY_PATH to the toolkit's lib64 directory for the build step -- the same requirement any real user of a non-standard CUDA install location would hit, now documented in docs/cuda-backend.md rather than left as a silent surprise.",
+      "Zero changes needed anywhere in gpu_policy.c, context_recommender.c, compat_check.c, or the joint planner -- confirmed directly by grep (no hardcoded 'Vulkan'/backend-name string anywhere in those files) and by this PR's own real generation test succeeding with zero code changes to any of them, exactly matching gpu_device.h's own long-standing design comment ('a future CUDA/ROCm backend needs no change here beyond a new CMake build flag')."
+    ]
+  },
+  "real_device_enumeration": {
+    "label": "REAL",
+    "evidence": [
+      "`membrane-run --list-devices`: 'CUDA0 (NVIDIA GeForce GTX 1650)' with real memory (3716.9 MiB total, 3662.0 MiB free at time of capture) alongside the existing 'CPU (AMD Ryzen 5 5600H...)' entry.",
+      "`membrane-run --doctor` / `--doctor --json`: 'GPU backend compiled in', 'GPU device: CUDA0 (NVIDIA GeForce GTX 1650)', gpu_devices_found:1 -- cross-checked directly against a real `nvidia-smi --query-gpu=name,memory.total,memory.free` invocation at the same time; the device name and total memory match exactly."
+    ]
+  },
+  "real_generation": {
+    "label": "REAL",
+    "evidence": [
+      "Native (F16) KV, --gpu-layers auto, SmolLM2-135M-Instruct-f16.gguf, ctx 2048: gpu_layers_selected=30 (full residency), backend=CUDA, device=CUDA0, real generation completed (exit ok:true), decode throughput 175.7 tok/s, real driver-reported GPU free-memory delta (before 3839819776 -> after 3567190016 bytes) captured via the existing gpu_memory_observed real-measurement field.",
+      "Adaptive KV (selected q8, Q8_FULL_RESIDENCY), --gpu-layers auto, same model/context: gpu_layers_selected=30, real generation completed, decode throughput 167.8 tok/s, real driver-reported GPU free-memory delta (before 3839885312 -> after 3567255552 bytes).",
+      "Both runs used the SAME, entirely unmodified joint planner/fallback machinery every other backend already uses -- planner.used:true, policy_version:'joint-auto-v1', fallback.attempted:false (the primary candidate succeeded immediately, no fallback needed), confirming the planner treats CUDA exactly like any other backend, no special-casing required.",
+      "No host OOM during either real generation run (checked via journalctl); this dev host's own severe, recurring memory pressure did not interfere with real GPU-resident inference."
+    ]
+  },
+  "compatibility_matrix_update": {
+    "label": "SOURCE_ANALYSIS",
+    "evidence": [
+      "docs/compatibility.json: MC-23 (previously 'CUDA -- not a product backend, NOT_A_PRODUCT_BACKEND, UNSUPPORTED') updated to SUPPORTED at the backend-level scope (the build option now exists and compiles). Two new REAL, tested rows added: MC-27 (native KV, CUDA, GTX 1650) and MC-28 (adaptive/q8 KV, CUDA, GTX 1650). One new NOT_YET_VALIDATED row (MC-29, q5-on-CUDA) honestly discloses what was not separately exercised this phase, rather than assumed to work by analogy.",
+      "docs/compatibility.md's own prose ('CUDA -- not a product backend...') updated to reflect the new real status."
+    ]
+  },
+  "package_dependency_strategy": {
+    "label": "SOURCE_ANALYSIS",
+    "evidence": [
+      "No official CUDA-enabled .deb package is added this phase -- seedocs/cuda-backend.md's own 'Packaging' section for the real reasoning: unlike Vulkan (a single, small, always-present-in-standard-repos libvulkan1 runtime dependency), a real CUDA runtime is a much larger, versioned, non-trivial system dependency (hundreds of MB, typically installed via NVIDIA's own repository or a user-local prefix exactly like this PR's own real installation), not something dpkg-shlibdeps can auto-resolve into a simple apt Depends: line the way libvulkan1 already is. Building from source with -DGGML_CUDA=ON (this PR's own real, tested path) remains the supported route; a real packaged CUDA variant is deferred, disclosed as a known limitation, not invented without a concrete distribution strategy."
+    ]
+  },
+  "known_limitations": {
+    "label": "SOURCE_ANALYSIS",
+    "items": [
+      "Tested against exactly one real device (GTX 1650, Turing/compute 7.5) -- not a claim about any other NVIDIA GPU/architecture, same disclosed scope Vulkan's own MC-05 row already established.",
+      "q5 compressed KV was not separately exercised on CUDA this phase (MC-29) -- only native and adaptive-selected-q8 were tested.",
+      "No official CUDA .deb package -- source build only, see package_dependency_strategy above.",
+      "No CI GPU hardware -- the new CI leg (release-candidate-style build-only check) confirms real compilation with a real CUDA toolkit (apt-installed on the GitHub-hosted runner), never real generation; only this dev host's own local, real hardware run provides real generation evidence.",
+      "The CUDA toolkit install itself required a genuinely large (~4.3 GiB) download from NVIDIA's own servers, which proved slow/flaky from this environment (multiple connection drops, required a resumable retry loop) -- unrelated to MEMBRANE itself, but a real, disclosed practical friction for anyone reproducing this setup from a similar environment."
+    ]
+  }
+}
