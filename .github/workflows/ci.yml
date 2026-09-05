@@ -950,7 +950,14 @@ jobs:
           test -f dist/membrane-cpu_*.deb
           test -f dist/membrane-cpu_*.sbom.json
           test -f dist/SHA256SUMS
-          sha256sum -c dist/SHA256SUMS
+          # SHA256SUMS records paths relative to dist/ itself (build-
+          # release.sh generates it from inside $OUT_DIR) -- verifying
+          # it against dist/SHA256SUMS from the repo root instead
+          # (without cd'ing in first) is a real bug this exact CI step
+          # hit on its first real run: sha256sum then looked for
+          # ./membrane-cpu_*.deb relative to the repo root, not dist/,
+          # and failed with "No such file or directory".
+          (cd dist && sha256sum -c SHA256SUMS)
           python3 -c "import json; d = json.load(open([p for p in __import__('glob').glob('dist/*.sbom.json')][0])); assert d['bomFormat'] == 'CycloneDX'; assert len(d['components']) > 0"
 
       - name: Upload release-candidate artifacts
