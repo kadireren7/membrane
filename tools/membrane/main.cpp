@@ -88,10 +88,14 @@ static void	print_usage(FILE *out)
 	fprintf(out, "\n");
 	fprintf(out, "install options:\n");
 	fprintf(out, "  --quant QUANT                       exact variant to "
-		"install, e.g. Q4_K_M (default: the smallest available --\n");
+		"install, e.g. Q4_K_M (default: the largest variant\n");
 	fprintf(out, "                                       "
-		"no hardware-aware selection yet, see docs/model-catalog.md)\n");
+		"real, current host memory is estimated to fit -- see\n");
+	fprintf(out, "                                       "
+		"docs/model-variant-selection.md)\n");
 	fprintf(out, "  --variant QUANT                     alias for --quant\n");
+	fprintf(out, "  --dry-run                           show which "
+		"variant would be selected/why, no download\n");
 	fprintf(out, "\n");
 	fprintf(out, "serve options:\n");
 	fprintf(out, "  --port N                           listen port "

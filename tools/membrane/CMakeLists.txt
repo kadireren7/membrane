@@ -233,6 +233,20 @@ set_target_properties(membrane_download_manager PROPERTIES
 target_link_libraries(membrane_download_manager PUBLIC membrane_sanitizers
   membrane_fs_util membrane_subprocess CURL::libcurl)
 
+# Mega Phase D, PR D2: hardware-aware variant selection (variant_
+# selector.h's own top comment) -- pure, reuses the existing, already-
+# documented membrane_host_memory_guard_resolve() (host_memory_guard.h,
+# a top-level llama-free library, Phase 34) rather than a second,
+# independently-drifting "does this fit" implementation.
+add_library(membrane_variant_selector STATIC variant_selector.cpp)
+set_target_properties(membrane_variant_selector PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_variant_selector PUBLIC membrane_sanitizers
+  membrane_model_catalog membrane_host_memory_guard)
+target_include_directories(membrane_variant_selector PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run)
+
 add_executable(membrane main.cpp model_cmd.cpp)
 set_target_properties(membrane PROPERTIES
   CXX_STANDARD 17
@@ -242,7 +256,7 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_runtime_session membrane_server membrane_service_cmd
   membrane_status_client membrane_server_config membrane_doctor_cmd
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
-  llama)
+  membrane_variant_selector llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
   ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
@@ -301,6 +315,18 @@ if(MEMBRANE_BUILD_TESTS)
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_download_manager COMMAND test_download_manager)
 
+  # Mega Phase D, PR D2: pure unit tests for hardware-aware variant
+  # selection -- synthetic hardware facts, no real /proc read.
+  add_executable(test_variant_selector test_variant_selector.cpp)
+  set_target_properties(test_variant_selector PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_variant_selector PRIVATE
+    membrane_variant_selector)
+  target_include_directories(test_variant_selector PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_variant_selector COMMAND test_variant_selector)
+
   # Mega Phase A, PR A3: black-box HTTP tests (test_server.cpp's own top
   # comment) against a real membrane_server_run() instance -- CI-safe, no
   # real GGUF model (an isolated, empty temp-directory registry).
@@ -344,8 +370,9 @@ if(MEMBRANE_BUILD_TESTS)
     CXX_STANDARD_REQUIRED ON)
   target_link_libraries(test_setup_cmd PRIVATE membrane_setup_cmd
     membrane_registry_core membrane_server_config membrane_product_cli
-    membrane_gpu_device membrane_runtime_core membrane_model_catalog
-    membrane_download_manager llama)
+    membrane_gpu_device membrane_runtime_core membrane_runtime_session
+    membrane_model_catalog membrane_download_manager
+    membrane_variant_selector llama)
   target_include_directories(test_setup_cmd PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${CMAKE_SOURCE_DIR}/tools/membrane-run

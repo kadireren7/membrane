@@ -15,11 +15,13 @@
 
 #include "gpu_device.h"
 #include "runtime_core.h"
+#include "runtime_session.h"
 #include "product_cli.h"
 #include "server_config.h"
 #include "model_catalog.h"
 #include "download_manager.h"
 #include "fs_util.h"
+#include "variant_selector.h"
 
 using json = nlohmann::json;
 
@@ -551,6 +553,7 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 {
 	std::string	name;
 	std::string	requested_quant;
+	bool		dry_run = false;
 
 	for (size_t i = 0; i < args.size(); ++i)
 	{
@@ -560,13 +563,18 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 			requested_quant = args[++i];
 			continue ;
 		}
+		if (args[i] == "--dry-run")
+		{
+			dry_run = true;
+			continue ;
+		}
 		if (name.empty())
 			name = args[i];
 	}
 	if (name.empty())
 	{
 		print_err(want_json, "CLI_ERROR", "usage: membrane model install "
-			"NAME [--quant QUANT]");
+			"NAME [--quant QUANT] [--dry-run]");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
 	membrane_catalog_t	cat = membrane_catalog_load();
@@ -580,6 +588,17 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
 	const membrane_catalog_variant_t	*variant = NULL;
+	membrane_host_meminfo_t	meminfo;
+
+	membrane_read_host_meminfo(&meminfo);
+
+	membrane_variant_selector_input_t	hw;
+
+	hw.host_total_bytes = meminfo.total_bytes;
+	hw.host_available_bytes = meminfo.available_bytes;
+	hw.host_available_known = meminfo.ok;
+
+	std::vector<membrane_variant_fit_t>	considered;
 
 	if (!requested_quant.empty())
 	{
@@ -592,17 +611,81 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 				+ "` for the real list");
 			return (MEMBRANE_EXIT_CLI_ERROR);
 		}
+		/* Section 12: an explicit user choice is hard -- always
+		 * honored, never blocked by this real fit estimate. But
+		 * Section 11 ("warn before download") still applies: disclose
+		 * a real, likely-to-fail estimate rather than silently
+		 * proceeding as if everything were fine. */
+		membrane_select_variant(*f, hw, &considered);
+		for (const auto &c : considered)
+		{
+			if (c.quant == variant->quant && !c.fits && !want_json)
+			{
+				printf("Warning: '%s' (%s) is estimated NOT to fit this "
+					"host's available memory (%s) -- proceeding anyway "
+					"because you asked for it explicitly. Consider a "
+					"smaller --quant, or `membrane model search` for a "
+					"smaller model.\n", f->name.c_str(),
+					variant->quant.c_str(), c.reason.c_str());
+				break ;
+			}
+		}
 	}
 	else
 	{
-		/* Mega Phase D, PR D1 has no hardware-aware variant selection
-		 * yet (that is D2's own, separate, real work) -- the smallest
-		 * available variant is the honest, documented, conservative
-		 * default in the meantime: most likely to actually fit,
-		 * never a guess dressed up as an intelligent recommendation. */
-		for (const auto &v : f->variants)
-			if (variant == NULL || v.size_bytes < variant->size_bytes)
-				variant = &v;
+		/* Real, hardware-aware selection (Mega Phase D, PR D2) -- see
+		 * variant_selector.h's own top comment for the exact,
+		 * deterministic policy (largest variant estimated to fit,
+		 * reusing host_memory_guard.h's own already-documented reserve
+		 * policy). */
+		variant = membrane_select_variant(*f, hw, &considered);
+		if (variant == NULL)
+		{
+			std::string	alternatives;
+
+			for (const auto &c : considered)
+				alternatives += "\n  " + c.quant + ": " + c.reason;
+			print_err(want_json, "NO_FEASIBLE_VARIANT", std::string("no "
+				"variant of '") + f->name + "' is estimated to fit this "
+				"host's available memory. Considered:" + alternatives
+				+ "\nTry a smaller model (`membrane model search`), or "
+				"force a specific variant anyway with --quant.");
+			return (MEMBRANE_EXIT_MODEL_ERROR);
+		}
+	}
+	if (dry_run)
+	{
+		/* Section 11 of the task: "before downloading a 10+ GB model,
+		 * estimate if it can reasonably fit" -- reports the real
+		 * selection decision (or every real reason nothing fits)
+		 * without ever touching the network. */
+		if (want_json)
+		{
+			json	j;
+
+			j["ok"] = true;
+			j["name"] = f->name;
+			j["selected_quant"] = variant->quant;
+			j["selected_size_bytes"] = variant->size_bytes;
+			json	arr = json::array();
+
+			for (const auto &c : considered)
+				arr.push_back({{"quant", c.quant}, {"fits", c.fits},
+					{"reason_code", c.reason_code}, {"reason", c.reason}});
+			j["considered"] = arr;
+			printf("%s\n", j.dump().c_str());
+		}
+		else
+		{
+			printf("Would install '%s' (%s, %.1f MiB) -- dry run, no "
+				"download performed.\n", f->name.c_str(),
+				variant->quant.c_str(),
+				(double)variant->size_bytes / (1024.0 * 1024.0));
+			for (const auto &c : considered)
+				printf("  %-10s %s: %s\n", c.quant.c_str(),
+					c.fits ? "fits" : "does not fit", c.reason.c_str());
+		}
+		return (MEMBRANE_EXIT_SUCCESS);
 	}
 	std::string	install_dir = membrane_registry_models_install_dir();
 

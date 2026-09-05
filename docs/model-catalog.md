@@ -21,10 +21,10 @@ network dependency, the same principle this project already applies
 to inference itself (`docs/server.md`'s own "no telemetry, no external
 network calls"). Only `install` makes a real network call.
 
-`install` with no `--quant` picks the **smallest available variant** —
-an honest, conservative, non-hardware-aware default. Mega Phase D, PR
-D2 (a separate, later PR) adds real hardware-aware variant selection;
-this PR does not pretend to have it yet.
+`install` with no `--quant` picks the largest variant real, current
+host memory is estimated to fit — real, hardware-aware selection (Mega
+Phase D, PR D2). See `docs/model-variant-selection.md` for the exact
+policy. `--dry-run` reports the decision without downloading anything.
 
 ## Source policy
 

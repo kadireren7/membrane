@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "phase": "mega-phase-d-model-catalog",
-  "membrane_commit": "PENDING -- updated as PR D1 actually merges",
+  "membrane_commit": "e0dbad7abbe963730b6846d97eabbc8d47d15d99",
   "generated_at": "2026-09-05T14:00:00Z",
   "pr_squash_shas": {
-    "D1": "PENDING"
+    "D1": "e0dbad7abbe963730b6846d97eabbc8d47d15d99"
   },
   "note": "Mega Phase D (PRs D1-D8): 'Install Once, Use It' -- model catalog, auto download, quant selection, cross-platform backends, client compatibility. This file covers PR D1 (model catalog + download manager) specifically. REAL rows are genuine local invocations (including a real HTTPS download against a real Hugging Face repository) on this dev host. SOURCE_ANALYSIS rows are direct code-reading confirmations, not runs.",
   "catalog_data_verification": {
@@ -18,7 +18,7 @@
   "download_manager": {
     "label": "REAL",
     "pr": "D1",
-    "squash_sha": "PENDING",
+    "squash_sha": "e0dbad7abbe963730b6846d97eabbc8d47d15d99",
     "evidence": [
       "libcurl (not cpp-httplib+OpenSSL) chosen specifically because this dev host had no root access to install libssl-dev this session, while libcurl4-openssl-dev's dev headers were already present -- a real, available system dependency, not a new one requiring root.",
       "Real end-to-end install: `membrane model install smollm2-135m-instruct --quant Q4_K_M` in an isolated environment (MEMBRANE_MODELS_PATH/MEMBRANE_MODELS_INSTALL_DIR test-hook overrides). Real ~100 MiB HTTPS download from https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF, completed in ~100s. Real file size (105454144 bytes) and real SHA-256 (ed5fa30c...) both matched the catalog's own recorded values exactly. Real GGUF validation succeeded (arch=llama, model_max_context=8192). Real registry entry created.",

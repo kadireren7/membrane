@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "phase": "mega-phase-d-model-variant-selection",
+  "membrane_commit": "PENDING -- updated as PR D2 actually merges",
+  "generated_at": "2026-09-05T15:00:00Z",
+  "pr_squash_shas": {
+    "D1": "e0dbad7abbe963730b6846d97eabbc8d47d15d99",
+    "D2": "PENDING"
+  },
+  "note": "Mega Phase D, PR D2: hardware-aware quant/model variant selection. D1's own real squash SHA backfilled here (not as a standalone post-merge main commit), matching this mega-phase's own convention.",
+  "policy_and_reuse": {
+    "label": "SOURCE_ANALYSIS",
+    "evidence": [
+      "variant_selector.h/.cpp is pure (no /proc read, no llama/ggml) -- reuses host_memory_guard.h's own already-documented membrane_host_memory_guard_resolve() (Phase 34's own 256 MiB fixed + 10% reserve policy, derived from real measurement) rather than a second, independently-drifting 'does this fit' implementation.",
+      "The real host-facts gathering (membrane_read_host_meminfo(), runtime_session.h) is the SAME real /proc/meminfo reader every other host-memory-aware feature in this project already uses -- confirmed via code reading, not a new implementation."
+    ]
+  },
+  "real_dry_run_evidence": {
+    "label": "REAL",
+    "evidence": [
+      "Real `membrane model install smollm2-135m-instruct --dry-run` on this dev host (675 MiB available at the time): all 4 variants (Q4_K_M/Q5_K_M/Q8_0/F16) correctly reported HOST_MEMORY_FIT; F16 (the largest, highest-precision) correctly selected.",
+      "Real `membrane model install smollm2-360m-instruct --dry-run` (709 MiB available): Q4_K_M correctly fit, F16 correctly reported HOST_MEMORY_INSUFFICIENT (required=725553760 reserve=268435456 available=709120000, real arithmetic verified by hand: 725553760+268435456=993989216 > 709120000) -- Q4_K_M (the largest FITTING variant) correctly selected.",
+      "Real `membrane model install qwen2.5-1.5b-instruct --dry-run` (709 MiB available): every one of the 4 variants correctly reported HOST_MEMORY_INSUFFICIENT with its own real numbers -- install correctly refused outright (exit code 3, NO_FEASIBLE_VARIANT), with every considered variant's own real reason printed, never silently picking an oversized one.",
+      "Real explicit-override test: `--quant Q4_K_M --dry-run` against qwen2.5-1.5b-instruct (a variant the real estimate says does not fit) printed a real warning ('proceeding anyway because you asked for it explicitly') and still proceeded (exit 0) -- confirming Section 12's own 'explicit user choice is hard' requirement.",
+      "All four dry-run scenarios were exercised live against this host's own real, fluctuating available memory (not a synthetic/mocked value) -- the exact numbers differ slightly between the two SmolLM2 checks (675 vs 709 MiB available) because real memory pressure on this shared dev host changed between the two real invocations, itself confirming these are real /proc reads, not a fixed test fixture."
+    ]
+  },
+  "unit_tests": {
+    "label": "SYNTHETIC",
+    "evidence": [
+      "test_variant_selector: 5 pure unit tests (synthetic hardware facts, no real /proc read) -- selects the largest fitting variant, selects a smaller variant under tight synthetic memory, returns NULL with every variant's own reason when none fit, fails closed on unknown/unreadable memory (never assumes infinite RAM), and confirms determinism (identical inputs -> identical output). CI-safe, llama-free. ASan/UBSan clean."
+    ]
+  },
+  "known_limitations": {
+    "label": "SOURCE_ANALYSIS",
+    "items": [
+      "The catalog's size_bytes (real download size) is used as a proxy for host-resident footprint -- reasonable for these small/mid catalog models at a modest context, not validated against a much larger (10+ GB) model where KV-cache-at-a-large-context could matter more. See docs/model-variant-selection.md.",
+      "No VRAM/GPU-layer-aware selection -- this module only decides whether downloading a variant is reasonable at all; the existing joint planner still separately decides GPU offload once the model is actually loaded.",
+      "The real dry-run evidence above happened to hit a genuinely memory-constrained window on this shared dev host (was not deliberately engineered to demonstrate the refusal path) -- both the 'everything fits' and 'nothing fits' outcomes were captured as they occurred naturally, not staged."
+    ]
+  }
+}
