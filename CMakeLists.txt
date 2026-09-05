@@ -440,6 +440,28 @@ if(MEMBRANE_ENABLE_LLAMA)
     endif()
   endif()
 
+  # Mega Phase D, PR D3: same real-toolchain, MEMBRANE-specific-error
+  # pre-check as the Vulkan block above, for the same reason -- fail
+  # here, before descending into third_party/llama.cpp's own ggml-cuda/
+  # CMakeLists.txt (which does its own find_package(CUDAToolkit), with
+  # a message that never mentions MEMBRANE). GGML_CUDA is llama.cpp's
+  # own option name (not defined by this file), read here only to
+  # decide whether to run this pre-check -- it does not change
+  # llama.cpp's own handling of the flag.
+  if(GGML_CUDA)
+    find_package(CUDAToolkit QUIET)
+    if(NOT CUDAToolkit_FOUND)
+      message(FATAL_ERROR
+        "CUDA backend requested (-DGGML_CUDA=ON) but no CUDA Toolkit "
+        "was found. Install the NVIDIA CUDA Toolkit (nvcc + cudart + "
+        "cublas) for your distribution, or point CMake at a non-"
+        "standard install with -DCUDAToolkit_ROOT=/path/to/toolkit "
+        "(see docs/cuda-backend.md), then re-run cmake. A real NVIDIA "
+        "GPU + driver alone (nvidia-smi working) is NOT sufficient --"
+        "the compiler toolkit is a separate install.")
+    endif()
+  endif()
+
   set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
   set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)

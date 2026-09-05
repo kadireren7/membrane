@@ -139,8 +139,28 @@ def _c5():
 	return len(bad) == 0, "; ".join(bad) if bad else "label/release_type/base_prerelease correct"
 
 
-@check("live compatibility counts (unchanged since v0.3.0) match what "
-	"docs/release-v0.4.0.md and the readiness evidence both claim")
+# RETIRED (Mega Phase D, PR D3): this check's entire premise -- that the
+# LIVE compatibility.json row counts must still match what v0.4.0's own
+# release notes/readiness evidence claimed at release time ("this
+# release adds no new architecture/model validation") -- is now
+# permanently, deliberately false going forward. v0.4.0 already shipped
+# and is not being re-released; Mega Phase D (PR D3 onward) legitimately
+# adds real new compatibility rows (CUDA backend: MC-23 updated, MC-27/
+# MC-28/MC-29 added) post-release, on main, exactly as the mega-phase's
+# own task requires. That is not a regression in v0.4.0's own historical
+# claim -- v0.4.0's release-time snapshot (results/release-v0.4.0/
+# readiness.json's own compatibility_counts field, docs/release-v0.4.0.md's
+# own cited numbers) stays exactly as committed and is not touched by
+# this or any later PR; only the LIVE working tree's compatibility.json
+# is expected to keep moving. Same precedent this project has used
+# repeatedly for a check whose own premise later became obsolete (e.g.
+# scripts/verify-release-v0.3.0.py's own retirement once v0.4.0
+# superseded it; scripts/verify-compatibility.py's check_no_cuda_option()
+# retirement this same PR) -- the FUNCTION itself is kept, unwired from
+# main(), for historical reference. Every OTHER check in this file
+# (README says stable v0.4.0, historical v0.3.0-and-earlier files
+# untouched, package policy, no-overclaim, PR C1/C2/C3 SHAs) has no such
+# live-vs-frozen-snapshot dependency and stays wired.
 def _c6():
 	compat = json.loads(COMPAT_JSON_PATH.read_text())
 	rows = compat["rows"]
@@ -278,7 +298,10 @@ def _c12():
 
 
 def main():
-	for fn in (_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12):
+	# _c6 retired (see its own comment) -- Mega Phase D legitimately
+	# moves the live compatibility.json counts past v0.4.0's own frozen
+	# release-time snapshot.
+	for fn in (_c1, _c2, _c3, _c4, _c5, _c7, _c8, _c9, _c10, _c11, _c12):
 		fn()
 	print(f"\n{CHECK_COUNT - len(FAILURES)}/{CHECK_COUNT} checks passed")
 	if FAILURES:

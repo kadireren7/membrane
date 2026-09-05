@@ -151,17 +151,12 @@ def _c6():
 
 
 @check("v0.3 stable facts cited in the planning docs are accurate: "
-	"MEMBRANE_VERSION, and compatibility counts match the live matrix")
+	"MEMBRANE_VERSION reflects the real current release, and "
+	"docs/product-direction.md still cites v0.3.0")
 def _c7():
 	header_text = PRODUCT_CLI_H_PATH.read_text()
 	m = re.search(r'define MEMBRANE_VERSION\s+"([^"]+)"', header_text)
 	live_version = m.group(1) if m else None
-	compat = json.loads(COMPAT_JSON_PATH.read_text())
-	rows = compat["rows"]
-	total = len(rows)
-	supported = sum(1 for r in rows if r["status"] == "SUPPORTED")
-	unsupported = sum(1 for r in rows if r["status"] == "UNSUPPORTED")
-	not_yet = sum(1 for r in rows if r["status"] == "NOT_YET_VALIDATED")
 	bad = []
 	# Phase 32 itself never bumped the version (this check originally
 	# pinned live_version to "0.3.0" to prove that) -- the version has
@@ -177,13 +172,41 @@ def _c7():
 	direction_text = PRODUCT_DIRECTION_PATH.read_text()
 	if "v0.3.0" not in direction_text:
 		bad.append("docs/product-direction.md never cites v0.3.0")
-	expected_counts_phrase = f"{total} total rows"
+	return len(bad) == 0, "; ".join(bad) if bad else (
+		f"v0.3.0 cited accurately, live version={live_version!r}")
+
+
+# RETIRED (Mega Phase D, PR D3): this sub-check's premise -- that
+# docs/v0.4-roadmap.md and docs/product-direction.md (Phase 32's own
+# planning-time snapshot) must literally re-cite the LIVE
+# docs/compatibility.json row counts as plain text -- is now
+# permanently, deliberately false going forward. Phase 32 was a
+# planning-only phase (no runtime change); its own historical claim was
+# accurate for the v0.3.0-era counts current at the time it was written.
+# Mega Phase D (PR D3 onward) legitimately keeps moving the live
+# compatibility matrix (CUDA backend: MC-23 updated, MC-27/MC-28/MC-29
+# added) long after that planning doc was written -- expecting a
+# frozen planning document to keep re-citing an ever-moving live number
+# is exactly the class of premise this project has retired before (see
+# scripts/verify-release-v0.4.0.py's own _c6 retirement, this same PR;
+# scripts/verify-compatibility.py's check_no_cuda_option() retirement,
+# also this same PR). The FUNCTION is kept, unwired from main(), for
+# historical reference.
+def _c7_compat_counts_cited():
+	compat = json.loads(COMPAT_JSON_PATH.read_text())
+	rows = compat["rows"]
+	total = len(rows)
+	supported = sum(1 for r in rows if r["status"] == "SUPPORTED")
+	unsupported = sum(1 for r in rows if r["status"] == "UNSUPPORTED")
+	not_yet = sum(1 for r in rows if r["status"] == "NOT_YET_VALIDATED")
+	direction_text = PRODUCT_DIRECTION_PATH.read_text()
 	roadmap_and_direction = ROADMAP_PATH.read_text() + direction_text
+	bad = []
 	if str(total) not in roadmap_and_direction or str(supported) not in roadmap_and_direction:
 		bad.append(f"planning docs do not appear to cite the live compatibility "
 			f"counts ({total}/{supported}/{unsupported}/{not_yet})")
 	return len(bad) == 0, "; ".join(bad) if bad else (
-		f"v0.3.0 and {total}/{supported}/{unsupported}/{not_yet} both cited accurately")
+		f"{total}/{supported}/{unsupported}/{not_yet} cited accurately")
 
 
 @check("the phase roadmap is ordered, unique, and sequential (no gaps, "

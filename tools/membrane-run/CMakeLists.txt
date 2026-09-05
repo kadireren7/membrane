@@ -148,8 +148,11 @@ if(BUILD_SHARED_LIBS)
   # (confirmed directly: a Vulkan build's installed binary failed with
   # "cannot open shared object file: libggml-vulkan.so.0" before
   # ggml-vulkan was added to this list -- see docs/install.md).
+  # Mega Phase D, PR D3: ggml-cuda joins this list the same way ggml-
+  # vulkan did -- only exists on a -DGGML_CUDA=ON configure, the
+  # existing TARGET guard below skips it cleanly otherwise.
   foreach(_membrane_run_dep IN ITEMS llama ggml ggml-base ggml-cpu
-      ggml-blas ggml-vulkan membrane_core)
+      ggml-blas ggml-vulkan ggml-cuda membrane_core)
     if(TARGET ${_membrane_run_dep})
       # membrane_core's own SHARED/STATIC-ness follows BUILD_SHARED_LIBS
       # at the point its add_library() call is evaluated, at the top of
