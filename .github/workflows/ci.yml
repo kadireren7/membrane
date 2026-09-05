@@ -405,6 +405,23 @@ jobs:
       - name: Verify model-catalog evidence and docs
         run: python3 scripts/verify-model-catalog.py
 
+  # Mega Phase D, PR D2: validates the committed hardware-aware
+  # variant-selection evidence and a handful of source-level regression
+  # guards (largest-fitting-variant policy, reuse of host_memory_guard.h,
+  # explicit --quant always honored, --dry-run never touches the
+  # network, no overclaim) -- python3 + checkout only, no C/C++ build,
+  # no real network call.
+  model-variant-selection-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify model-variant-selection evidence and docs
+        run: python3 scripts/verify-model-variant-selection.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
@@ -502,16 +519,20 @@ jobs:
       # file's own top comment for why the real network path is
       # verified manually instead) both confirmed llama-free the same
       # way test_doctor_cmd was -- join this same cheap job.
+      # Mega Phase D, PR D2: test_variant_selector (pure, no /proc read
+      # of its own) confirmed llama-free the same way -- joins this same
+      # cheap job.
       - name: Build (target-scoped -- no llama/ggml compilation)
         run: |
           cmake --build build-service-lifecycle-tests -j2 --target \
             test_systemd_unit test_server_config test_fs_util test_subprocess \
             test_utf8_stream test_stream_queue test_request_admission \
-            test_doctor_cmd test_model_catalog test_download_manager
+            test_doctor_cmd test_model_catalog test_download_manager \
+            test_variant_selector
       - name: Test
         run: |
           ctest --test-dir build-service-lifecycle-tests --output-on-failure \
-            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$|^test_utf8_stream$|^test_stream_queue$|^test_request_admission$|^test_doctor_cmd$|^test_model_catalog$|^test_download_manager$'
+            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$|^test_utf8_stream$|^test_stream_queue$|^test_request_admission$|^test_doctor_cmd$|^test_model_catalog$|^test_download_manager$|^test_variant_selector$'
 
   # Mega Phase B, PR B2: TSan cannot be combined with the ASan/UBSan
   # configure service-lifecycle-tests above already uses (see this
