@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "phase": "mega-phase-c-product-onboarding",
+  "membrane_commit": "PENDING -- updated as PR C1 actually merges",
+  "generated_at": "2026-09-05T00:00:00Z",
+  "pr_squash_shas": {
+    "C1": "PENDING"
+  },
+  "note": "Mega Phase C (PRs C1-C4): turns the development tree into a coherent, installable, diagnosable, upgradeable, release-quality local AI product culminating in v0.4.0 stable. This file covers PR C1 (product onboarding: `membrane setup`/`membrane doctor`) specifically -- C2 (packaging/supply chain), C3 (API/runtime hardening), and C4 (v0.4.0 release) each get their own scoped evidence file, matching this mega-phase's own PR structure (four distinct product areas, not one continuously-extended feature) rather than Mega Phase B's single shared file. REAL rows are genuine local invocations on this dev host (or a real, isolated Docker container for the fresh-environment audit). SYNTHETIC rows are ctest-registered unit tests with no real GGUF model dependency (CI-safe). SOURCE_ANALYSIS rows are direct code-reading confirmations, not runs.",
+  "first_product_audit": {
+    "label": "REAL",
+    "note": "Section 2 of the task: performed BEFORE writing any C1 code, from a REAL fresh `ubuntu:24.04` Docker container (memory-bounded to 768MB to protect this dev host's own tight real memory, never touching the two other, unrelated, already-running containers on this host) -- a real .deb built from this project's own build tree, installed via `apt-get install ./membrane.deb`, walked through exactly the flow a genuinely new user would follow.",
+    "friction_found": [
+      {
+        "finding": "No unified onboarding command existed -- a new user had to know and run, in order, `membrane model add`, `membrane service install`, `membrane service start`, with nothing guiding them through it.",
+        "severity": "HIGH",
+        "addressed_by": "membrane setup (this PR)"
+      },
+      {
+        "finding": "No unified diagnostic command existed for the product/service surface (`membrane-run --doctor` exists, but only checks the raw inference tool's own hardware view, never registry/config/service/HTTP state together).",
+        "severity": "HIGH",
+        "addressed_by": "membrane doctor (this PR)"
+      },
+      {
+        "finding": "`membrane service start`/`status` failed unhelpfully (\"(no output)\") when systemctl itself was not installed at all (confirmed directly: a bare `ubuntu:24.04` container has no systemctl) -- `service install` also silently \"succeeded\" (wrote a real unit file) even though the service could never actually run there, giving false confidence.",
+        "severity": "HIGH",
+        "addressed_by": "membrane doctor's own systemctl-availability check (execvp's real exit-code-127 signal, never a shelled-out `which`), and `membrane setup` skipping service steps cleanly with a clear message when it is absent"
+      },
+      {
+        "finding": "A genuinely minimal Ubuntu image has no `curl` (or any HTTP client) at all -- the README's own curl quickstart examples assume one is present, which is not guaranteed on a fresh minimal install. `membrane status`/`membrane doctor` already work around this with their own built-in HTTP client.",
+        "severity": "MEDIUM",
+        "addressed_by": "membrane doctor/setup use httplib::Client directly, never assume curl; noted as a real, non-MEMBRANE-fixable environmental fact"
+      },
+      {
+        "finding": "A base/non-instruct model (no chat template) registers fine but only fails at chat-completion TIME with CHAT_TEMPLATE_UNAVAILABLE -- the error itself is real, clear, and honest, but nothing warns at `model add`/`setup` time.",
+        "severity": "LOW",
+        "addressed_by": "not addressed this PR -- disclosed as a known limitation, not invented a fix for without more evidence of real user impact"
+      }
+    ],
+    "positive_findings": [
+      "`apt install ./membrane.deb`, `membrane model add`, `membrane status --json`, and package removal (correctly preserving user registry/config) all worked cleanly with zero surprises.",
+      "Package install correctly pulled in its one real runtime dependency (libgomp1) automatically via apt's own dependency resolution."
+    ]
+  },
+  "membrane_doctor": {
+    "label": "REAL",
+    "pr": "C1",
+    "squash_sha": "PENDING",
+    "evidence": [
+      "Orchestrates (never duplicates) membrane-run --doctor --json for hardware/RAM (real subprocess call, real CPU/GPU/RAM data confirmed against this dev host's own real values), registry_core.h for the model registry (real stat()-based staleness check, same primitive `membrane model list` already uses), server_config.h for config/default_model, systemd_unit.h/subprocess.h for the installed service, status_client.h for live HTTP status.",
+      "Real invocation against an isolated, empty environment: overall OK (with MEMBRANE_RUN_EXEC_PATH set to the real co-located membrane-run binary, matching real packaging). Real invocation against a genuinely low-memory moment on this dev host (measured ~508MB available) correctly WARNed on the hardware check with an honest, actionable message.",
+      "Real stale-model and dangling-default-model scenarios both correctly WARN (never ERROR) -- confirmed via a real registered-then-deleted model file and a real dangling default_model pointing at an unregistered name.",
+      "Real malformed-config scenario correctly reports ERROR (fails closed, matching server_config.h's own existing schema_version contract) -- the only check level that can produce ERROR, matching Section 10's own \"warnings are never fatal\" rule (exit code stays 0 unless a real ERROR exists).",
+      "test_doctor_cmd: 5 ctest-registered tests (empty environment, stale model, dangling default, malformed config, and a real no-systemctl simulation via an empty PATH directory -- exercising the exact real audit finding above deterministically, without needing a container). ASan/UBSan clean."
+    ]
+  },
+  "membrane_setup": {
+    "label": "REAL",
+    "pr": "C1",
+    "squash_sha": "PENDING",
+    "evidence": [
+      "Orchestrates membrane_doctor_collect() (hardware/registry/service state), membrane_model_cmd_dispatch() (real GGUF-validating model add, real default_model set), and membrane_service_cmd_dispatch() (real systemd --user install/start) -- all as real in-process function calls, never a second implementation of any of them.",
+      "Real full end-to-end run on this dev host's own real systemd --user session: version -> hardware/RAM summary -> real model registration (SmolLM2-135M-Instruct) -> real default-model set -> real service install -> real service start -> real GET /health and GET /v1/models both answering correctly -> final endpoint summary. Confirmed via `membrane doctor` immediately afterward: every check OK.",
+      "Real idempotence proof: running the exact same command a second time against the already-configured state reported 'already registered'/'already the default model'/'already installed'/'already running' cleanly -- no duplicate registry entry, no re-installed unit, no error.",
+      "Real conflict-detection proof: attempting to register a DIFFERENT file under an already-used name is refused with a clear, actionable message (never silently overwriting the existing entry) -- the original entry confirmed completely unchanged afterward.",
+      "Real rollback-reporting proof: an invalid GGUF file is rejected by the real GGUF validator (membrane_gpu_estimate_model(), the same one `membrane model add` uses) with the exact real llama.cpp error message, followed by setup's own 'stopping here, nothing else has been changed' message and a concrete recovery command -- confirmed no service/config state was touched.",
+      "A REAL startup-timing race was found and fixed while testing the verify-endpoint step: `membrane service start` returning success does not guarantee the listener has bound the port yet (the same real race server.cpp's own svr.wait_until_ready() already had to account for) -- an immediate single GET /health could see a real, transient connection-refused for a genuinely healthy service. Fixed with a bounded (~3s) retry poll, skipped entirely when no service was expected to be running (--no-service, or systemctl unavailable) to avoid a needless delay in that case.",
+      "A REAL JSON-output design bug was found and fixed: calling the reused model/service dispatch functions with want_json=false does not make them silent, it makes them print HUMAN text -- `membrane --json setup` was printing prose ahead of its own JSON summary line. Fixed with a small RAII stdout-redirect-to-/dev/null helper used only around those specific reused calls when the OUTER call is itself in JSON mode; confirmed via a real invocation that produces EXACTLY one valid JSON line, and via a real non-JSON invocation confirming the ordinary human narrative is completely unaffected.",
+      "test_setup_cmd: 4 ctest-registered tests (no-model-path skip, model-registration idempotence, model-registration conflict refusal, --no-service skip) -- all CI-safe, none requiring a real GGUF file (idempotence/conflict are resolved by setup's own pre-check before ever reaching real GGUF validation). ASan/UBSan clean."
+    ]
+  },
+  "cli_consistency": {
+    "label": "SOURCE_ANALYSIS",
+    "note": "Section 12 of the task: `membrane --help` now lists setup/doctor alongside every pre-existing command with the same style/formatting convention; both accept the project's existing global --json flag; `membrane status` (existing, thin HTTP client) and `membrane service status` (existing, systemd+HTTP) are deliberately left as two distinct, already-justified commands (server-reachability-only vs full service-lifecycle state) -- `membrane doctor` is the new THIRD, broader diagnostic surface, not a replacement for either, and does not duplicate their own real logic (calls membrane_fetch_server_status()/systemctl exactly as they already do)."
+  },
+  "known_limitations": {
+    "label": "SOURCE_ANALYSIS",
+    "items": [
+      "A base/non-instruct model with no chat template is only caught at chat-completion time (CHAT_TEMPLATE_UNAVAILABLE), not proactively warned about at `model add`/`setup` time -- disclosed real audit finding (LOW severity), not addressed this PR.",
+      "`membrane doctor`'s hardware check depends on locating a real `membrane-run` binary co-located with the running `membrane` binary (guaranteed by real packaging, Section 17) -- a dev build with the two binaries in separate build-tree subdirectories gracefully degrades to a WARN rather than failing, via the same MEMBRANE_RUN_EXEC_PATH test-hook override this project's other commands already use for isolated testing.",
+      "A queued/support-bundle command (`membrane diagnose`, Section 11 of the task) was deliberately NOT implemented this PR -- the task's own \"only if clearly useful\" framing, combined with the first product audit not surfacing a case doctor's own real checks don't already cover, made it a speculative addition rather than a response to observed friction (Section 2's own \"do not invent features before identifying actual friction\" rule)."
+    ]
+  }
+}

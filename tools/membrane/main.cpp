@@ -11,6 +11,8 @@
 #include "server_config.h"
 #include "service_cmd.h"
 #include "status_client.h"
+#include "doctor_cmd.h"
+#include "setup_cmd.h"
 #include "product_cli.h"
 
 using json = nlohmann::json;
@@ -45,6 +47,10 @@ static void	print_usage(FILE *out)
 		"OpenAI-compatible HTTP server (foreground)\n");
 	fprintf(out, "  membrane status                    check a running "
 		"`membrane serve`/service instance\n");
+	fprintf(out, "  membrane doctor                    unified diagnostic: "
+		"installation, hardware, registry, config, service, HTTP\n");
+	fprintf(out, "  membrane setup                     guided first-run: "
+		"register a model, install/start the service, verify it\n");
 	fprintf(out, "  membrane service install           install membrane."
 		"service as a systemd --user unit\n");
 	fprintf(out, "  membrane service uninstall         remove it\n");
@@ -61,6 +67,16 @@ static void	print_usage(FILE *out)
 		"of this binary's own real path\n");
 	fprintf(out, "  --force                              overwrite a "
 		"same-named unit MEMBRANE did not create\n");
+	fprintf(out, "\n");
+	fprintf(out, "setup options:\n");
+	fprintf(out, "  --model PATH                        GGUF to register "
+		"(prompted for interactively if omitted)\n");
+	fprintf(out, "  --model-name NAME                   name to register "
+		"it under (derived from the filename if omitted)\n");
+	fprintf(out, "  --yes                                assume safe "
+		"defaults, never prompt (for automation)\n");
+	fprintf(out, "  --no-service                         skip service "
+		"install/start (e.g. no systemd in this environment)\n");
 	fprintf(out, "\n");
 	fprintf(out, "serve options:\n");
 	fprintf(out, "  --port N                           listen port "
@@ -182,6 +198,20 @@ int	main(int argc, char **argv)
 				args.end());
 
 		return (membrane_service_cmd_dispatch(service_args, want_json));
+	}
+	if (args[0] == "doctor")
+	{
+		std::vector<std::string>	doctor_args(args.begin() + 1,
+				args.end());
+
+		return (membrane_doctor_cmd_dispatch(doctor_args, want_json));
+	}
+	if (args[0] == "setup")
+	{
+		std::vector<std::string>	setup_args(args.begin() + 1,
+				args.end());
+
+		return (membrane_setup_cmd_dispatch(setup_args, want_json));
 	}
 	if (args[0] == "status")
 	{
