@@ -2,8 +2,8 @@
   "schema_version": 1,
   "policy_version": 1,
   "phase": "31-stable-release (policy first decided in phase 30-first-run-polish, unchanged since)",
-  "product_version": "0.3.0",
-  "debian_version": "0.3.0",
+  "product_version": "0.4.0",
+  "debian_version": "0.4.0",
   "debian_version_mapping_rule": "replace every '-' with '~' (CMakeLists.txt: string(REPLACE \"-\" \"~\" ...) applied to MEMBRANE_VERSION from tools/membrane-run/product_cli.h) -- Debian Policy 5.6.12, so a prerelease always sorts before its eventual stable release. A stable version has no hyphen, so the rule is a no-op here: '0.3.0' in, '0.3.0' out (confirmed directly: the built package's own Version: field reads exactly '0.3.0', no ~rc suffix).",
   "decision": {
     "id": "one-official-vulkan-enabled-package",

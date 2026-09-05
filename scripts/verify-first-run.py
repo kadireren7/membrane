@@ -197,7 +197,11 @@ def _c8():
 		return False, "no official artifact found in release-artifacts manifest"
 	pkg_name = official["package_name"]
 	text = DATA_PATH.read_text()
-	ok = f"{pkg_name}_0.3.0" in text or f"official {pkg_name}" in text.lower()
+	version_text = PRODUCT_CLI_H_PATH.read_text()
+	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', version_text)
+	live_version = m.group(1) if m else "0.0.0"
+	ok = (f"{pkg_name}_{live_version}" in text
+		or f"official {pkg_name}" in text.lower())
 	return ok, (f"first-run evidence references the official package "
 		f"{pkg_name!r}" if ok else f"first-run evidence never references "
 		f"the official package name {pkg_name!r} from the release-"

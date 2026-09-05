@@ -19,16 +19,16 @@ memory and model shape before committing to a plan, instead of a fixed
 
 ## Build
 
-Easiest path on Ubuntu/Debian/Pop!_OS: a `.deb` package
-(`sudo apt install ./membrane_<version>_amd64.deb`) — no manual CMake
-flags. That one package is Vulkan-enabled but runs correctly CPU-only
-(GPU offload stays opt-in, `--auto`/`--gpu-layers`); a CPU-only
-`membrane-cpu_<version>_amd64.deb` also exists as a CI-validation/
-build-your-own artifact. Release packages are produced by this
-project's build pipeline; none are hosted publicly yet, so build your
-own with `cmake --build <dir> --target package` (see
-[`docs/install.md`](docs/install.md)'s Option A). What follows here is
-building `membrane-run` directly from source.
+Easiest path on Ubuntu/Debian/Pop!_OS: download the latest `.deb` from
+[the Releases page](https://github.com/kadireren7/membrane/releases)
+and `sudo apt install ./membrane_<version>_amd64.deb` — no manual
+CMake flags. That one package is Vulkan-enabled but runs correctly
+CPU-only (GPU offload stays opt-in, `--auto`/`--gpu-layers`); a
+CPU-only `membrane-cpu_<version>_amd64.deb` also exists as a
+CI-validation/build-your-own artifact, not a release asset. You can
+also build a package yourself with `cmake --build <dir> --target
+package` (see [`docs/install.md`](docs/install.md)'s Option A). What
+follows here is building `membrane-run` directly from source.
 
 CPU-only:
 
@@ -272,19 +272,22 @@ live in
 **[kadireren7/membrane-research](https://github.com/kadireren7/membrane-research)**,
 with SHA256-verified provenance back to this repository.
 
-**Release status**: latest stable tag `v0.3.0` (supersedes `v0.2.0`,
-now historical). Built on `v0.3.0-rc3`'s Qwen2 compressed-KV support,
-performance-profiling/planner-substage timing diagnostics, and the
-fallback trace on a fully-exhausted error JSON, plus post-RC3 CLI/
-first-run/packaging polish (`--doctor`, `--list-devices`,
-`--inspect-model`, an official Debian-family amd64 `.deb` package) —
-see [docs/release-v0.3.0.md](docs/release-v0.3.0.md) for the full
-release notes. All real-run validation (CPU, NVIDIA Vulkan, AMD Vulkan
-RADV) is still from the maintainer's own development host plus
-container-based packaging checks — **independent multi-host validation
-remains limited**; this is disclosed as a known limitation, not hidden.
-CPU-only default behavior (no flags, or `--gpu-layers 0`) is unchanged
-by any of this.
+**Release status**: latest stable tag `v0.4.0` (supersedes `v0.3.0`,
+now historical). v0.3.0's own runtime/planner/packaging capabilities
+are unchanged; v0.4.0 adds one-command onboarding (`membrane setup`,
+`membrane doctor`), release-supply-chain maturity (reproducible `.deb`
+builds, an SBOM, a real registry schema-versioning fix), and API/
+runtime hardening (a frozen, doc-checked error contract, real soak/
+concurrency testing, a second real client beyond the Python SDK, a
+privacy/security source audit) — see
+[docs/release-v0.4.0.md](docs/release-v0.4.0.md) for the full release
+notes and [docs/upgrade-v0.3-to-v0.4.md](docs/upgrade-v0.3-to-v0.4.md)
+if you're upgrading from v0.3.0. All real-run validation (CPU, NVIDIA
+Vulkan, AMD Vulkan RADV) is still from the maintainer's own
+development host plus container-based packaging checks —
+**independent multi-host validation remains limited**; this is
+disclosed as a known limitation, not hidden. CPU-only default behavior
+(no flags, or `--gpu-layers 0`) is unchanged by any of this.
 
 ## AI-assisted development
 

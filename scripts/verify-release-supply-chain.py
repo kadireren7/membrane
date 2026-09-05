@@ -193,12 +193,11 @@ def _c11():
 		else f"bash: {bash_rc.stderr.strip()} python3: {py_rc.stderr.strip()}")
 
 
-@check("stable release still says v0.3.0 (no version bump during "
-	"Mega Phase C sub-PRs before C4)")
+@check("live MEMBRANE_VERSION is v0.4.0 (bumped by PR C4)")
 def _c12():
 	text = (REPO_ROOT / "tools" / "membrane-run" / "product_cli.h").read_text()
 	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', text)
-	ok = m is not None and m.group(1) == "0.3.0"
+	ok = m is not None and m.group(1) == "0.4.0"
 	return ok, f"MEMBRANE_VERSION={m.group(1) if m else '(not found)'}"
 
 

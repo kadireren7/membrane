@@ -18,7 +18,7 @@
 /* Single authoritative version string -- referenced by product_cli.cpp
  * (--version/--help) and main.cpp (startup summary, JSON output) so
  * a release version bump only needs to change this one line. */
-# define MEMBRANE_VERSION "0.3.0"
+# define MEMBRANE_VERSION "0.4.0"
 
 /* Phase 11A: --kv adaptive's CLI-level request value -- NOT a real
  * storage type (kv_store_telemetry.h's MEMBRANE_KV_STORE_NATIVE/Q8/Q5
