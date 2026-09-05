@@ -204,29 +204,20 @@ jobs:
       - name: Verify first-run UX evidence
         run: python3 scripts/verify-first-run.py
 
-  # Phase 31: validates v0.3.0 stable-release readiness (live tree
-  # state: MEMBRANE_VERSION, CITATION.cff, release notes, compatibility
-  # counts, official package policy, external-validation disclosure, no
-  # overclaim, README release status, and that the historical RC1/RC2/
-  # RC3 release docs/evidence remain untouched) -- python3 + checkout
-  # only, no GPU, no model download, no C/C++ build, no Docker. Same
-  # standalone-script/own-CI-job pattern as cli-ux-check/distribution-
-  # check/release-artifact-check/first-run-check above, not chained
-  # into verify-results.py -- see scripts/verify-release-v0.3.0.py's
-  # own docstring for why (this job is itself expected to need
-  # retirement once a future release supersedes v0.3.0, same as
-  # release-rc3-check before it -- see that job's removal in this same
-  # phase for the precedent).
-  release-v030-check:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Verify v0.3.0 stable-release readiness
-        run: python3 scripts/verify-release-v0.3.0.py
+  # Phase 31 added this job checking CURRENT/live state while v0.3.0
+  # was the latest stable release -- retired here, in Mega Phase C's
+  # own PR C4, now that v0.4.0 supersedes it, exactly the precedent
+  # this job's own comment predicted ("expected to need retirement once
+  # a future release supersedes v0.3.0, same as release-rc3-check
+  # before it"). scripts/verify-release-v0.3.0.py's assertions
+  # ("MEMBRANE_VERSION == 0.3.0", "CITATION.cff version == 0.3.0",
+  # README's release-status line naming v0.3.0 as latest stable) become
+  # permanently false by design once the version legitimately moves on
+  # -- the script FILE itself is untouched (still documents exactly
+  # what Phase 31 checked at the time), only this CI wiring is removed.
+  # scripts/verify-release-supply-chain.py's/verify-api-contract.py's/
+  # etc. own live-MEMBRANE_VERSION checks (updated to 0.4.0 this PR)
+  # are this job's successor for ongoing live-version tracking.
 
   # Phase 32: validates the v0.4 product-direction/roadmap planning
   # documents (docs/product-direction.md, docs/v0.4-roadmap.md,

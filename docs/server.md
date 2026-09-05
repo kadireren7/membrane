@@ -52,7 +52,7 @@ Then point any OpenAI-compatible client at `http://127.0.0.1:8642/v1`.
 
 ## Endpoints
 
-- `GET /health` — `{"status":"ok","version":"0.3.0"}`.
+- `GET /health` — `{"status":"ok","version":"0.4.0"}`.
 - `GET /v1/models` — every model currently in the registry
   (`membrane model add`), OpenAI `list` shape.
 - `GET /v1/status` — membrane-specific (not an OpenAI endpoint), backs

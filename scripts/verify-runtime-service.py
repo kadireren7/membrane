@@ -136,11 +136,11 @@ def _c7():
 	return len(bad) == 0, "; ".join(bad) if bad else "no premature release claim"
 
 
-@check("stable release still says v0.3.0")
+@check("live MEMBRANE_VERSION is v0.4.0 (bumped by Mega Phase C's own PR C4)")
 def _c8():
 	text = PRODUCT_CLI_H_PATH.read_text()
 	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', text)
-	ok = m is not None and m.group(1) == "0.3.0"
+	ok = m is not None and m.group(1) == "0.4.0"
 	return ok, f"MEMBRANE_VERSION={m.group(1) if m else '(not found)'}"
 
 

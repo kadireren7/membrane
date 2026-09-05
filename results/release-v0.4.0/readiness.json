@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "label": "REAL",
+  "version": "0.4.0",
+  "commit": "PENDING -- filled in with this PR's own real branch HEAD once committed (this file is finalized in a follow-up commit on the same PR branch, before merge -- never a post-merge direct-main commit)",
+  "base_prerelease": "v0.3.0",
+  "release_type": "stable",
+  "compatibility_counts": {
+    "total": 26,
+    "supported": 19,
+    "unsupported": 6,
+    "not_yet_validated": 1,
+    "source": "docs/compatibility.json, unchanged since v0.3.0 (this release adds no new architecture/model validation)"
+  },
+  "validators": {
+    "verify-product-onboarding.py": "14/14 (PR C1)",
+    "verify-release-supply-chain.py": "16/16 (PR C2)",
+    "verify-api-contract.py": "13/13 (PR C3)",
+    "verify-release-v0.4.0.py": "12/12 (this PR's own new validator)",
+    "verify-release-v0.3.0.py": "RETIRED from CI this PR (same precedent as verify-release-rc3.py's own retirement) -- script file untouched, no longer wired into any CI job"
+  },
+  "ctest": {
+    "llama_free_and_llama_enabled_combined": {
+      "build_dir": "build-b1",
+      "result": "85/85",
+      "note": "full local suite, ASan/UBSan-configured build, re-run clean after the version bump. A transient, real, host-memory-pressure-driven flake in test_mem_guard (tools/membrane-kv-exact-sim, entirely unrelated to any Mega Phase C change) was observed and root-caused during PR C3's own work -- see docs/soak-and-concurrency-testing.md and PR C3's own commit message; this exact same failure mode is a documented, pre-existing HOST_MEMORY_FLAKE classification going back to results/release-v0.3.0/readiness.json's own ctest notes."
+    }
+  },
+  "package": {
+    "filename": "membrane_0.4.0_amd64.deb",
+    "package_name": "membrane",
+    "architecture": "amd64",
+    "backend": "Vulkan-enabled (official policy, results/release-artifacts/manifest.json, unchanged since v0.3.0)",
+    "build_command": "scripts/build-release.sh --backend vulkan --out-dir dist --jobs 2 (SOURCE_DATE_EPOCH-pinned, reproducible -- docs/release-supply-chain.md)",
+    "control_metadata": {
+      "Package": "membrane",
+      "Version": "0.4.0",
+      "Architecture": "amd64",
+      "Depends": "libc6 (>= 2.38), libgcc-s1 (>= 3.4), libgomp1 (>= 6), libstdc++6 (>= 13.1), libvulkan1 (>= 1.2.131.2)"
+    },
+    "no_forbidden_payload": "no models, tests, build-tree paths, or git metadata -- confirmed via dpkg-deb -c, same real package-content audit PR C2 already performed against this same CMakeLists.txt configuration (unchanged)",
+    "note": "Built from this PR's own branch tree (product_cli.h already bumped to 0.4.0) via scripts/build-release.sh. This is a real preview build, not necessarily the exact bytes of the final tagged release asset -- the actual v0.4.0 release asset is rebuilt fresh from the exact post-merge, tagged commit at release time (Section: 'do not mutate main after final release merge before tagging'); its own real sha256 lives in that release's own SHA256SUMS asset, not duplicated here (this project's own established policy: 'release artifact hashes need not be committed into the tagged source tree')."
+  },
+  "preview_package_sha256": "0ba39c924f8b5fad8546d7934e31372a92aa05778e82404fad1f9d6b8cec52c2",
+  "container_install": {
+    "evidence_class": "REAL",
+    "environment": "fresh docker run --rm --memory=512m ubuntu:24.04, no GPU passthrough",
+    "steps": [
+      {"command": "apt-get install -y ./membrane_0.4.0_amd64.deb", "exit_code": 0},
+      {"command": "membrane-run --version", "stdout": "MEMBRANE 0.4.0", "exit_code": 0},
+      {"command": "membrane-run --doctor", "exit_code": 0, "note": "one honest combined GPU warning, no false claim on this Vulkan-enabled build"},
+      {"command": "membrane-run --list-devices", "exit_code": 0, "stdout_excerpt": "CPU (AMD Ryzen 5 5600H with Radeon Graphics)"},
+      {"command": "membrane --version", "stdout": "membrane 0.4.0", "exit_code": 0},
+      {"command": "membrane model list --json", "stdout": "[]", "exit_code": 0},
+      {"command": "apt-get remove -y membrane", "exit_code": 0, "files_remaining": 0}
+    ]
+  },
+  "known_limitations": [
+    "Independent multi-host validation remains limited -- unchanged disclosure from v0.3.0",
+    "Under this project's own severe, shared-host memory pressure, a normally-fast host-memory-guard rejection can be slow enough to time out a client -- a real, disclosed PR C3 finding, not an architecture change this phase",
+    "A non-instruct model with no chat template is only caught at chat-completion time, not proactively warned about at model add/setup time -- PR C1's own disclosed first-product-audit finding",
+    "Open WebUI and OpenAI-compatible editor plugins remain disclosed, not independently tested",
+    "Release tags are real and annotated but unsigned -- no GPG signing identity is configured on this project's release host",
+    "Every v0.3.0 known limitation not explicitly superseded above still applies unchanged (Qwen2 scope, no CUDA product path, narrow AMD/Intel GPU validation, no FPGA/CXL hardware claim, Debian-family amd64-only official package)"
+  ],
+  "external_validation_status": "Still limited -- disclosed explicitly in README.md and docs/release-v0.4.0.md, not hidden. Unchanged from v0.3.0's own explicit, informed decision to ship stable now rather than wait for independent-host testers.",
+  "ci": {
+    "status": "PENDING -- filled in with this PR's own real run IDs once CI completes, before merge"
+  }
+}

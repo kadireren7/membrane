@@ -163,9 +163,17 @@ def _c7():
 	unsupported = sum(1 for r in rows if r["status"] == "UNSUPPORTED")
 	not_yet = sum(1 for r in rows if r["status"] == "NOT_YET_VALIDATED")
 	bad = []
-	if live_version != "0.3.0":
-		bad.append(f"live MEMBRANE_VERSION={live_version!r}, expected '0.3.0' "
-			"(Phase 32 must not bump the version)")
+	# Phase 32 itself never bumped the version (this check originally
+	# pinned live_version to "0.3.0" to prove that) -- the version has
+	# since legitimately moved to "0.4.0" via Mega Phase C's own PR C4,
+	# many phases later. That real, sanctioned bump doesn't make Phase
+	# 32's own historical claims below (about v0.3.0-era counts) wrong;
+	# it just means this check now confirms a DIFFERENT thing: that the
+	# live version reflects the real, current release, not a lingering
+	# stale value from some phase in between.
+	if live_version != "0.4.0":
+		bad.append(f"live MEMBRANE_VERSION={live_version!r}, expected the "
+			"current stable '0.4.0'")
 	direction_text = PRODUCT_DIRECTION_PATH.read_text()
 	if "v0.3.0" not in direction_text:
 		bad.append("docs/product-direction.md never cites v0.3.0")

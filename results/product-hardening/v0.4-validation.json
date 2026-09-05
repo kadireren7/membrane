@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "phase": "mega-phase-c-product-hardening",
-  "membrane_commit": "PENDING -- updated as PR C3 actually merges",
+  "membrane_commit": "d23cc7584627e2d3cf50a689a9057cb56b8e5191",
   "generated_at": "2026-09-05T09:30:00Z",
   "pr_squash_shas": {
     "C1": "3db0fe58b8fdf92536c238b072b967f30d6e2cdb",
     "C2": "161ba7e76b6c9a212d84e60be27f28eac645289e",
-    "C3": "PENDING"
+    "C3": "d23cc7584627e2d3cf50a689a9057cb56b8e5191"
   },
   "note": "Mega Phase C, PR C3: API/runtime hardening + real client validation. C1/C2's own real squash SHAs backfilled here (not as standalone post-merge main commits), matching the B1-in-B2 / C1-in-C2 convention. C3's own squash SHA gets backfilled the same way inside PR C4.",
   "api_contract": {

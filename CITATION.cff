@@ -9,8 +9,8 @@ authors:
   - family-names: Altıntaş
     given-names: Kadir Eren
 repository-code: "https://github.com/kadireren7/membrane"
-version: "0.3.0"
-date-released: "2026-09-01"
+version: "0.4.0"
+date-released: "2026-09-05"
 license: Apache-2.0
 abstract: >-
   MEMBRANE is an open-source llama.cpp runtime layer for KV-cache
@@ -23,11 +23,13 @@ abstract: >-
   validated for LLM_ARCH_LLAMA and LLM_ARCH_QWEN2 models against real
   local fixtures -- not a claim of universal architecture or hardware
   coverage; see docs/compatibility.md for the current matrix. An
-  official Debian-family amd64 .deb package is available; independent
-  multi-host validation beyond the maintainer's own development
-  hardware remains limited as of this release. This citation targets
-  the latest stable release, v0.3.0; the repository's main branch may
-  contain development changes beyond it. Archived experiments, negative
+  official Debian-family amd64 .deb package is available, installable
+  and onboarded end to end with a single `membrane setup` command
+  (`membrane doctor` for diagnostics); independent multi-host
+  validation beyond the maintainer's own development hardware remains
+  limited as of this release. This citation targets the latest stable
+  release, v0.4.0; the repository's main branch may contain
+  development changes beyond it. Archived experiments, negative
   results, and benchmark/FPGA/CXL simulation provenance live in the
   companion repository kadireren7/membrane-research.
 keywords:

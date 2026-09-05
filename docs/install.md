@@ -41,14 +41,17 @@ every CI run) but is a CI-validation/build-your-own artifact, not the
 official release asset — use it only if you specifically want to
 avoid the Vulkan/`libvulkan1` dependency.
 
-Release packages are produced by this project's build pipeline (see
-"Building a `.deb` package yourself" below) — none are hosted publicly
-yet (external multi-host validation is still in progress; see
-`docs/release-v0.3.0-rc3.md`). If you have a `membrane_<version>_amd64.deb`
-file already (built yourself, or attached to a future release):
+Release packages are attached to this project's own
+[GitHub releases](https://github.com/kadireren7/membrane/releases)
+(each with a `SHA256SUMS` file) — download the latest, or build one
+yourself with this project's own build pipeline (see "Building a
+`.deb` package yourself" below). External multi-host validation beyond
+the maintainer's own development hardware is still limited, disclosed
+in the README rather than hidden. Once you have a
+`membrane_<version>_amd64.deb` file (downloaded, or built yourself):
 
 ```bash
-sudo apt install ./membrane_0.3.0~rc3_amd64.deb
+sudo apt install ./membrane_0.4.0_amd64.deb
 ```
 
 (`apt install ./file.deb`, not `dpkg -i`, so apt resolves the package's
