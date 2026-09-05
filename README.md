@@ -82,8 +82,18 @@ membrane-run --model model.gguf --prompt "Hello" --ctx 2048 --auto
 
 Prefer talking to MEMBRANE over HTTP instead of the CLI directly (any
 OpenAI-compatible client/library, no code changes beyond `base_url`)?
-Register a model once, then let a systemd `--user` service keep it
-running in the background — no terminal needed for day-to-day use:
+One guided command handles registration and the background service
+together:
+
+```bash
+membrane setup --model /path/to/model.gguf
+```
+
+`membrane setup` registers the model, offers to make it the default,
+installs and starts the systemd `--user` service, and verifies the
+endpoint answers — safe to re-run any time (it reports what's already
+done rather than repeating it). Prefer to do each step yourself
+instead? It's the same three commands under the hood:
 
 ```bash
 membrane model add qwen /path/to/model.gguf
@@ -91,6 +101,10 @@ membrane service install
 membrane service start
 membrane service status
 ```
+
+Something not working? `membrane doctor` checks installation, hardware,
+the model registry, config, the service, and the HTTP endpoint in one
+pass, and tells you exactly what (if anything) needs attention.
 
 ```bash
 curl http://127.0.0.1:8642/v1/chat/completions \

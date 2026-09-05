@@ -355,6 +355,23 @@ jobs:
       - name: Verify background-service evidence and docs
         run: python3 scripts/verify-background-service.py
 
+  # Mega Phase C, PR C1: validates the committed product-onboarding
+  # evidence (results/product-onboarding/validation.json), README's own
+  # mention of `membrane setup`/`membrane doctor`, and a handful of
+  # direct source-level regression guards for this PR's own real
+  # findings -- python3 + checkout only, no GPU, no model download, no
+  # C/C++ build.
+  product-onboarding-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify product-onboarding evidence and docs
+        run: python3 scripts/verify-product-onboarding.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
@@ -439,16 +456,23 @@ jobs:
       # concurrency queue -- both llama-free, same target-scoped-without-
       # llama trick) join the same cheap job. PR B3: test_request_
       # admission (the bounded pending-chat-request gate) joins too, same
-      # reasoning.
+      # reasoning. Mega Phase C, PR C1: test_doctor_cmd (membrane
+      # doctor's own registry/config/service checks -- confirmed llama-
+      # free directly: a target-scoped build of it alone compiles zero
+      # llama/ggml files) joins too. test_setup_cmd is llama-LINKED
+      # (setup_cmd.cpp calls into model_cmd.cpp, which needs real GGUF
+      # validation via gpu_device.h) and lives in packaging-smoke below
+      # instead, alongside test_registry_core/test_server.
       - name: Build (target-scoped -- no llama/ggml compilation)
         run: |
           cmake --build build-service-lifecycle-tests -j2 --target \
             test_systemd_unit test_server_config test_fs_util test_subprocess \
-            test_utf8_stream test_stream_queue test_request_admission
+            test_utf8_stream test_stream_queue test_request_admission \
+            test_doctor_cmd
       - name: Test
         run: |
           ctest --test-dir build-service-lifecycle-tests --output-on-failure \
-            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$|^test_utf8_stream$|^test_stream_queue$|^test_request_admission$'
+            -R '^test_systemd_unit$|^test_server_config$|^test_fs_util$|^test_subprocess$|^test_utf8_stream$|^test_stream_queue$|^test_request_admission$|^test_doctor_cmd$'
 
   # Mega Phase B, PR B2: TSan cannot be combined with the ASan/UBSan
   # configure service-lifecycle-tests above already uses (see this
@@ -623,7 +647,8 @@ jobs:
       - name: CPU build
         run: |
           cmake --build build-cpu-install -j2 --target membrane-run \
-            membrane test_runtime_session test_registry_core test_server
+            membrane test_runtime_session test_registry_core test_server \
+            test_setup_cmd
 
       # Mega Phase A, PR A1: this is the ONLY CI coverage test_runtime_
       # session gets (same pre-existing gap fallback-controller-tests
@@ -647,10 +672,13 @@ jobs:
       # means to run. Each alternative anchored individually so future
       # test names sharing a prefix with any of these three don't
       # silently reintroduce the same bug.
-      - name: Test runtime-session core, model registry, and HTTP server
+      # Mega Phase C, PR C1: test_setup_cmd joins the same list -- it
+      # too genuinely needs llama.h (setup_cmd.cpp calls into model_
+      # cmd.cpp, which needs real GGUF validation via gpu_device.h).
+      - name: Test runtime-session core, model registry, HTTP server, and setup
         run: |
           ctest --test-dir build-cpu-install --output-on-failure \
-            -R '^test_runtime_session$|^test_registry_core$|^test_server$'
+            -R '^test_runtime_session$|^test_registry_core$|^test_server$|^test_setup_cmd$'
 
       - name: CPU install to temp prefix
         run: |
