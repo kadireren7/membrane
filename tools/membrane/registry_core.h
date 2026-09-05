@@ -61,6 +61,14 @@ typedef struct s_membrane_registry_error
 	std::string	message;	/* human-readable detail */
 }	membrane_registry_error_t;
 
+/* Mega Phase C, PR C2 (Section: registry schema versioning): the ONE
+ * schema_version this build writes and accepts on load. Bumped only when
+ * the on-disk {schema_version, models[]} shape changes incompatibly; see
+ * docs/schema-versioning.md for the fail-closed policy this project uses
+ * for both the registry and server_config (never a silent best-effort
+ * read of an unrecognized version). == 1 today. */
+# define MEMBRANE_REGISTRY_SCHEMA_VERSION	1
+
 /* Section 10: XDG_DATA_HOME/membrane/models.json, falling back to
  * $HOME/.local/share/membrane/models.json when XDG_DATA_HOME is unset --
  * the exact XDG Base Directory fallback rule. Returns an empty string

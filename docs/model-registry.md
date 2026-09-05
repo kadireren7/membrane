@@ -53,6 +53,10 @@ Never stored: prompt history, secrets, API keys.
   `inspect` additionally rescans real metadata when the file changed
   (`MODIFIED`), so a stale name never keeps reporting the old
   architecture/context.
+- **Schema version**: a `models.json` carrying a `schema_version` this
+  build does not recognize fails closed with `UNSUPPORTED_SCHEMA`,
+  never silently misread — see `docs/schema-versioning.md` for the
+  full policy (shared with `server.json`).
 
 ## Used by
 

@@ -124,6 +124,16 @@ bool	membrane_registry_load(const std::string &registry_path,
 			"shape");
 		return (false);
 	}
+	int	schema = root.value("schema_version", 0);
+
+	if (schema != MEMBRANE_REGISTRY_SCHEMA_VERSION)
+	{
+		set_err(err, "UNSUPPORTED_SCHEMA", std::string("'") + registry_path
+			+ "' has schema_version " + std::to_string(schema)
+			+ ", this build only understands "
+			+ std::to_string(MEMBRANE_REGISTRY_SCHEMA_VERSION));
+		return (false);
+	}
 	for (const auto &j : root["models"])
 	{
 		membrane_registry_entry_t	entry;
@@ -145,7 +155,7 @@ bool	membrane_registry_save(const std::string &registry_path,
 	*err = membrane_registry_error_t();
 	json	root;
 
-	root["schema_version"] = 1;
+	root["schema_version"] = MEMBRANE_REGISTRY_SCHEMA_VERSION;
 	root["models"] = json::array();
 	for (const auto &e : reg.entries)
 		root["models"].push_back(entry_to_json(e));
