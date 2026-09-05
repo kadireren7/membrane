@@ -2,7 +2,7 @@
   "schema_version": 1,
   "label": "REAL",
   "version": "0.4.0",
-  "commit": "1c90b2f (release/v0.4.0-prep branch HEAD at the time of the real container/ctest evidence above; the eventual squash-merge commit is content-identical, git history only)",
+  "commit": "b78a7ff8b778f79ebfe5f964857938923644329a (release/v0.4.0-prep branch HEAD, all CI green; the eventual squash-merge commit is content-identical, git history only)",
   "base_prerelease": "v0.3.0",
   "release_type": "stable",
   "compatibility_counts": {
@@ -65,6 +65,11 @@
   ],
   "external_validation_status": "Still limited -- disclosed explicitly in README.md and docs/release-v0.4.0.md, not hidden. Unchanged from v0.3.0's own explicit, informed decision to ship stable now rather than wait for independent-host testers.",
   "ci": {
-    "status": "PENDING -- filled in with this PR's own real run IDs once CI completes, before merge"
+    "status": "SUCCESS",
+    "head_sha": "b78a7ff8b778f79ebfe5f964857938923644329a",
+    "run_ids": {
+      "pull_request": 33950468329,
+      "push": 33950466483
+    }
   }
 }
