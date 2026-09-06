@@ -10,7 +10,7 @@
 # include <direct.h>
 # include <io.h>
 # include <process.h>
-# include <windows.h>
+# include "membrane/windows_lean.h"
 #else
 # include <unistd.h>
 # include <limits.h>

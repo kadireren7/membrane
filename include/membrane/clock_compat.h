@@ -28,7 +28,7 @@
 
 #ifdef _WIN32
 # include <time.h>
-# include <windows.h>
+# include "membrane/windows_lean.h"
 
 # define CLOCK_MONOTONIC		0
 # define CLOCK_MONOTONIC_RAW	1

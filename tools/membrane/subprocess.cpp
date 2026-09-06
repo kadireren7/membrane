@@ -6,7 +6,7 @@
 
 #ifdef _WIN32
 # include <thread>
-# include <windows.h>
+# include "membrane/windows_lean.h"
 #else
 # include <fcntl.h>
 # include <poll.h>

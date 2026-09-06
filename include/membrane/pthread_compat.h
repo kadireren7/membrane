@@ -36,7 +36,7 @@
 #ifdef _WIN32
 # include <process.h>
 # include <stdlib.h>
-# include <windows.h>
+# include "membrane/windows_lean.h"
 
 typedef SRWLOCK			pthread_mutex_t;
 typedef CONDITION_VARIABLE	pthread_cond_t;

@@ -10,7 +10,7 @@
  * inside psapi.h itself, none of them really about psapi.h being
  * broken -- just never given the types it assumes are already
  * defined). */
-# include <windows.h>
+# include "membrane/windows_lean.h"
 # include <psapi.h>
 #else
 # include <sys/resource.h>

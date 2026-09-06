@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 
 #ifdef _WIN32
-# include <windows.h>
+# include "membrane/windows_lean.h"
 #else
 # include <sys/statvfs.h>
 # include <unistd.h>
