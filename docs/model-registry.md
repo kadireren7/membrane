@@ -19,6 +19,16 @@ never forces a model to load; it only changes what an omitted
 separate server config file (`~/.config/membrane/server.json`), not
 this registry.
 
+**`membrane use NAME`** (Mega Phase D, PR D6, `docs/model-lifecycle.md`)
+is the higher-level, normal product entry point built on top of this:
+it resolves NAME (an installed registry name, or a catalog id/alias —
+installing it first with explicit consent if needed), does everything
+`membrane model use NAME` does, and — if a server is already running —
+also live-switches the actual running model, not just the config
+default. Use `membrane model use` directly only when you specifically
+want the low-level "just change the config, never touch a live
+server" behavior.
+
 ## Location
 
 `$XDG_DATA_HOME/membrane/models.json`, falling back to
@@ -64,5 +74,9 @@ Never stored: prompt history, secrets, API keys.
 - `membrane serve` (`docs/server.md`) — every `model` field in a chat
   request is resolved through this same registry, never a raw
   filesystem path from an HTTP client. A server that has already
-  started does not see a registry change until restarted (`docs/
-  service.md`'s "Model registry and default-model reload" section).
+  started **does** see a registry change without a restart (a cheap
+  `stat()`-based hot-reload, Mega Phase B PR B3) — see `docs/
+  service.md`'s "Model registry and default-model reload" section for
+  the full detail and the real evidence; only the separate server
+  *config* file (`default_model`, listen address/port) is still
+  read-once at startup.

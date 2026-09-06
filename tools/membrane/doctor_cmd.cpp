@@ -501,6 +501,66 @@ static s_doctor_check	check_http(bool service_installed, bool service_active)
 	return (c);
 }
 
+/* Mega Phase D, PR D6, Section 22 of the task: closes the one real gap
+ * check_default_model() itself deliberately left open (it only ever
+ * checks the CONFIGURED default_model against the registry -- it has no
+ * concept of the server's real, currently-loaded model at all). Runs
+ * AFTER check_http() (needs its real, live /v1/status read -- never a
+ * second HTTP fetch of its own) and reuses check_default_model()'s own
+ * `known_models` output too -- neither the live status nor the registry
+ * snapshot is re-fetched independently here. "Selected model file
+ * missing"/"stale catalog metadata" are already real, existing findings
+ * from check_registry() above (which covers every registered model,
+ * default or not) -- deliberately not duplicated here. */
+static s_doctor_check	check_model_lifecycle(bool http_reachable,
+					const json &http_detail)
+{
+	s_doctor_check					c;
+	std::string						config_path
+			= membrane_server_config_resolve_path();
+	membrane_server_config_t		cfg = membrane_server_config_defaults();
+	membrane_server_config_error_t	cfg_err;
+
+	c.name = "model_lifecycle";
+	if (!config_path.empty())
+		membrane_server_config_load(config_path, &cfg, &cfg_err);
+	c.detail = {{"default_model", cfg.default_model.empty()
+			? json(nullptr) : json(cfg.default_model)}};
+	if (!http_reachable)
+	{
+		c.status = MEMBRANE_DOCTOR_STATUS_OK;
+		c.detail["active_model"] = nullptr;
+		return (c);
+	}
+	json	active = http_detail.value("loaded_model", json(nullptr));
+
+	c.detail["active_model"] = active;
+	if (cfg.default_model.empty() && active.is_null())
+	{
+		c.status = MEMBRANE_DOCTOR_STATUS_WARN;
+		c.detail["message"] = "the service is running, but no default "
+			"model is configured and none is currently active -- a chat "
+			"request with no explicit \"model\" field will be refused. "
+			"Run `membrane use MODEL` to pick one";
+		return (c);
+	}
+	if (!active.is_null() && !cfg.default_model.empty()
+		&& active.get<std::string>() != cfg.default_model)
+	{
+		c.status = MEMBRANE_DOCTOR_STATUS_WARN;
+		c.detail["message"] = "the running server's active model ('"
+			+ active.get<std::string>() + "') differs from the configured "
+			"default ('" + cfg.default_model + "') -- normal right after a "
+			"live `membrane use` switch to a non-default model; run "
+			"`membrane use " + cfg.default_model + "` to realign them, or "
+			"`membrane use " + active.get<std::string>() + "` to make the "
+			"active one the new default";
+		return (c);
+	}
+	c.status = MEMBRANE_DOCTOR_STATUS_OK;
+	return (c);
+}
+
 std::string	membrane_doctor_collect(json *out_root)
 {
 	std::vector<s_doctor_check>	checks;
@@ -517,7 +577,13 @@ std::string	membrane_doctor_collect(json *out_root)
 
 	checks.push_back(check_service(&service_installed, &service_active,
 			&unused_port));
-	checks.push_back(check_http(service_installed, service_active));
+
+	s_doctor_check	http_check = check_http(service_installed,
+			service_active);
+
+	checks.push_back(http_check);
+	checks.push_back(check_model_lifecycle(
+			http_check.detail.value("reachable", false), http_check.detail));
 
 	std::string	overall = MEMBRANE_DOCTOR_STATUS_OK;
 

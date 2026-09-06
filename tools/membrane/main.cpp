@@ -13,6 +13,7 @@
 #include "status_client.h"
 #include "doctor_cmd.h"
 #include "setup_cmd.h"
+#include "use_cmd.h"
 #include "product_cli.h"
 
 using json = nlohmann::json;
@@ -51,6 +52,9 @@ static void	print_usage(FILE *out)
 		"register a catalog model (see install options)\n");
 	fprintf(out, "  membrane model uninstall NAME     delete a "
 		"catalog-installed model's file and unregister it\n");
+	fprintf(out, "  membrane use MODEL                 select/activate "
+		"MODEL -- installs it first (with consent) if not already "
+		"installed\n");
 	fprintf(out, "  membrane serve                    start a local "
 		"OpenAI-compatible HTTP server (foreground)\n");
 	fprintf(out, "  membrane status                    check a running "
@@ -96,6 +100,12 @@ static void	print_usage(FILE *out)
 	fprintf(out, "  --variant QUANT                     alias for --quant\n");
 	fprintf(out, "  --dry-run                           show which "
 		"variant would be selected/why, no download\n");
+	fprintf(out, "\n");
+	fprintf(out, "use options (see docs/model-lifecycle.md):\n");
+	fprintf(out, "  --quant QUANT / --variant QUANT     variant to "
+		"install if MODEL is not installed yet\n");
+	fprintf(out, "  --yes / -y                           allow an "
+		"unattended download with no interactive prompt\n");
 	fprintf(out, "\n");
 	fprintf(out, "serve options:\n");
 	fprintf(out, "  --port N                           listen port "
@@ -161,6 +171,12 @@ int	main(int argc, char **argv)
 				args.end());
 
 		return (membrane_model_cmd_dispatch(model_args, want_json));
+	}
+	if (args[0] == "use")
+	{
+		std::vector<std::string>	use_args(args.begin() + 1, args.end());
+
+		return (membrane_use_cmd_dispatch(use_args, want_json));
 	}
 	if (args[0] == "serve")
 	{
