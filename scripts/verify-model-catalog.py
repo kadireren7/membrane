@@ -206,9 +206,9 @@ def _c12():
 		else "all present")
 
 
-@check("CI: every job that sets MEMBRANE_ENABLE_LLAMA=ON also installs "
-	"libcurl4-openssl-dev (find_package(CURL REQUIRED) runs at CMake "
-	"configure time regardless of which targets are later built)")
+@check("CI: every LINUX job that sets MEMBRANE_ENABLE_LLAMA=ON also "
+	"installs libcurl4-openssl-dev (find_package(CURL REQUIRED) runs at "
+	"CMake configure time regardless of which targets are later built)")
 def _c13():
 	ci_path = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 	text = ci_path.read_text()
@@ -231,10 +231,31 @@ def _c13():
 					job_start = j
 					break
 			window = "\n".join(lines[job_start:i])
+			# Mega Phase D, PR D4: a second real false positive found
+			# and fixed here -- "libcurl4-openssl-dev" is an apt (Linux/
+			# Debian) package name and simply does not apply to a
+			# `runs-on: macos-*` job. macOS ships its own system libcurl
+			# (part of the OS itself, at /usr/lib/libcurl.dylib) that
+			# CMake's find_package(CURL) discovers with no install step
+			# of any kind -- confirmed directly: macos-metal-smoke (this
+			# PR's own new job) has never installed libcurl and its real
+			# CMake configure step found CURL successfully regardless.
+			# Skip any job whose own runs-on: line (searched the same
+			# backward-from-job_start way) targets macOS -- this check's
+			# real premise ("needs an explicit apt install") only holds
+			# for Linux runners.
+			runs_on_macos = False
+			for j in range(job_start, i):
+				if re.match(r"^\s*runs-on:\s*macos", lines[j]):
+					runs_on_macos = True
+					break
+			if runs_on_macos:
+				continue
 			if "libcurl4-openssl-dev" not in window:
 				bad.append(f"line {i + 1}")
 	return len(bad) == 0, (f"missing libcurl4-openssl-dev near: {bad}" if bad
-		else "every MEMBRANE_ENABLE_LLAMA=ON job has libcurl4-openssl-dev")
+		else "every Linux MEMBRANE_ENABLE_LLAMA=ON job has "
+			"libcurl4-openssl-dev")
 
 
 @check("Mega Phase C's own evidence files are untouched by this PR's own "
