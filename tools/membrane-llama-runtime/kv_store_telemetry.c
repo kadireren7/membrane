@@ -3,8 +3,15 @@
 #include <math.h>
 #include <string.h>
 #ifdef _WIN32
-# include <psapi.h>
+/* windows.h MUST come before psapi.h -- psapi.h's own declarations use
+ * types (WINAPI, LPVOID, HANDLE, DWORD, ...) that only exist once
+ * windows.h has already been processed; a real, first-attempt Windows
+ * CI compile failure otherwise (dozens of cascading syntax errors
+ * inside psapi.h itself, none of them really about psapi.h being
+ * broken -- just never given the types it assumes are already
+ * defined). */
 # include <windows.h>
+# include <psapi.h>
 #else
 # include <sys/resource.h>
 #endif

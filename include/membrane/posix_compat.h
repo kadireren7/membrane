@@ -18,6 +18,18 @@
 #ifdef _WIN32
 # include <io.h>
 
+/* access()/unlink()/fileno() all resolve via <io.h>'s own legacy
+ * POSIX-compat aliases on this MSVC/SDK combination (confirmed
+ * directly: this project's own real Windows CI build compiled every
+ * call site using them with no error) -- but F_OK itself is NOT
+ * defined by <io.h> here (a real, first-attempt Windows CI compile
+ * failure: "'F_OK': undeclared identifier"). Its value is standard
+ * (0 -- "does this path exist at all") on every platform, POSIX and
+ * Windows alike. */
+# ifndef F_OK
+#  define F_OK 0
+# endif
+
 static inline int	fsync(int fd)
 {
 	return (_commit(fd) == 0 ? 0 : -1);
