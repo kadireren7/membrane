@@ -25,6 +25,7 @@
 #include "utf8_stream.h"
 #include "stream_queue.h"
 #include "request_admission.h"
+#include "fs_util.h"
 
 #include <sys/stat.h>
 
@@ -448,8 +449,7 @@ static membrane_registry_t	refresh_and_snapshot_registry(
 
 	if (stat(st->registry_path.c_str(), &stat_buf) == 0)
 	{
-		int64_t	mtime_ns = (int64_t)stat_buf.st_mtim.tv_sec * 1000000000LL
-				+ (int64_t)stat_buf.st_mtim.tv_nsec;
+		int64_t	mtime_ns = membrane_stat_mtime_ns(stat_buf);
 
 		std::lock_guard<std::mutex>	lock(st->registry_mtx);
 

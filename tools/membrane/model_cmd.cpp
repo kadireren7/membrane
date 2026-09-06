@@ -42,8 +42,7 @@ static bool	stat_file(const std::string &path,
 	}
 	*status = MEMBRANE_REGISTRY_STAT_OK;
 	*size_bytes = (uint64_t)st.st_size;
-	*mtime_ns = (int64_t)st.st_mtim.tv_sec * 1000000000LL
-		+ (int64_t)st.st_mtim.tv_nsec;
+	*mtime_ns = membrane_stat_mtime_ns(st);
 	return (true);
 }
 

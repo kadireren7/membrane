@@ -14,6 +14,7 @@
 #include "registry_core.h"
 #include "server_config.h"
 #include "systemd_unit.h"
+#include "fs_util.h"
 #include "subprocess.h"
 #include "status_client.h"
 #include "product_cli.h"
@@ -201,8 +202,7 @@ static s_doctor_check	check_registry(json *out_models_for_reuse)
 		{
 			stat_status = MEMBRANE_REGISTRY_STAT_OK;
 			size_bytes = (uint64_t)st.st_size;
-			mtime_ns = (int64_t)st.st_mtim.tv_sec * 1000000000LL
-				+ (int64_t)st.st_mtim.tv_nsec;
+			mtime_ns = membrane_stat_mtime_ns(st);
 		}
 		else
 			stat_status = (errno == ENOENT) ? MEMBRANE_REGISTRY_STAT_MISSING
