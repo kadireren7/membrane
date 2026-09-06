@@ -30,6 +30,24 @@
 #  define F_OK 0
 # endif
 
+/* dup()/dup2()/close() and STDOUT_FILENO/STDERR_FILENO (used by
+ * tools/membrane-run/main.cpp's real --json parse-error stderr
+ * capture, redirecting fd 2 to a temp file and back) -- dup/dup2/
+ * close are NOT reliably available undecorated the way access/unlink/
+ * fileno are (their _-prefixed forms are the only guaranteed names),
+ * and the STD*_FILENO macros do not exist on Windows at all (there is
+ * no <unistd.h> to define them). Standard fd numbers (0/1/2) are the
+ * same constants on every platform, POSIX and Windows alike. */
+# define dup _dup
+# define dup2 _dup2
+# define close _close
+# ifndef STDOUT_FILENO
+#  define STDOUT_FILENO 1
+# endif
+# ifndef STDERR_FILENO
+#  define STDERR_FILENO 2
+# endif
+
 static inline int	fsync(int fd)
 {
 	return (_commit(fd) == 0 ? 0 : -1);

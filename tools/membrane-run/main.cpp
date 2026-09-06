@@ -10,8 +10,11 @@
  * --json parse-error stderr capture (parse_opts_capture_stderr()
  * below) -- portable POSIX, not Linux-only (see that function's own
  * comment for why this replaced an earlier memfd_create()-based
- * version). */
-#include <unistd.h>
+ * version). Mega Phase D, PR D5: dup/dup2/close/STD*_FILENO are real
+ * on Windows too, via membrane/posix_compat.h (there is no <unistd.h>
+ * there at all). */
+#include "membrane/posix_compat.h"
+#include "membrane/clock_compat.h"
 
 #include "ggml.h"
 #include "llama.h"

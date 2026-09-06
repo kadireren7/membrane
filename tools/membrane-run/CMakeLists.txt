@@ -34,7 +34,7 @@ target_link_libraries(membrane_runtime_session PUBLIC membrane_product_cli
   membrane_context_recommender membrane_host_memory_guard
   membrane_context_auto_cli membrane_kv_store_telemetry llama)
 target_include_directories(membrane_runtime_session PUBLIC
-  ${CMAKE_SOURCE_DIR}/tools/membrane-run)
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run ${CMAKE_SOURCE_DIR}/include)
 target_include_directories(membrane_runtime_session PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
