@@ -641,8 +641,20 @@ static void	handle_models(s_membrane_server_model_state *st,
 	{
 		json	m;
 
+		/* Section 17/18 of the Mega Phase D, PR D7 task: `e.name` is the
+		 * SAME registry name `membrane use NAME`/`membrane model use
+		 * NAME` already select by -- one canonical, client-safe id, never
+		 * a filesystem path and never a second alias a client would need
+		 * to learn. */
 		m["id"] = e.name;
 		m["object"] = "model";
+		/* Real, first-attempt Python openai SDK compatibility finding
+		 * (PR D7): openai.types.model.Model declares `created: int` as a
+		 * REQUIRED field (no default) -- client.models.list() genuinely
+		 * failed pydantic validation with this field missing. e.added_
+		 * at_unix is real data already captured at `add`/`install` time
+		 * (registry_core.h), never fabricated. */
+		m["created"] = e.added_at_unix;
 		m["owned_by"] = "membrane";
 		arr.push_back(m);
 	}
@@ -739,12 +751,92 @@ static void	handle_status(s_membrane_server_model_state *st,
  * for a non-streaming one today.
  */
 
+/* Mega Phase D, PR D7, Section 12 of the task: real "stop" string
+ * support, implemented ENTIRELY at this file's own product layer --
+ * decode_loop.h/run_generation() needed no change at all. Reuses the
+ * SAME cancel_flag mechanism PR B2 already built for client-disconnect
+ * cancellation (a plain std::atomic<bool>* polled once per free-running
+ * step) for a second purpose: a token_cb that accumulates the response
+ * text and, on a real match, truncates the about-to-be-emitted text at
+ * the match and sets cancel_flag -- generation genuinely halts (real
+ * compute savings, not a post-hoc truncation of output that was already
+ * fully generated). Earliest match across every requested stop string
+ * wins, matching real OpenAI behavior. */
+static bool	find_stop_match(const std::string &acc,
+				const std::vector<std::string> &stops, size_t *out_pos)
+{
+	bool	found = false;
+	size_t	best = std::string::npos;
+
+	for (const auto &s : stops)
+	{
+		if (s.empty())
+			continue ;
+		size_t	pos = acc.find(s);
+
+		if (pos != std::string::npos && (!found || pos < best))
+		{
+			found = true;
+			best = pos;
+		}
+	}
+	if (found)
+		*out_pos = best;
+	return (found);
+}
+
+/* The non-streaming analogue of stream_token_cb()'s own stop-matching
+ * logic above -- no queue/SSE framing involved, just a plain
+ * accumulator and a local cancel_flag this function's own caller (the
+ * non-streaming branch of handle_chat_completions()) owns. */
+struct s_nonstream_stop_ctx
+{
+	std::string						acc;
+	const std::vector<std::string>	*stops;
+	std::atomic<bool>				*cancel_flag;
+	bool							matched = false;
+	size_t							match_pos = 0;
+};
+
+static void	nonstream_stop_token_cb(const char *piece, size_t piece_len,
+				int step, void *user_data)
+{
+	(void)step;
+	s_nonstream_stop_ctx	*ctx = (s_nonstream_stop_ctx *)user_data;
+
+	ctx->acc.append(piece, piece_len);
+	size_t	match_pos;
+
+	if (find_stop_match(ctx->acc, *ctx->stops, &match_pos))
+	{
+		ctx->matched = true;
+		ctx->match_pos = match_pos;
+		ctx->cancel_flag->store(true, std::memory_order_relaxed);
+	}
+}
+
 struct s_stream_worker_ctx
 {
 	stream_queue_t				*queue;
-	const std::atomic<bool>	*cancel_flag;
+	std::atomic<bool>			*cancel_flag;	/* PR D7: writable now --
+											 * stream_token_cb() itself
+											 * sets this on a real stop-
+											 * sequence match (see its own
+											 * top comment) */
 	std::string					utf8_pending;	/* worker-thread-only, no
 											 * synchronization needed */
+	/* PR D7: NULL/empty stop_sequences (the default, and every request
+	 * that does not send "stop") leaves this codepath completely
+	 * untouched -- byte-identical to before this phase (Section 4's own
+	 * "explicit beats implicit" convention). full_acc/stop_matched are
+	 * worker-thread-only (same single-writer/single-reader reasoning as
+	 * utf8_pending above -- stream_token_cb and stream_worker_fn's own
+	 * post-generate read of stop_matched never race, since the callback
+	 * only ever runs synchronously inside membrane_session_generate(),
+	 * which has already returned by the time stop_matched is read). */
+	const std::vector<std::string>	*stop_sequences = NULL;
+	std::string					full_acc;
+	bool						stop_matched = false;
 };
 
 /* The one bridge from the push-based decode loop (this runs on the
@@ -762,18 +854,80 @@ static void	stream_token_cb(const char *piece, size_t piece_len, int step,
 
 	if (emit_len == 0)
 		return ;
+	std::string	emit_text = wctx->utf8_pending.substr(0, emit_len);
+
+	wctx->utf8_pending.erase(0, emit_len);
+	if (wctx->stop_sequences != NULL && !wctx->stop_sequences->empty())
+	{
+		size_t	already_sent = wctx->full_acc.size();
+
+		wctx->full_acc += emit_text;
+		size_t	match_pos;
+
+		if (find_stop_match(wctx->full_acc, *wctx->stop_sequences,
+				&match_pos))
+		{
+			if (match_pos > already_sent)
+			{
+				std::string	truncated = emit_text.substr(0,
+						match_pos - already_sent);
+				s_stream_event	ev;
+
+				ev.type = MEMBRANE_STREAM_EVENT_TOKEN;
+				ev.text = truncated;
+				wctx->queue->push_blocking(std::move(ev));
+			}
+			wctx->stop_matched = true;
+			wctx->cancel_flag->store(true, std::memory_order_relaxed);
+			return ;
+		}
+	}
 	s_stream_event	ev;
 
 	ev.type = MEMBRANE_STREAM_EVENT_TOKEN;
-	ev.text = wctx->utf8_pending.substr(0, emit_len);
-	wctx->utf8_pending.erase(0, emit_len);
+	ev.text = emit_text;
 	wctx->queue->push_blocking(std::move(ev));
 }
 
 struct s_stream_request_state
 {
 	stream_queue_t				queue;
-	std::atomic<bool>			cancel_flag{false};
+	std::atomic<bool>			cancel_flag{false};	/* the QUEUE's own
+											 * disconnect-shutdown flag
+											 * ONLY (stream_queue_t's own
+											 * top comment/push_blocking()'s
+											 * own contract) -- true here
+											 * makes push_blocking() give
+											 * up and drop ANY further
+											 * event, including a real
+											 * terminal one, matching its
+											 * pre-D7 "a dead connection's
+											 * queue can never wedge the
+											 * worker thread forever"
+											 * design. PR D7's own real,
+											 * first-attempt bug: a stop-
+											 * sequence match must NEVER
+											 * set THIS flag (it would
+											 * silently drop the real
+											 * DONE frame a still-connected
+											 * client is waiting for) --
+											 * gen_cancel_flag below is the
+											 * separate, correct flag for
+											 * that. */
+	std::atomic<bool>			gen_cancel_flag{false};	/* PR D7: what
+											 * actually gets passed to
+											 * run_generation() as its own
+											 * cancel_flag parameter --
+											 * set true by EITHER a real
+											 * client disconnect (stream_
+											 * provide()/stream_release(),
+											 * alongside `cancel_flag`
+											 * above) OR a stop-sequence
+											 * match (stream_token_cb(),
+											 * alongside `stop_matched`,
+											 * deliberately NEVER
+											 * alongside `cancel_flag`
+											 * above) */
 	std::thread					worker;
 	std::unique_lock<std::mutex>	server_lock;	/* holds st->mtx for the
 											 * whole request -- see this
@@ -800,6 +954,11 @@ struct s_stream_request_state
 	s_membrane_server_model_state	*st = NULL;
 	std::string					id;
 	request_admission_ticket_t	admission_ticket;
+	std::vector<std::string>	stop_sequences;	/* PR D7 -- empty (the
+											 * default) leaves the stop-
+											 * matching codepath in
+											 * stream_token_cb() entirely
+											 * unreached */
 
 	s_stream_request_state() : queue(&cancel_flag) {}
 };
@@ -814,24 +973,42 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 	s_stream_worker_ctx	wctx;
 
 	wctx.queue = &state->queue;
-	wctx.cancel_flag = &state->cancel_flag;
+	/* PR D7, real bug found and fixed via a real Python-SDK-driven hang:
+	 * this must be gen_cancel_flag, NEVER state->cancel_flag -- stream_
+	 * queue_t::push_blocking() itself refuses to deliver ANY further
+	 * event (including the real terminal DONE frame a still-connected
+	 * client is waiting for) once state->cancel_flag is true (its own
+	 * documented "a dead connection's queue can never wedge the worker
+	 * thread forever" contract). A stop-sequence match is emphatically
+	 * NOT a dead connection -- using state->cancel_flag here silently
+	 * dropped the DONE frame every time, hanging the client forever
+	 * (confirmed with real stderr instrumentation: cancel_flag really
+	 * was set, run_generation() really did stop, but push_blocking()
+	 * silently discarded the terminal event because that SAME flag was
+	 * already true). gen_cancel_flag is a separate flag with no such
+	 * side effect on the queue. */
+	wctx.cancel_flag = &state->gen_cancel_flag;
 
 	membrane_generation_request_t	gen_req = {};
 	membrane_generation_result_t	gen_res;
 
+	if (!state->stop_sequences.empty())
+		wctx.stop_sequences = &state->stop_sequences;
 	gen_req.o = &state->req_o;
 	gen_req.prompt_text = state->prompt_text;
 	gen_req.ctx_size = 0;
 	gen_req.token_cb = stream_token_cb;
 	gen_req.token_cb_ud = &wctx;
-	gen_req.cancel_flag = &state->cancel_flag;
+	gen_req.cancel_flag = &state->gen_cancel_flag;
 	membrane_session_generate(&state->st->session, gen_req, &gen_res);
 	/* Flush whatever partial UTF-8 tail never resolved -- better to emit
 	 * it than to silently drop real generated bytes (Section 21: only
 	 * reachable if generation stopped (limit/EOG/cancellation) exactly
 	 * mid-character, a rare edge case, never treated as an excuse to
-	 * lose output). */
-	if (!wctx.utf8_pending.empty())
+	 * lose output). PR D7: skipped when a stop sequence matched -- those
+	 * trailing bytes are generated content PAST the point the client
+	 * asked to cut the response at, never emitted. */
+	if (!wctx.utf8_pending.empty() && !wctx.stop_matched)
 	{
 		s_stream_event	flush_ev;
 
@@ -841,7 +1018,15 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 	}
 	s_stream_event	terminal;
 
-	if (gen_res.cancelled)
+	/* PR D7: a stop-sequence match also sets cancel_flag (reusing the
+	 * same real mechanism client-disconnect cancellation already uses),
+	 * so gen_res.cancelled is true here too -- wctx.stop_matched is the
+	 * one thing that tells these two real, different causes apart. A
+	 * stop match is a NORMAL, successful completion from the client's
+	 * point of view (a real "data: [DONE]" DONE frame with finish_
+	 * reason "stop"), never the silent-close CANCELLED path a dead
+	 * peer gets. */
+	if (gen_res.cancelled && !wctx.stop_matched)
 		terminal.type = MEMBRANE_STREAM_EVENT_CANCELLED;
 	else if (!gen_res.ok)
 	{
@@ -854,9 +1039,17 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 	else
 	{
 		terminal.type = MEMBRANE_STREAM_EVENT_DONE;
-		terminal.finish_reason = ((size_t)gen_res.gen_result.tokens.size()
-				>= (size_t)state->max_tokens) ? "length" : "stop";
+		terminal.finish_reason = wctx.stop_matched ? "stop"
+			: (((size_t)gen_res.gen_result.tokens.size()
+					>= (size_t)state->max_tokens) ? "length" : "stop");
 		terminal.prompt_tokens = gen_res.prompt_tokens.size();
+		/* PR D7: gen_res.gen_result.tokens.size() counts every token the
+		 * runtime actually decoded, including the one whose OWN piece
+		 * text contained (or completed) the stop match and was itself
+		 * only partially emitted -- usage.completion_tokens can be at
+		 * most one token higher than what the client actually received
+		 * as text in that real, disclosed edge case (docs/api-
+		 * contract.md), never fabricated lower to look tidy. */
 		terminal.completion_tokens = gen_res.gen_result.tokens.size();
 		terminal.include_usage = state->include_usage;
 	}
@@ -910,7 +1103,14 @@ static bool	stream_provide(std::shared_ptr<s_stream_request_state> state,
 	{
 		if (!sink.is_writable())
 		{
+			/* A real disconnect: both flags -- state->cancel_flag (so
+			 * the queue itself gives up on any further push, correctly,
+			 * nobody is left to read them) AND gen_cancel_flag (so
+			 * run_generation() actually stops decoding; see stream_
+			 * worker_fn()'s own top comment on why these are two
+			 * separate flags, not one). */
 			state->cancel_flag.store(true, std::memory_order_relaxed);
+			state->gen_cancel_flag.store(true, std::memory_order_relaxed);
 			return (false);
 		}
 		return (true);	/* nothing ready yet, peer still alive -- httplib
@@ -1009,8 +1209,10 @@ static void	stream_release(std::shared_ptr<s_stream_request_state> state,
 	 * this cancel_flag store is the only guaranteed signal in that case),
 	 * a still-running generation serves no purpose once the Response
 	 * object is being destroyed -- always request cancellation before
-	 * joining, so this never blocks waiting on a runaway generation. */
+	 * joining, so this never blocks waiting on a runaway generation.
+	 * Both flags -- see stream_worker_fn()'s own top comment on why. */
 	state->cancel_flag.store(true, std::memory_order_relaxed);
+	state->gen_cancel_flag.store(true, std::memory_order_relaxed);
 	if (state->worker.joinable())
 		state->worker.join();
 	/* Section 27: back to READY (never left at GENERATING) -- still
@@ -1113,6 +1315,77 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 		role_storage.push_back(msg["role"]);
 		content_storage.push_back(msg["content"]);
 	}
+	/* Mega Phase D, PR D7, Section 15 of the task: "tools"/"tool_choice"
+	 * are checked BEFORE model resolution, same "malformed/unsupported
+	 * request is rejected regardless of which model was named" precedent
+	 * as the messages-shape loop above. Explicit rejection, never a
+	 * silent drop -- MEMBRANE does not execute tools, and silently
+	 * ignoring a real tool schema would let a client believe a tool call
+	 * might come back when one never will (Section 10's own "a field
+	 * that changes intended behavior must be rejected, not ignored"). */
+	if (body.contains("tools") || body.contains("tool_choice"))
+	{
+		send_json_error(res, 400, "UNSUPPORTED_TOOL_CALLING", "tool "
+			"calling is not supported -- remove \"tools\"/\"tool_choice\" "
+			"from the request (see docs/api-contract.md)");
+		return ;
+	}
+	/* Section 14: response_format is only ever a real no-op for its own
+	 * default ("text", or the field simply absent) -- any other value
+	 * (e.g. "json_object"/"json_schema") is rejected explicitly rather
+	 * than silently ignored, since this server has no JSON-mode grammar/
+	 * constrained-decoding path that could actually honor it (Section
+	 * 14: "do not pretend JSON mode exists merely by prompt injection"). */
+	if (body.contains("response_format") && body["response_format"].is_object()
+		&& body["response_format"].value("type", std::string("text"))
+			!= "text")
+	{
+		send_json_error(res, 400, "UNSUPPORTED_RESPONSE_FORMAT",
+			"response_format type '"
+			+ body["response_format"].value("type", std::string(""))
+			+ "' is not supported -- only the default (\"text\", or the "
+			"field omitted entirely) is supported");
+		return ;
+	}
+	/* Section 12: real stop-string support -- see find_stop_match()/
+	 * stream_token_cb()'s own top comments for the full design. Accepts
+	 * the same two real shapes OpenAI's own API does: a single string,
+	 * or an array of up to 4 strings (OpenAI's own real limit) -- more
+	 * than 4 is a real, explicit 400, never silently truncated to 4. */
+	std::vector<std::string>	stop_sequences;
+
+	if (body.contains("stop") && !body["stop"].is_null())
+	{
+		const json	&stop_field = body["stop"];
+
+		if (stop_field.is_string())
+			stop_sequences.push_back(stop_field.get<std::string>());
+		else if (stop_field.is_array())
+		{
+			if (stop_field.size() > 4)
+			{
+				send_json_error(res, 400, "INVALID_REQUEST", "\"stop\" "
+					"accepts at most 4 strings");
+				return ;
+			}
+			for (const auto &item : stop_field)
+			{
+				if (!item.is_string())
+				{
+					send_json_error(res, 400, "INVALID_REQUEST", "every "
+						"\"stop\" entry must be a string");
+					return ;
+				}
+				stop_sequences.push_back(item.get<std::string>());
+			}
+		}
+		else
+		{
+			send_json_error(res, 400, "INVALID_REQUEST", "\"stop\" must "
+				"be a string or an array of up to 4 strings");
+			return ;
+		}
+	}
 	std::string	model_name = has_model_field ? body["model"].get<std::string>()
 			: st->default_model;
 	const membrane_registry_entry_t	*entry = membrane_registry_find(reg,
@@ -1206,6 +1479,7 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 		state->model_name = model_name;
 		state->max_tokens = max_tokens;
 		state->include_usage = want_usage_in_stream;
+		state->stop_sequences = stop_sequences;
 		state->id = id_buf;
 		state->server_lock = std::move(lock);
 		state->admission_ticket = std::move(admission_ticket);	/* Section
@@ -1240,11 +1514,28 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 							 * 5 of the task: "persistent model, new
 							 * context per request." */
 	gen_req.token_cb = NULL;
+	/* PR D7: only wired up when the request actually asked for one (the
+	 * default -- empty stop_sequences -- keeps this branch's own
+	 * gen_req fields at their pre-D7 values, byte-identical behavior). */
+	std::atomic<bool>		nonstream_stop_flag{false};
+	s_nonstream_stop_ctx	nonstream_stop_ctx;
+
+	if (!stop_sequences.empty())
+	{
+		nonstream_stop_ctx.stops = &stop_sequences;
+		nonstream_stop_ctx.cancel_flag = &nonstream_stop_flag;
+		gen_req.token_cb = nonstream_stop_token_cb;
+		gen_req.token_cb_ud = &nonstream_stop_ctx;
+		gen_req.cancel_flag = &nonstream_stop_flag;
+	}
 	st->model_state.store(MEMBRANE_MODEL_STATE_GENERATING,
 		std::memory_order_relaxed);
 	membrane_session_generate(&st->session, gen_req, &gen_res);
 	st->model_state.store(MEMBRANE_MODEL_STATE_READY,
 		std::memory_order_relaxed);
+	/* A stop-sequence match sets gen_req.cancel_flag, so gen_res.cancelled
+	 * is true here too (ok is unaffected -- see runtime_session.h's own
+	 * doc comment) -- never treated as a real failure. */
 	if (!gen_res.ok)
 	{
 		if (gen_res.err.set)
@@ -1257,7 +1548,10 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 		return ;
 	}
 
-	json	response;
+	std::string	final_text = (nonstream_stop_ctx.matched)
+			? nonstream_stop_ctx.acc.substr(0, nonstream_stop_ctx.match_pos)
+			: gen_res.text;
+	json		response;
 
 	response["id"] = id_buf;
 	response["object"] = "chat.completion";
@@ -1266,9 +1560,10 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 	json	choice;
 
 	choice["index"] = 0;
-	choice["message"] = {{"role", "assistant"}, {"content", gen_res.text}};
-	choice["finish_reason"] = ((size_t)gen_res.gen_result.tokens.size()
-			>= (size_t)max_tokens) ? "length" : "stop";
+	choice["message"] = {{"role", "assistant"}, {"content", final_text}};
+	choice["finish_reason"] = nonstream_stop_ctx.matched ? "stop"
+		: (((size_t)gen_res.gen_result.tokens.size()
+				>= (size_t)max_tokens) ? "length" : "stop");
 	response["choices"] = json::array({choice});
 	size_t	prompt_tokens = gen_res.prompt_tokens.size();
 	size_t	completion_tokens = gen_res.gen_result.tokens.size();

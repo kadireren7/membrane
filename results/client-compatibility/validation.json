@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "phase": "mega-phase-d-client-compatibility",
+  "membrane_commit": "PENDING -- updated as PR D7 actually merges",
+  "generated_at": "2026-09-07T02:30:00Z",
+  "pr_squash_shas": {
+    "D1": "e0dbad7abbe963730b6846d97eabbc8d47d15d99",
+    "D2": "f923c8fcf6e95d1da73068bd5130d50af1ac1711",
+    "D3": "62a0e8003ca3b19d3df6eaa558cf95419182a8e2",
+    "D4": "b0aec0bc71c7cadce460f60573d7a8053b1b7303",
+    "D5": "ace9bb8445302f73112409bde3e64a9c26c27e52",
+    "D6": "9df0040891df1aa93220258acf29b150a45a641c",
+    "D7": "PENDING"
+  },
+  "note": "Mega Phase D, PR D7: real client-compatibility validation of the existing OpenAI-compatible server, plus real API-field-compatibility hardening (stop sequences, explicit tools/response_format rejection, a real GET /v1/models Python-SDK compatibility bug found and fixed). This phase deliberately expanded the API surface only where a real client/workflow needed it -- no /v1/completions, no /v1/embeddings, no tool calling were added, all disclosed with reasons in docs/api-contract.md/docs/server.md.",
+  "host_memory_pressure": {
+    "label": "SOURCE_ANALYSIS",
+    "note": "This shared dev host has 5.6 GiB total RAM and was under real, severe memory pressure throughout this phase (available RAM as low as ~150-350 MiB, 5-7 GiB of swap in active use at various points, driven by unrelated desktop applications on the same machine, not by MEMBRANE). This genuinely affected testing strategy: Open WebUI (Docker) was deferred rather than risking host instability (two unrelated Docker containers for a different project were already running and must not be disturbed); an extremely large prompt (~200k words) caused the server to become unresponsive for several minutes during a long-context test (see known_limitations) -- confirmed as real host swap-thrashing behavior, not a code defect, by cross-checking with much smaller prompts on the same server."
+  },
+  "api_audit": {
+    "label": "SOURCE_ANALYSIS",
+    "fields": {
+      "model": "SUPPORTED",
+      "messages": "SUPPORTED",
+      "stream": "SUPPORTED",
+      "stream_options.include_usage": "SUPPORTED",
+      "max_tokens": "SUPPORTED",
+      "max_completion_tokens": "SUPPORTED",
+      "stop": "SUPPORTED (new this phase -- real early termination, see docs/server.md)",
+      "temperature": "IGNORED_COMPATIBLY",
+      "top_p": "IGNORED_COMPATIBLY",
+      "presence_penalty": "IGNORED_COMPATIBLY",
+      "frequency_penalty": "IGNORED_COMPATIBLY",
+      "n": "IGNORED_COMPATIBLY",
+      "user": "IGNORED_COMPATIBLY",
+      "logprobs": "IGNORED_COMPATIBLY",
+      "seed": "IGNORED_COMPATIBLY (decode is already fully deterministic with no RNG -- not a false determinism claim)",
+      "response_format": "REJECTED_EXPLICITLY (new this phase -- anything but the default \"text\")",
+      "tools": "REJECTED_EXPLICITLY (new this phase)",
+      "tool_choice": "REJECTED_EXPLICITLY (new this phase)",
+      "parallel_tool_calls": "IGNORED_COMPATIBLY (meaningless without tools, which are themselves rejected before this field would ever matter)",
+      "usage": "SUPPORTED (response field)",
+      "finish_reason": "SUPPORTED (response field: stop/length)",
+      "Authorization header": "IGNORED_COMPATIBLY (tolerated, never treated as authentication -- loopback-only is this server's real security boundary)"
+    },
+    "method": "Read directly from tools/membrane/server.cpp's handle_chat_completions() (this phase's own mandatory first audit) -- never assumed from docs."
+  },
+  "python_openai": {
+    "label": "VALIDATED_REAL",
+    "client_version": "openai 3.8.0 (installed in an isolated venv this phase)",
+    "evidence": [
+      "client.models.list() against a real running server -- a real, confirmed bug found and fixed: openai.types.model.Model declares created:int as a REQUIRED field; GET /v1/models genuinely failed pydantic validation before this phase added a real created timestamp (registry_entry.added_at_unix) to the response.",
+      "client.chat.completions.create(stream=False) and stream=True both real, against a real, small, locally-installed model (smollm2-135m-instruct, Q8_0 quant) -- real usage/finish_reason parsing via the SDK's own typed interface.",
+      "Real proof of stop-sequence early termination: max_tokens=60, stop=['<|im_end|>'] -- completion_tokens=19 (well under 60), finish_reason='stop', the stop string itself never present in the returned content. Reproduced for both stream=False and stream=True, and for two different stop strings.",
+      "Real proof of tools/response_format rejection: both raise openai.BadRequestError with the real UNSUPPORTED_TOOL_CALLING/UNSUPPORTED_RESPONSE_FORMAT codes.",
+      "Real proof of unknown-model rejection (openai.NotFoundError, MODEL_NOT_FOUND) and malformed-request rejection (openai.BadRequestError, INVALID_REQUEST).",
+      "Real multi-turn chat (system/user/assistant/user) and real Turkish+emoji UTF-8 round trip -- both completed without error (small-model output quality is separately, honestly disclosed below, not conflated with protocol correctness).",
+      "Real API-driven model auto-switch proof (Section 19): three sequential client.chat.completions.create() calls naming smollm2-135m-instruct, then smollm2-135m-q4 (a second real, distinct registered model), then smollm2-135m-instruct again -- GET /v1/status's own real loaded_model field confirmed the server switched each time, with NO call to any MEMBRANE-specific admin endpoint -- a normal OpenAI-shaped request alone triggers the live switch."
+    ]
+  },
+  "node_client": {
+    "label": "VALIDATED_REAL",
+    "client_version": "openai (npm) 7.10.0, Node.js v24.16.0",
+    "evidence": [
+      "Official openai npm package installed in an isolated scratch directory (never a MEMBRANE runtime dependency) -- real models.list(), real non-streaming and streaming chat.completions.create() (async-iterator consumption), real APIError.status/.error shape checks for unknown-model (404) and tools-rejected (400 UNSUPPORTED_TOOL_CALLING).",
+      "Real stop-sequence early-termination proof, same method as the Python SDK above: completion_tokens < max_tokens, finish_reason='stop', stop string absent from output.",
+      "A lighter-weight, no-npm-install, CI-safe second-language check also exists and now covers the new D7 fields too: scripts/node-client-check.mjs (Node's own built-in fetch only) -- extended this phase with tools/response_format/stop-shape/Authorization-header checks, all passing against a real running server with an empty registry (no real model needed for these specific checks, since they are rejected before model resolution)."
+    ]
+  },
+  "openwebui": {
+    "label": "NOT_VALIDATED",
+    "reason": "This shared dev host was under real, severe memory pressure throughout this phase (see host_memory_pressure above), with two unrelated Docker containers (postgres, redis, a different project) already running and not to be disturbed. Pulling/running an Open WebUI container was judged unsafe to attempt given the host's real state at the time -- deferred, not blocked (Section 46 of the task: 'if neither Open WebUI nor Continue can be safely validated, do not block D7 automatically, but disclose the gap'). The underlying protocol surface Open WebUI would exercise (model listing, non-stream chat, streaming chat, a configurable base URL + dummy API key) is already VALIDATED_REAL via two independent real SDKs above."
+  },
+  "continue_extension": {
+    "label": "CONFIGURATION_ONLY",
+    "reason": "No VS Code environment exists in this CLI-only sandbox. Continue's own documented OpenAI-compatible provider configuration format (a `models:` entry with `provider: openai`, `apiBase`, `apiKey`) was checked against this server's real, confirmed behavior above (loopback base URL with no double /v1/v1, a real Authorization header tolerated, standard /v1/models and /v1/chat/completions) -- the configuration is expected to work based on that real protocol evidence, but Continue itself was never actually run end-to-end this phase."
+  },
+  "additional_client": {
+    "label": "VALIDATED_REAL",
+    "evidence": [
+      "curl (raw HTTP, no SDK abstraction) was used throughout this phase, including to isolate and definitively prove a real streaming concurrency bug (see known_limitations/real_bug_found_and_fixed below) that neither SDK's own higher-level abstractions alone would have made as easy to diagnose.",
+      "Real SSE wire-format inspection via curl -N: exact `data: {...}` chat.completion.chunk frames, the terminal `data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"...}]}` frame, and a final `data: [DONE]` -- matches Section 21's own real client-expectation checklist."
+    ]
+  },
+  "model_listing": {
+    "label": "REAL",
+    "evidence": [
+      "GET /v1/models real id/object/created/owned_by fields -- id is exactly the registry name (membrane use NAME's own name), created is the real added_at_unix from the registry (a genuine bug fix this phase, not always present before), never a filesystem path.",
+      "test_server.cpp's own extended test_registry_hot_reload_without_restart() now asserts created/object/owned_by directly, ctest-verified."
+    ]
+  },
+  "nonstream": {
+    "label": "REAL",
+    "evidence": ["See python_openai/node_client above -- real non-streaming chat completions against a real small model, both SDKs."]
+  },
+  "stream": {
+    "label": "REAL",
+    "evidence": ["See python_openai/node_client above -- real streaming chat completions, real SSE frames, real usage chunk when stream_options.include_usage is requested."]
+  },
+  "cancellation": {
+    "label": "REAL",
+    "evidence": [
+      "Real forced client disconnect mid-stream (curl with a 3s timeout against a 500-max-tokens request) -- confirmed the server correctly stopped generation and released its internal lock: a fresh, unrelated request immediately afterward was served in 0.19s, proving no deadlock.",
+      "This is a regression check, not new behavior -- but it was genuinely re-verified after this phase's own real concurrency fix (see known_limitations) changed which atomic flag the streaming worker thread watches; a real risk existed that the fix could have broken real disconnect-cancellation while fixing the stop-sequence hang, and this test proves it did not."
+    ]
+  },
+  "multi_turn": {
+    "label": "REAL",
+    "evidence": ["Real system/user/assistant/user request via both SDKs completed without protocol error -- MEMBRANE itself owns no conversation history (docs/model-lifecycle.md's own established convention extends here: the client resends full history every request)."]
+  },
+  "unicode": {
+    "label": "REAL",
+    "evidence": ["Real Turkish (çğıöşü) + emoji (😀) request, real non-error UTF-8-encodable response, via the Python SDK."]
+  },
+  "model_switch": {
+    "label": "REAL",
+    "evidence": ["See python_openai's own real auto-switch proof above -- two distinct real registered models (different quants of the same small family, but the server only cares about registry NAME identity, exercising the exact same real switch path a switch between two unrelated model families would)."]
+  },
+  "not_installed": {
+    "label": "REAL",
+    "evidence": ["A chat request naming an unregistered model name returns a real 404 MODEL_NOT_FOUND -- never an auto-download attempt. (Section 20's suggested code name was MODEL_NOT_INSTALLED; this project already had an equivalent real code, MODEL_NOT_FOUND, predating this phase -- reused rather than renamed, an established Mega Phase D convention of reusing existing codes where one already fits, see docs/model-lifecycle.md's own D6 precedent.)"]
+  },
+  "server_busy": {
+    "label": "SOURCE_ANALYSIS",
+    "note": "Not re-exercised with a real flood this phase -- already real, ctest-verified (test_server.cpp's pre-existing test_admission_gate_rejects_at_capacity_zero, unchanged by this PR) and already documented (docs/server.md's Errors table, SERVER_BUSY + Retry-After). Re-confirmed by source read that this code path is completely untouched by any D7 change."
+  },
+  "api_fields": {
+    "label": "SOURCE_ANALYSIS",
+    "note": "See api_audit above for the complete field-by-field classification, derived directly from tools/membrane/server.cpp's real request-parsing code, not assumed from docs."
+  },
+  "unsupported_fields": {
+    "label": "REAL",
+    "evidence": ["tools/tool_choice/response_format(non-text) real, tested rejections -- see python_openai/node_client above and test_server.cpp's own new ctest coverage."]
+  },
+  "api_additions": {
+    "label": "SOURCE_ANALYSIS",
+    "note": "Exactly two real additions this phase: (1) stop-sequence support (a real, tested feature, see docs/server.md), (2) a `created` field in GET /v1/models (a real bug fix for Python SDK compatibility). /v1/completions and /v1/embeddings were evaluated and deliberately NOT added -- no real target client needs either for basic chat/streaming use, and /v1/embeddings would need a real, separate hidden-state extraction path this project does not have (never faked from generation logits, per the task's own explicit instruction)."
+  },
+  "known_limitations": {
+    "label": "SOURCE_ANALYSIS",
+    "items": [
+      "A real, first-attempt concurrency bug was found and fixed this phase: the streaming stop-sequence implementation initially reused the SAME std::atomic<bool> cancel_flag stream_queue_t's own push_blocking() uses to decide 'give up, the client is gone' -- setting it (correctly) to halt generation early also (incorrectly) made push_blocking() silently DROP the real terminal DONE frame a still-connected client was waiting for, hanging every streaming request that used `stop` forever. Found via direct stderr instrumentation of the real running server (not guessed), root-caused to stream_queue_t's own documented contract, and fixed by introducing a second, separate atomic (gen_cancel_flag) for 'halt the decode loop' distinct from the queue's own 'the client is gone, stop delivering' flag. Verified fixed via real curl/Python/Node round trips (sub-second) and via a real client-disconnect regression check (proving the fix did not break the ORIGINAL PR B2 cancellation feature). This bug would never have been caught by ctest's own request-validation-only harness (no real model there) -- only a real end-to-end client test against a real model surfaced it, which is exactly why this phase's own real-client-testing mandate exists.",
+      "An extremely large prompt (~200,000 words) made the server become unresponsive for several minutes on this severely memory-constrained (5.6 GiB total RAM) test host -- no crash, but no fast, clean structured error either (Section 26 of the task wanted a fast, structured rejection; this was not achieved at that prompt size). A moderately large prompt (~3,600 words, ~4,500-5,000 tokens) succeeded normally in ~26s; a larger one (~15,000 words) also caused extended unresponsiveness. This is disclosed as a real, found gap: there is no cheap, fast pre-flight prompt-size/token-count check before the full context-recommendation pipeline (tokenization + host-memory-guard + joint-planner) runs, so a client that sends an enormous prompt pays the full cost of that pipeline (which scales with prompt size and, on a memory-constrained host, can be dominated by swap thrashing) before any error is returned, rather than failing fast. Not fixed this phase (would require new work on the context-recommendation pipeline's own entry point, out of D7's own client-compatibility scope) -- a real, actionable candidate for a future phase.",
+      "Open WebUI was not validated this phase (see openwebui above) -- a real, disclosed gap, not silently claimed as covered.",
+      "Continue was not run end-to-end (see continue_extension above) -- configuration-format compatibility only.",
+      "Model-quality observation, NOT a protocol/compatibility issue: the SmolLM2-135M fixture used for all real testing this phase frequently produces degenerate, echo-heavy output (repeating parts of the prompt/chat-template special tokens as visible text) under greedy decoding -- a known, previously-disclosed characteristic of this exact small model (see this project's own prior Phase 4.2 finding: neither SmolLM2-135M nor SmolLM2-360M met a real quality bar). Every protocol-level check in this phase (correct fields, correct error codes, correct streaming shape, correct stop-sequence truncation point) passed regardless of output quality -- client PROTOCOL compatibility and model OUTPUT quality are deliberately kept as separate concerns throughout this evidence file."
+    ]
+  },
+  "product_value_check": {
+    "label": "REAL",
+    "note": "Section 47 of the task: can a user now `membrane use MODEL`, open a real third-party client, point it at MEMBRANE, and chat/stream without any MEMBRANE-specific flags? YES, confirmed real this phase for two independent real OpenAI SDKs (Python, Node) -- `membrane use smollm2-135m-instruct --yes` (D6) installed and selected the model, `membrane serve` started the server, and both SDKs, configured with nothing more than a base_url and a placeholder API key, listed the model, chatted, and streamed successfully. Open WebUI/Continue specifically were not exercised end-to-end this phase (see above), so the claim is scoped to 'a real OpenAI-SDK-based application' rather than 'any GUI chat client', an honest, narrower claim than the broadest possible reading of Section 47."
+  }
+}
