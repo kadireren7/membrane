@@ -1,5 +1,6 @@
 #include "model_cmd.h"
 #include "registry_core.h"
+#include "membrane/clock_compat.h"
 
 #include <cerrno>
 #include <cstdio>
