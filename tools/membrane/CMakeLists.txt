@@ -70,6 +70,22 @@ target_link_libraries(membrane_systemd_unit PUBLIC membrane_sanitizers)
 target_include_directories(membrane_systemd_unit PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 
+# Mega Phase D, PR D4: pure launchd LaunchAgent plist generation
+# (launchd_unit.h's own top comment) -- the macOS analog of
+# membrane_systemd_unit above, same pure-generation/no-filesystem split.
+# Built unconditionally (not #ifdef __APPLE__-guarded at the CMake
+# level) so its own unit tests run on every platform, including this
+# project's normal Linux CI -- pure string generation needs no real
+# launchd to test, exactly like membrane_systemd_unit's own tests need
+# no real systemd.
+add_library(membrane_launchd_unit STATIC launchd_unit.cpp)
+set_target_properties(membrane_launchd_unit PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_launchd_unit PUBLIC membrane_sanitizers)
+target_include_directories(membrane_launchd_unit PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+
 # Mega Phase B, PR B1: the persistent `membrane serve` config (server_
 # config.h's own top comment) -- listen_address/port/default_model/
 # log_level, atomically written via membrane_fs_util.
@@ -155,13 +171,19 @@ target_include_directories(membrane_status_client PRIVATE
 # Mega Phase B, PR B1: `membrane service ...` itself (service_cmd.h's own
 # top comment) -- installs/manages membrane.service as a systemd --user
 # unit; never a second daemon-supervision implementation.
+# Mega Phase D, PR D4: also links membrane_launchd_unit -- service_cmd.cpp
+# dispatches between the two backends via #ifdef __APPLE__ internally
+# (server.h's own foreground membrane_server_run() stays the one, shared
+# runtime either platform supervises -- Section 4's "never duplicate
+# server/runtime logic" satisfied by construction, not by convention).
 add_library(membrane_service_cmd STATIC service_cmd.cpp)
 set_target_properties(membrane_service_cmd PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_service_cmd PUBLIC membrane_sanitizers
-  membrane_systemd_unit membrane_server_config membrane_subprocess
-  membrane_status_client membrane_fs_util membrane_product_cli)
+  membrane_systemd_unit membrane_launchd_unit membrane_server_config
+  membrane_subprocess membrane_status_client membrane_fs_util
+  membrane_product_cli)
 target_include_directories(membrane_service_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_service_cmd PRIVATE
@@ -395,6 +417,19 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_systemd_unit PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_systemd_unit COMMAND test_systemd_unit)
+
+  # Mega Phase D, PR D4: the launchd analog of test_systemd_unit above --
+  # same pure generation/path-handling coverage, no real launchctl. Runs
+  # here (normal Linux CI) too, not only on the macOS runner -- pure
+  # string logic needs no real launchd to test.
+  add_executable(test_launchd_unit test_launchd_unit.cpp)
+  set_target_properties(test_launchd_unit PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_launchd_unit PRIVATE membrane_launchd_unit)
+  target_include_directories(test_launchd_unit PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_launchd_unit COMMAND test_launchd_unit)
 
   add_executable(test_server_config test_server_config.cpp)
   set_target_properties(test_server_config PROPERTIES

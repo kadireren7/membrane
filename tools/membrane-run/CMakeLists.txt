@@ -126,10 +126,26 @@ target_include_directories(membrane-run PRIVATE
 # a hardcoded "../lib" so it stays correct if CMAKE_INSTALL_LIBDIR ever
 # resolves to something other than "lib" (e.g. "lib64" on some distros
 # under a non-default GNUInstallDirs configuration).
+#
+# Mega Phase D, PR D4: $ORIGIN is a Linux/ELF-only dynamic-linker token
+# -- dyld (macOS) has no concept of "$ORIGIN" at all and would silently
+# leave a Darwin build's installed binary unable to find its own
+# installed libraries (the exact "cannot open shared object file" class
+# of bug this whole RPATH block exists to prevent, just on the other
+# platform). @loader_path is dyld's own equivalent token (relative to
+# the loading binary/library itself, same meaning as $ORIGIN). Selected
+# once via CMake's own APPLE variable (true only on a Darwin configure)
+# rather than a runtime check, since this is a build-time/link-time
+# property.
+if(APPLE)
+  set(MEMBRANE_RPATH_ORIGIN_TOKEN "@loader_path")
+else()
+  set(MEMBRANE_RPATH_ORIGIN_TOKEN "$ORIGIN")
+endif()
 file(RELATIVE_PATH MEMBRANE_RUN_RPATH_TO_LIBDIR
   "${CMAKE_INSTALL_FULL_BINDIR}" "${CMAKE_INSTALL_FULL_LIBDIR}")
 set_target_properties(membrane-run PROPERTIES
-  INSTALL_RPATH "$ORIGIN/${MEMBRANE_RUN_RPATH_TO_LIBDIR}"
+  INSTALL_RPATH "${MEMBRANE_RPATH_ORIGIN_TOKEN}/${MEMBRANE_RUN_RPATH_TO_LIBDIR}"
   BUILD_WITH_INSTALL_RPATH FALSE
   SKIP_BUILD_RPATH FALSE)
 install(TARGETS membrane-run RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -151,8 +167,11 @@ if(BUILD_SHARED_LIBS)
   # Mega Phase D, PR D3: ggml-cuda joins this list the same way ggml-
   # vulkan did -- only exists on a -DGGML_CUDA=ON configure, the
   # existing TARGET guard below skips it cleanly otherwise.
+  # Mega Phase D, PR D4: ggml-metal joins the same way -- only exists on
+  # a -DGGML_METAL=ON configure (Apple-only, see the root CMakeLists.txt
+  # pre-check above).
   foreach(_membrane_run_dep IN ITEMS llama ggml ggml-base ggml-cpu
-      ggml-blas ggml-vulkan ggml-cuda membrane_core)
+      ggml-blas ggml-vulkan ggml-cuda ggml-metal membrane_core)
     if(TARGET ${_membrane_run_dep})
       # membrane_core's own SHARED/STATIC-ness follows BUILD_SHARED_LIBS
       # at the point its add_library() call is evaluated, at the top of
@@ -189,7 +208,7 @@ if(BUILD_SHARED_LIBS)
       # PUBLIC_HEADER DESTINATION" dev-warning on every configure.
       set_target_properties(${_membrane_run_dep} PROPERTIES
         PUBLIC_HEADER ""
-        INSTALL_RPATH "$ORIGIN"
+        INSTALL_RPATH "${MEMBRANE_RPATH_ORIGIN_TOKEN}"
         BUILD_WITH_INSTALL_RPATH FALSE
         SKIP_BUILD_RPATH FALSE)
       install(TARGETS ${_membrane_run_dep}

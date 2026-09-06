@@ -1093,3 +1093,74 @@ jobs:
         run: |
           ./build-cuda-smoke/tools/membrane-run/membrane-run --doctor
           ./build-cuda-smoke/tools/membrane-run/membrane-run --list-devices
+
+  # Mega Phase D, PR D4: unlike cuda-backend-build-smoke above, this
+  # runner IS real, genuine Apple hardware -- macos-14 is a real Apple
+  # Silicon (arm64) GitHub-hosted runner, not an emulated/virtualized
+  # x86 environment -- so this job attempts REAL Metal generation, not
+  # just a compile-only smoke. If real generation turns out not to work
+  # reliably in this specific hosted-runner environment, docs/macos-
+  # metal.md and results/macos-metal/validation.json disclose exactly
+  # what level was actually achieved here -- never overclaimed to match
+  # this job's own intent.
+  macos-metal-smoke:
+    runs-on: macos-14
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Configure (Metal + llama)
+        run: |
+          cmake -S . -B build-metal-smoke \
+            -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_METAL=ON \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build-metal-smoke -j3 --target membrane-run membrane
+
+      - name: Real device enumeration and doctor
+        run: |
+          ./build-metal-smoke/tools/membrane-run/membrane-run --list-devices
+          ./build-metal-smoke/tools/membrane-run/membrane-run --doctor
+
+      - name: Real unit tests (test_launchd_unit, test_systemd_unit skipped)
+        run: |
+          ./build-metal-smoke/tools/membrane/test_launchd_unit
+
+      # Real product-path download: the same D1/D2 catalog + download
+      # manager + variant selector every other real model install in
+      # this project uses -- a genuine HTTPS fetch from Hugging Face,
+      # not a CI-only fixture. SmolLM2-135M-Instruct/q4_k_m is the
+      # smallest catalog entry, chosen to keep this job's real network
+      # transfer small.
+      - name: Real model install (download from Hugging Face)
+        run: |
+          ./build-metal-smoke/tools/membrane/membrane model install \
+            smollm2:135m --quant q4_k_m --json | tee /tmp/install-result.json
+          echo "MODEL_PATH=$(python3 -c 'import json;print(json.load(open("/tmp/install-result.json"))["path"])')" >> "$GITHUB_ENV"
+
+      - name: Real generation on Metal (--gpu-layers auto)
+        run: |
+          ./build-metal-smoke/tools/membrane-run/membrane-run \
+            --model "$MODEL_PATH" --prompt "Hello" --ctx auto --auto \
+            --gpu-layers auto --json | tee /tmp/generation-result.json
+
+      # Real launchd service lifecycle smoke -- each GitHub-hosted macOS
+      # runner has a real, working per-session launchd (gui/<uid>), so
+      # this exercises real launchctl bootstrap/kickstart/bootout, not
+      # just the pure plist-generation unit tests above.
+      - name: Real launchd service lifecycle smoke
+        continue-on-error: true
+        run: |
+          ./build-metal-smoke/tools/membrane/membrane service install \
+            --exec-path "$(pwd)/build-metal-smoke/tools/membrane/membrane"
+          ./build-metal-smoke/tools/membrane/membrane service start
+          sleep 2
+          ./build-metal-smoke/tools/membrane/membrane service status
+          ./build-metal-smoke/tools/membrane/membrane service stop
+          ./build-metal-smoke/tools/membrane/membrane service uninstall
