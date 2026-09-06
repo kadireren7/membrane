@@ -522,6 +522,55 @@
       "reason_code": "",
       "evidence": [],
       "notes": "q5 compressed KV on CUDA was not separately exercised this phase (only native and adaptive-selected-q8 were tested) -- the same compat_check.c allowlist logic that already validates q5 on CPU/Vulkan applies unchanged (backend-agnostic), but no real q5-on-CUDA generation run exists yet. Disclosed, not assumed."
+    },
+    {
+      "id": "MC-30",
+      "model_family": "any",
+      "model_arch": "any",
+      "backend": "metal",
+      "kv_precision": "any",
+      "kv_placement": "any",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "backend-level",
+      "status": "SUPPORTED",
+      "reason_code": "CANDIDATE_SELECTED",
+      "evidence": [
+        "results/macos-metal/validation.json"
+      ],
+      "notes": "Mega Phase D, PR D4: Metal is now a real, compiled-in build option (GGML_METAL=ON) -- this row's own scope is backend-level (the build option exists and compiles cleanly on real macOS CI, no planner/policy code needed any change, matching gpu_device.h's own long-standing design promise, same finding as PR D3's CUDA work), not a claim about any specific model/precision combination. MC-31 carries the specific real, tested combination; MC-32 discloses what was not yet exercised."
+    },
+    {
+      "id": "MC-31",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "metal",
+      "kv_precision": "adaptive",
+      "kv_placement": "auto",
+      "gpu_layers_mode": "auto",
+      "context_class": "small (2048)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "Q8_FULL_RESIDENCY",
+      "evidence": [
+        "results/macos-metal/validation.json"
+      ],
+      "notes": "Tested hardware: GitHub Actions macos-14 runner's real MTL0 device (self-reported as 'Apple Paravirtual device' -- a real Apple Silicon host, but this job runs inside a paravirtualized VM, not bare-metal; see docs/macos-metal.md's 'Hardware scope'). --gpu-layers auto selected 30/30 layers GPU-resident; adaptive KV selected q8 (Q8_FULL_RESIDENCY); real generation completed (128 tokens, exit 0); real driver-reported GPU memory delta confirmed. Decode throughput was very low (0.41 tok/s) -- disclosed as likely paravirtualization overhead, not a MEMBRANE inefficiency, but no bare-metal Mac was available to confirm; this row is a compatibility ('does it work') claim only, never a performance claim (docs/compatibility.md's own 'Compatibility != performance' policy). --ctx auto does not yet work on macOS (host_memory_guard.h's host-RAM read is Linux-only) -- this run used an explicit --ctx 2048. Mega Phase D, PR D4."
+    },
+    {
+      "id": "MC-32",
+      "model_family": "any",
+      "model_arch": "any",
+      "backend": "metal",
+      "kv_precision": "native or q5",
+      "kv_placement": "any",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "NOT_YET_VALIDATED",
+      "reason_code": "",
+      "evidence": [],
+      "notes": "native-precision and q5 compressed KV on Metal were not separately exercised this phase (only the --kv adaptive default path, which resolved to q8, was tested -- MC-31) -- the same compat_check.c allowlist logic that already validates these on CPU/Vulkan/CUDA applies unchanged (backend-agnostic), but no real native/q5-on-Metal generation run exists yet. Disclosed, not assumed."
     }
   ]
 }

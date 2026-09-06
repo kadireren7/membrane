@@ -10,6 +10,11 @@
  * unit (server.h's foreground membrane_server_run() is completely
  * unchanged; `membrane serve` still works exactly as before, for direct/
  * debug use -- Section 4 of the task).
+ *
+ * Mega Phase D, PR D4: on macOS/Darwin, the same subcommands manage a
+ * launchd LaunchAgent instead (launchd_unit.h) -- service_cmd.cpp
+ * dispatches internally via #ifdef __APPLE__; this header's own public
+ * surface is unchanged on either platform.
  */
 int	membrane_service_cmd_dispatch(const std::vector<std::string> &args,
 			bool want_json);

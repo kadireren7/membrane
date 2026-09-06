@@ -6,11 +6,11 @@
 #include <string>
 #include <vector>
 
-/* Phase 28, Section 6: memfd_create()/dup2()/lseek() for the --json
- * parse-error stderr capture (parse_opts_capture_stderr() below) --
- * Linux-only, matching this project's existing Linux-only scope
- * (docs/install.md). */
-#include <sys/mman.h>
+/* Phase 28, Section 6 / Mega Phase D, PR D4: tmpfile()/dup2() for the
+ * --json parse-error stderr capture (parse_opts_capture_stderr()
+ * below) -- portable POSIX, not Linux-only (see that function's own
+ * comment for why this replaced an earlier memfd_create()-based
+ * version). */
 #include <unistd.h>
 
 #include "ggml.h"
@@ -1848,54 +1848,66 @@ static bool	argv_has_json_flag(int argc, char **argv)
 /* Phase 28, Section 6: membrane_run_parse_opts() already prints one
  * clear "membrane-run: ...\n" line (occasionally a couple more, e.g.
  * --device's "Available:" listing) to stderr on every failure --
- * captured here (fd 2 redirected to an anonymous in-memory file for
- * the duration of the call only, via memfd_create -- Linux-only, same
- * scope as the rest of this project) so a --json caller gets that
- * exact text inside a machine-readable object on stdout, without a
- * second hand-maintained copy of the parser's own error strings. The
+ * captured here (fd 2 redirected to an anonymous temp file for the
+ * duration of the call only, via tmpfile()) so a --json caller gets
+ * that exact text inside a machine-readable object on stdout, without
+ * a second hand-maintained copy of the parser's own error strings. The
  * real stderr still receives the message afterward (re-emitted
  * verbatim once fd 2 is restored) -- a --json run's stderr diagnostics
  * are unaffected, matching this file's existing "stderr always gets
  * diagnostics regardless of --json" convention. Falls back to an
  * uncaptured call (captured left empty) if either fd operation fails,
- * rather than losing the parse result itself. */
+ * rather than losing the parse result itself.
+ *
+ * Mega Phase D, PR D4: originally used memfd_create() (an anonymous,
+ * unlinked, RAM-backed fd) -- a real, genuine Linux-only syscall (glibc/
+ * kernel-specific, no Darwin equivalent) that failed to even compile
+ * on macOS ("use of undeclared identifier 'memfd_create'", found by
+ * this PR's own real macOS CI build). tmpfile() is the portable POSIX
+ * equivalent for this exact use case: an anonymous (unlinked
+ * immediately after creation on every real libc) temp file, auto-
+ * cleaned on close/process exit, working identically on Linux, macOS,
+ * and BSD -- a strict improvement (removes a Linux-only dependency)
+ * rather than a platform-specific workaround. */
 static int	parse_opts_capture_stderr(int argc, char **argv,
 				membrane_run_opts_t *o, std::string *captured)
 {
 	int		saved_fd;
+	FILE	*mem_file;
 	int		mem_fd;
 	int		rc;
-	off_t	len;
+	long	len;
 
 	captured->clear();
 	fflush(stderr);
 	saved_fd = dup(STDERR_FILENO);
-	mem_fd = (int)memfd_create("membrane-run-parse-stderr", 0);
-	if (saved_fd < 0 || mem_fd < 0)
+	mem_file = tmpfile();
+	if (saved_fd < 0 || mem_file == NULL)
 	{
 		if (saved_fd >= 0)
 			close(saved_fd);
-		if (mem_fd >= 0)
-			close(mem_fd);
+		if (mem_file != NULL)
+			fclose(mem_file);
 		return (membrane_run_parse_opts(argc, argv, o));
 	}
+	mem_fd = fileno(mem_file);
 	dup2(mem_fd, STDERR_FILENO);
 	rc = membrane_run_parse_opts(argc, argv, o);
 	fflush(stderr);
 	dup2(saved_fd, STDERR_FILENO);
 	close(saved_fd);
-	len = lseek(mem_fd, 0, SEEK_END);
+	len = ftell(mem_file);
 	if (len > 0)
 	{
 		std::vector<char>	buf((size_t)len);
-		ssize_t				n;
+		size_t				n;
 
-		lseek(mem_fd, 0, SEEK_SET);
-		n = read(mem_fd, buf.data(), (size_t)len);
+		rewind(mem_file);
+		n = fread(buf.data(), 1, (size_t)len, mem_file);
 		if (n > 0)
-			captured->assign(buf.data(), (size_t)n);
+			captured->assign(buf.data(), n);
 	}
-	close(mem_fd);
+	fclose(mem_file);
 	if (!captured->empty())
 		fputs(captured->c_str(), stderr);
 	return (rc);

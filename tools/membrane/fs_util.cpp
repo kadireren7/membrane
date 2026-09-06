@@ -92,3 +92,14 @@ bool	membrane_atomic_write_file(const std::string &path,
 	}
 	return (true);
 }
+
+int64_t	membrane_stat_mtime_ns(const struct stat &st)
+{
+#ifdef __APPLE__
+	return ((int64_t)st.st_mtimespec.tv_sec * 1000000000LL
+		+ (int64_t)st.st_mtimespec.tv_nsec);
+#else
+	return ((int64_t)st.st_mtim.tv_sec * 1000000000LL
+		+ (int64_t)st.st_mtim.tv_nsec);
+#endif
+}

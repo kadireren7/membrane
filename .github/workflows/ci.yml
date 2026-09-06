@@ -1093,3 +1093,108 @@ jobs:
         run: |
           ./build-cuda-smoke/tools/membrane-run/membrane-run --doctor
           ./build-cuda-smoke/tools/membrane-run/membrane-run --list-devices
+
+  # Mega Phase D, PR D4: validates the committed real-macOS/Metal
+  # evidence (results/macos-metal/validation.json) and a handful of
+  # source-level regression guards (the GGML_METAL Apple-only
+  # pre-check, ggml-metal joined the RPATH foreach list, the real
+  # @loader_path/$ORIGIN cross-platform token, the
+  # membrane_stat_mtime_ns() portability helper, no backend-specific
+  # leakage, no overclaim) -- python3 + checkout only, no macOS runner,
+  # no C/C++ build.
+  macos-metal-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify macOS/Metal backend evidence and docs
+        run: python3 scripts/verify-macos-metal.py
+
+  # Mega Phase D, PR D4: unlike cuda-backend-build-smoke above, this
+  # runner IS real Apple Silicon hardware -- macos-14 is a real arm64
+  # GitHub-hosted runner, not an x86 emulation -- so this job attempts
+  # REAL Metal generation, not just a compile-only smoke. Confirmed
+  # directly by real output: the job itself executes inside a
+  # paravirtualized VM on that hardware (Metal reports the device as
+  # "Apple Paravirtual device", not a bare-metal GPU) -- real
+  # compatibility evidence, but never a performance claim; see
+  # docs/macos-metal.md's own "Hardware scope" section, which (along
+  # with results/macos-metal/validation.json) discloses exactly what
+  # level was actually achieved here -- never overclaimed to match this
+  # job's own intent.
+  macos-metal-smoke:
+    runs-on: macos-14
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Configure (Metal + llama)
+        run: |
+          cmake -S . -B build-metal-smoke \
+            -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_METAL=ON \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build-metal-smoke -j3 --target membrane-run \
+            membrane test_launchd_unit
+
+      - name: Real device enumeration and doctor
+        run: |
+          ./build-metal-smoke/tools/membrane-run/membrane-run --list-devices
+          ./build-metal-smoke/tools/membrane-run/membrane-run --doctor
+
+      - name: Real unit tests (test_launchd_unit, test_systemd_unit skipped)
+        run: |
+          ./build-metal-smoke/tools/membrane/test_launchd_unit
+
+      # Real product-path download: the same D1/D2 catalog + download
+      # manager + variant selector every other real model install in
+      # this project uses -- a genuine HTTPS fetch from Hugging Face,
+      # not a CI-only fixture. SmolLM2-135M-Instruct/q4_k_m is the
+      # smallest catalog entry, chosen to keep this job's real network
+      # transfer small.
+      - name: Real model install (download from Hugging Face)
+        run: |
+          ./build-metal-smoke/tools/membrane/membrane model install \
+            smollm2:135m --quant q4_k_m --json | tee /tmp/install-result.json
+          echo "MODEL_PATH=$(python3 -c 'import json;print(json.load(open("/tmp/install-result.json"))["path"])')" >> "$GITHUB_ENV"
+
+      # A real, genuine finding from this job's own first real run:
+      # --ctx auto correctly refuses to proceed (PLANNER_REJECTED_ALL)
+      # on this runner -- host_memory_guard's host-RAM read is Linux-
+      # only (/proc/meminfo), so --ctx auto has no host-memory fact to
+      # size against on macOS yet (a real, disclosed, pre-existing gap,
+      # out of this PR's own scope -- see docs/macos-metal.md's known
+      # limitations). An explicit --ctx N (still combined with --auto
+      # for GPU-layers/KV auto-selection) is the CLI's own documented
+      # example 5 for exactly this situation and is what actually
+      # exercises real Metal generation here.
+      - name: Real generation on Metal (--gpu-layers auto)
+        run: |
+          ./build-metal-smoke/tools/membrane-run/membrane-run \
+            --model "$MODEL_PATH" --prompt "Hello" --ctx 2048 --auto \
+            --gpu-layers auto --json | tee /tmp/generation-result.json
+          python3 -c "import json,sys; d=json.load(open('/tmp/generation-result.json')); sys.exit(0 if d.get('ok') is True else 1)"
+
+      # Real launchd service lifecycle smoke -- each GitHub-hosted macOS
+      # runner has a real, working per-session launchd (gui/<uid>), so
+      # this exercises real launchctl bootstrap/kickstart/bootout, not
+      # just the pure plist-generation unit tests above.
+      - name: Real launchd service lifecycle smoke
+        continue-on-error: true
+        run: |
+          ./build-metal-smoke/tools/membrane/membrane service install \
+            --exec-path "$(pwd)/build-metal-smoke/tools/membrane/membrane"
+          ./build-metal-smoke/tools/membrane/membrane service start
+          sleep 2
+          ./build-metal-smoke/tools/membrane/membrane service status
+          ./build-metal-smoke/tools/membrane/membrane service stop
+          ./build-metal-smoke/tools/membrane/membrane service uninstall

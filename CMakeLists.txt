@@ -462,6 +462,27 @@ if(MEMBRANE_ENABLE_LLAMA)
     endif()
   endif()
 
+  # Mega Phase D, PR D4: same real-toolchain, MEMBRANE-specific-error
+  # pre-check pattern as the Vulkan/CUDA blocks above -- but Metal has
+  # no "development files missing" middle ground the way Vulkan/CUDA
+  # do: Foundation.framework/Metal.framework/MetalKit.framework are
+  # part of the OS itself and simply do not exist outside Apple
+  # platforms (third_party/llama.cpp/ggml/src/ggml-metal/CMakeLists.txt's
+  # own find_library(... REQUIRED) calls would otherwise be the first,
+  # generic, MEMBRANE-unaware failure a non-Apple caller hits). Checked
+  # via CMake's own APPLE variable (true only when the target OS is
+  # Darwin), not a runtime probe -- there is no toolkit version or SDK
+  # path that fixes this on a non-Apple OS. GGML_METAL is llama.cpp's
+  # own option name (not defined by this file), read here only to
+  # decide whether to run this pre-check.
+  if(GGML_METAL AND NOT APPLE)
+    message(FATAL_ERROR
+      "Metal backend requested (-DGGML_METAL=ON) but the target OS is "
+      "not Apple/Darwin. Metal is an Apple-only graphics/compute API "
+      "(Foundation.framework/Metal.framework/MetalKit.framework do not "
+      "exist on Linux/Windows) -- see docs/macos-metal.md.")
+  endif()
+
   set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
   set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
