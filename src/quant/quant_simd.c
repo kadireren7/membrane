@@ -37,12 +37,14 @@
  */
 #include "membrane/quant_simd.h"
 #include "membrane/f16convert.h"
+#include "membrane/pthread_compat.h"
 
 #include <math.h>
-#include <pthread.h>
 #include <stdbool.h>
 #include <string.h>
-#include <unistd.h>
+#ifndef _WIN32
+# include <unistd.h>
+#endif
 
 #if defined(__x86_64__) || defined(__i386__)
 # include <immintrin.h>
@@ -854,12 +856,21 @@ membrane_status_t	membrane_simd_q4_0_dequantize_batch(
 
 unsigned int	membrane_simd_default_threads(void)
 {
+#ifdef _WIN32
+	SYSTEM_INFO	info;
+
+	GetSystemInfo(&info);
+	if (info.dwNumberOfProcessors < 1)
+		return (1);
+	return ((unsigned int)info.dwNumberOfProcessors);
+#else
 	long	n;
 
 	n = sysconf(_SC_NPROCESSORS_ONLN);
 	if (n < 1)
 		return (1);
 	return ((unsigned int)n);
+#endif
 }
 
 typedef enum e_qpool_op

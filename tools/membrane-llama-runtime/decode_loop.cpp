@@ -1,4 +1,5 @@
 #include "decode_loop.h"
+#include "membrane/clock_compat.h"
 
 #include <algorithm>
 #include <cstdio>

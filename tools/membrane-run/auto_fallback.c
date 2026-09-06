@@ -6,10 +6,10 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "auto_fallback.h"
+#include "membrane/clock_compat.h"
 
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 /* Phase 24: this module stays llama-free (clock_gettime()/CLOCK_MONOTONIC
  * are libc, not ggml/llama) -- same "no product-specific dependency"

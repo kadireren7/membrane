@@ -340,7 +340,8 @@ target_include_directories(membrane_context_auto_cli PUBLIC
 add_library(membrane_auto_fallback STATIC
   tools/membrane-run/auto_fallback.c)
 target_link_libraries(membrane_auto_fallback PUBLIC membrane_sanitizers)
-target_include_directories(membrane_auto_fallback PUBLIC tools/membrane-run)
+target_include_directories(membrane_auto_fallback PUBLIC tools/membrane-run
+  ${CMAKE_SOURCE_DIR}/include)
 
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,
