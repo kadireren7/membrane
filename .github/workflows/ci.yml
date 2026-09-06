@@ -1254,12 +1254,39 @@ jobs:
           cmake --build build-windows-smoke --config Release -j 2 \
             --target membrane-run membrane test_windows_task
 
+      # Windows has no RPATH/@loader_path/$ORIGIN at all -- unlike
+      # Linux/macOS (where CMake's own default build-tree RPATH lets
+      # the raw, uninstalled build-tree binary find its sibling .so/
+      # .dylib files with zero extra steps, which is why the CUDA/
+      # Metal CI legs above run their own build-tree binaries directly)
+      # a real Windows CI attempt at this found the raw build-tree
+      # membrane-run.exe genuinely cannot start at all: MSVC's multi-
+      # config generator puts the .exe and its own ggml*.dll/llama.dll
+      # dependencies in DIFFERENT build-tree directories
+      # (tools/membrane-run/Release/ vs bin/Release/), and Windows's
+      # own default DLL search order (same directory as the .exe, then
+      # PATH) never finds them there. A real `cmake --install` places
+      # every DLL in the SAME directory as membrane-run.exe/membrane.exe
+      # (CMAKE_INSTALL_BINDIR, tools/membrane-run/CMakeLists.txt's own
+      # real fix for this earlier in Mega Phase D, PR D5) -- this is
+      # the real, correct fix, not a CI-only workaround: it exercises
+      # this project's own actual install path, exactly like
+      # packaging-smoke's own CPU/Vulkan legs already do on Linux.
+      - name: Install to a real prefix (Windows needs this to run at all)
+        continue-on-error: true
+        run: |
+          cmake --install build-windows-smoke --config Release \
+            --prefix "$(pwd)/install-windows-smoke"
+
       - name: Real device enumeration and doctor
         continue-on-error: true
         run: |
-          ./build-windows-smoke/tools/membrane-run/Release/membrane-run.exe --list-devices
-          ./build-windows-smoke/tools/membrane-run/Release/membrane-run.exe --doctor
+          ./install-windows-smoke/bin/membrane-run.exe --list-devices
+          ./install-windows-smoke/bin/membrane-run.exe --doctor
 
+      # test_windows_task links only membrane_windows_task (pure Win32
+      # API calls, no ggml/llama) -- no DLL dependency at all, so it
+      # runs fine straight from the build tree, no install needed.
       - name: Real unit tests (test_windows_task, test_systemd_unit/test_launchd_unit skipped)
         continue-on-error: true
         run: |
@@ -1271,14 +1298,14 @@ jobs:
       - name: Real model install (download from Hugging Face)
         continue-on-error: true
         run: |
-          ./build-windows-smoke/tools/membrane/Release/membrane.exe model install \
+          ./install-windows-smoke/bin/membrane.exe model install \
             smollm2:135m --quant q4_k_m --json | tee install-result.json
           echo "MODEL_PATH=$(python3 -c 'import json;print(json.load(open("install-result.json"))["path"])')" >> "$GITHUB_ENV"
 
       - name: Real CPU generation
         continue-on-error: true
         run: |
-          ./build-windows-smoke/tools/membrane-run/Release/membrane-run.exe \
+          ./install-windows-smoke/bin/membrane-run.exe \
             --model "$MODEL_PATH" --prompt "Hello" --ctx 2048 --auto \
             --json | tee generation-result.json
           python3 -c "import json,sys; d=json.load(open('generation-result.json')); sys.exit(0 if d.get('ok') is True else 1)"
@@ -1288,10 +1315,10 @@ jobs:
       - name: Real Windows Task Scheduler service lifecycle smoke
         continue-on-error: true
         run: |
-          ./build-windows-smoke/tools/membrane/Release/membrane.exe service install \
-            --exec-path "$(pwd)/build-windows-smoke/tools/membrane/Release/membrane.exe"
-          ./build-windows-smoke/tools/membrane/Release/membrane.exe service start
+          ./install-windows-smoke/bin/membrane.exe service install \
+            --exec-path "$(pwd)/install-windows-smoke/bin/membrane.exe"
+          ./install-windows-smoke/bin/membrane.exe service start
           sleep 2
-          ./build-windows-smoke/tools/membrane/Release/membrane.exe service status
-          ./build-windows-smoke/tools/membrane/Release/membrane.exe service stop
-          ./build-windows-smoke/tools/membrane/Release/membrane.exe service uninstall
+          ./install-windows-smoke/bin/membrane.exe service status
+          ./install-windows-smoke/bin/membrane.exe service stop
+          ./install-windows-smoke/bin/membrane.exe service uninstall

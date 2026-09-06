@@ -48,7 +48,7 @@ set_target_properties(membrane_fs_util PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_fs_util PUBLIC membrane_sanitizers)
 target_include_directories(membrane_fs_util PUBLIC
-  ${CMAKE_SOURCE_DIR}/tools/membrane)
+  ${CMAKE_SOURCE_DIR}/tools/membrane ${CMAKE_SOURCE_DIR}/include)
 
 # Mega Phase B, PR B1: minimal safe subprocess runner (subprocess.h's own
 # top comment) -- fork()+execvp(), never system()/popen().
@@ -58,7 +58,7 @@ set_target_properties(membrane_subprocess PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_subprocess PUBLIC membrane_sanitizers)
 target_include_directories(membrane_subprocess PUBLIC
-  ${CMAKE_SOURCE_DIR}/tools/membrane)
+  ${CMAKE_SOURCE_DIR}/tools/membrane ${CMAKE_SOURCE_DIR}/include)
 
 # Mega Phase B, PR B1: pure systemd --user unit-file generation (systemd_
 # unit.h's own top comment) -- no filesystem/systemctl access here.
