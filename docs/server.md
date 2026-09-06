@@ -81,12 +81,42 @@ Supported request fields: `model` (required, a registered name, unless
 a `default_model` is configured server-side — see below —, in which
 case an omitted or empty `"model"` field falls back to it),
 `messages` (required, non-empty array of `{role, content}`),
-`max_tokens` / `max_completion_tokens` (optional, default 512).
-`temperature`/`top_p`/other sampling fields are accepted and **ignored**
-— the underlying decode loop is greedy-only (argmax) today, no sampling
-support exists in this project yet; the response's own `membrane.sampling`
-field says so explicitly rather than silently claiming otherwise.
-`stream: true` — see "Streaming" below.
+`max_tokens` / `max_completion_tokens` (optional, default 512), `stop`
+(optional — see "Stop sequences" below). `stream: true` — see
+"Streaming" below.
+
+`temperature`/`top_p`/`presence_penalty`/`frequency_penalty`/`n`/`user`/
+`logprobs`/`seed` are all accepted and **ignored** (harmless — none of
+them change intended behavior enough to warrant an error; see
+`docs/api-contract.md`'s field table) — the underlying decode loop is
+greedy-only (argmax) today, no sampling support exists in this project
+yet; the response's own `membrane.sampling` field says so explicitly
+rather than silently claiming otherwise. `seed` specifically is a real
+no-op, not a false claim: greedy decoding with no RNG anywhere is
+already fully deterministic given identical inputs.
+
+`tools`/`tool_choice` and `response_format` (anything other than the
+default `"text"`) are explicitly **rejected** (`400`), never silently
+ignored — see "Not implemented" below for why.
+
+### Stop sequences (`stop`) — PR D7
+
+A string, or an array of up to 4 strings (OpenAI's own real limit — a
+longer array is `400 INVALID_REQUEST`, never silently truncated).
+Implemented as a REAL early termination, not a post-hoc truncation of
+output that was already fully generated: the accumulated response text
+is checked against every requested stop string as each new piece of
+text becomes available, and if one matches, generation is halted right
+there (reusing the same real cancellation mechanism client-disconnect
+handling already uses) — the matched stop string itself, and everything
+after it, is never included in the response, and never sent to the
+client on the streaming path either. `finish_reason` is `"stop"` in
+this case. Works identically for both `stream: false` and
+`stream: true`. `usage.completion_tokens` can be at most one token
+higher than what the client actually received as visible text in one
+real, disclosed edge case: the one token whose own decoded text
+straddles the match point is still counted as generated, even though
+only the portion before the match was ever sent.
 
 Response (OpenAI shape plus one additive `membrane` object):
 
@@ -340,31 +370,43 @@ SSE `data: {"error": {...}}` event — see "Streaming" above.
 | 500 | (a real planner reason code, or `GENERATION_FAILED` if none was set) | generation failed after loading (non-streaming only) |
 | 503 | `NO_FEASIBLE_CONTEXT` | no context/hardware plan could be resolved (e.g. insufficient host memory) |
 | 503 | `SERVER_BUSY` | too many chat completion requests are already in flight (PR B3, "Bounded request admission" above) — includes a `Retry-After` header |
+| 400 | `UNSUPPORTED_TOOL_CALLING` | the request included `"tools"`/`"tool_choice"` (PR D7, Section 15: MEMBRANE does not execute tools — rejected explicitly rather than silently ignored, since silently dropping the schema would mislead a client into expecting a tool call back) |
+| 400 | `UNSUPPORTED_RESPONSE_FORMAT` | `"response_format"` requested anything other than the default (`"text"`, or the field omitted) — this server has no constrained-decoding/JSON-mode path that could actually honor it (PR D7, Section 14) |
 
 ## Client integration (PR B4)
 
+Expanded in PR D7 (Mega Phase D) with real Node.js SDK evidence and the
+`created`-field fix described below.
+
 MEMBRANE ships no client of its own — any OpenAI-compatible client
 works against `http://127.0.0.1:8642/v1` with a placeholder API key
-(this server has no authentication, see "Security scope" above).
+(this server has no authentication, see "Security scope" above). See
+`docs/client-compatibility.md` for the full, current, honestly-labeled
+matrix (this section stays a summary, that document is authoritative).
 
-**Real, tested evidence:** the official Python `openai` SDK —
-`client.models.list()`, `client.chat.completions.create()` both
-non-streaming (Mega Phase A, PR A4) and streaming
-(`stream=True`, PR B2) — real generation, real usage/finish_reason
-parsing, real incremental chunks, all via the SDK's own typed
-interface, never manual JSON handling. See
-`results/background-service/validation.json`/
-`results/runtime-service/validation.json`.
+**Real, tested evidence:** the official Python `openai` SDK (3.8.0 as
+of PR D7) and Node.js `openai` npm package (7.10.0, PR D7) — real
+`client.models.list()`, real `chat.completions.create()` both
+non-streaming and streaming, real usage/finish_reason parsing, real
+incremental chunks, real `stop`-sequence early termination, real
+`tools`/`response_format` rejection, all via each SDK's own typed
+interface, never manual JSON handling. PR D7 also found and fixed a
+real Python-SDK compatibility bug this way: `GET /v1/models` was
+missing `created` (a field `openai.types.model.Model` declares
+REQUIRED) — `client.models.list()` genuinely failed before the fix. See
+`results/client-compatibility/validation.json`.
 
-**Configuration instructions (not independently validated this
-phase):** the following are standard OpenAI-compatible integrations
-that should work against this server based on its own protocol
-compliance above, but were not run end-to-end this phase — real Docker
-resource pressure on the development host at the time (other unrelated
-services already running, tight free memory) made starting an
-additional real container unsafe to attempt without risking those
-other services, so this is disclosed as configuration guidance, not a
-tested claim, rather than silently skipped or falsely claimed "tested".
+**Configuration instructions (not independently validated end-to-end):**
+the following are standard OpenAI-compatible integrations that should
+work against this server based on its own protocol compliance above,
+but were not run end-to-end as of PR D7 — this shared development host
+was under real, severe memory pressure throughout PR D7 (as low as
+~150-350 MiB available RAM), with two unrelated Docker containers for a
+different project already running and not to be disturbed, so starting
+an additional real container (Open WebUI) was judged unsafe to attempt
+without risking those other services. Disclosed as configuration
+guidance, not a tested claim, rather than silently skipped or falsely
+claimed "tested".
 
 - **Open WebUI**: `docker run` it with its own `OPENAI_API_BASE_URL`
   environment variable set to `http://127.0.0.1:8642/v1` (or
@@ -389,9 +431,31 @@ tested claim, rather than silently skipped or falsely claimed "tested".
 
 ## Not implemented
 
-- `POST /v1/completions` (non-chat).
+- `POST /v1/completions` (legacy, non-chat) and `POST /v1/embeddings` —
+  evaluated for PR D7 (Mega Phase D, Section 11 of the task) and
+  deliberately not added: no real target client (Python/Node SDKs, Open
+  WebUI, Continue) requires either for basic chat/streaming use, and
+  `/v1/embeddings` specifically would require a real, separate
+  hidden-state extraction path through llama.cpp this project does not
+  have yet — never faked from generation logits (Section 11: "do not
+  fake embeddings from generation logits").
+- Tool calling (`"tools"`/`"tool_choice"`) — evaluated for PR D7
+  (Section 15) and explicitly rejected (`UNSUPPORTED_TOOL_CALLING`, see
+  the Errors table below), never silently dropped. MEMBRANE does not
+  execute tools; accepting the schema and silently ignoring it would
+  let a client believe a tool call might come back when one never will.
+- `response_format` beyond the default (`"text"`, or the field omitted)
+  — evaluated for PR D7 (Section 14) and explicitly rejected
+  (`UNSUPPORTED_RESPONSE_FORMAT`) rather than silently ignored: this
+  server has no constrained-decoding/JSON-mode grammar path that could
+  actually honor `{"type": "json_object"}`, and pretending it works via
+  prompt injection alone would be dishonest.
 - Sampling beyond greedy decoding (temperature/top_p/etc. are accepted
-  and ignored, never faked).
+  and ignored, never faked). `seed` is likewise accepted and ignored —
+  not a false determinism claim: greedy decoding with no RNG anywhere
+  in the decode loop is already fully deterministic given identical
+  model/prompt/parameters, a stronger guarantee than seed-based
+  determinism alone would provide.
 - Multiple simultaneously-resident models.
 - An idle-model timeout (unload after N minutes of no requests) —
   evaluated for PR B3 and deliberately deferred: no clear evidence yet

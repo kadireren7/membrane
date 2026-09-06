@@ -141,11 +141,22 @@ commands (`install`/`start`/`stop`/`status`/`logs`/`uninstall`),
 [`docs/server.md`](docs/server.md) for the full endpoint/streaming/
 security/limitations reference, and
 [`docs/model-registry.md`](docs/model-registry.md) for `membrane
-model`. Point Open WebUI, an OpenAI-compatible editor plugin (e.g.
-Continue), or the official `openai` Python/JS SDK at
-`http://127.0.0.1:8642/v1` with any placeholder API key — see
-`docs/server.md`'s own "Client integration" section for what has
-actually been tested versus configuration-only guidance.
+model`.
+
+#### Use with your app
+
+Point any OpenAI-compatible client at `http://127.0.0.1:8642/v1` with
+any placeholder API key (this server has no authentication of its own —
+loopback-only is its real security boundary). Real, tested this project:
+the official Python and Node.js `openai` SDKs (`client.models.list()`,
+non-streaming and streaming `chat.completions.create()`, real tool-
+calling/`response_format` rejection, real `stop`-sequence early
+termination). Open WebUI and editor plugins like Continue use the same
+standard OpenAI-compatible protocol and are expected to work the same
+way, though they have not both been run end-to-end yet — see
+[`docs/client-compatibility.md`](docs/client-compatibility.md) for the
+exact, honestly-labeled matrix (never "should work," always what was
+actually run).
 
 Prefer a single foreground process for debugging instead of the
 service? `membrane serve` (no service install needed) does exactly the

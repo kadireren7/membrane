@@ -685,6 +685,15 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      # Mega Phase D, PR D7: node-client-check.mjs (used below, against
+      # this job's own already-running real `membrane serve`) uses only
+      # Node's built-in fetch, no npm install -- setup-node just
+      # guarantees a real, known Node version is on PATH rather than
+      # relying on whatever ubuntu-latest happens to ship preinstalled.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -824,6 +833,35 @@ jobs:
             exit 1
           fi
           rm -f /tmp/ci-serve-models.json /tmp/ci-health.json
+
+      # Mega Phase D, PR D7, Section 45 of the task: a real, lightweight
+      # (no npm install) second-language client-protocol check against a
+      # fresh real `membrane serve` instance -- an empty registry again,
+      # same "no real GGUF model needed" reasoning as the step above.
+      - name: Real Node client-compatibility check (node-client-check.mjs)
+        run: |
+          MEMBRANE_MODELS_PATH=/tmp/ci-serve-models-2.json \
+            /tmp/membrane-install-cpu/bin/membrane serve --port 18943 &
+          server_pid=$!
+          ready=0
+          for _ in $(seq 1 50); do
+            if curl -sf http://127.0.0.1:18943/health > /dev/null; then
+              ready=1
+              break
+            fi
+            sleep 0.1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "membrane serve never answered /health"
+            kill -KILL "$server_pid" 2>/dev/null || true
+            exit 1
+          fi
+          node scripts/node-client-check.mjs http://127.0.0.1:18943
+          rc=$?
+          kill -TERM "$server_pid" 2>/dev/null || true
+          wait "$server_pid" 2>/dev/null || true
+          rm -f /tmp/ci-serve-models-2.json
+          exit "$rc"
 
       # Mega Phase B, PR B1: real `membrane service install/uninstall`
       # through the installed binary's own CLI dispatch -- MEMBRANE_

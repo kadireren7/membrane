@@ -249,6 +249,174 @@ static void	test_chat_malformed_message_shape(void)
 		"a message missing \"content\" returns 400");
 }
 
+/*
+ * Mega Phase D, PR D7: request-shape/field-compatibility tests -- every
+ * one of these checks (tools/tool_choice/response_format/stop) happens
+ * BEFORE model resolution in handle_chat_completions() (same "malformed/
+ * unsupported request is rejected regardless of which model was named"
+ * precedent test_chat_missing_required_fields() above already relies
+ * on), so all of them are fully exercisable against this file's own
+ * empty-registry harness -- no real model needed.
+ */
+static void	test_chat_tools_rejected(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json			req = {{"model", "smol"},
+			{"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+			{"tools", json::array({{{"type", "function"},
+				{"function", {{"name", "f"}}}}})}};
+	auto			res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 400,
+		"a request with \"tools\" is rejected with 400, never silently "
+		"ignored (Section 15 of the task: MEMBRANE does not execute "
+		"tools, and silently dropping the schema would mislead a client "
+		"into expecting a tool call back)");
+	json	body = json::parse(res->body);
+
+	TEST_ASSERT(body["error"]["code"] == "UNSUPPORTED_TOOL_CALLING",
+		"error code is UNSUPPORTED_TOOL_CALLING");
+}
+
+static void	test_chat_tool_choice_rejected(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json			req = {{"model", "smol"},
+			{"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+			{"tool_choice", "auto"}};
+	auto			res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 400,
+		"\"tool_choice\" alone (no \"tools\") is also rejected -- either "
+		"field implies the client expects tool-calling semantics");
+	json	body = json::parse(res->body);
+
+	TEST_ASSERT(body["error"]["code"] == "UNSUPPORTED_TOOL_CALLING",
+		"error code is UNSUPPORTED_TOOL_CALLING");
+}
+
+static void	test_chat_response_format_json_rejected(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json			req = {{"model", "smol"},
+			{"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+			{"response_format", {{"type", "json_object"}}}};
+	auto			res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 400,
+		"response_format type \"json_object\" is rejected explicitly -- "
+		"this server has no constrained-decoding path that could "
+		"actually honor it (Section 14 of the task)");
+	json	body = json::parse(res->body);
+
+	TEST_ASSERT(body["error"]["code"] == "UNSUPPORTED_RESPONSE_FORMAT",
+		"error code is UNSUPPORTED_RESPONSE_FORMAT");
+}
+
+static void	test_chat_response_format_text_not_rejected(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json			req = {{"model", "nonexistent"},
+			{"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+			{"response_format", {{"type", "text"}}}};
+	auto			res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 404,
+		"response_format type \"text\" (the real default) is never "
+		"rejected -- the request proceeds to the normal 404 MODEL_NOT_"
+		"FOUND path, not UNSUPPORTED_RESPONSE_FORMAT");
+}
+
+static void	test_chat_stop_too_many_entries_rejected(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json			req = {{"model", "smol"},
+			{"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+			{"stop", json::array({"a", "b", "c", "d", "e"})}};
+	auto			res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 400,
+		"\"stop\" with more than 4 strings is rejected (OpenAI's own "
+		"real limit), never silently truncated to 4");
+	json	body = json::parse(res->body);
+
+	TEST_ASSERT(body["error"]["code"] == "INVALID_REQUEST",
+		"error code is INVALID_REQUEST");
+}
+
+static void	test_chat_stop_non_string_entry_rejected(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json			req = {{"model", "smol"},
+			{"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+			{"stop", json::array({"a", 5})}};
+	auto			res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 400,
+		"a non-string \"stop\" array entry is rejected with 400");
+}
+
+static void	test_chat_stop_wrong_type_rejected(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json			req = {{"model", "smol"},
+			{"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+			{"stop", 5}};
+	auto			res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 400,
+		"a \"stop\" that is neither a string nor an array is rejected "
+		"with 400");
+}
+
+static void	test_chat_stop_valid_shape_reaches_model_resolution(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json			req = {{"model", "nonexistent"},
+			{"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+			{"stop", json::array({"a", "b", "c", "d"})}};
+	auto			res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 404,
+		"a well-formed \"stop\" (a single string, or up to 4 strings) "
+		"is accepted and the request proceeds to the normal 404 MODEL_"
+		"NOT_FOUND path -- valid stop requests are never wrongly "
+		"rejected");
+}
+
+/* Section 29 of the D7 task: a real Authorization header (the shape
+ * every OpenAI-client library sends by default, "Bearer sk-...") must
+ * never cause a normal request to be rejected -- this server has no
+ * authentication of its own (loopback-only is its real security
+ * boundary, docs/server.md), so the header is fully ignored, never
+ * inspected at all. Proven here by an otherwise-normal request (an
+ * unregistered model name) still failing with the SAME 404 MODEL_NOT_
+ * FOUND it would without the header -- never a 401/403. */
+static void	test_auth_header_is_tolerated(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+
+	cli.set_bearer_token_auth("sk-local-dummy-not-checked");
+	json	req = {{"model", "nonexistent"},
+			{"messages", json::array({{{"role", "user"}, {"content", "hi"}}})}};
+	auto	res = cli.Post("/v1/chat/completions", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 404,
+		"a request carrying a real \"Authorization: Bearer ...\" header "
+		"is processed normally (404 MODEL_NOT_FOUND, not 401/403) -- "
+		"the header is tolerated, never treated as authentication this "
+		"server does not implement");
+}
+
 /* Mega Phase B, PR B3, Section 30 of the task: real concurrent HTTP
  * requests against the SAME running server instance -- proves the new
  * admission gate/model-state machine/registry snapshot machinery (all
@@ -349,7 +517,26 @@ static void	test_registry_hot_reload_without_restart(const std::string &dir)
 
 			for (const auto &m : after_body["data"])
 				if (m["id"] == "hot-reloaded-model")
+				{
 					seen = true;
+					/* Mega Phase D, PR D7, Section 17/18: the id is
+					 * exactly the registry name (no filesystem path, no
+					 * second alias) -- and "created" is present and
+					 * matches the real added_at_unix this test itself
+					 * set (openai-python's own Model type declares
+					 * created:int REQUIRED -- a real, confirmed
+					 * compatibility bug before this field existed at
+					 * all). */
+					TEST_ASSERT(m.contains("created")
+						&& m["created"] == 1700000000,
+						"the model entry carries a real \"created\" "
+						"timestamp matching the registry's own "
+						"added_at_unix");
+					TEST_ASSERT(m["object"] == "model",
+						"object is \"model\"");
+					TEST_ASSERT(m["owned_by"] == "membrane",
+						"owned_by is \"membrane\"");
+				}
 		}
 		if (!seen)
 		{
@@ -489,6 +676,15 @@ int	main(void)
 	test_chat_stream_missing_messages_still_400();
 	test_chat_stream_malformed_message_still_400();
 	test_chat_malformed_message_shape();
+	test_chat_tools_rejected();
+	test_chat_tool_choice_rejected();
+	test_chat_response_format_json_rejected();
+	test_chat_response_format_text_not_rejected();
+	test_chat_stop_too_many_entries_rejected();
+	test_chat_stop_non_string_entry_rejected();
+	test_chat_stop_wrong_type_rejected();
+	test_chat_stop_valid_shape_reaches_model_resolution();
+	test_auth_header_is_tolerated();
 	test_concurrent_requests_are_thread_safe();
 	test_second_instance_same_port_fails_to_bind(dir);
 	/* Mutates the shared registry permanently for the rest of this
