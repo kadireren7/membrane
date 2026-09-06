@@ -240,16 +240,21 @@ def _c13():
 			# of any kind -- confirmed directly: macos-metal-smoke (this
 			# PR's own new job) has never installed libcurl and its real
 			# CMake configure step found CURL successfully regardless.
+			# Mega Phase D, PR D5: a third real false positive, same
+			# reasoning -- "libcurl4-openssl-dev" doesn't apply to a
+			# `runs-on: windows-*` job either (windows-support-smoke
+			# installs curl's real dev headers/import lib via vcpkg
+			# instead, an entirely different package manager/name).
 			# Skip any job whose own runs-on: line (searched the same
-			# backward-from-job_start way) targets macOS -- this check's
-			# real premise ("needs an explicit apt install") only holds
-			# for Linux runners.
-			runs_on_macos = False
+			# backward-from-job_start way) targets macOS or Windows --
+			# this check's real premise ("needs an explicit apt
+			# install") only holds for Linux runners.
+			runs_on_non_linux = False
 			for j in range(job_start, i):
-				if re.match(r"^\s*runs-on:\s*macos", lines[j]):
-					runs_on_macos = True
+				if re.match(r"^\s*runs-on:\s*(macos|windows)", lines[j]):
+					runs_on_non_linux = True
 					break
-			if runs_on_macos:
+			if runs_on_non_linux:
 				continue
 			if "libcurl4-openssl-dev" not in window:
 				bad.append(f"line {i + 1}")

@@ -48,7 +48,7 @@ set_target_properties(membrane_fs_util PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_fs_util PUBLIC membrane_sanitizers)
 target_include_directories(membrane_fs_util PUBLIC
-  ${CMAKE_SOURCE_DIR}/tools/membrane)
+  ${CMAKE_SOURCE_DIR}/tools/membrane ${CMAKE_SOURCE_DIR}/include)
 
 # Mega Phase B, PR B1: minimal safe subprocess runner (subprocess.h's own
 # top comment) -- fork()+execvp(), never system()/popen().
@@ -58,7 +58,7 @@ set_target_properties(membrane_subprocess PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_subprocess PUBLIC membrane_sanitizers)
 target_include_directories(membrane_subprocess PUBLIC
-  ${CMAKE_SOURCE_DIR}/tools/membrane)
+  ${CMAKE_SOURCE_DIR}/tools/membrane ${CMAKE_SOURCE_DIR}/include)
 
 # Mega Phase B, PR B1: pure systemd --user unit-file generation (systemd_
 # unit.h's own top comment) -- no filesystem/systemctl access here.
@@ -85,6 +85,19 @@ set_target_properties(membrane_launchd_unit PROPERTIES
 target_link_libraries(membrane_launchd_unit PUBLIC membrane_sanitizers)
 target_include_directories(membrane_launchd_unit PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
+
+# Mega Phase D, PR D5: pure Windows Task Scheduler XML generation
+# (windows_task.h's own top comment) -- the Windows analog of
+# membrane_systemd_unit/membrane_launchd_unit above, same pure-
+# generation/no-filesystem split, built unconditionally (not #ifdef
+# _WIN32-guarded) so its own unit tests run on every platform too.
+add_library(membrane_windows_task STATIC windows_task.cpp)
+set_target_properties(membrane_windows_task PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_windows_task PUBLIC membrane_sanitizers)
+target_include_directories(membrane_windows_task PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane ${CMAKE_SOURCE_DIR}/include)
 
 # Mega Phase B, PR B1: the persistent `membrane serve` config (server_
 # config.h's own top comment) -- listen_address/port/default_model/
@@ -176,14 +189,17 @@ target_include_directories(membrane_status_client PRIVATE
 # (server.h's own foreground membrane_server_run() stays the one, shared
 # runtime either platform supervises -- Section 4's "never duplicate
 # server/runtime logic" satisfied by construction, not by convention).
+# Mega Phase D, PR D5: also links membrane_windows_task -- a third real
+# backend (Windows Task Scheduler), same #ifdef-dispatched pattern,
+# now #ifdef _WIN32 alongside the existing #ifdef __APPLE__ branch.
 add_library(membrane_service_cmd STATIC service_cmd.cpp)
 set_target_properties(membrane_service_cmd PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_service_cmd PUBLIC membrane_sanitizers
-  membrane_systemd_unit membrane_launchd_unit membrane_server_config
-  membrane_subprocess membrane_status_client membrane_fs_util
-  membrane_product_cli)
+  membrane_systemd_unit membrane_launchd_unit membrane_windows_task
+  membrane_server_config membrane_subprocess membrane_status_client
+  membrane_fs_util membrane_product_cli)
 target_include_directories(membrane_service_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_service_cmd PRIVATE
@@ -200,7 +216,8 @@ set_target_properties(membrane_doctor_cmd PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_doctor_cmd PUBLIC membrane_sanitizers
   membrane_registry_core membrane_server_config membrane_systemd_unit
-  membrane_subprocess membrane_status_client membrane_product_cli)
+  membrane_launchd_unit membrane_windows_task membrane_subprocess
+  membrane_status_client membrane_product_cli)
 target_include_directories(membrane_doctor_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_doctor_cmd PRIVATE
@@ -222,6 +239,8 @@ set_target_properties(membrane_setup_cmd PROPERTIES
 target_link_libraries(membrane_setup_cmd PUBLIC membrane_sanitizers
   membrane_registry_core membrane_server_config membrane_doctor_cmd
   membrane_service_cmd membrane_cpp_httplib membrane_product_cli)
+target_include_directories(membrane_setup_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/include)
 target_include_directories(membrane_setup_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_setup_cmd PRIVATE
@@ -415,7 +434,7 @@ if(MEMBRANE_BUILD_TESTS)
     CXX_STANDARD_REQUIRED ON)
   target_link_libraries(test_systemd_unit PRIVATE membrane_systemd_unit)
   target_include_directories(test_systemd_unit PRIVATE
-    ${CMAKE_SOURCE_DIR}/tests/unit)
+    ${CMAKE_SOURCE_DIR}/tests/unit ${CMAKE_SOURCE_DIR}/include)
   add_test(NAME test_systemd_unit COMMAND test_systemd_unit)
 
   # Mega Phase D, PR D4: the launchd analog of test_systemd_unit above --
@@ -428,8 +447,22 @@ if(MEMBRANE_BUILD_TESTS)
     CXX_STANDARD_REQUIRED ON)
   target_link_libraries(test_launchd_unit PRIVATE membrane_launchd_unit)
   target_include_directories(test_launchd_unit PRIVATE
-    ${CMAKE_SOURCE_DIR}/tests/unit)
+    ${CMAKE_SOURCE_DIR}/tests/unit ${CMAKE_SOURCE_DIR}/include)
   add_test(NAME test_launchd_unit COMMAND test_launchd_unit)
+
+  # Mega Phase D, PR D5: the Windows Task Scheduler analog of
+  # test_systemd_unit/test_launchd_unit above -- same pure generation/
+  # path-handling coverage, no real schtasks.exe. Runs here (normal
+  # Linux CI) too, not only on a Windows runner -- pure string logic
+  # needs no real Task Scheduler to test.
+  add_executable(test_windows_task test_windows_task.cpp)
+  set_target_properties(test_windows_task PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_windows_task PRIVATE membrane_windows_task)
+  target_include_directories(test_windows_task PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit ${CMAKE_SOURCE_DIR}/include)
+  add_test(NAME test_windows_task COMMAND test_windows_task)
 
   add_executable(test_server_config test_server_config.cpp)
   set_target_properties(test_server_config PROPERTIES

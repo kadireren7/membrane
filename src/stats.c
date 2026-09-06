@@ -1,7 +1,7 @@
 /* CLOCK_MONOTONIC_RAW is a Linux extension, hidden under strict C11. */
 #define _DEFAULT_SOURCE
 
-#include <time.h>
+#include "membrane/clock_compat.h"
 
 #include "membrane/stats.h"
 

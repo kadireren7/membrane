@@ -54,7 +54,22 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-add_compile_options(-Wall -Wextra -Wpedantic)
+# Mega Phase D, PR D5: -Wall/-Wextra/-Wpedantic are GCC/Clang flag
+# spellings -- MSVC's cl.exe parses "-Wextra" as "/W" (a warning-level
+# switch) followed by a non-numeric "extra" argument, and fails outright
+# ("command line error D8021: invalid numeric argument '/Wextra'") for
+# EVERY target, a real, genuine first-attempt Windows CI finding (this
+# flag is applied unconditionally, project-wide, via add_compile_options()
+# with no target scoping to bypass). /W4 is MSVC's own conventional
+# "high warning level" (its literal /Wall is far noisier than -Wall/
+# -Wextra combined -- enables many off-by-default, rarely-actionable
+# warnings not meant for normal project use), the standard real-world
+# equivalent most cross-platform MSVC projects use for this purpose.
+if(MSVC)
+  add_compile_options(/W4)
+else()
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
 
 # Sanitizer flags travel as an interface target so every executable that
 # links membrane_core inherits them for both compile and link steps.
@@ -149,7 +164,18 @@ add_library(membrane_core STATIC
   src/attntrace/attntrace3.c
 )
 target_include_directories(membrane_core PUBLIC include)
-target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m ZLIB::ZLIB)
+# Mega Phase D, PR D5: "m" (the math library) is a POSIX/Unix-only
+# library NAME -- math functions live in the C runtime itself on
+# Windows (no separate libm.lib exists at all; MSVC's linker would
+# fail outright with "cannot open file 'm.lib'" if this were passed
+# unconditionally).
+if(WIN32)
+  target_link_libraries(membrane_core PUBLIC membrane_sanitizers
+    Threads::Threads ZLIB::ZLIB)
+else()
+  target_link_libraries(membrane_core PUBLIC membrane_sanitizers
+    Threads::Threads m ZLIB::ZLIB)
+endif()
 
 add_subdirectory(tools/membrane-bench)
 add_subdirectory(tools/membrane-store-bench)
@@ -184,7 +210,7 @@ target_link_libraries(membrane_runtime_core PUBLIC membrane_core
 add_library(membrane_kv_store_telemetry STATIC
   tools/membrane-llama-runtime/kv_store_telemetry.c)
 target_include_directories(membrane_kv_store_telemetry PUBLIC
-  tools/membrane-llama-runtime)
+  tools/membrane-llama-runtime ${CMAKE_SOURCE_DIR}/include)
 
 # membrane-llama-run's CLI argument parser (tools/membrane-llama-runtime/
 # cli_parse.h/.cpp), split out of main.cpp so it -- like
@@ -314,7 +340,8 @@ target_include_directories(membrane_context_auto_cli PUBLIC
 add_library(membrane_auto_fallback STATIC
   tools/membrane-run/auto_fallback.c)
 target_link_libraries(membrane_auto_fallback PUBLIC membrane_sanitizers)
-target_include_directories(membrane_auto_fallback PUBLIC tools/membrane-run)
+target_include_directories(membrane_auto_fallback PUBLIC tools/membrane-run
+  ${CMAKE_SOURCE_DIR}/include)
 
 # membrane-cxl-sim (Phase 6.1) is a pure discrete-event simulator, no
 # llama.cpp dependency -- built unconditionally like the C tools above,

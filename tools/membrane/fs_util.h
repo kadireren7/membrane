@@ -44,4 +44,29 @@ bool	membrane_atomic_write_file(const std::string &path,
  * #ifdef repeated at each of the three call sites. */
 int64_t	membrane_stat_mtime_ns(const struct stat &st);
 
+/* Mega Phase D, PR D5: the real per-user "home" directory, one place --
+ * every product path resolver (registry_core.cpp, server_config.cpp)
+ * used to read getenv("HOME") directly, which is unset by default in
+ * a plain Windows environment (no XDG/HOME convention there at all).
+ * Checks HOME first (still honored if a caller explicitly sets it, e.g.
+ * a Windows dev running under MSYS/git-bash), then USERPROFILE (the
+ * real, always-set Windows equivalent, e.g. C:\Users\name) -- returns
+ * empty if neither is set, same "caller reports IO_ERROR" contract
+ * every existing call site already has. Deliberately still resolves a
+ * dot-prefixed path convention (~/.config/membrane,
+ * ~/.local/share/membrane) rather than %APPDATA%/%LOCALAPPDATA% --
+ * real and working on Windows (NTFS tolerates dot-prefixed directory
+ * names fine), disclosed as a real, deliberate scope reduction
+ * (docs/windows-support.md), not silently assumed to be idiomatic. */
+std::string	membrane_resolve_home_dir(void);
+
+/* Mega Phase D, PR D5: the CURRENTLY RUNNING binary's own real,
+ * resolved path -- one shared implementation for a primitive that used
+ * to have two independent, Linux-only copies (service_cmd.cpp's
+ * resolve_exec_path(), doctor_cmd.cpp's resolve_membrane_run_path()).
+ * /proc/self/exe on Linux, _NSGetExecutablePath()+realpath() on macOS
+ * (Mega Phase D, PR D4), GetModuleFileNameA(NULL, ...) on Windows (this
+ * PR) -- returns false if the platform-specific call itself fails. */
+bool	membrane_resolve_own_exe_path(std::string *out_path);
+
 #endif

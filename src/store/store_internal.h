@@ -1,7 +1,7 @@
 #ifndef MEMBRANE_STORE_INTERNAL_H
 # define MEMBRANE_STORE_INTERNAL_H
 
-# include <pthread.h>
+# include "membrane/pthread_compat.h"
 
 # include "membrane/store.h"
 

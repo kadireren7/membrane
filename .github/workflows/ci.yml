@@ -1198,3 +1198,142 @@ jobs:
           ./build-metal-smoke/tools/membrane/membrane service status
           ./build-metal-smoke/tools/membrane/membrane service stop
           ./build-metal-smoke/tools/membrane/membrane service uninstall
+
+  # Mega Phase D, PR D5: validates the committed real-Windows evidence
+  # (results/windows-support/validation.json) and a handful of source-
+  # level regression guards (the MSVC /W4 flag guard, the four compat
+  # shim headers carry real Win32 implementations, the NOMINMAX guard,
+  # the schtasks UTF-16 XML conversion, the sha256sum backslash-
+  # stripping fix, no backend/platform-specific leakage, no overclaim)
+  # -- python3 + checkout only, no Windows runner, no C/C++ build.
+  windows-support-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify Windows support evidence and docs
+        run: python3 scripts/verify-windows-support.py
+
+  # Mega Phase D, PR D5: real Windows validation on GitHub Actions'
+  # windows-latest hosted runner -- the same "attempt the full real
+  # pipeline, disclose exactly what actually works" approach as
+  # macos-metal-smoke above. No discrete GPU exists on this runner
+  # (same as every Linux CPU-only job in this file) -- this is real
+  # CPU-only Windows validation, never a GPU-backend claim. bash is
+  # used for every step (Git for Windows ships it on this image,
+  # confirmed available) so command syntax stays consistent with every
+  # other job in this file; CMake's own default generator on Windows
+  # (Visual Studio, when no -G is passed) resolves the MSVC toolchain
+  # itself via MSBuild, so no vcvarsall/PATH setup is needed first.
+  # Every step below (build, install, real device enumeration, real
+  # unit tests, real Hugging Face download, real generation, real Task
+  # Scheduler service lifecycle) is real, working, and confirmed
+  # end-to-end on this runner -- see docs/windows-support.md and
+  # results/windows-support/validation.json for the full real evidence
+  # (continue-on-error was used liberally during this phase's own
+  # iterative real bring-up, deliberately, to see as much real signal
+  # as possible per round rather than stopping at the first unknown --
+  # removed now that every step is confirmed reliable).
+  windows-support-smoke:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      # curl and zlib are real, external CMake find_package(...
+      # REQUIRED) dependencies on every platform (find_package(ZLIB
+      # REQUIRED) at the root CMakeLists.txt level for membrane_core;
+      # find_package(CURL REQUIRED) for the model-catalog download
+      # manager) -- neither ships with Windows itself the way it does
+      # (in the relevant dev-header/import-lib form) on Linux/macOS.
+      # vcpkg is preinstalled on this runner image (VCPKG_INSTALLATION_
+      # ROOT) -- used here rather than a from-scratch vcpkg bootstrap.
+      - name: Install real curl/zlib dev packages via vcpkg
+        run: |
+          "$VCPKG_INSTALLATION_ROOT/vcpkg" install curl zlib \
+            --triplet x64-windows
+
+      - name: Configure (CPU-only -- no discrete GPU on this runner)
+        run: |
+          cmake -S . -B build-windows-smoke \
+            -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-windows
+
+      - name: Build
+        run: |
+          cmake --build build-windows-smoke --config Release -j 2 \
+            --target membrane-run membrane test_windows_task
+
+      # Windows has no RPATH/@loader_path/$ORIGIN at all -- unlike
+      # Linux/macOS (where CMake's own default build-tree RPATH lets
+      # the raw, uninstalled build-tree binary find its sibling .so/
+      # .dylib files with zero extra steps, which is why the CUDA/
+      # Metal CI legs above run their own build-tree binaries directly)
+      # a real Windows CI attempt at this found the raw build-tree
+      # membrane-run.exe genuinely cannot start at all: MSVC's multi-
+      # config generator puts the .exe and its own ggml*.dll/llama.dll
+      # dependencies in DIFFERENT build-tree directories
+      # (tools/membrane-run/Release/ vs bin/Release/), and Windows's
+      # own default DLL search order (same directory as the .exe, then
+      # PATH) never finds them there. A real `cmake --install` places
+      # every DLL in the SAME directory as membrane-run.exe/membrane.exe
+      # (CMAKE_INSTALL_BINDIR, tools/membrane-run/CMakeLists.txt's own
+      # real fix for this earlier in Mega Phase D, PR D5) -- this is
+      # the real, correct fix, not a CI-only workaround: it exercises
+      # this project's own actual install path, exactly like
+      # packaging-smoke's own CPU/Vulkan legs already do on Linux.
+      - name: Install to a real prefix (Windows needs this to run at all)
+        run: |
+          cmake --install build-windows-smoke --config Release \
+            --prefix "$(pwd)/install-windows-smoke"
+
+      - name: Real device enumeration and doctor
+        run: |
+          ./install-windows-smoke/bin/membrane-run.exe --list-devices
+          ./install-windows-smoke/bin/membrane-run.exe --doctor
+
+      # test_windows_task links only membrane_windows_task (pure Win32
+      # API calls, no ggml/llama) -- no DLL dependency at all, so it
+      # runs fine straight from the build tree, no install needed.
+      - name: Real unit tests (test_windows_task, test_systemd_unit/test_launchd_unit skipped)
+        run: |
+          ./build-windows-smoke/tools/membrane/Release/test_windows_task.exe
+
+      # Real product-path download: the same D1/D2 catalog + download
+      # manager + variant selector every other real model install in
+      # this project uses.
+      - name: Real model install (download from Hugging Face)
+        run: |
+          ./install-windows-smoke/bin/membrane.exe model install \
+            smollm2:135m --quant q4_k_m --json | tee install-result.json
+          echo "MODEL_PATH=$(python3 -c 'import json;print(json.load(open("install-result.json"))["path"])')" >> "$GITHUB_ENV"
+
+      - name: Real CPU generation
+        run: |
+          ./install-windows-smoke/bin/membrane-run.exe \
+            --model "$MODEL_PATH" --prompt "Hello" --ctx 2048 --auto \
+            --json | tee generation-result.json
+          python3 -c "import json,sys; d=json.load(open('generation-result.json')); sys.exit(0 if d.get('ok') is True else 1)"
+
+      # Real Task Scheduler service lifecycle smoke -- exercises real
+      # schtasks.exe install/start/status/stop/uninstall.
+      - name: Real Windows Task Scheduler service lifecycle smoke
+        run: |
+          ./install-windows-smoke/bin/membrane.exe service install \
+            --exec-path "$(pwd)/install-windows-smoke/bin/membrane.exe"
+          ./install-windows-smoke/bin/membrane.exe service start
+          sleep 2
+          ./install-windows-smoke/bin/membrane.exe service status
+          ./install-windows-smoke/bin/membrane.exe service stop
+          ./install-windows-smoke/bin/membrane.exe service uninstall

@@ -1,14 +1,14 @@
 #define _DEFAULT_SOURCE
 
-#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
 
 #include "membrane/block.h"
+#include "membrane/dirent_compat.h"
+#include "membrane/posix_compat.h"
 #include "backend_internal.h"
 
 /*

@@ -11,6 +11,7 @@
 #include "ggml-backend.h"
 #include "ggml.h"
 #include "llama_hook.h"
+#include "membrane/clock_compat.h"
 
 struct s_membrane_llama_hook_ctx
 {

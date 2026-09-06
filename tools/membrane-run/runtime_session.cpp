@@ -19,6 +19,7 @@
  */
 
 #include "runtime_session.h"
+#include "membrane/clock_compat.h"
 
 #include <cerrno>
 #include <cstdio>

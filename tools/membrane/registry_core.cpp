@@ -7,7 +7,9 @@
 
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
+#ifndef _WIN32
+# include <unistd.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -27,10 +29,10 @@ std::string	membrane_registry_default_path(void)
 
 	if (xdg_data_home != NULL && xdg_data_home[0] != '\0')
 		return (std::string(xdg_data_home) + "/membrane/models.json");
-	const char	*home = getenv("HOME");
+	std::string	home = membrane_resolve_home_dir();
 
-	if (home != NULL && home[0] != '\0')
-		return (std::string(home) + "/.local/share/membrane/models.json");
+	if (!home.empty())
+		return (home + "/.local/share/membrane/models.json");
 	return ("");
 }
 
@@ -53,10 +55,10 @@ std::string	membrane_registry_models_install_dir(void)
 
 	if (xdg_data_home != NULL && xdg_data_home[0] != '\0')
 		return (std::string(xdg_data_home) + "/membrane/models");
-	const char	*home = getenv("HOME");
+	std::string	home = membrane_resolve_home_dir();
 
-	if (home != NULL && home[0] != '\0')
-		return (std::string(home) + "/.local/share/membrane/models");
+	if (!home.empty())
+		return (home + "/.local/share/membrane/models");
 	return ("");
 }
 

@@ -2,7 +2,19 @@
 
 #include <math.h>
 #include <string.h>
-#include <sys/resource.h>
+#ifdef _WIN32
+/* windows.h MUST come before psapi.h -- psapi.h's own declarations use
+ * types (WINAPI, LPVOID, HANDLE, DWORD, ...) that only exist once
+ * windows.h has already been processed; a real, first-attempt Windows
+ * CI compile failure otherwise (dozens of cascading syntax errors
+ * inside psapi.h itself, none of them really about psapi.h being
+ * broken -- just never given the types it assumes are already
+ * defined). */
+# include "membrane/windows_lean.h"
+# include <psapi.h>
+#else
+# include <sys/resource.h>
+#endif
 
 /* membrane_runtime_nll()/membrane_runtime_compare_logits() (runtime_
  * core.c) can in principle propagate a NaN/Infinity into logit_rel_l2/
@@ -66,14 +78,25 @@ static void	parse_proc_status(membrane_kv_store_rss_t *out)
 
 void	membrane_kv_store_read_rss(membrane_kv_store_rss_t *out)
 {
-	struct rusage	ru;
-
 	if (out == NULL)
 		return ;
 	memset(out, 0, sizeof(*out));
 	parse_proc_status(out);
+#ifdef _WIN32
+	/* GetProcessMemoryInfo()'s PeakWorkingSetSize is the real Windows
+	 * analog of getrusage(RUSAGE_SELF).ru_maxrss (a resident-memory
+	 * high-water mark) -- reported in bytes, not the kB ru_maxrss uses
+	 * on Linux, hence the /1024 conversion. */
+	PROCESS_MEMORY_COUNTERS	pmc;
+
+	if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+		out->ru_maxrss_kb = (uint64_t)(pmc.PeakWorkingSetSize / 1024);
+#else
+	struct rusage	ru;
+
 	if (getrusage(RUSAGE_SELF, &ru) == 0)
 		out->ru_maxrss_kb = (uint64_t)ru.ru_maxrss;
+#endif
 }
 
 void	membrane_kv_store_rss_max(const membrane_kv_store_rss_t *a,

@@ -3,6 +3,7 @@
 
 #include "systemd_unit.h"
 #include "test_helpers.h"
+#include "membrane/posix_compat.h"
 
 /*
  * Mega Phase B, PR B1: unit tests for systemd_unit.h's pure unit-file

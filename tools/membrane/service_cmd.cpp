@@ -1,6 +1,7 @@
 #include "service_cmd.h"
 #include "systemd_unit.h"
 #include "launchd_unit.h"
+#include "windows_task.h"
 #include "server_config.h"
 #include "subprocess.h"
 #include "status_client.h"
@@ -12,11 +13,8 @@
 #include <cstring>
 #include <sstream>
 
-#include <limits.h>
-#include <unistd.h>
-
-#ifdef __APPLE__
-# include <mach-o/dyld.h>
+#ifndef _WIN32
+# include <unistd.h>
 #endif
 
 #include <nlohmann/json.hpp>
@@ -26,42 +24,40 @@
 using json = nlohmann::json;
 
 /*
- * Mega Phase D, PR D4: this file now dispatches between two real
- * per-user service-manager backends -- systemd --user (Linux, Mega
- * Phase B, PR B1) and launchd (macOS/Darwin, this PR) -- via #ifdef
- * __APPLE__ at each real point of platform divergence: unit/plist
- * generation+path resolution (systemd_unit.h/launchd_unit.h, already
- * fully separated), the real service-manager binary invoked, and how
- * "logs" is obtained (journalctl has no launchd equivalent -- launchd
- * redirects the job's own stdout/stderr straight to a real file via
- * StandardOutPath/StandardErrorPath, so "logs" tails that file
- * directly on macOS). server.h's own foreground membrane_server_run()
- * (`membrane serve`) is completely unchanged and identical on both
- * platforms -- only how it gets supervised as a background service
- * differs, matching Section 4's "never duplicate server/runtime logic".
+ * Mega Phase D: this file dispatches between three real per-user
+ * service-manager backends -- systemd --user (Linux, Mega Phase B, PR
+ * B1), launchd (macOS/Darwin, PR D4), and Windows Task Scheduler (this
+ * PR, D5) -- via #ifdef __APPLE__ / #ifdef _WIN32 at each real point of
+ * platform divergence: unit/plist/task generation+identification
+ * (systemd_unit.h/launchd_unit.h/windows_task.h, all fully separated,
+ * pure modules), the real service-manager binary invoked, and how
+ * "logs" is obtained (neither launchd nor Task Scheduler has a
+ * journalctl equivalent -- both redirect the job's own stdout/stderr
+ * straight to a real file, so "logs" tails that file directly on
+ * either). server.h's own foreground membrane_server_run() (`membrane
+ * serve`) is completely unchanged and identical on all three platforms
+ * -- only how it gets supervised as a background service differs,
+ * matching Section 4's "never duplicate server/runtime logic".
  *
- * Known, disclosed semantic differences (docs/macos-metal.md has the
- * full narrative) -- launchd's command set has no exact 1:1 mapping to
- * systemctl's start/stop/restart/status:
- *   - "start": `launchctl bootstrap` (loads+starts; fails if already
- *     loaded) falling back to `launchctl kickstart -k` (force-restart;
- *     requires already loaded) -- together they make `start` idempotent
- *     whether or not the job was already loaded, without a special
- *     "is it loaded" pre-check of their own.
- *   - "stop": `launchctl bootout` fully unloads the job (closer to
- *     systemd's stop+disable combined) -- there is no launchd verb that
- *     stops a running job while leaving it loaded/re-startable via a
- *     bare "start" the way `systemctl --user stop` does; a subsequent
- *     `start` on macOS re-bootstraps it fresh, which is fine (idempotent)
- *     but is not byte-for-byte the same lifecycle as the Linux path.
- *   - "restart": `launchctl kickstart -k` (kill and relaunch in place);
- *     requires the job already be loaded (run `start` first if not).
- *   - "status": `launchctl print` has no machine-stable documented
- *     output format (unlike `systemctl show --property=...`) -- parsed
- *     defensively for "state = " / "pid = " lines, the same real,
- *     widely-relied-upon convention every other launchd tooling uses,
- *     but disclosed here as inherently less stable than the systemd
- *     path.
+ * Known, disclosed semantic differences (docs/macos-metal.md and
+ * docs/windows-support.md have the full narratives) -- neither
+ * launchd's nor Task Scheduler's command set maps 1:1 to systemctl's
+ * start/stop/restart/status:
+ *   - macOS "start"/"stop"/"restart": see docs/macos-metal.md (PR D4).
+ *   - Windows "install": Task Scheduler has no local unit FILE this
+ *     process itself writes/reads the way systemd/launchd do -- the
+ *     real, live task definition lives inside Windows's own Task
+ *     Scheduler store. "Does a same-named task already exist, and is
+ *     it ours?" is answered by really invoking `schtasks /query ...
+ *     /xml` and inspecting its live output, not by reading a path this
+ *     process controls directly.
+ *   - Windows "start"/"stop"/"restart": `schtasks /run`, `/end`, and
+ *     (no atomic restart primitive) `/end` then `/run` respectively.
+ *   - Windows "status": `schtasks /query /fo list /v` has a real,
+ *     documented (if locale-dependent) "Status:" field -- no PID is
+ *     exposed by schtasks.exe itself, disclosed as a real, honest gap
+ *     (main_pid stays "0"/unknown on Windows), unlike systemd/launchd
+ *     which both report a real PID.
  */
 
 static void	print_err(bool want_json, const std::string &code,
@@ -82,9 +78,9 @@ static void	print_err(bool want_json, const std::string &code,
 #ifdef __APPLE__
 /* macOS's own real per-session domain target for `launchctl bootstrap/
  * bootout/kickstart/print` -- gui/<uid> is the correct target for a
- * per-user LaunchAgent running in a real login GUI/session (as opposed
- * to system/ for root-owned LaunchDaemons, which this project never
- * uses -- Section 5: ordinary user permissions only, no root). */
+ * real per-user LaunchAgent running in a real login GUI/session (as
+ * opposed to system/ for root-owned LaunchDaemons, which this project
+ * never uses -- Section 5: ordinary user permissions only, no root). */
 static std::string	launchd_domain_target(void)
 {
 	return ("gui/" + std::to_string(getuid()));
@@ -97,15 +93,16 @@ static std::string	launchd_service_target(void)
 #endif
 
 /* Section 6: resolves the CURRENTLY RUNNING membrane binary's own real
- * path -- /proc/self/exe on Linux, _NSGetExecutablePath() on macOS
- * (there is no /proc filesystem on Darwin) -- never a caller-assembled
- * guess. A build-tree path (this repo's own out-of-tree build
- * directories, or /tmp) is usable but fragile (a later `rm -rf`/rebuild
- * breaks the installed unit/plist) -- callers get a warning, never a
- * silent trap, but installation still proceeds (Section 6 explicitly
- * allows either choice; blocking outright would make this command
- * untestable from a dev build, which this project's own dev-local
- * smoke testing needs). */
+ * path -- via the shared, cross-platform membrane_resolve_own_exe_path()
+ * (fs_util.h; /proc/self/exe on Linux, _NSGetExecutablePath() on macOS,
+ * GetModuleFileNameA() on Windows) -- never a caller-assembled guess. A
+ * build-tree path (this repo's own out-of-tree build directories, or
+ * /tmp) is usable but fragile (a later `rm -rf`/rebuild breaks the
+ * installed unit/plist/task) -- callers get a warning, never a silent
+ * trap, but installation still proceeds (Section 6 explicitly allows
+ * either choice; blocking outright would make this command untestable
+ * from a dev build, which this project's own dev-local smoke testing
+ * needs). */
 static bool	resolve_exec_path(const std::string &override_path,
 				std::string *out_path, bool *out_looks_like_build_tree)
 {
@@ -115,44 +112,51 @@ static bool	resolve_exec_path(const std::string &override_path,
 		*out_looks_like_build_tree = false;
 		return (true);
 	}
-#ifdef __APPLE__
-	char		buf[PATH_MAX];
-	uint32_t	size = sizeof(buf);
-
-	if (_NSGetExecutablePath(buf, &size) != 0)
+	if (!membrane_resolve_own_exe_path(out_path))
 		return (false);
-	char	resolved[PATH_MAX];
-
-	if (realpath(buf, resolved) == NULL)
-		return (false);
-	*out_path = resolved;
-#else
-	char	buf[PATH_MAX];
-	ssize_t	n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
-
-	if (n < 0)
-		return (false);
-	buf[n] = '\0';
-	*out_path = buf;
-#endif
 	*out_looks_like_build_tree = (out_path->find("/build") != std::string::npos
 		|| out_path->find("/tmp/") == 0);
 	return (true);
 }
 
-/* One real, sensible default log location per platform -- launchd has
- * no journalctl equivalent, so this is where `membrane service logs`
- * reads from on macOS (see cmd_logs below). Not XDG (macOS has no such
- * convention); $HOME/Library/Logs/<app> is the real, standard macOS
- * per-user application log location. */
+/* One real, sensible default log location per platform -- neither
+ * launchd nor Task Scheduler has a journalctl equivalent, so this is
+ * where `membrane service logs` reads from on macOS/Windows (see
+ * cmd_logs below). Not XDG (neither macOS nor Windows has that
+ * convention). */
 #ifdef __APPLE__
 static std::string	default_log_path(void)
 {
-	const char	*home = getenv("HOME");
+	std::string	home = membrane_resolve_home_dir();
 
-	if (home == NULL || home[0] == '\0')
+	if (home.empty())
 		return ("/tmp/membrane-service.log");
-	return (std::string(home) + "/Library/Logs/membrane/membrane.log");
+	return (home + "/Library/Logs/membrane/membrane.log");
+}
+#elif defined(_WIN32)
+static std::string	default_log_path(void)
+{
+	std::string	home = membrane_resolve_home_dir();
+
+	if (home.empty())
+		return ("C:/Windows/Temp/membrane-service.log");
+	return (home + "/AppData/Local/membrane/membrane.log");
+}
+
+/* schtasks /create /xml requires a real FILE path (not stdin) -- a
+ * private temp location, cleaned up immediately after the real
+ * `schtasks /create` call below, same "write a temp file, use it,
+ * remove it" pattern this project's own subprocess-driven checksum
+ * verification (download_manager.cpp) already established. */
+static std::string	temp_task_xml_path(void)
+{
+	const char	*temp_dir = getenv("TEMP");
+
+	if (temp_dir == NULL || temp_dir[0] == '\0')
+		temp_dir = getenv("TMP");
+	if (temp_dir == NULL || temp_dir[0] == '\0')
+		temp_dir = "C:/Windows/Temp";
+	return (std::string(temp_dir) + "/membrane-task.xml");
 }
 #endif
 
@@ -191,22 +195,76 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 			"the generated service will break if this path is later "
 			"removed or rebuilt. Pass --exec-path once installed, or "
 			"reinstall after packaging.\n", exec_path.c_str());
-#ifdef __APPLE__
-	std::string	unit_path = membrane_launchd_plist_path();
+#ifdef _WIN32
+	std::string	task_name = membrane_task_name();
+	membrane_subprocess_result_t	query_result;
+	bool	queried = membrane_run_subprocess({"schtasks", "/query", "/tn",
+			task_name, "/xml"}, &query_result);
+	bool	task_exists = queried && query_result.exit_code == 0;
+
+	if (task_exists && !membrane_task_xml_is_membrane_managed(
+			query_result.stdout_output) && !force)
+	{
+		print_err(want_json, "UNIT_EXISTS", "a scheduled task named '"
+			+ task_name + "' already exists and was not created by "
+			"`membrane service install` -- refusing to overwrite it. "
+			"Remove it yourself first, or pass --force if you are sure.");
+		return (MEMBRANE_EXIT_RUNTIME_ERROR);
+	}
+	membrane_task_options_t	task_opts;
+
+	task_opts.exec_path = exec_path;
+	task_opts.log_path = default_log_path();
+	std::string	task_xml = membrane_generate_task_xml(task_opts);
+	std::string	tmp_xml_path = temp_task_xml_path();
+	membrane_fs_error_t	xml_fs_err;
+
+	/* A real, first-attempt Windows CI finding: `schtasks /create /xml`
+	 * genuinely requires the file to actually BE UTF-16 on disk (not
+	 * just declared as such) -- writing membrane_generate_task_xml()'s
+	 * own plain UTF-8 bytes directly failed with a real schtasks.exe
+	 * error ("unable to switch the encoding"). Real conversion, not a
+	 * relabeling. */
+	std::string	task_xml_bytes = membrane_task_xml_to_utf16le_bytes(
+			task_xml);
+
+	if (!membrane_atomic_write_file(tmp_xml_path, task_xml_bytes,
+			&xml_fs_err))
+	{
+		print_err(want_json, xml_fs_err.code, xml_fs_err.message);
+		return (MEMBRANE_EXIT_RUNTIME_ERROR);
+	}
+	membrane_subprocess_result_t	create_result;
+	bool	created = membrane_run_subprocess({"schtasks", "/create", "/tn",
+			task_name, "/xml", tmp_xml_path, "/f"}, &create_result);
+
+	remove(tmp_xml_path.c_str());
+	if (!created || create_result.exit_code != 0)
+	{
+		print_err(want_json, "SCHTASKS_FAILED", "schtasks /create failed: "
+			+ (create_result.stderr_output.empty() ? "(no output)"
+				: create_result.stderr_output));
+		return (MEMBRANE_EXIT_RUNTIME_ERROR);
+	}
+	std::string	unit_path = task_name;	/* reported below as an identifier,
+										 * not a real filesystem path */
 #else
+# ifdef __APPLE__
+	std::string	unit_path = membrane_launchd_plist_path();
+# else
 	std::string	unit_path = membrane_unit_file_path();
-#endif
+# endif
 
 	if (unit_path.empty())
 	{
-#ifdef __APPLE__
+# ifdef __APPLE__
 		print_err(want_json, "IO_ERROR", "HOME is not set -- cannot locate "
 			"the LaunchAgents directory");
-#else
+# else
 		print_err(want_json, "IO_ERROR", "neither XDG_CONFIG_HOME nor "
 			"HOME is set -- cannot locate the systemd --user unit "
 			"directory");
-#endif
+# endif
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);
 	}
 	FILE	*existing = fopen(unit_path.c_str(), "rb");
@@ -220,12 +278,12 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 		while ((n = fread(buf, 1, sizeof(buf), existing)) > 0)
 			content.append(buf, n);
 		fclose(existing);
-#ifdef __APPLE__
+# ifdef __APPLE__
 		bool	is_managed = membrane_launchd_plist_is_membrane_managed(
 				content);
-#else
+# else
 		bool	is_managed = membrane_unit_is_membrane_managed(content);
-#endif
+# endif
 		if (!is_managed && !force)
 		{
 			print_err(want_json, "UNIT_EXISTS", std::string("'") + unit_path
@@ -235,18 +293,18 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 			return (MEMBRANE_EXIT_RUNTIME_ERROR);
 		}
 	}
-#ifdef __APPLE__
+# ifdef __APPLE__
 	membrane_launchd_options_t	unit_opts;
 
 	unit_opts.exec_path = exec_path;
 	unit_opts.log_path = default_log_path();
 	std::string	unit_content = membrane_generate_launchd_plist(unit_opts);
-#else
+# else
 	membrane_unit_options_t	unit_opts;
 
 	unit_opts.exec_path = exec_path;
 	std::string	unit_content = membrane_generate_unit_file(unit_opts);
-#endif
+# endif
 	membrane_fs_error_t	fs_err;
 
 	if (!membrane_atomic_write_file(unit_path, unit_content, &fs_err))
@@ -254,11 +312,12 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 		print_err(want_json, fs_err.code, fs_err.message);
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);
 	}
+#endif
 	/* Section 8: seed a default config if none exists yet -- `membrane
 	 * serve` already tolerates a missing config (defaults apply), this
 	 * just makes `membrane service status`/a user editing the file
 	 * afterward see real values immediately. Never overwrites an
-	 * existing config. */
+	 * existing config. Shared across all three platforms. */
 	membrane_server_config_t		cfg;
 	membrane_server_config_error_t	cfg_err;
 	std::string						config_path
@@ -267,9 +326,6 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 	if (!config_path.empty()
 		&& !membrane_server_config_load(config_path, &cfg, &cfg_err))
 	{
-		/* A malformed EXISTING config is a real problem -- surfaced, but
-		 * does not block install (the unit is already written and
-		 * valid; the user can fix the config separately). */
 		if (!want_json)
 			fprintf(stderr, "membrane service install: WARNING -- "
 				"existing server config could not be read: %s\n",
@@ -285,11 +341,12 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 		else
 			fclose(probe);
 	}
-#ifndef __APPLE__
-	/* launchd has no analogous "reload the unit registry" step --
-	 * unlike systemd, it discovers a plist's content fresh at the point
-	 * it is actually bootstrapped (see cmd_start_stop_restart below), so
-	 * there is nothing to reload here on macOS. */
+#if !defined(__APPLE__) && !defined(_WIN32)
+	/* Neither launchd nor Task Scheduler has an analogous "reload the
+	 * unit registry" step -- unlike systemd, each discovers a fresh
+	 * definition at the point it is actually loaded/registered (see
+	 * cmd_install's own Windows branch above, and the verb dispatcher
+	 * below), so there is nothing to reload here on macOS/Windows. */
 	membrane_subprocess_result_t	reload_result;
 
 	membrane_run_subprocess({"systemctl", "--user", "daemon-reload"},
@@ -315,20 +372,55 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 
 static int	cmd_uninstall(bool want_json)
 {
-#ifdef __APPLE__
-	std::string	unit_path = membrane_launchd_plist_path();
+#ifdef _WIN32
+	std::string	task_name = membrane_task_name();
+	membrane_subprocess_result_t	query_result;
+	bool	queried = membrane_run_subprocess({"schtasks", "/query", "/tn",
+			task_name, "/xml"}, &query_result);
+
+	if (!queried || query_result.exit_code != 0)
+	{
+		if (want_json)
+			printf("{\"ok\":true,\"note\":\"nothing installed\"}\n");
+		else
+			printf("Nothing installed.\n");
+		return (MEMBRANE_EXIT_SUCCESS);
+	}
+	if (!membrane_task_xml_is_membrane_managed(query_result.stdout_output))
+	{
+		print_err(want_json, "NOT_MANAGED", "the scheduled task '"
+			+ task_name + "' was not created by `membrane service "
+			"install` -- refusing to remove it");
+		return (MEMBRANE_EXIT_RUNTIME_ERROR);
+	}
+	membrane_subprocess_result_t	end_result;
+
+	membrane_run_subprocess({"schtasks", "/end", "/tn", task_name},
+		&end_result);	/* best-effort */
+	membrane_subprocess_result_t	delete_result;
+
+	membrane_run_subprocess({"schtasks", "/delete", "/tn", task_name, "/f"},
+		&delete_result);
+	if (want_json)
+		printf("{\"ok\":true}\n");
+	else
+		printf("Uninstalled %s\n", task_name.c_str());
+	return (MEMBRANE_EXIT_SUCCESS);
 #else
+# ifdef __APPLE__
+	std::string	unit_path = membrane_launchd_plist_path();
+# else
 	std::string	unit_path = membrane_unit_file_path();
-#endif
+# endif
 
 	if (unit_path.empty())
 	{
-#ifdef __APPLE__
+# ifdef __APPLE__
 		print_err(want_json, "IO_ERROR", "HOME is not set");
-#else
+# else
 		print_err(want_json, "IO_ERROR", "neither XDG_CONFIG_HOME nor "
 			"HOME is set");
-#endif
+# endif
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);
 	}
 	FILE	*existing = fopen(unit_path.c_str(), "rb");
@@ -348,11 +440,11 @@ static int	cmd_uninstall(bool want_json)
 	while ((n = fread(buf, 1, sizeof(buf), existing)) > 0)
 		content.append(buf, n);
 	fclose(existing);
-#ifdef __APPLE__
+# ifdef __APPLE__
 	bool	is_managed = membrane_launchd_plist_is_membrane_managed(content);
-#else
+# else
 	bool	is_managed = membrane_unit_is_membrane_managed(content);
-#endif
+# endif
 	if (!is_managed)
 	{
 		print_err(want_json, "NOT_MANAGED", std::string("'") + unit_path
@@ -362,26 +454,27 @@ static int	cmd_uninstall(bool want_json)
 	}
 	membrane_subprocess_result_t	stop_result;
 
-#ifdef __APPLE__
+# ifdef __APPLE__
 	/* best-effort: bootout fails harmlessly if it was never bootstrapped */
 	membrane_run_subprocess({"launchctl", "bootout",
 		launchd_service_target()}, &stop_result);
-#else
+# else
 	membrane_run_subprocess({"systemctl", "--user", "stop",
 		MEMBRANE_UNIT_NAME}, &stop_result);	/* best-effort */
-#endif
-	unlink(unit_path.c_str());
-#ifndef __APPLE__
+# endif
+	remove(unit_path.c_str());
+# ifndef __APPLE__
 	membrane_subprocess_result_t	reload_result;
 
 	membrane_run_subprocess({"systemctl", "--user", "daemon-reload"},
 		&reload_result);
-#endif
+# endif
 	if (want_json)
 		printf("{\"ok\":true}\n");
 	else
 		printf("Uninstalled %s\n", unit_path.c_str());
 	return (MEMBRANE_EXIT_SUCCESS);
+#endif
 }
 
 #ifdef __APPLE__
@@ -427,6 +520,48 @@ static int	cmd_launchd_verb(const std::string &verb, bool want_json)
 	{
 		print_err(want_json, "LAUNCHCTL_FAILED", "launchctl " + verb
 			+ " failed: " + failure_detail);
+		return (MEMBRANE_EXIT_RUNTIME_ERROR);
+	}
+	if (want_json)
+		printf("{\"ok\":true}\n");
+	else
+		printf("%s\n", verb.c_str());
+	return (MEMBRANE_EXIT_SUCCESS);
+}
+#elif defined(_WIN32)
+static int	cmd_schtasks_verb(const std::string &verb, bool want_json)
+{
+	std::string	task_name = membrane_task_name();
+	membrane_subprocess_result_t	result;
+	bool	ok;
+
+	if (verb == "start")
+	{
+		membrane_run_subprocess({"schtasks", "/run", "/tn", task_name},
+			&result);
+		ok = (result.exit_code == 0);
+	}
+	else if (verb == "stop")
+	{
+		membrane_run_subprocess({"schtasks", "/end", "/tn", task_name},
+			&result);
+		ok = (result.exit_code == 0);
+	}
+	else	/* restart -- schtasks has no atomic restart primitive */
+	{
+		membrane_subprocess_result_t	end_result;
+
+		membrane_run_subprocess({"schtasks", "/end", "/tn", task_name},
+			&end_result);	/* best-effort */
+		membrane_run_subprocess({"schtasks", "/run", "/tn", task_name},
+			&result);
+		ok = (result.exit_code == 0);
+	}
+	if (!ok)
+	{
+		print_err(want_json, "SCHTASKS_FAILED", "schtasks " + verb
+			+ " failed: " + (result.stderr_output.empty() ? "(no output)"
+				: result.stderr_output));
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);
 	}
 	if (want_json)
@@ -497,8 +632,6 @@ static int	cmd_status(bool want_json)
 			std::string	key = line.substr(0, eq);
 			std::string	val = line.substr(eq + 1);
 
-			/* launchctl print pads keys with leading/trailing whitespace
-			 * (e.g. "\tstate = running") -- trim before comparing. */
 			size_t	key_start = key.find_first_not_of(" \t");
 			size_t	key_end = key.find_last_not_of(" \t");
 			if (key_start == std::string::npos)
@@ -514,6 +647,41 @@ static int	cmd_status(bool want_json)
 				active_state = val;
 			else if (key == "pid")
 				main_pid = val;
+		}
+	}
+	else
+		load_state = "not-found";
+#elif defined(_WIN32)
+	/* `schtasks /query /fo list /v`'s "Status:" line has real, if
+	 * locale-dependent, values ("Running", "Ready", "Disabled") --
+	 * schtasks.exe itself exposes no PID at all (a real, disclosed gap
+	 * vs. systemd/launchd, both of which do) -- main_pid stays "0". */
+	membrane_subprocess_result_t	query_result;
+	bool	have_schtasks = membrane_run_subprocess({"schtasks", "/query",
+			"/tn", membrane_task_name(), "/fo", "list", "/v"}, &query_result);
+
+	if (have_schtasks && query_result.exit_code == 0)
+	{
+		load_state = "loaded";
+		std::istringstream	iss(query_result.stdout_output);
+		std::string			line;
+
+		while (std::getline(iss, line))
+		{
+			size_t	colon = line.find(':');
+
+			if (colon == std::string::npos)
+				continue ;
+			std::string	key = line.substr(0, colon);
+			std::string	val = line.substr(colon + 1);
+			size_t		val_start = val.find_first_not_of(" \t");
+
+			if (val_start != std::string::npos)
+				val = val.substr(val_start);
+			else
+				val = "";
+			if (key.find("Status") != std::string::npos)
+				active_state = val;
 		}
 	}
 	else
@@ -609,11 +777,13 @@ static int	cmd_logs(const std::vector<std::string> &args, bool want_json)
 		lines = 1;
 	if (lines > 10000)
 		lines = 10000;
-#ifdef __APPLE__
-	/* launchd has no journalctl equivalent -- the job's own stdout/
-	 * stderr are redirected straight to a real file (StandardOutPath/
-	 * StandardErrorPath in the installed plist, see default_log_path()
-	 * above), so "logs" is a real `tail -n` of that file. */
+#if defined(__APPLE__) || defined(_WIN32)
+	/* Neither launchd nor Task Scheduler has a journalctl equivalent --
+	 * the job's own stdout/stderr are redirected straight to a real
+	 * file (StandardOutPath/StandardErrorPath in the installed plist on
+	 * macOS, the `cmd.exe /c ... >> logfile 2>&1` wrapper in the
+	 * registered task on Windows -- see default_log_path() above), so
+	 * "logs" is a real `tail -n` of that file on either platform. */
 	membrane_subprocess_result_t	result;
 	bool	ran = membrane_run_subprocess({"tail", "-n",
 			std::to_string(lines), default_log_path()}, &result, 15);
@@ -667,6 +837,8 @@ int	membrane_service_cmd_dispatch(const std::vector<std::string> &args,
 	if (args[0] == "start" || args[0] == "stop" || args[0] == "restart")
 #ifdef __APPLE__
 		return (cmd_launchd_verb(args[0], want_json));
+#elif defined(_WIN32)
+		return (cmd_schtasks_verb(args[0], want_json));
 #else
 		return (cmd_systemctl_verb(args[0], want_json));
 #endif
