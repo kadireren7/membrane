@@ -1199,6 +1199,24 @@ jobs:
           ./build-metal-smoke/tools/membrane/membrane service stop
           ./build-metal-smoke/tools/membrane/membrane service uninstall
 
+  # Mega Phase D, PR D5: validates the committed real-Windows evidence
+  # (results/windows-support/validation.json) and a handful of source-
+  # level regression guards (the MSVC /W4 flag guard, the four compat
+  # shim headers carry real Win32 implementations, the NOMINMAX guard,
+  # the schtasks UTF-16 XML conversion, the sha256sum backslash-
+  # stripping fix, no backend/platform-specific leakage, no overclaim)
+  # -- python3 + checkout only, no Windows runner, no C/C++ build.
+  windows-support-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify Windows support evidence and docs
+        run: python3 scripts/verify-windows-support.py
+
   # Mega Phase D, PR D5: real Windows validation on GitHub Actions'
   # windows-latest hosted runner -- the same "attempt the full real
   # pipeline, disclose exactly what actually works" approach as
@@ -1210,10 +1228,15 @@ jobs:
   # other job in this file; CMake's own default generator on Windows
   # (Visual Studio, when no -G is passed) resolves the MSVC toolchain
   # itself via MSBuild, so no vcvarsall/PATH setup is needed first.
-  # continue-on-error is used liberally on this job's OWN steps for
-  # this first real attempt -- deliberately, to see as much real signal
-  # as possible in one round rather than stopping at the first
-  # unknown; tightened once each step is confirmed working for real.
+  # Every step below (build, install, real device enumeration, real
+  # unit tests, real Hugging Face download, real generation, real Task
+  # Scheduler service lifecycle) is real, working, and confirmed
+  # end-to-end on this runner -- see docs/windows-support.md and
+  # results/windows-support/validation.json for the full real evidence
+  # (continue-on-error was used liberally during this phase's own
+  # iterative real bring-up, deliberately, to see as much real signal
+  # as possible per round rather than stopping at the first unknown --
+  # removed now that every step is confirmed reliable).
   windows-support-smoke:
     runs-on: windows-latest
     permissions:
@@ -1241,7 +1264,6 @@ jobs:
             --triplet x64-windows
 
       - name: Configure (CPU-only -- no discrete GPU on this runner)
-        continue-on-error: true
         run: |
           cmake -S . -B build-windows-smoke \
             -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release \
@@ -1249,7 +1271,6 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows
 
       - name: Build
-        continue-on-error: true
         run: |
           cmake --build build-windows-smoke --config Release -j 2 \
             --target membrane-run membrane test_windows_task
@@ -1273,13 +1294,11 @@ jobs:
       # this project's own actual install path, exactly like
       # packaging-smoke's own CPU/Vulkan legs already do on Linux.
       - name: Install to a real prefix (Windows needs this to run at all)
-        continue-on-error: true
         run: |
           cmake --install build-windows-smoke --config Release \
             --prefix "$(pwd)/install-windows-smoke"
 
       - name: Real device enumeration and doctor
-        continue-on-error: true
         run: |
           ./install-windows-smoke/bin/membrane-run.exe --list-devices
           ./install-windows-smoke/bin/membrane-run.exe --doctor
@@ -1288,7 +1307,6 @@ jobs:
       # API calls, no ggml/llama) -- no DLL dependency at all, so it
       # runs fine straight from the build tree, no install needed.
       - name: Real unit tests (test_windows_task, test_systemd_unit/test_launchd_unit skipped)
-        continue-on-error: true
         run: |
           ./build-windows-smoke/tools/membrane/Release/test_windows_task.exe
 
@@ -1296,14 +1314,12 @@ jobs:
       # manager + variant selector every other real model install in
       # this project uses.
       - name: Real model install (download from Hugging Face)
-        continue-on-error: true
         run: |
           ./install-windows-smoke/bin/membrane.exe model install \
             smollm2:135m --quant q4_k_m --json | tee install-result.json
           echo "MODEL_PATH=$(python3 -c 'import json;print(json.load(open("install-result.json"))["path"])')" >> "$GITHUB_ENV"
 
       - name: Real CPU generation
-        continue-on-error: true
         run: |
           ./install-windows-smoke/bin/membrane-run.exe \
             --model "$MODEL_PATH" --prompt "Hello" --ctx 2048 --auto \
@@ -1313,7 +1329,6 @@ jobs:
       # Real Task Scheduler service lifecycle smoke -- exercises real
       # schtasks.exe install/start/status/stop/uninstall.
       - name: Real Windows Task Scheduler service lifecycle smoke
-        continue-on-error: true
         run: |
           ./install-windows-smoke/bin/membrane.exe service install \
             --exec-path "$(pwd)/install-windows-smoke/bin/membrane.exe"

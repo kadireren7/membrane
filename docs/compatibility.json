@@ -571,6 +571,38 @@
       "reason_code": "",
       "evidence": [],
       "notes": "native-precision and q5 compressed KV on Metal were not separately exercised this phase (only the --kv adaptive default path, which resolved to q8, was tested -- MC-31) -- the same compat_check.c allowlist logic that already validates these on CPU/Vulkan/CUDA applies unchanged (backend-agnostic), but no real native/q5-on-Metal generation run exists yet. Disclosed, not assumed."
+    },
+    {
+      "id": "MC-33",
+      "model_family": "SmolLM2-135M-Instruct",
+      "model_arch": "llama",
+      "backend": "cpu",
+      "kv_precision": "adaptive",
+      "kv_placement": "auto",
+      "gpu_layers_mode": "auto",
+      "context_class": "small (2048)",
+      "hardware_scope": "tested",
+      "status": "SUPPORTED",
+      "reason_code": "NO_GPU_DEVICE",
+      "evidence": [
+        "results/windows-support/validation.json"
+      ],
+      "notes": "Mega Phase D, PR D5: first real Windows validation of this project -- tested on a real GitHub Actions windows-latest runner (real MSVC 19.51/Visual Studio 2026 build; real CPU hardware observed varied between runs, e.g. AMD EPYC 9V74 and INTEL(R) XEON(R) PLATINUM 8573C -- no discrete GPU on this runner, so this is a CPU-only claim, not a Windows GPU-backend claim). Real end-to-end product path: real HTTPS model download from Hugging Face with real checksum verification, real generation (128 tokens, adaptive KV correctly selected q8 via NO_GPU_DEVICE, real decode throughput 117.2 tok/s), and a real Windows Task Scheduler service-lifecycle smoke (install/start/status/stop/uninstall), all genuinely succeeding. This required porting real, pre-existing POSIX dependencies throughout membrane_core (pthread, dirent.h, POSIX timing, more) to Windows -- see docs/windows-support.md for the full list of real bugs found and fixed."
+    },
+    {
+      "id": "MC-34",
+      "model_family": "any",
+      "model_arch": "any",
+      "backend": "cpu",
+      "kv_precision": "native or q5",
+      "kv_placement": "any",
+      "gpu_layers_mode": "any",
+      "context_class": "n/a",
+      "hardware_scope": "not-hardware-specific",
+      "status": "NOT_YET_VALIDATED",
+      "reason_code": "",
+      "evidence": [],
+      "notes": "native-precision and q5 compressed KV on Windows were not separately exercised this phase (only the --kv adaptive default path, which resolved to q8, was tested -- MC-33) -- the same compat_check.c allowlist logic that already validates these on CPU/Vulkan/CUDA/Metal applies unchanged (backend-agnostic), but no real native/q5-on-Windows generation run exists yet. --ctx auto (the fully-automatic context-sizing form) was also not exercised on Windows -- host_memory_guard.h's host-RAM reader is Linux-only, the same real, disclosed gap already noted for macOS (docs/windows-support.md's own 'Known limitations'). Disclosed, not assumed."
     }
   ]
 }

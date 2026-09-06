@@ -89,7 +89,12 @@ itself fails closed before model load (MC-21) — `--kv-placement cpu` and
   subject to the same CLI, device, placement, and architecture/precision
   gates as any other backend (e.g. MC-20's CLI-level placement rejection
   applies regardless of backend, and MC-21 is specifically a CPU-only
-  build rejecting a GPU placement request).
+  build rejecting a GPU placement request). As of Mega Phase D, PR D5,
+  the CPU backend is also real, tested on **Windows** (`docs/windows-support.md`)
+  — GitHub Actions' `windows-latest` runner (real MSVC/Visual Studio
+  2026 build, no discrete GPU) — adaptive/q8 KV precision confirmed
+  (MC-33); native/q5 and `--ctx auto` not yet separately exercised on
+  Windows (MC-34).
 - **Vulkan** — a product GPU backend. Precision/placement rows tested so
   far were run on one real device (a GTX 1650) — see "Hardware scope"
   below.
@@ -120,9 +125,14 @@ Each row in `docs/compatibility.json` carries a `hardware_scope`:
   names the same real GTX 1650. MC-31 (Metal, Mega Phase D PR D4) names
   a different real device — GitHub Actions' `macos-14` runner's `MTL0`
   (a real Apple Silicon host, but running inside a paravirtualized VM,
-  not bare-metal; see `docs/macos-metal.md`). Each `tested` row is
-  always a claim about that one exact, named device — never "all Vulkan
-  GPUs," "all NVIDIA GPUs," or "all Macs."
+  not bare-metal; see `docs/macos-metal.md`). MC-33 (CPU on Windows,
+  Mega Phase D PR D5) names yet another real, if variable, device —
+  GitHub Actions' `windows-latest` runner's real CPU (observed as both
+  a real AMD EPYC and a real Intel Xeon across different runs; see
+  `docs/windows-support.md`). Each `tested` row is always a claim about
+  that one exact, named device (or, for MC-33, that one runner image's
+  own variable-but-real CPU hardware) — never "all Vulkan GPUs," "all
+  NVIDIA GPUs," "all Macs," or "all Windows machines."
 - `backend-level` — the claim is about the backend/build configuration
   itself (e.g. "no GPU backend compiled in" fails closed), not tied to
   specific hardware.
