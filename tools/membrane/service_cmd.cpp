@@ -219,7 +219,17 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 	std::string	tmp_xml_path = temp_task_xml_path();
 	membrane_fs_error_t	xml_fs_err;
 
-	if (!membrane_atomic_write_file(tmp_xml_path, task_xml, &xml_fs_err))
+	/* A real, first-attempt Windows CI finding: `schtasks /create /xml`
+	 * genuinely requires the file to actually BE UTF-16 on disk (not
+	 * just declared as such) -- writing membrane_generate_task_xml()'s
+	 * own plain UTF-8 bytes directly failed with a real schtasks.exe
+	 * error ("unable to switch the encoding"). Real conversion, not a
+	 * relabeling. */
+	std::string	task_xml_bytes = membrane_task_xml_to_utf16le_bytes(
+			task_xml);
+
+	if (!membrane_atomic_write_file(tmp_xml_path, task_xml_bytes,
+			&xml_fs_err))
 	{
 		print_err(want_json, xml_fs_err.code, xml_fs_err.message);
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);

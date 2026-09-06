@@ -3,6 +3,7 @@
 
 #include "launchd_unit.h"
 #include "test_helpers.h"
+#include "membrane/posix_compat.h"
 
 /*
  * Mega Phase D, PR D4: unit tests for launchd_unit.h's pure plist

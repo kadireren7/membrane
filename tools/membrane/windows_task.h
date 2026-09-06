@@ -73,4 +73,22 @@ std::string	membrane_task_name(void);
  * membrane_launchd_plist_is_membrane_managed(). */
 bool	membrane_task_xml_is_membrane_managed(const std::string &xml);
 
+# ifdef _WIN32
+/* A real, first-attempt Windows CI finding: `schtasks /create /xml`
+ * genuinely requires the XML file on disk to actually BE UTF-16
+ * (Task Scheduler's own documented preference for its XML import) --
+ * writing membrane_generate_task_xml()'s own plain UTF-8 std::string
+ * bytes directly (matching its own `encoding="UTF-16"` declaration in
+ * name only, not in the real bytes) failed with a real schtasks.exe
+ * error: "ERROR: unable to switch the encoding". Converts real UTF-8
+ * text to real UTF-16LE bytes (via MultiByteToWideChar(), prefixed
+ * with a real byte-order-mark) -- the caller (service_cmd.cpp's own
+ * Windows install path) writes the RESULT of this function to the
+ * temp XML file, not membrane_generate_task_xml()'s own return value
+ * directly. Windows-only (the pure generator above needs no such
+ * step on any other platform, which never uses Task Scheduler at
+ * all). */
+std::string	membrane_task_xml_to_utf16le_bytes(const std::string &utf8_xml);
+# endif
+
 #endif

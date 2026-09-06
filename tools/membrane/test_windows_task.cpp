@@ -3,6 +3,7 @@
 
 #include "windows_task.h"
 #include "test_helpers.h"
+#include "membrane/posix_compat.h"
 
 /*
  * Mega Phase D, PR D5: unit tests for windows_task.h's pure Task

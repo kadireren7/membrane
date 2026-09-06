@@ -3,6 +3,10 @@
 #include <cstdlib>
 #include <sstream>
 
+#ifdef _WIN32
+# include "membrane/windows_lean.h"
+#endif
+
 /*
  * XML-escapes the four characters that matter inside an element's text
  * content or a double-quoted attribute value (& < > "). Task Scheduler
@@ -37,7 +41,19 @@ std::string	membrane_generate_task_xml(const membrane_task_options_t &opts)
 			? "C:\\Windows\\Temp\\membrane-service.log" : opts.log_path;
 	std::ostringstream	oss;
 
-	oss << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+	/* Real, first-attempt Windows CI finding: `schtasks /create /xml`
+	 * genuinely requires UTF-16 (Task Scheduler's own real, documented
+	 * preference for its XML import) -- a real run with this
+	 * declaration mismatched against the actual bytes on disk (this
+	 * function itself always returns plain UTF-8-encoded std::string
+	 * content; converting to real UTF-16LE bytes -- with a BOM -- and
+	 * writing THOSE is service_cmd.cpp's own Windows-only install
+	 * path's job, not this pure generator's) failed with a real,
+	 * genuine schtasks.exe error: "ERROR: unable to switch the
+	 * encoding". The declaration here describes the bytes that will
+	 * actually be written to disk, not what this in-memory std::string
+	 * itself is encoded as. */
+	oss << "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n";
 	oss << "<Task version=\"1.2\" "
 		"xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n";
 	oss << "  <RegistrationInfo>\n";
@@ -96,3 +112,29 @@ bool	membrane_task_xml_is_membrane_managed(const std::string &xml)
 {
 	return (xml.find(MEMBRANE_TASK_MARKER) != std::string::npos);
 }
+
+#ifdef _WIN32
+std::string	membrane_task_xml_to_utf16le_bytes(const std::string &utf8_xml)
+{
+	int	wlen = MultiByteToWideChar(CP_UTF8, 0, utf8_xml.c_str(),
+			(int)utf8_xml.size(), NULL, 0);
+
+	if (wlen <= 0)
+		return (std::string());
+	std::wstring	wide((size_t)wlen, L'\0');
+
+	MultiByteToWideChar(CP_UTF8, 0, utf8_xml.c_str(), (int)utf8_xml.size(),
+		&wide[0], wlen);
+	std::string	out;
+
+	/* Real UTF-16LE byte-order-mark (0xFF 0xFE) -- Task Scheduler's own
+	 * XML parser uses this to confirm the encoding it was told to
+	 * expect (via the <?xml ... encoding="UTF-16"?> declaration
+	 * membrane_generate_task_xml() itself already writes) actually
+	 * matches the real bytes on disk. */
+	out.append("\xFF\xFE", 2);
+	out.append(reinterpret_cast<const char *>(wide.data()),
+		wide.size() * sizeof(wchar_t));
+	return (out);
+}
+#endif

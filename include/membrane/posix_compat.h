@@ -40,6 +40,27 @@ static inline int	nanosleep(const struct timespec *req, struct timespec *rem)
 	return (0);
 }
 
+/* setenv()/unsetenv() (used by this phase's own real regression-guard
+ * tests -- test_windows_task.cpp/test_systemd_unit.cpp/test_launchd_
+ * unit.cpp all save/override/restore an env var around each test case)
+ * have no Windows equivalent NAME at all; _putenv_s() is the real
+ * Win32 substitute. Every real call site in this codebase always
+ * passes overwrite=1 (there is no real caller needing setenv()'s own
+ * "only set if not already set" mode), so that argument is accepted
+ * but not otherwise used. Setting an EMPTY value is _putenv_s()'s own
+ * documented way to remove a variable, the real Windows equivalent of
+ * unsetenv(). */
+static inline int	setenv(const char *name, const char *value, int overwrite)
+{
+	(void)overwrite;
+	return (_putenv_s(name, value) == 0 ? 0 : -1);
+}
+
+static inline int	unsetenv(const char *name)
+{
+	return (_putenv_s(name, "") == 0 ? 0 : -1);
+}
+
 /* PATH_MAX is a POSIX macro -- MAX_PATH (windows.h) is the real
  * Windows analog (both name "the longest path this platform's own
  * filesystem APIs promise to handle"). realpath() itself has no

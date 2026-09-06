@@ -102,14 +102,27 @@ bool	membrane_compute_sha256(const std::string &path, std::string *out_hex,
 	}
 	/* Output is "<hex>  <path>\n" -- the hex digest is always exactly
 	 * 64 lowercase hex characters, real coreutils behavior, not
-	 * guessed. */
-	if (res.stdout_output.size() < 64)
+	 * guessed. GNU coreutils' own documented "escaped filename" mode
+	 * prepends a literal '\' before the hash whenever the FILENAME
+	 * argument itself contains a backslash or newline (escaping those
+	 * characters within the filename in the rest of the line) -- a
+	 * real, first-attempt Windows CI finding: every real Windows path
+	 * contains backslashes, so this mode is not a rare edge case there,
+	 * it is the NORMAL case, and skipping it silently corrupted the
+	 * parsed hash by one character on that platform (this file's own
+	 * checksum verification failed on every real Windows install
+	 * before this fix, not just some). */
+	std::string	out = res.stdout_output;
+
+	if (!out.empty() && out[0] == '\\')
+		out.erase(0, 1);
+	if (out.size() < 64)
 	{
 		set_err(err, "IO_ERROR", "unexpected sha256sum output: "
 			+ res.stdout_output);
 		return (false);
 	}
-	*out_hex = res.stdout_output.substr(0, 64);
+	*out_hex = out.substr(0, 64);
 	return (true);
 }
 

@@ -434,7 +434,7 @@ if(MEMBRANE_BUILD_TESTS)
     CXX_STANDARD_REQUIRED ON)
   target_link_libraries(test_systemd_unit PRIVATE membrane_systemd_unit)
   target_include_directories(test_systemd_unit PRIVATE
-    ${CMAKE_SOURCE_DIR}/tests/unit)
+    ${CMAKE_SOURCE_DIR}/tests/unit ${CMAKE_SOURCE_DIR}/include)
   add_test(NAME test_systemd_unit COMMAND test_systemd_unit)
 
   # Mega Phase D, PR D4: the launchd analog of test_systemd_unit above --
@@ -447,7 +447,7 @@ if(MEMBRANE_BUILD_TESTS)
     CXX_STANDARD_REQUIRED ON)
   target_link_libraries(test_launchd_unit PRIVATE membrane_launchd_unit)
   target_include_directories(test_launchd_unit PRIVATE
-    ${CMAKE_SOURCE_DIR}/tests/unit)
+    ${CMAKE_SOURCE_DIR}/tests/unit ${CMAKE_SOURCE_DIR}/include)
   add_test(NAME test_launchd_unit COMMAND test_launchd_unit)
 
   # Mega Phase D, PR D5: the Windows Task Scheduler analog of
@@ -461,7 +461,7 @@ if(MEMBRANE_BUILD_TESTS)
     CXX_STANDARD_REQUIRED ON)
   target_link_libraries(test_windows_task PRIVATE membrane_windows_task)
   target_include_directories(test_windows_task PRIVATE
-    ${CMAKE_SOURCE_DIR}/tests/unit)
+    ${CMAKE_SOURCE_DIR}/tests/unit ${CMAKE_SOURCE_DIR}/include)
   add_test(NAME test_windows_task COMMAND test_windows_task)
 
   add_executable(test_server_config test_server_config.cpp)
