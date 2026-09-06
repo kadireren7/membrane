@@ -1121,7 +1121,8 @@ jobs:
 
       - name: Build
         run: |
-          cmake --build build-metal-smoke -j3 --target membrane-run membrane
+          cmake --build build-metal-smoke -j3 --target membrane-run \
+            membrane test_launchd_unit
 
       - name: Real device enumeration and doctor
         run: |
