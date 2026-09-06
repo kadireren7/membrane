@@ -54,7 +54,22 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-add_compile_options(-Wall -Wextra -Wpedantic)
+# Mega Phase D, PR D5: -Wall/-Wextra/-Wpedantic are GCC/Clang flag
+# spellings -- MSVC's cl.exe parses "-Wextra" as "/W" (a warning-level
+# switch) followed by a non-numeric "extra" argument, and fails outright
+# ("command line error D8021: invalid numeric argument '/Wextra'") for
+# EVERY target, a real, genuine first-attempt Windows CI finding (this
+# flag is applied unconditionally, project-wide, via add_compile_options()
+# with no target scoping to bypass). /W4 is MSVC's own conventional
+# "high warning level" (its literal /Wall is far noisier than -Wall/
+# -Wextra combined -- enables many off-by-default, rarely-actionable
+# warnings not meant for normal project use), the standard real-world
+# equivalent most cross-platform MSVC projects use for this purpose.
+if(MSVC)
+  add_compile_options(/W4)
+else()
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
 
 # Sanitizer flags travel as an interface target so every executable that
 # links membrane_core inherits them for both compile and link steps.
