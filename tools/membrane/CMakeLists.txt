@@ -97,7 +97,7 @@ set_target_properties(membrane_windows_task PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_windows_task PUBLIC membrane_sanitizers)
 target_include_directories(membrane_windows_task PUBLIC
-  ${CMAKE_SOURCE_DIR}/tools/membrane)
+  ${CMAKE_SOURCE_DIR}/tools/membrane ${CMAKE_SOURCE_DIR}/include)
 
 # Mega Phase B, PR B1: the persistent `membrane serve` config (server_
 # config.h's own top comment) -- listen_address/port/default_model/
