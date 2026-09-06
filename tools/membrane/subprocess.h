@@ -6,13 +6,20 @@
 
 /*
  * Mega Phase B, PR B1: a minimal, safe subprocess runner for `membrane
- * service`'s systemctl/journalctl calls. Deliberately fork()+execvp(),
- * NEVER system()/popen() with an interpolated shell string -- argv is
- * passed directly to execvp(), so there is no shell parsing step for
- * injected metacharacters to exploit, even if a caller-controlled value
- * (a unit name, in principle) ever ended up in argv (Section 11 of the
- * task: "No shell injection"). Linux-only, matching this project's
- * existing Linux-only scope (docs/install.md).
+ * service`'s systemctl/journalctl calls. Deliberately fork()+execvp()
+ * on Linux/macOS, NEVER system()/popen() with an interpolated shell
+ * string -- argv is passed directly to execvp(), so there is no shell
+ * parsing step for injected metacharacters to exploit, even if a
+ * caller-controlled value (a unit name, in principle) ever ended up in
+ * argv (Section 11 of the task: "No shell injection").
+ *
+ * Mega Phase D, PR D5: also implemented on Windows via CreateProcessA
+ * -- argv is passed as an array here too and quoted into a single
+ * command-line string only by this file's own, correct
+ * quote-each-argument-individually algorithm (never a caller-built
+ * string, and never cmd.exe -- CreateProcessA's own lpCommandLine
+ * parameter runs the target executable directly), so the same "no
+ * shell injection" property holds on every platform.
  */
 
 typedef struct s_membrane_subprocess_result

@@ -149,7 +149,18 @@ add_library(membrane_core STATIC
   src/attntrace/attntrace3.c
 )
 target_include_directories(membrane_core PUBLIC include)
-target_link_libraries(membrane_core PUBLIC membrane_sanitizers Threads::Threads m ZLIB::ZLIB)
+# Mega Phase D, PR D5: "m" (the math library) is a POSIX/Unix-only
+# library NAME -- math functions live in the C runtime itself on
+# Windows (no separate libm.lib exists at all; MSVC's linker would
+# fail outright with "cannot open file 'm.lib'" if this were passed
+# unconditionally).
+if(WIN32)
+  target_link_libraries(membrane_core PUBLIC membrane_sanitizers
+    Threads::Threads ZLIB::ZLIB)
+else()
+  target_link_libraries(membrane_core PUBLIC membrane_sanitizers
+    Threads::Threads m ZLIB::ZLIB)
+endif()
 
 add_subdirectory(tools/membrane-bench)
 add_subdirectory(tools/membrane-store-bench)

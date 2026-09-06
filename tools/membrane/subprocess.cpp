@@ -4,20 +4,223 @@
 #include <cstring>
 #include <ctime>
 
-#include <fcntl.h>
-#include <poll.h>
-#include <signal.h>
-#include <sys/wait.h>
-#include <unistd.h>
+#ifdef _WIN32
+# include <thread>
+# include <windows.h>
+#else
+# include <fcntl.h>
+# include <poll.h>
+# include <signal.h>
+# include <sys/wait.h>
+# include <unistd.h>
+#endif
 
 /*
- * See subprocess.h's own top comment. Reads stdout/stderr concurrently
- * via poll() (never sequential blocking reads on two pipes at once --
- * that risks a real deadlock if the child fills one pipe's kernel buffer
- * while this process is blocked reading the other) with a wall-clock
- * deadline; a child that outlives it is SIGKILL'd, waited for
- * (never left a zombie), and reported as a timeout via spawn_failed.
+ * See subprocess.h's own top comment. On Linux/macOS: reads stdout/
+ * stderr concurrently via poll() (never sequential blocking reads on
+ * two pipes at once -- that risks a real deadlock if the child fills
+ * one pipe's kernel buffer while this process is blocked reading the
+ * other) with a wall-clock deadline; a child that outlives it is
+ * SIGKILL'd, waited for (never left a zombie), and reported as a
+ * timeout via spawn_failed.
  */
+
+#ifdef _WIN32
+
+/*
+ * Mega Phase D, PR D5: CreateProcessA needs a single command-line
+ * string, not an argv array -- this is the standard, well-documented
+ * Win32 quoting algorithm (the same one the Windows CRT itself uses to
+ * build argv from a command line, run in reverse): wrap an argument in
+ * double quotes if it is empty or contains a space/tab/quote, doubling
+ * any run of backslashes that is immediately followed by a quote (or
+ * is at the very end of a quoted argument), and escaping the quote
+ * itself with a backslash. Getting this wrong either breaks arguments
+ * containing spaces (a real path like "C:\Program Files\membrane\...")
+ * or -- far worse -- lets a backslash-quote sequence terminate the
+ * argument early, which is exactly the class of bug this whole
+ * function exists to get right once, correctly, rather than leave
+ * every call site to improvise its own.
+ */
+static std::string	win32_quote_argument(const std::string &arg)
+{
+	bool	needs_quotes = arg.empty();
+
+	for (char c : arg)
+		if (c == ' ' || c == '\t' || c == '"')
+			needs_quotes = true;
+	if (!needs_quotes)
+		return (arg);
+	std::string	out = "\"";
+	size_t		backslashes = 0;
+
+	for (char c : arg)
+	{
+		if (c == '\\')
+		{
+			++backslashes;
+			continue ;
+		}
+		if (c == '"')
+		{
+			out.append(backslashes * 2 + 1, '\\');
+			backslashes = 0;
+			out += '"';
+			continue ;
+		}
+		out.append(backslashes, '\\');
+		backslashes = 0;
+		out += c;
+	}
+	out.append(backslashes * 2, '\\');
+	out += '"';
+	return (out);
+}
+
+static std::string	win32_build_command_line(
+				const std::vector<std::string> &argv)
+{
+	std::string	out;
+
+	for (size_t i = 0; i < argv.size(); ++i)
+	{
+		if (i > 0)
+			out += ' ';
+		out += win32_quote_argument(argv[i]);
+	}
+	return (out);
+}
+
+/* Reads a pipe to EOF into *out -- run on its own std::thread (one per
+ * pipe) so stdout/stderr are drained concurrently, same reason the
+ * POSIX path uses poll() on both fds at once: a child that fills one
+ * pipe's kernel buffer while this process only reads the other would
+ * otherwise deadlock. */
+static void	win32_read_pipe_to_string(HANDLE h, std::string *out)
+{
+	char	buf[4096];
+	DWORD	n;
+
+	while (ReadFile(h, buf, sizeof(buf), &n, NULL) && n > 0)
+		out->append(buf, n);
+}
+
+bool	membrane_run_subprocess(const std::vector<std::string> &argv,
+			membrane_subprocess_result_t *out, int timeout_seconds)
+{
+	*out = membrane_subprocess_result_t();
+	if (argv.empty())
+	{
+		out->spawn_failed = true;
+		return (false);
+	}
+
+	SECURITY_ATTRIBUTES	sa;
+
+	sa.nLength = sizeof(sa);
+	sa.bInheritHandle = TRUE;
+	sa.lpSecurityDescriptor = NULL;
+
+	HANDLE	out_read;
+	HANDLE	out_write;
+	HANDLE	err_read;
+	HANDLE	err_write;
+
+	if (!CreatePipe(&out_read, &out_write, &sa, 0)
+		|| !CreatePipe(&err_read, &err_write, &sa, 0))
+	{
+		out->spawn_failed = true;
+		return (false);
+	}
+	/* The PARENT's own read-end handles must never be inherited by the
+	 * child -- only the write ends (wired to the child's stdout/stderr
+	 * below) are meant to cross into it. Leaving the read ends
+	 * inheritable would leak a handle the child could otherwise hold
+	 * open, which would (among other problems) prevent this process's
+	 * own ReadFile() loop from ever seeing real EOF after the child
+	 * exits. */
+	SetHandleInformation(out_read, HANDLE_FLAG_INHERIT, 0);
+	SetHandleInformation(err_read, HANDLE_FLAG_INHERIT, 0);
+
+	STARTUPINFOA	si;
+
+	ZeroMemory(&si, sizeof(si));
+	si.cb = sizeof(si);
+	si.dwFlags = STARTF_USESTDHANDLES;
+	si.hStdOutput = out_write;
+	si.hStdError = err_write;
+	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+	PROCESS_INFORMATION	pi;
+
+	ZeroMemory(&pi, sizeof(pi));
+
+	std::string	cmdline = win32_build_command_line(argv);
+	std::vector<char>	cmdline_buf(cmdline.begin(), cmdline.end());
+
+	cmdline_buf.push_back('\0');	/* CreateProcessA may WRITE to this
+									 * buffer (in-place argument
+									 * splitting) -- never pass a
+									 * std::string's own internal buffer
+									 * or a string literal directly. */
+	BOOL	spawned = CreateProcessA(NULL, cmdline_buf.data(), NULL, NULL,
+			TRUE, 0, NULL, NULL, &si, &pi);
+
+	/* These two write-end handles belong to the CHILD's own stdout/
+	 * stderr now (duplicated into it by CreateProcessA's own handle
+	 * inheritance) -- closing the parent's copies here (whether or not
+	 * spawning succeeded) is what lets win32_read_pipe_to_string()'s
+	 * ReadFile() loop below ever see real EOF once the child exits;
+	 * holding them open in the parent would hang that loop forever. */
+	CloseHandle(out_write);
+	CloseHandle(err_write);
+	if (!spawned)
+	{
+		CloseHandle(out_read);
+		CloseHandle(err_read);
+		out->spawn_failed = true;
+		return (false);
+	}
+
+	std::thread	out_reader(win32_read_pipe_to_string, out_read,
+			&out->stdout_output);
+	std::thread	err_reader(win32_read_pipe_to_string, err_read,
+			&out->stderr_output);
+
+	DWORD	wait_ms = (DWORD)((timeout_seconds > 0 ? timeout_seconds : 3600)
+			* 1000);
+	DWORD	wait_result = WaitForSingleObject(pi.hProcess, wait_ms);
+
+	if (wait_result != WAIT_OBJECT_0)
+	{
+		TerminateProcess(pi.hProcess, 1);
+		WaitForSingleObject(pi.hProcess, INFINITE);
+		out_reader.join();
+		err_reader.join();
+		CloseHandle(out_read);
+		CloseHandle(err_read);
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
+		out->spawn_failed = true;
+		out->stderr_output += "\n(membrane: subprocess timed out and was "
+			"killed)";
+		return (false);
+	}
+	out_reader.join();
+	err_reader.join();
+	CloseHandle(out_read);
+	CloseHandle(err_read);
+
+	DWORD	exit_code = 0;
+
+	GetExitCodeProcess(pi.hProcess, &exit_code);
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+	out->exit_code = (int)exit_code;
+	return (true);
+}
+
+#else
 
 static void	set_nonblocking(int fd)
 {
@@ -176,3 +379,5 @@ bool	membrane_run_subprocess(const std::vector<std::string> &argv,
 		out->exit_code = -1;
 	return (true);
 }
+
+#endif	/* _WIN32 */

@@ -19,10 +19,10 @@ std::string	membrane_server_config_resolve_path(void)
 
 	if (xdg_config_home != NULL && xdg_config_home[0] != '\0')
 		return (std::string(xdg_config_home) + "/membrane/server.json");
-	const char	*home = getenv("HOME");
+	std::string	home = membrane_resolve_home_dir();
 
-	if (home != NULL && home[0] != '\0')
-		return (std::string(home) + "/.config/membrane/server.json");
+	if (!home.empty())
+		return (home + "/.config/membrane/server.json");
 	return ("");
 }
 

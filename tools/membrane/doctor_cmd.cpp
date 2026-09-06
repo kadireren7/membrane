@@ -5,15 +5,19 @@
 #include <cstring>
 #include <sstream>
 
-#include <limits.h>
 #include <sys/stat.h>
-#include <unistd.h>
+
+#ifndef _WIN32
+# include <unistd.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
 #include "registry_core.h"
 #include "server_config.h"
 #include "systemd_unit.h"
+#include "launchd_unit.h"
+#include "windows_task.h"
 #include "fs_util.h"
 #include "subprocess.h"
 #include "status_client.h"
@@ -50,13 +54,14 @@ static bool	status_worse(const std::string &a, const std::string &b)
 	return (rank(a) > rank(b));
 }
 
-/* /proc/self/exe of the CURRENTLY RUNNING `membrane` binary -- Linux-only,
- * matching this project's existing scope (same primitive service_cmd.cpp's
- * own resolve_exec_path() already uses). Real packaging (Section 17 of
- * the task) always installs `membrane` and `membrane-run` into the SAME
- * bindir, so looking for "membrane-run" right next to this running
- * binary is correct for every real installed case; a dev build with the
- * two binaries in separate build-tree subdirectories is a secondary,
+/* The CURRENTLY RUNNING `membrane` binary's own real, resolved path --
+ * via the shared, cross-platform membrane_resolve_own_exe_path()
+ * (fs_util.h; the same primitive service_cmd.cpp's own
+ * resolve_exec_path() uses). Real packaging (Section 17 of the task)
+ * always installs `membrane` and `membrane-run` into the SAME bindir,
+ * so looking for "membrane-run" right next to this running binary is
+ * correct for every real installed case; a dev build with the two
+ * binaries in separate build-tree subdirectories is a secondary,
  * gracefully-degraded case (reported as a WARN, never a hard failure --
  * Section 9's own "may aggregate" language never promised every check
  * can always run). MEMBRANE_RUN_EXEC_PATH overrides it outright, the
@@ -72,18 +77,19 @@ static bool	resolve_membrane_run_path(std::string *out_path)
 		*out_path = override_path;
 		return (true);
 	}
-	char	buf[PATH_MAX];
-	ssize_t	n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+	std::string	self_path;
 
-	if (n < 0)
+	if (!membrane_resolve_own_exe_path(&self_path))
 		return (false);
-	buf[n] = '\0';
-	std::string	self_path(buf);
-	size_t		slash = self_path.find_last_of('/');
+	size_t	slash = self_path.find_last_of('/');
 
 	if (slash == std::string::npos)
 		return (false);
+#ifdef _WIN32
+	std::string	candidate = self_path.substr(0, slash) + "/membrane-run.exe";
+#else
 	std::string	candidate = self_path.substr(0, slash) + "/membrane-run";
+#endif
 	struct stat	st;
 
 	if (stat(candidate.c_str(), &st) != 0)
@@ -290,8 +296,12 @@ static s_doctor_check	check_config(void)
 /* Section 9/Section 11 (Mega Phase C audit finding): a bare `ubuntu:24.04`
  * container has no systemctl at all -- `membrane service install/start`
  * used to fail there with an unhelpful "(no output)" message and no
- * proactive warning. Checking for systemctl's own presence FIRST and
- * reporting it clearly closes that real, observed gap. */
+ * proactive warning. Checking for the real per-platform service-manager
+ * binary's own presence FIRST and reporting it clearly closes that
+ * real, observed gap -- on Linux via systemctl (Mega Phase C), on
+ * macOS via launchctl (Mega Phase D, PR D4 -- previously left as a
+ * disclosed-but-unconverted limitation; converted here), on Windows
+ * via schtasks (Mega Phase D, PR D5). */
 static s_doctor_check	check_service(bool *out_installed, bool *out_active,
 				int *out_port)
 {
@@ -300,6 +310,82 @@ static s_doctor_check	check_service(bool *out_installed, bool *out_active,
 	c.name = "service";
 	*out_installed = false;
 	*out_active = false;
+
+	std::string	active_state = "unknown";
+	bool		manager_available = true;
+	std::string	manager_name;
+#ifdef __APPLE__
+	manager_name = "launchctl";
+
+	membrane_subprocess_result_t	print_result;
+	bool	ran = membrane_run_subprocess({"launchctl", "print",
+			"gui/" + std::to_string(getuid()) + "/" MEMBRANE_LAUNCHD_LABEL},
+			&print_result, 5);
+
+	if (!ran || print_result.exit_code == 127)
+		manager_available = false;
+	else if (print_result.exit_code == 0)
+	{
+		*out_installed = true;
+		std::istringstream	iss(print_result.stdout_output);
+		std::string			line;
+
+		while (std::getline(iss, line))
+		{
+			size_t	eq = line.find('=');
+
+			if (eq == std::string::npos)
+				continue ;
+			std::string	key = line.substr(0, eq);
+			size_t		ks = key.find_first_not_of(" \t");
+			size_t		ke = key.find_last_not_of(" \t");
+
+			if (ks == std::string::npos)
+				continue ;
+			key = key.substr(ks, ke - ks + 1);
+			if (key == "state")
+			{
+				std::string	val = line.substr(eq + 1);
+				size_t		vs = val.find_first_not_of(" \t");
+
+				active_state = vs != std::string::npos
+						? val.substr(vs) : "";
+			}
+		}
+	}
+#elif defined(_WIN32)
+	manager_name = "schtasks";
+
+	membrane_subprocess_result_t	query_result;
+	bool	ran = membrane_run_subprocess({"schtasks", "/query", "/tn",
+			membrane_task_name(), "/fo", "list", "/v"}, &query_result, 5);
+
+	if (!ran || query_result.exit_code == 1)
+		manager_available = false;
+	else if (query_result.exit_code == 0)
+	{
+		*out_installed = true;
+		std::istringstream	iss(query_result.stdout_output);
+		std::string			line;
+
+		while (std::getline(iss, line))
+		{
+			size_t	colon = line.find(':');
+
+			if (colon == std::string::npos)
+				continue ;
+			if (line.substr(0, colon).find("Status") != std::string::npos)
+			{
+				std::string	val = line.substr(colon + 1);
+				size_t		vs = val.find_first_not_of(" \t");
+
+				active_state = vs != std::string::npos
+						? val.substr(vs) : "";
+			}
+		}
+	}
+#else
+	manager_name = "systemctl";
 
 	std::string	unit_path = membrane_unit_file_path();
 	bool		unit_exists = false;
@@ -320,21 +406,10 @@ static s_doctor_check	check_service(bool *out_installed, bool *out_active,
 	 * this file's own top comment) makes the CHILD exit 127
 	 * (subprocess.h's own documented execvp-failure convention) -- ran
 	 * is still true (fork/pipe setup succeeded), only exit_code reveals
-	 * it. Reported as its own clear WARN rather than the old unhelpful
-	 * "(no output)" a real `membrane service start` attempt used to
-	 * give in this exact situation. */
+	 * it. */
 	if (!ran || show_result.exit_code == 127)
-	{
-		c.status = MEMBRANE_DOCTOR_STATUS_WARN;
-		c.detail = {{"systemctl_available", false},
-			{"message", "systemctl is not available in this environment "
-				"-- `membrane service` commands cannot work here; use "
-				"`membrane serve` directly instead"}};
-		return (c);
-	}
-	std::string	active_state = "unknown";
-
-	if (show_result.exit_code == 0)
+		manager_available = false;
+	else if (show_result.exit_code == 0)
 	{
 		std::istringstream	iss(show_result.stdout_output);
 		std::string			line;
@@ -358,10 +433,24 @@ static s_doctor_check	check_service(bool *out_installed, bool *out_active,
 	}
 	else
 		*out_installed = unit_exists;
-	*out_active = (active_state == "active");
+#endif
+	/* Reported as its own clear WARN rather than an unhelpful "(no
+	 * output)" a real `membrane service start` attempt used to give in
+	 * this exact situation (Mega Phase C's own original finding, now
+	 * applied to all three platforms' own service-manager binary). */
+	if (!manager_available)
+	{
+		c.status = MEMBRANE_DOCTOR_STATUS_WARN;
+		c.detail = {{manager_name + "_available", false},
+			{"message", manager_name + " is not available in this "
+				"environment -- `membrane service` commands cannot work "
+				"here; use `membrane serve` directly instead"}};
+		return (c);
+	}
+	*out_active = (active_state == "active" || active_state == "Running");
 	c.status = MEMBRANE_DOCTOR_STATUS_OK;
-	c.detail = {{"systemctl_available", true}, {"installed", *out_installed},
-		{"active_state", active_state}};
+	c.detail = {{manager_name + "_available", true},
+		{"installed", *out_installed}, {"active_state", active_state}};
 	if (!*out_installed)
 		c.detail["message"] = "not installed -- run `membrane service "
 			"install` to run MEMBRANE as a background service";

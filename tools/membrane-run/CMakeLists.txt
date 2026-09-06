@@ -211,9 +211,25 @@ if(BUILD_SHARED_LIBS)
         INSTALL_RPATH "${MEMBRANE_RPATH_ORIGIN_TOKEN}"
         BUILD_WITH_INSTALL_RPATH FALSE
         SKIP_BUILD_RPATH FALSE)
-      install(TARGETS ${_membrane_run_dep}
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR})
+      # Mega Phase D, PR D5: on Windows, a shared library's own install
+      # ARTIFACT is its .dll, which CMake's install(TARGETS ...)
+      # classifies as RUNTIME (not LIBRARY -- that governs the .lib
+      # import library there instead). RPATH/@loader_path/$ORIGIN have
+      # no Windows equivalent at all; dyld/the ELF loader's own
+      # "search relative to the loading binary" behavior is instead
+      # Windows's own DEFAULT DLL search order (the same directory as
+      # the loading .exe, checked before PATH) -- so the fix here is
+      # simply to install the .dll into the SAME directory as
+      # membrane-run.exe (CMAKE_INSTALL_BINDIR), never
+      # CMAKE_INSTALL_LIBDIR, which the OS would never look in.
+      if(WIN32)
+        install(TARGETS ${_membrane_run_dep}
+          RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+      else()
+        install(TARGETS ${_membrane_run_dep}
+          LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR})
+      endif()
     endif()
   endforeach()
 endif()

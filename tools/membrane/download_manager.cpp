@@ -6,9 +6,14 @@
 #include <cstdio>
 #include <cstring>
 
-#include <sys/statvfs.h>
 #include <sys/stat.h>
-#include <unistd.h>
+
+#ifdef _WIN32
+# include <windows.h>
+#else
+# include <sys/statvfs.h>
+# include <unistd.h>
+#endif
 
 #include <curl/curl.h>
 
@@ -24,6 +29,24 @@ bool	membrane_download_check_disk_space(const std::string &dest_dir,
 			uint64_t required_bytes, membrane_download_error_t *err)
 {
 	*err = membrane_download_error_t();
+	uint64_t	available;
+
+#ifdef _WIN32
+	/* GetDiskFreeSpaceExA -- statvfs() does not exist on Windows at all
+	 * (no <sys/statvfs.h>). ullAvailableToCaller (not ullTotalFree) is
+	 * the real "how much can THIS process actually write" figure,
+	 * matching statvfs's own f_bavail (available to an unprivileged
+	 * caller) rather than f_bfree (available to root). */
+	ULARGE_INTEGER	avail_to_caller;
+
+	if (!GetDiskFreeSpaceExA(dest_dir.c_str(), &avail_to_caller, NULL, NULL))
+	{
+		set_err(err, "IO_ERROR", std::string("could not stat filesystem "
+			"for '") + dest_dir + "' (GetDiskFreeSpaceExA failed)");
+		return (false);
+	}
+	available = avail_to_caller.QuadPart;
+#else
 	struct statvfs	st;
 
 	if (statvfs(dest_dir.c_str(), &st) != 0)
@@ -32,7 +55,8 @@ bool	membrane_download_check_disk_space(const std::string &dest_dir,
 			"for '") + dest_dir + "': " + strerror(errno));
 		return (false);
 	}
-	uint64_t	available = (uint64_t)st.f_bavail * (uint64_t)st.f_frsize;
+	available = (uint64_t)st.f_bavail * (uint64_t)st.f_frsize;
+#endif
 	/* A real, small safety margin (256 MiB) on top of the exact byte
 	 * count -- a download that lands EXACTLY at the last free byte
 	 * still leaves the filesystem with zero headroom for anything
@@ -243,7 +267,7 @@ bool	membrane_download_file(const std::string &url,
 		 * become correct by resuming further -- delete rather than
 		 * leave a permanently-broken .partial a future retry would
 		 * just resume from and still get wrong. */
-		unlink(partial_path.c_str());
+		remove(partial_path.c_str());
 		set_err(err, "SIZE_MISMATCH", "expected " + std::to_string(
 			expected_size_bytes) + " bytes, got " + std::to_string(
 			final_st.st_size) + " -- partial file deleted");
@@ -270,7 +294,7 @@ bool	membrane_download_file(const std::string &url,
 		}
 		else if (actual_hex != expected_sha256)
 		{
-			unlink(partial_path.c_str());
+			remove(partial_path.c_str());
 			set_err(err, "CHECKSUM_MISMATCH", "expected sha256 "
 				+ expected_sha256 + ", got " + actual_hex
 				+ " -- partial file deleted");
