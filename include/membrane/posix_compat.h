@@ -18,7 +18,27 @@
 #ifdef _WIN32
 # include <io.h>
 # include <stdlib.h>
+# include <time.h>
 # include "membrane/windows_lean.h"
+
+/* nanosleep() (used by tools/membrane/server.cpp's own graceful-
+ * shutdown poll loop and setup_cmd.cpp's own retry-with-backoff
+ * helper, both fixed, sub-second millisecond-scale intervals -- never
+ * a case needing real nanosecond precision) has no Windows equivalent
+ * NAME at all. Sleep() (Win32, millisecond granularity) is the real,
+ * standard substitute -- real, disclosed precision loss below
+ * millisecond scale (irrelevant to either real caller here, both of
+ * which sleep for a fixed 100ms/200ms). `rem` (the real POSIX
+ * signature's own "time remaining if interrupted by a signal" output)
+ * is never populated -- Windows has no equivalent interruption signal
+ * for Sleep() to report, and neither real caller here ever reads it
+ * (both pass NULL). */
+static inline int	nanosleep(const struct timespec *req, struct timespec *rem)
+{
+	(void)rem;
+	Sleep((DWORD)(req->tv_sec * 1000 + req->tv_nsec / 1000000));
+	return (0);
+}
 
 /* PATH_MAX is a POSIX macro -- MAX_PATH (windows.h) is the real
  * Windows analog (both name "the longest path this platform's own

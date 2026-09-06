@@ -1,4 +1,5 @@
 #include "server.h"
+#include "membrane/posix_compat.h"
 
 #include <atomic>
 #include <chrono>
