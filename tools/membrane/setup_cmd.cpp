@@ -20,6 +20,7 @@
 #include "service_cmd.h"
 #include "doctor_cmd.h"
 #include "product_cli.h"
+#include "cli_shared.h"
 
 using json = nlohmann::json;
 
@@ -63,44 +64,6 @@ static bool	parse_setup_args(const std::vector<std::string> &args,
 		}
 	}
 	return (true);
-}
-
-static bool	is_interactive(void)
-{
-	return (isatty(fileno(stdin)) != 0);
-}
-
-/* Section 6: non-interactive (no TTY, or --yes) always takes
- * `default_yes` without ever blocking on stdin -- this is what makes
- * setup safe to run from CI/automation with no prompts at all. */
-static bool	ask_yes_no(const std::string &prompt, bool default_yes,
-				bool assume_yes)
-{
-	if (assume_yes || !is_interactive())
-		return (default_yes);
-	printf("%s [%s]: ", prompt.c_str(), default_yes ? "Y/n" : "y/N");
-	fflush(stdout);
-	std::string	line;
-
-	if (!std::getline(std::cin, line) || line.empty())
-		return (default_yes);
-	return (line[0] == 'y' || line[0] == 'Y');
-}
-
-/* Returns "" (never blocks) when non-interactive -- the caller then
- * knows to skip model registration for this run rather than hanging on
- * a prompt automation could never answer. */
-static std::string	ask_line(const std::string &prompt)
-{
-	if (!is_interactive())
-		return ("");
-	printf("%s", prompt.c_str());
-	fflush(stdout);
-	std::string	line;
-
-	if (!std::getline(std::cin, line))
-		return ("");
-	return (line);
 }
 
 static std::string	derive_model_name(const std::string &path)
@@ -171,80 +134,10 @@ static bool	verify_get_with_retry(const std::string &bind, int port,
  * control flow still relies purely on their real return codes, and
  * `summary` (accumulated as the run progresses, printed exactly once
  * at the very end) is the ONE JSON document a machine caller gets,
- * never a mix of narrative headers and scattered per-step JSON blobs. */
-static void	narrate(bool want_json, const char *fmt, ...)
-{
-	if (want_json)
-		return ;
-
-	va_list	ap;
-
-	va_start(ap, fmt);
-	vprintf(fmt, ap);
-	va_end(ap);
-}
-
-/* Real bug found and fixed while testing this exact JSON-mode design:
- * calling the reused membrane_model_cmd_dispatch()/membrane_service_
- * cmd_dispatch() with want_json=false does NOT make them silent -- it
- * makes them print their own HUMAN-readable text instead (their only
- * other mode is want_json=true, printing their OWN separate JSON line
- * -- neither is "say nothing"), so `membrane --json setup` was
- * printing human prose from the underlying add/install/start calls
- * ahead of setup's own single clean summary object, exactly the mixed-
- * output problem this whole redesign was meant to avoid. Since neither
- * command has a genuinely silent mode of its own, this small RAII
- * helper redirects real fd 1 to /dev/null for the exact duration of one
- * reused call, restoring it (and never eating anything setup prints
- * itself before/after) immediately afterward -- control flow still
- * relies purely on the real return code, never on parsing suppressed
- * output. A no-op (verified via `active`) when want_json is false, so
- * the ordinary human-readable path is completely unaffected. */
-class stdout_silencer_t
-{
-	public:
-		explicit stdout_silencer_t(bool active)
-			: active_(active), saved_fd_(-1)
-		{
-			if (!active_)
-				return ;
-			fflush(stdout);
-			saved_fd_ = dup(STDOUT_FILENO);
-			int	devnull = open(MEMBRANE_NULL_DEVICE, O_WRONLY);
-
-			if (devnull >= 0)
-			{
-				dup2(devnull, STDOUT_FILENO);
-				close(devnull);
-			}
-		}
-
-		~stdout_silencer_t(void)
-		{
-			if (!active_ || saved_fd_ < 0)
-				return ;
-			fflush(stdout);
-			dup2(saved_fd_, STDOUT_FILENO);
-			close(saved_fd_);
-		}
-
-		stdout_silencer_t(const stdout_silencer_t &) = delete;
-		stdout_silencer_t	&operator=(const stdout_silencer_t &) = delete;
-
-	private:
-		bool	active_;
-		int		saved_fd_;
-};
-
-static int	dispatch_silently_if_json(bool want_json,
-				const std::vector<std::string> &args,
-				int (*fn)(const std::vector<std::string> &, bool))
-{
-	stdout_silencer_t	silencer(want_json);
-
-	return (fn(args, false));
-}
-
+ * never a mix of narrative headers and scattered per-step JSON blobs.
+ * (membrane_cli_narrate()/stdout_silencer_t/membrane_cli_dispatch_
+ * silently_if_json() now live in cli_shared.h -- Mega Phase D, PR D6 --
+ * reused as-is by use_cmd.cpp too.) */
 int	membrane_setup_cmd_dispatch(const std::vector<std::string> &args,
 				bool want_json)
 {
@@ -268,7 +161,7 @@ int	membrane_setup_cmd_dispatch(const std::vector<std::string> &args,
 	 * never a second hardware/registry/service detection. */
 	if (!want_json)
 		print_step(++step, total_steps, "checking installation and host");
-	narrate(want_json, "MEMBRANE %s\n", MEMBRANE_VERSION);
+	membrane_cli_narrate(want_json, "MEMBRANE %s\n", MEMBRANE_VERSION);
 
 	json		doctor_root;
 
@@ -281,20 +174,20 @@ int	membrane_setup_cmd_dispatch(const std::vector<std::string> &args,
 		{
 			const json	&d = c["detail"];
 
-			narrate(want_json, "CPU: %s\n",
+			membrane_cli_narrate(want_json, "CPU: %s\n",
 				d.value("cpu", std::string("unknown")).c_str());
-			narrate(want_json, "GPU backend: %s (%d device(s))\n",
+			membrane_cli_narrate(want_json, "GPU backend: %s (%d device(s))\n",
 				d.value("gpu_backend_available", false) ? "available"
 					: "none",
 				d.value("gpu_devices_found", 0));
 			uint64_t	total_b = d.value("host_total_bytes", 0ULL);
 
 			if (total_b > 0)
-				narrate(want_json, "Host RAM: %.1f GiB total\n",
+				membrane_cli_narrate(want_json, "Host RAM: %.1f GiB total\n",
 					(double)total_b / (1024.0 * 1024.0 * 1024.0));
 		}
 		if (c["name"] == "registry")
-			narrate(want_json, "Model registry: %d model(s) currently "
+			membrane_cli_narrate(want_json, "Model registry: %d model(s) currently "
 				"registered\n", (int)c["detail"].value("count", 0));
 	}
 
@@ -312,12 +205,12 @@ int	membrane_setup_cmd_dispatch(const std::vector<std::string> &args,
 	std::string	model_path = o.model_path;
 
 	if (!o.want_model_path)
-		model_path = ask_line("Path to a local GGUF model (leave empty "
+		model_path = membrane_cli_ask_line("Path to a local GGUF model (leave empty "
 			"to skip model registration): ");
 	summary["model"] = json();
 	if (model_path.empty())
 	{
-		narrate(want_json, "No model path given -- skipping model "
+		membrane_cli_narrate(want_json, "No model path given -- skipping model "
 			"registration (you can run `membrane model add NAME PATH` "
 			"any time).\n");
 		summary["model"]["registered"] = false;
@@ -356,7 +249,7 @@ int	membrane_setup_cmd_dispatch(const std::vector<std::string> &args,
 				if (existing->path == canonical)
 				{
 					already_correct = true;
-					narrate(want_json, "'%s' is already registered "
+					membrane_cli_narrate(want_json, "'%s' is already registered "
 						"pointing at this exact file -- nothing to "
 						"do.\n", model_name.c_str());
 				}
@@ -375,7 +268,7 @@ int	membrane_setup_cmd_dispatch(const std::vector<std::string> &args,
 		}
 		if (!already_correct)
 		{
-			int	rc = dispatch_silently_if_json(want_json,
+			int	rc = membrane_cli_dispatch_silently_if_json(want_json,
 					{"add", model_name, canonical},
 					membrane_model_cmd_dispatch);
 
@@ -405,16 +298,16 @@ int	membrane_setup_cmd_dispatch(const std::vector<std::string> &args,
 		if (!config_path.empty())
 			membrane_server_config_load(config_path, &cfg, &cfg_err);
 		if (cfg.default_model == model_name)
-			narrate(want_json, "'%s' is already the default model.\n",
+			membrane_cli_narrate(want_json, "'%s' is already the default model.\n",
 				model_name.c_str());
 		else if (!cfg.default_model.empty())
-			narrate(want_json, "Default model is already set to '%s' "
+			membrane_cli_narrate(want_json, "Default model is already set to '%s' "
 				"-- leaving it unchanged (run `membrane model use %s` "
 				"yourself if you want to switch it).\n",
 				cfg.default_model.c_str(), model_name.c_str());
-		else if (ask_yes_no("Make '" + model_name + "' the default "
+		else if (membrane_cli_ask_yes_no("Make '" + model_name + "' the default "
 				"model?", true, o.assume_yes))
-			dispatch_silently_if_json(want_json, {"use", model_name},
+			membrane_cli_dispatch_silently_if_json(want_json, {"use", model_name},
 				membrane_model_cmd_dispatch);
 		summary["model"]["default_model"] = cfg.default_model.empty()
 				? model_name : cfg.default_model;
@@ -440,14 +333,14 @@ int	membrane_setup_cmd_dispatch(const std::vector<std::string> &args,
 	summary["service"] = json();
 	if (o.no_service)
 	{
-		narrate(want_json, "--no-service given -- skipping (use "
+		membrane_cli_narrate(want_json, "--no-service given -- skipping (use "
 			"`membrane serve` directly, or `membrane service "
 			"install`/`start` later).\n");
 		summary["service"]["skipped"] = "no-service flag given";
 	}
 	else if (!systemctl_available)
 	{
-		narrate(want_json, "systemctl is not available in this "
+		membrane_cli_narrate(want_json, "systemctl is not available in this "
 			"environment -- skipping service install/start. Use "
 			"`membrane serve` directly instead.\n");
 		summary["service"]["skipped"] = "systemctl not available";
@@ -465,15 +358,15 @@ int	membrane_setup_cmd_dispatch(const std::vector<std::string> &args,
 					std::string("")) == "active");
 			}
 		if (already_installed)
-			narrate(want_json, "Service already installed.\n");
+			membrane_cli_narrate(want_json, "Service already installed.\n");
 		else
-			dispatch_silently_if_json(want_json, {"install"},
+			membrane_cli_dispatch_silently_if_json(want_json, {"install"},
 				membrane_service_cmd_dispatch);
 		if (already_active)
-			narrate(want_json, "Service already running.\n");
+			membrane_cli_narrate(want_json, "Service already running.\n");
 		else
 		{
-			int	rc = dispatch_silently_if_json(want_json, {"start"},
+			int	rc = membrane_cli_dispatch_silently_if_json(want_json, {"start"},
 					membrane_service_cmd_dispatch);
 
 			if (rc != MEMBRANE_EXIT_SUCCESS)
@@ -512,24 +405,24 @@ int	membrane_setup_cmd_dispatch(const std::vector<std::string> &args,
 
 	summary["verified"] = {{"health", health_ok}, {"models", models_ok}};
 	if (health_ok && models_ok)
-		narrate(want_json, "/health and /v1/models both answered "
+		membrane_cli_narrate(want_json, "/health and /v1/models both answered "
 			"correctly.\n");
 	else if (o.no_service || !systemctl_available)
-		narrate(want_json, "Endpoint not checked (no service running "
+		membrane_cli_narrate(want_json, "Endpoint not checked (no service running "
 			"yet in this session) -- start it with `membrane service "
 			"start` or `membrane serve`, then verify with `membrane "
 			"status`.\n");
 	else
-		narrate(want_json, "Endpoint did not answer yet -- it may "
+		membrane_cli_narrate(want_json, "Endpoint did not answer yet -- it may "
 			"still be starting. Check again shortly with `membrane "
 			"status` or `membrane service logs`.\n");
 
 	/* Step 5: final summary -- Section 5, item 15. */
 	if (!want_json)
 		print_step(++step, total_steps, "done");
-	narrate(want_json, "Endpoint: http://%s:%d/v1\n",
+	membrane_cli_narrate(want_json, "Endpoint: http://%s:%d/v1\n",
 		cfg.listen_address.c_str(), cfg.port);
-	narrate(want_json, "Next: point any OpenAI-compatible client at "
+	membrane_cli_narrate(want_json, "Next: point any OpenAI-compatible client at "
 		"that URL, or run `membrane status` / `membrane doctor` any "
 		"time.\n");
 	summary["ok"] = true;

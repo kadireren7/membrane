@@ -82,7 +82,21 @@ membrane-run --model model.gguf --prompt "Hello" --ctx 2048 --auto
 
 Prefer talking to MEMBRANE over HTTP instead of the CLI directly (any
 OpenAI-compatible client/library, no code changes beyond `base_url`)?
-One guided command handles registration and the background service
+Don't have a model file yet? One command picks a model, installs it
+(with your consent), and puts it to work:
+
+```bash
+membrane use qwen2.5:7b
+```
+
+If `qwen2.5:7b` isn't installed yet, this previews the download (size,
+hardware fit, recommended variant), asks to confirm, installs it, and
+selects it — activating it live if `membrane serve`/the service is
+already running. Already installed? Same command just selects/
+activates it, no restart needed. See `docs/model-lifecycle.md`.
+
+Already have a local `.gguf` file and want the guided first-run
+instead? One command handles registration and the background service
 together:
 
 ```bash

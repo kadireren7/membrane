@@ -475,6 +475,162 @@ static membrane_registry_t	refresh_and_snapshot_registry(
 							 * "missing is not an error" convention */
 }
 
+/* Mega Phase D, PR D6, Section 12 of the task: a loopback-only,
+ * MEMBRANE-specific (never /v1/..., never part of the OpenAI-compatible
+ * surface) admin endpoint letting `membrane use` trigger a live model
+ * switch without requiring `membrane serve`/the service to be restarted.
+ * This is a THIN wrapper around ensure_model_loaded() -- the exact same
+ * function handle_chat_completions() itself already calls -- never a
+ * second switch/lifecycle policy: Section 17's idempotence ("already
+ * active" -> no reload) and Section 16's failure-recovery honesty (a
+ * failed switch that successfully restores the previous model is still
+ * reported as a FAILURE for the requested model, with the real recovered
+ * model named in active_model) both come from ensure_model_loaded()
+ * itself, for free.
+ *
+ * The context-recommendation pipeline ensure_model_loaded() drives
+ * needs SOME real prompt text to size context against (see try_load_
+ * one()'s own call to membrane_resolve_ctx_auto()) -- there is no real
+ * user message yet for an admin-triggered warm switch, so a short, fixed
+ * placeholder chat turn is applied through the model's own real chat
+ * template (load_chat_template()/apply_chat_template(), the SAME
+ * functions handle_chat_completions() itself uses -- never a second
+ * templating path). Real, disclosed design finding (docs/model-
+ * lifecycle.md has the detail): context_recommender.c's own algorithm
+ * always maximizes recommended_context to fit real host memory (the
+ * prompt's own token count is only ever a FLOOR), so this placeholder
+ * sizes context almost identically to what a real first chat message
+ * would in the common case -- not a corner this endpoint is quietly
+ * cutting. */
+static void	handle_activate_model(s_membrane_server_model_state *st,
+				const httplib::Request &req, httplib::Response &res)
+{
+	json	body;
+
+	try
+	{
+		body = json::parse(req.body);
+	}
+	catch (const json::parse_error &)
+	{
+		send_json_error(res, 400, "INVALID_REQUEST", "request body is not "
+			"valid JSON");
+		return ;
+	}
+	if (!body.is_object() || !body.contains("model")
+		|| !body["model"].is_string() || body["model"].get<std::string>()
+			.empty())
+	{
+		send_json_error(res, 400, "INVALID_REQUEST", "request must be a "
+			"JSON object with a non-empty string \"model\"");
+		return ;
+	}
+	std::string			model_name = body["model"];
+	membrane_registry_t	reg = refresh_and_snapshot_registry(st);
+	const membrane_registry_entry_t	*entry = membrane_registry_find(reg,
+			model_name);
+
+	if (entry == NULL)
+	{
+		send_json_error(res, 404, "MODEL_NOT_FOUND", "no model named '"
+			+ model_name + "' is registered (see `membrane model list`)");
+		return ;
+	}
+	/* Section 15 of the task: never unload a model beneath an active
+	 * generation. st->mtx already serializes every generation for the
+	 * whole request (Section 24 of the Mega Phase A task) -- a bounded
+	 * try_lock retry here (never an indefinite block) reuses that exact
+	 * same real serialization instead of inventing a second one, and
+	 * reports SERVER_BUSY (the same code/spirit as the admission gate's
+	 * own 503) rather than either blocking forever or racing a live
+	 * generation. */
+	std::unique_lock<std::mutex>	lock(st->mtx, std::defer_lock);
+	bool							locked = false;
+
+	for (int attempt = 0; attempt < 50 && !locked; ++attempt)
+	{
+		if (lock.try_lock())
+			locked = true;
+		else
+		{
+			struct timespec	ts = {0, 100000000L};
+
+			nanosleep(&ts, NULL);
+		}
+	}
+	if (!locked)
+	{
+		res.set_header("Retry-After", "1");
+		send_json_error(res, 503, "SERVER_BUSY", "a generation is currently "
+			"in progress -- retry shortly");
+		return ;
+	}
+	if (st->model_loaded && st->loaded_name == entry->name)
+	{
+		const char	*kv_name;
+
+		membrane_kv_precision_name_to_json(st->session.gs.adaptive_used
+			? st->session.gs.adaptive_selected_mode : MEMBRANE_KV_STORE_NATIVE,
+			&kv_name);
+		json	j;
+
+		j["ok"] = true;
+		j["already_active"] = true;
+		j["active_model"] = st->loaded_name;
+		j["backend"] = st->session.gs.requested
+			? st->session.gs.backend_selected : "CPU";
+		res.set_content(j.dump(), "application/json");
+		return ;
+	}
+	std::string	tmpl;
+	std::string	tmpl_err;
+
+	if (!load_chat_template(entry->path, &tmpl, &tmpl_err))
+	{
+		send_json_error(res, 500, "CHAT_TEMPLATE_UNAVAILABLE", tmpl_err);
+		return ;
+	}
+	std::vector<llama_chat_message>	chat;
+	llama_chat_message					warmup;
+
+	warmup.role = "user";
+	warmup.content = "Hello";
+	chat.push_back(warmup);
+	std::string	prompt_text;
+
+	if (!apply_chat_template(tmpl, chat, &prompt_text))
+	{
+		send_json_error(res, 500, "CHAT_TEMPLATE_FAILED", "the model's chat "
+			"template could not be applied to a warm-up message");
+		return ;
+	}
+	std::string	err_code;
+	std::string	err_message;
+	int			err_status = 500;
+	bool		ok = ensure_model_loaded(st, reg, *entry, prompt_text, 512,
+			&err_code, &err_message, &err_status);
+
+	if (ok)
+		st->cached_chat_template = tmpl;
+	json	j;
+
+	j["ok"] = ok;
+	j["already_active"] = false;
+	j["active_model"] = st->model_loaded ? json(st->loaded_name)
+			: json(nullptr);
+	if (st->model_loaded)
+	{
+		j["backend"] = st->session.gs.requested
+			? st->session.gs.backend_selected : "CPU";
+	}
+	if (!ok)
+	{
+		j["error"] = {{"code", err_code}, {"message", err_message}};
+		res.status = err_status;
+	}
+	res.set_content(j.dump(), "application/json");
+}
+
 static void	handle_models(s_membrane_server_model_state *st,
 				const httplib::Request &, httplib::Response &res)
 {
@@ -530,6 +686,15 @@ static void	handle_status(s_membrane_server_model_state *st,
 	}
 	else
 		j["loaded_model"] = nullptr;
+	/* Mega Phase D, PR D6, Section 20/22: exposes the SAME default_model
+	 * `membrane serve`/the service read at startup (server_config.h,
+	 * unchanged by a live switch -- see server.h's own top comment on
+	 * default_model) so `membrane status`/`membrane doctor` can honestly
+	 * compare "what the config prefers" against "what is actually
+	 * loaded right now" without a second, independently-drifting config
+	 * read of their own. */
+	j["default_model"] = st->default_model.empty() ? json(nullptr)
+			: json(st->default_model);
 	j["context_policy"] = "automatic";
 	res.set_content(j.dump(), "application/json");
 }
@@ -1233,6 +1398,9 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	svr.Post("/v1/chat/completions", [&](const httplib::Request &rq,
 			httplib::Response &rs)
 		{ handle_chat_completions(&state, rq, rs); });
+	svr.Post("/membrane/v1/models/activate", [&](const httplib::Request &rq,
+			httplib::Response &rs)
+		{ handle_activate_model(&state, rq, rs); });
 
 	if (!svr.bind_to_port(bind, port))
 	{

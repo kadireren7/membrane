@@ -27,6 +27,7 @@
 #include "download_manager.h"
 #include "fs_util.h"
 #include "variant_selector.h"
+#include "status_client.h"
 
 using json = nlohmann::json;
 
@@ -913,6 +914,55 @@ static int	cmd_uninstall(const std::vector<std::string> &args, bool want_json)
 			"itself download");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
+	/* Mega Phase D, PR D6, Section 19 of the task: never silently delete
+	 * a model out from under a running server that has it ACTIVE right
+	 * now -- checked via a real GET /v1/status, the same live source of
+	 * truth `membrane use`/`membrane status` themselves already trust,
+	 * never re-derived from config alone. A server that is unreachable
+	 * (stopped, or genuinely does not have this model loaded) never
+	 * blocks the uninstall -- only a real, currently-loaded match does. */
+	std::string						config_path
+			= membrane_server_config_resolve_path();
+	membrane_server_config_t		cfg = membrane_server_config_defaults();
+	membrane_server_config_error_t	cfg_err;
+
+	if (!config_path.empty())
+		membrane_server_config_load(config_path, &cfg, &cfg_err);
+	json	live_status;
+	bool	reachable = membrane_fetch_server_status(cfg.listen_address,
+			cfg.port, &live_status);
+
+	if (reachable && live_status.contains("loaded_model")
+		&& !live_status["loaded_model"].is_null()
+		&& live_status["loaded_model"].get<std::string>() == args[0])
+	{
+		print_err(want_json, "MODEL_ACTIVE", std::string("'") + args[0]
+			+ "' is currently the ACTIVE model on a running server -- "
+			"switch to a different model first (`membrane use OTHER`), "
+			"or stop the service (`membrane service stop`), before "
+			"uninstalling it");
+		return (MEMBRANE_EXIT_CLI_ERROR);
+	}
+	/* Section 19: never leave a dangling default pointing at a file that
+	 * is about to be deleted -- cleared explicitly (never silently) and
+	 * reported in this command's own output below, rather than left for
+	 * a future `membrane use`/`membrane doctor` to discover as a
+	 * surprise. Best-effort: a failure to clear it is reported as a
+	 * warning, never treated as a reason to abort an otherwise-successful
+	 * uninstall (the registry, not server_config, is this command's own
+	 * primary responsibility). */
+	bool	was_default = !config_path.empty()
+			&& cfg.default_model == args[0];
+	bool	default_cleared = false;
+
+	if (was_default)
+	{
+		cfg.default_model.clear();
+		membrane_server_config_error_t	clear_err;
+
+		default_cleared = membrane_server_config_save(config_path, cfg,
+				&clear_err);
+	}
 	std::string	path_to_delete = entry->path;
 
 	if (!membrane_registry_remove(&reg, args[0], &err))
@@ -940,6 +990,9 @@ static int	cmd_uninstall(const std::vector<std::string> &args, bool want_json)
 		j["ok"] = true;
 		j["uninstalled"] = args[0];
 		j["file_deleted"] = file_deleted;
+		j["was_default"] = was_default;
+		if (was_default)
+			j["default_cleared"] = default_cleared;
 		printf("%s\n", j.dump().c_str());
 	}
 	else
@@ -950,6 +1003,13 @@ static int	cmd_uninstall(const std::vector<std::string> &args, bool want_json)
 				"at %s could not be deleted (%s) -- you may want to "
 				"remove it manually.\n", path_to_delete.c_str(),
 				strerror(errno));
+		if (was_default)
+			printf(default_cleared
+				? "'%s' was the default model -- default_model has been "
+					"cleared; run `membrane use NAME` to pick a new one.\n"
+				: "Warning: '%s' was the default model, but clearing "
+					"default_model failed -- run `membrane doctor` to "
+					"check.\n", args[0].c_str());
 	}
 	return (MEMBRANE_EXIT_SUCCESS);
 }

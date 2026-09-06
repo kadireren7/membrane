@@ -139,20 +139,31 @@ Service:
   pid: 1234567
   running: yes
   endpoint: http://127.0.0.1:8642
-  loaded model: qwen
+  default model: qwen
+  active model: qwen
   backend: CPU
   kv precision: q8
   context policy: automatic
 ```
 
 `installed`/`state`/`pid` come from a real `systemctl --user show`
-call; `running`/`endpoint`/`loaded model`/… come from a real `GET
-/v1/status` call against the server itself (the same endpoint
+call; `running`/`endpoint`/`default model`/`active model`/… come from a
+real `GET /v1/status` call against the server itself (the same endpoint
 `membrane status` — the pre-existing thin HTTP client, unrelated to
 the service manager — already used). If the process is active but not
 yet answering HTTP (e.g. still loading), `http: not reachable at
 <address>:<port>` is shown instead of fabricating a loaded-model
 value.
+
+`default model` (Mega Phase D, PR D6) is what `server_config.json`
+currently prefers — set by `membrane use MODEL`/`membrane model use
+NAME`, read at `membrane serve`/service startup. `active model` is
+whatever the running server actually has loaded right now, which a
+live `membrane use MODEL` switch can change without a restart. The two
+can legitimately differ (e.g. right after `membrane use` changes the
+default while the service is stopped, or right after a live switch that
+failed and recovered a different model) — this is never collapsed into
+one line, so that divergence stays visible rather than papered over.
 
 ## Model registry and default-model reload
 
@@ -166,9 +177,19 @@ detail and real evidence).
 
 The server **config** (`~/.config/membrane/server.json`, including
 `default_model`) is still read only once, at `membrane serve` startup —
-a newly set `default_model` (`membrane model use NAME`) takes effect on
-the next `membrane serve`/`membrane service restart`, not live. This
-remains a disclosed limitation, not silently assumed to already work.
+a newly set `default_model` from the low-level `membrane model use NAME`
+takes effect on the next `membrane serve`/`membrane service restart`,
+not live. This remains a disclosed, deliberate limitation of the config
+file itself, not silently assumed to already work.
+
+Mega Phase D, PR D6's `membrane use MODEL` (the normal, product-facing
+command — see `docs/model-lifecycle.md`) works around this for the
+*active* model specifically: it still writes `default_model` the same
+read-once way, but if the service is already running it also triggers
+a real, live switch of the model actually loaded right now, via a new
+admin endpoint — no restart required for that part. The config file's
+own startup-only read is unchanged; only `membrane use`'s *live-switch*
+half is new.
 
 ## Security scope
 

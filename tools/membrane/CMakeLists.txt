@@ -223,6 +223,18 @@ target_include_directories(membrane_doctor_cmd PUBLIC
 target_include_directories(membrane_doctor_cmd PRIVATE
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
 
+# Mega Phase D, PR D6: small CLI-composition helpers (cli_shared.h's own
+# top comment) -- extracted out of setup_cmd.cpp, which now links this
+# instead of carrying its own copy; use_cmd.cpp (below) reuses the same
+# library rather than a second copy.
+add_library(membrane_cli_shared STATIC cli_shared.cpp)
+set_target_properties(membrane_cli_shared PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_cli_shared PUBLIC membrane_sanitizers)
+target_include_directories(membrane_cli_shared PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane ${CMAKE_SOURCE_DIR}/include)
+
 # Mega Phase C, PR C1: `membrane setup` -- the guided onboarding flow
 # (setup_cmd.h's own top comment). Orchestrates membrane_doctor_collect(),
 # membrane_model_cmd_dispatch(), and membrane_service_cmd_dispatch()
@@ -238,7 +250,8 @@ set_target_properties(membrane_setup_cmd PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_setup_cmd PUBLIC membrane_sanitizers
   membrane_registry_core membrane_server_config membrane_doctor_cmd
-  membrane_service_cmd membrane_cpp_httplib membrane_product_cli)
+  membrane_service_cmd membrane_cpp_httplib membrane_product_cli
+  membrane_cli_shared)
 target_include_directories(membrane_setup_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/include)
 target_include_directories(membrane_setup_cmd PUBLIC
@@ -288,6 +301,27 @@ target_link_libraries(membrane_variant_selector PUBLIC membrane_sanitizers
 target_include_directories(membrane_variant_selector PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane-run)
 
+# Mega Phase D, PR D6: `membrane use MODEL` -- orchestrates catalog
+# resolution/variant selection/the real install transaction/the registry/
+# server_config/the new live-switch admin endpoint (use_cmd.h's own top
+# comment has the full contract). Like membrane_setup_cmd, it calls
+# membrane_model_cmd_dispatch() (model_cmd.h), which is compiled directly
+# into the `membrane` EXECUTABLE, not its own library -- this library
+# depends on that symbol via the executable's own final link step.
+add_library(membrane_use_cmd STATIC use_cmd.cpp)
+set_target_properties(membrane_use_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_use_cmd PUBLIC membrane_sanitizers
+  membrane_registry_core membrane_server_config membrane_model_catalog
+  membrane_variant_selector membrane_status_client membrane_doctor_cmd
+  membrane_cli_shared membrane_product_cli llama)
+target_include_directories(membrane_use_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+target_include_directories(membrane_use_cmd PRIVATE
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
 add_executable(membrane main.cpp model_cmd.cpp)
 set_target_properties(membrane PROPERTIES
   CXX_STANDARD 17
@@ -297,7 +331,7 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_runtime_session membrane_server membrane_service_cmd
   membrane_status_client membrane_server_config membrane_doctor_cmd
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
-  membrane_variant_selector llama)
+  membrane_variant_selector membrane_use_cmd membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
   ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
@@ -413,7 +447,7 @@ if(MEMBRANE_BUILD_TESTS)
     membrane_registry_core membrane_server_config membrane_product_cli
     membrane_gpu_device membrane_runtime_core membrane_runtime_session
     membrane_model_catalog membrane_download_manager
-    membrane_variant_selector llama)
+    membrane_variant_selector membrane_status_client llama)
   target_include_directories(test_setup_cmd PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -421,6 +455,30 @@ if(MEMBRANE_BUILD_TESTS)
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
   add_test(NAME test_setup_cmd COMMAND test_setup_cmd)
+
+  # Mega Phase D, PR D6: unit/integration tests for `membrane use`
+  # (test_use_cmd.cpp's own top comment) -- same real-model_cmd.cpp-
+  # linked-directly-into-the-test-binary shape as test_setup_cmd above
+  # (membrane_use_cmd itself calls membrane_model_cmd_dispatch(), which
+  # is only ever compiled into the real `membrane` executable or, here,
+  # directly into this test binary).
+  add_executable(test_use_cmd test_use_cmd.cpp model_cmd.cpp)
+  set_target_properties(test_use_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_use_cmd PRIVATE membrane_use_cmd
+    membrane_server membrane_registry_core membrane_server_config
+    membrane_product_cli membrane_gpu_device membrane_runtime_core
+    membrane_runtime_session membrane_model_catalog
+    membrane_download_manager membrane_variant_selector
+    membrane_status_client membrane_doctor_cmd membrane_cli_shared llama)
+  target_include_directories(test_use_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_use_cmd COMMAND test_use_cmd)
 
   # Mega Phase B, PR B1, Section 13: pure tests for the new service-
   # lifecycle modules -- unit generation/path handling, config

@@ -29,4 +29,52 @@ bool	membrane_fetch_server_status(const std::string &bind, int port,
  * one real implementation of the presentation too, not just the fetch. */
 void	membrane_print_server_status_human(const nlohmann::json &status);
 
+/*
+ * Mega Phase D, PR D6: the CLI-side counterpart of server.cpp's new
+ * loopback-only POST /membrane/v1/models/activate -- a thin wrapper
+ * around ensure_model_loaded() (idempotent if already active, recovers
+ * the previous model on a failed switch; see server.cpp's own top
+ * comments), never a second switch/lifecycle implementation. Deliberately
+ * NOT part of the OpenAI-compatible surface (/v1/...) -- a MEMBRANE-
+ * specific admin namespace, same loopback-only exposure as every other
+ * route this server already registers.
+ */
+typedef struct s_membrane_activate_result
+{
+	bool		ok;				/* true iff the server itself reports the
+								 * switch succeeded (mirrors server.cpp's
+								 * own ensure_model_loaded() return value
+								 * verbatim -- NEVER set true just because
+								 * a recovery attempt on a FAILED switch
+								 * happened to succeed; Section 16 of the
+								 * task: never claim success when the
+								 * server actually recovered the OLD
+								 * model instead of loading the
+								 * requested one) */
+	bool		already_active;	/* true iff no reload was needed at all */
+	std::string	active_model;	/* the server's real, current active
+								 * model name after this call -- may be
+								 * the PREVIOUS model (recovery) even
+								 * when ok is false, or empty if the
+								 * server ended up with nothing loaded */
+	std::string	backend;		/* real backend the server reports for
+								 * active_model, "" if active_model is
+								 * itself empty */
+	std::string	error_code;		/* "" iff ok */
+	std::string	error_message;	/* "" iff ok */
+}	membrane_activate_result_t;
+
+/* Returns false only on a TRANSPORT failure (could not reach the server
+ * at all, e.g. it stopped between an earlier reachability check and this
+ * call) -- *out is left untouched in that case. A real application-level
+ * failure (the server responded, but the switch itself failed) is
+ * reported via a real HTTP response instead: this function returns true
+ * and *out.ok is false, with error_code/error_message/active_model/
+ * backend describing the server's own real post-attempt state (see
+ * s_membrane_activate_result's own field comments) -- the caller must
+ * check both. */
+bool	membrane_activate_model(const std::string &bind, int port,
+			const std::string &model_name,
+			membrane_activate_result_t *out);
+
 #endif

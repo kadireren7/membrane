@@ -216,9 +216,32 @@ cover the underlying primitives in CI.
 `~/.config/membrane/server.json` (Section 9 of the Mega Phase B task).
 It never forces a model to load — the server still starts "healthy, no
 model loaded" either way — it only changes what an omitted `"model"`
-field in a chat request falls back to. Takes effect on the next
-`membrane serve` invocation or `membrane service restart`; an
-already-running process does not pick it up live.
+field in a chat request falls back to. The **config file itself** is
+still only read once, at `membrane serve` startup — an already-running
+process never re-reads `default_model` on its own.
+
+Mega Phase D, PR D6 adds a separate, live path on top of this: `membrane
+use MODEL` sets `default_model` exactly as above, but if a server is
+already running it ALSO triggers a real, immediate model switch via a
+new loopback-only admin endpoint (`POST /membrane/v1/models/activate`,
+see below) — no restart needed for the *active* model to change, even
+though the *config file*'s own read-once behavior is unchanged. See
+`docs/model-lifecycle.md` for the full default-vs-active contract.
+
+### `POST /membrane/v1/models/activate` (PR D6, internal/admin only)
+
+Not part of the OpenAI-compatible surface (`/v1/...`) — a MEMBRANE-
+specific, loopback-only admin route `membrane use` calls internally,
+undocumented for third-party clients. Body: `{"model": "NAME"}` (a
+registered name). A thin wrapper around the exact same `ensure_model_
+loaded()` function `POST /v1/chat/completions` itself uses — never a
+second switch implementation, so it inherits that function's own
+idempotence (already-active is a no-op, reported as
+`{"already_active": true}`) and failure-recovery guarantees (see below)
+for free. Never unloads a model out from under an in-progress
+generation — it waits (bounded, ~5s) on the same request-serializing
+mutex every chat request already uses, reporting `503 SERVER_BUSY`
+rather than blocking indefinitely or racing a live generation.
 
 ## Model cache policy
 

@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "phase": "mega-phase-d-model-lifecycle-ux",
+  "membrane_commit": "PENDING -- updated as PR D6 actually merges",
+  "generated_at": "2026-09-06T18:40:00Z",
+  "pr_squash_shas": {
+    "D1": "e0dbad7abbe963730b6846d97eabbc8d47d15d99",
+    "D2": "f923c8fcf6e95d1da73068bd5130d50af1ac1711",
+    "D3": "62a0e8003ca3b19d3df6eaa558cf95419182a8e2",
+    "D4": "b0aec0bc71c7cadce460f60573d7a8053b1b7303",
+    "D5": "ace9bb8445302f73112409bde3e64a9c26c27e52",
+    "D6": "PENDING"
+  },
+  "note": "Mega Phase D, PR D6: makes `membrane use MODEL` a first-class product action -- select an installed model (live-switching a running server, no restart) or, if not installed, resolve/preview/consent/install/select it in one command. This is pure orchestration on top of D1 (download)/D2 (variant selection)/A2 (registry)/B1 (server config)/B3 (server model-lifecycle state machine, ensure_model_loaded()) -- no second registry, downloader, or switch policy was written. The new admin endpoint (POST /membrane/v1/models/activate) is a thin wrapper around the exact same ensure_model_loaded() function POST /v1/chat/completions already calls, so its idempotence/failure-recovery guarantees are inherited, not reimplemented.",
+  "resolution": {
+    "label": "REAL",
+    "evidence": [
+      "Precedence is exact-registered-name first, then exact catalog id/alias (model_catalog.h's own membrane_catalog_resolve(), unchanged) -- no fuzzy/typo matching before a real network install.",
+      "test_use_cmd.cpp::test_unknown_model_returns_not_found: a name that is neither registered nor a catalog id/alias returns a clean CLI_ERROR, real assertion, ctest-verified.",
+      "test_use_cmd.cpp::test_invalid_variant_override_is_refused: an explicit --quant naming a variant the resolved family does not have is refused before any download is attempted."
+    ]
+  },
+  "installed_use": {
+    "label": "REAL",
+    "evidence": [
+      "test_use_cmd.cpp::test_installed_but_service_stopped: a registered model with a real, existing file, no server running -- `membrane use` succeeds, sets default_model (verified by re-loading server.json), and does not fail merely because the service is stopped (Section 13 of the task).",
+      "test_use_cmd.cpp::test_installed_but_file_missing: a registered model whose file no longer exists is refused (MODEL_FILE_MISSING, MEMBRANE_EXIT_MODEL_ERROR), default_model left unset -- Section 4's real file-existence re-check, via a real stat().",
+      "Manual real run (this session, isolated MEMBRANE_MODELS_PATH/MEMBRANE_MODELS_INSTALL_DIR/MEMBRANE_SERVER_CONFIG_PATH env overrides, real filesystem, no mocks): re-running `membrane use smollm2-135m-instruct --yes` against an already-installed model completed in 0.013s (no network call attempted) and left server.json's default_model correctly set -- real idempotent short-circuit at the resolution layer, before the catalog/install path is ever reached."
+    ]
+  },
+  "auto_install": {
+    "label": "REAL",
+    "evidence": [
+      "Manual real run (this session): `membrane use smollm2-135m-instruct --yes` against a NOT-installed real catalog entry performed a real HTTPS download from https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF (258.3 MiB, F16 variant, real progress percentages observed), real GGUF validation, real registry write, then printed 'Installed ... -> <path>' followed by 'Selected model: smollm2-135m-instruct' / 'Service is not running. Start it with: membrane service start'.",
+      "A real bug was found and fixed during this same manual run: the internal re-invocation of `membrane_model_cmd_dispatch()` was originally missing the leading 'install' subcommand token, so it resolved the catalog family name itself as an unknown subcommand and failed every not-installed install attempt. Caught by this manual real run (ctest's own non-interactive consent test short-circuits before reaching this call, so it could not have caught this), fixed, and reconfirmed with a second real run that completed the full download/install/select cycle correctly.",
+      "The variant actually installed (F16, matching the previewed 'Recommended variant: F16') is byte-identical to what was shown before consent -- the internal re-invocation pins --quant to the exact previewed variant."
+    ]
+  },
+  "consent": {
+    "label": "REAL",
+    "evidence": [
+      "test_use_cmd.cpp::test_noninteractive_without_yes_requires_consent: a real catalog entry (smollm2-135m-instruct), no --yes, no TTY (ctest has none) -- returns NONINTERACTIVE_CONSENT_REQUIRED/CLI_ERROR, and the registry is confirmed still empty afterward (no download was attempted).",
+      "--yes bypasses the prompt entirely, confirmed by the real manual not-installed-model run above completing without blocking on stdin."
+    ]
+  },
+  "noninteractive": {
+    "label": "REAL",
+    "evidence": [
+      "Same as 'consent' above -- this project's own established test convention (matching test_setup_cmd.cpp) relies on ctest's own binaries having no TTY, exercising the real non-interactive/automation code path, not a mocked is_interactive()."
+    ]
+  },
+  "variant_selection": {
+    "label": "REAL",
+    "evidence": [
+      "Reuses membrane_select_variant()/membrane_catalog_find_variant() (variant_selector.h/model_catalog.h) directly, the exact same functions `membrane model install` itself calls -- already covered by test_variant_selector.cpp's own real unit coverage; use_cmd.cpp adds no second selection algorithm.",
+      "The real manual not-installed run above shows real output: 'Recommended variant: F16', 'Estimated hardware fit: HOST_MEMORY_FIT', 'Backend: CPU only (no compatible GPU detected)' -- real values, not placeholders, derived from a real /proc/meminfo read on this dev host and a real doctor hardware-check reuse."
+    ]
+  },
+  "download": {
+    "label": "REAL",
+    "evidence": [
+      "Same real HTTPS transfer/checksum verification as 'auto_install' above -- reuses download_manager.h's own membrane_download_file()/membrane_compute_sha256() via cmd_install's own dispatch, never a second downloader. Per this project's own established precedent (test_download_manager.cpp's own top comment), the real network transfer itself is NOT exercised inside ctest -- validated manually here instead, same as D1's own original convention."
+    ]
+  },
+  "registry": {
+    "label": "REAL",
+    "evidence": [
+      "The real manual install above resulted in a real, loadable models.json entry (confirmed via a subsequent `membrane use` re-run resolving it from the registry, and via `membrane status`/config inspection).",
+      "test_use_cmd.cpp exercises real membrane_registry_load/add/save calls throughout (register_entry() helper), against real isolated temp-directory registries -- no injected/mock registry."
+    ]
+  },
+  "default_model": {
+    "label": "REAL",
+    "evidence": [
+      "Every test_use_cmd.cpp test that reaches the installed-flow re-loads server.json afterward via membrane_server_config_load() and asserts on the real on-disk default_model value -- never asserted against an in-memory copy alone.",
+      "Manual real run: server.json's default_model correctly read 'smollm2-135m-instruct' after each `membrane use` invocation, confirmed via `cat server.json` and `membrane status`."
+    ]
+  },
+  "active_model": {
+    "label": "REAL",
+    "evidence": [
+      "test_use_cmd.cpp::test_switch_to_invalid_gguf_reports_failure launches a REAL membrane_server_run() instance (background thread, same pattern as test_server.cpp) and drives a real HTTP round trip through the new POST /membrane/v1/models/activate endpoint against a real (intentionally non-GGUF) file -- a real ensure_model_loaded() failure, not a mock.",
+      "Manual real run: with a real membrane serve instance running (background, real /health responding), `membrane use smollm2-135m-instruct --yes` against the already-downloaded real model attempted a real live switch. `membrane status` afterward correctly showed 'default model: smollm2-135m-instruct' / 'active model: (none loaded yet)' -- the real, honest default-vs-active distinction (Section 11), not a fabricated pair."
+    ]
+  },
+  "service_switch": {
+    "label": "REAL",
+    "evidence": [
+      "The new POST /membrane/v1/models/activate endpoint was exercised with a real HTTP client (status_client.cpp's membrane_activate_model()) against a real, running membrane_server_run() instance in both the ctest suite (test_switch_to_invalid_gguf_reports_failure) and this session's own manual run.",
+      "Manual real run's actual switch attempt failed with a real, genuine NO_FEASIBLE_CONTEXT -- reproduced by directly curling the pre-existing, unrelated POST /v1/chat/completions endpoint against the same model on the same host, which failed identically. Confirmed via `free -h` that this dev host was under real, severe memory pressure at the time (5.1 GiB of 5.6 GiB total in use, ~500 MiB available) from unrelated desktop processes (browser, other Claude Code sessions) -- a genuine, disclosed environment constraint (see 'known_limitations'), not a bug in this PR's own code. This is the SAME real host-memory-constrained environment already on record in a prior phase's own memory notes ('Dev machine memory constraints -- only 5.6GiB RAM')."
+    ]
+  },
+  "switch_recovery": {
+    "label": "REAL",
+    "evidence": [
+      "test_use_cmd.cpp::test_switch_to_invalid_gguf_reports_failure confirms a real switch failure is reported as MEMBRANE_EXIT_RUNTIME_ERROR with default_model still set (Section 11 -- default and active are distinct promises, a failed live switch never rolls back the already-saved default).",
+      "This directly exercises server.cpp's own pre-existing (Mega Phase B, PR B3) ensure_model_loaded() recovery logic through the NEW endpoint -- no second recovery implementation was written; the endpoint is a thin wrapper, so B3's own already-documented recovery guarantee (docs/server.md's 'Model-switch failure recovery' section, itself backed by real evidence in results/background-service/validation.json) applies here unchanged."
+    ]
+  },
+  "idempotence": {
+    "label": "REAL",
+    "evidence": [
+      "membrane use's own idempotence check happens BEFORE the activate endpoint is ever called (a real GET /v1/status read, comparing loaded_model to the resolved name) -- so a repeated `membrane use` against an already-active model performs zero HTTP switch attempts, not merely 'switch skipped server-side'.",
+      "Manual real run: the already-installed re-run (service stopped) completed in 0.013s with no network activity, confirming the short-circuit is real, not merely asserted."
+    ]
+  },
+  "cross_platform": {
+    "label": "SOURCE_ANALYSIS",
+    "evidence": [
+      "No new platform-specific (#ifdef _WIN32/__APPLE__) code was added anywhere in use_cmd.cpp/cli_shared.cpp/the new server.cpp admin endpoint -- every primitive reused (registry_core.h, server_config.h, status_client.h's httplib client, fs_util.h) is the SAME already-cross-platform code D3/D4/D5 already validated on real CUDA/macOS/Windows hosts.",
+      "This PR's own CI matrix (Linux, Windows, macOS per the existing workflow) compiles and runs the new test_use_cmd/updated test_setup_cmd/test_doctor_cmd/test_server binaries on all three -- see CI run links once merged.",
+      "Not independently re-validated on real Windows/macOS hardware THIS phase (no new platform-specific code justifying it) -- relies on D3/D4/D5's own real hardware validation of the underlying primitives, and on this PR's own CI compiling/running cleanly on all three OSes."
+    ]
+  },
+  "real_download": {
+    "label": "REAL",
+    "evidence": [
+      "See 'auto_install'/'download' above -- one real HTTPS download of smollm2-135m-instruct's F16 variant (258.3 MiB) from Hugging Face, real checksum path exercised (checksum_verified reported in the real install JSON), matching Section 33's 'use one small real model catalog entry only, do not repeatedly download large models' instruction."
+    ]
+  },
+  "real_runtime": {
+    "label": "REAL",
+    "evidence": [
+      "See 'service_switch'/'switch_recovery' above -- a real running membrane_server_run() instance, a real HTTP round trip through the new admin endpoint, and a real (host-memory-constrained) ensure_model_loaded() attempt, both in ctest (invalid-GGUF failure path) and in this session's own manual run (real, valid model, real NO_FEASIBLE_CONTEXT failure under real host memory pressure -- reproduced identically via the pre-existing chat-completions endpoint, confirming it is a genuine host constraint, not a bug introduced by this PR).",
+      "A full real SUCCESSFUL live switch (loading a real model into an already-running server via `membrane use`) was NOT achieved this session due to real, severe, pre-existing host memory pressure on this shared dev machine (see 'known_limitations') -- the mechanics of a successful switch are covered instead by test_use_cmd.cpp's own already-active/idempotence tests plus B3's own pre-existing real evidence (results/background-service/validation.json) that ensure_model_loaded() succeeds under normal memory conditions; the NEW code added by this PR (the admin endpoint, the CLI-side client) was itself proven to correctly wire into that same real function via the real failure-path exercise above."
+    ]
+  },
+  "known_limitations": {
+    "label": "SOURCE_ANALYSIS",
+    "items": [
+      "A full real SUCCESSFUL end-to-end live switch (not just failure/recovery) could not be captured this session -- this dev host was under real, severe memory pressure (~500 MiB available out of 5.6 GiB total) from unrelated desktop processes at the time of testing. The new code's correctness under a successful load is inferred from (a) it being a thin, unmodified wrapper around ensure_model_loaded(), which already has its own independent real-success evidence (results/background-service/validation.json), and (b) the real failure-path exercise proving the new HTTP plumbing itself works correctly end to end.",
+      "DOWNLOAD_FAILED/CHECKSUM_FAILED are folded into one coarse JSON error code for `membrane use` specifically -- the real, specific cause is printed to stderr by the internally re-invoked `membrane model install`, not surfaced as a distinct JSON error.code. A disclosed simplification, not an oversight (docs/model-lifecycle.md).",
+      "The registry does not record which quant/variant was installed (only architecture/context/file identity) -- `membrane status` cannot show 'installed variant' without a registry schema change, which this PR does not make.",
+      "No independent real Windows/macOS/GPU hardware re-validation this phase specifically for the NEW code (see 'cross_platform') -- no platform-specific code was added, so this relies on CI plus D3/D4/D5's own prior real-hardware validation of every reused primitive.",
+      "A real bug (missing 'install' subcommand token in the internal re-invocation) was found and fixed only via a manual real run, not by ctest -- ctest's own non-interactive consent test intentionally stops before reaching that call (to avoid a real network download in CI), so this class of bug is only caught by the manual real-download pass this project's own established convention already relies on for D1's own downloader."
+    ]
+  }
+}
