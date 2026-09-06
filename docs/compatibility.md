@@ -100,17 +100,29 @@ itself fails closed before model load (MC-21) — `--kv-placement cpu` and
   q5 not yet separately exercised (MC-29). No official CUDA-enabled
   `.deb` package exists yet — source build only, see
   `docs/cuda-backend.md`'s own "Packaging" section for why.
+- **Metal** — a product GPU backend as of Mega Phase D, PR D4
+  (`-DGGML_METAL=ON`, `docs/macos-metal.md`). Real, tested against one
+  device (GitHub Actions' `macos-14` runner's `MTL0`, self-reported as
+  an "Apple Paravirtual device" — a real Apple Silicon host, but this
+  job runs inside a paravirtualized VM, not bare-metal; see
+  `docs/macos-metal.md`'s "Hardware scope") — adaptive/q8 KV precision
+  confirmed (MC-30, MC-31); native/q5 not yet separately exercised
+  (MC-32). No official macOS package exists yet — source build only.
 
 ## Hardware scope
 
 Each row in `docs/compatibility.json` carries a `hardware_scope`:
 
-- `tested` — validated on one specific, named device (currently: a real
-  GTX 1650 for every row in this matrix with `hardware_scope: "tested"`,
-  including MC-17/MC-18/MC-19 since Phase 26's real Vulkan experiment —
-  `results/compat-expansion/validation.json`'s CE-05/CE-06/CE-08 rows).
-  This is a claim about that exact device, not "all Vulkan GPUs" or "all
-  NVIDIA GPUs."
+- `tested` — validated on one specific, named device. Every CPU/Vulkan/
+  CUDA row with `hardware_scope: "tested"` (including MC-17/MC-18/MC-19
+  since Phase 26's real Vulkan experiment —
+  `results/compat-expansion/validation.json`'s CE-05/CE-06/CE-08 rows)
+  names the same real GTX 1650. MC-31 (Metal, Mega Phase D PR D4) names
+  a different real device — GitHub Actions' `macos-14` runner's `MTL0`
+  (a real Apple Silicon host, but running inside a paravirtualized VM,
+  not bare-metal; see `docs/macos-metal.md`). Each `tested` row is
+  always a claim about that one exact, named device — never "all Vulkan
+  GPUs," "all NVIDIA GPUs," or "all Macs."
 - `backend-level` — the claim is about the backend/build configuration
   itself (e.g. "no GPU backend compiled in" fails closed), not tied to
   specific hardware.

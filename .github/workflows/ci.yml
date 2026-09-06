@@ -1094,15 +1094,37 @@ jobs:
           ./build-cuda-smoke/tools/membrane-run/membrane-run --doctor
           ./build-cuda-smoke/tools/membrane-run/membrane-run --list-devices
 
+  # Mega Phase D, PR D4: validates the committed real-macOS/Metal
+  # evidence (results/macos-metal/validation.json) and a handful of
+  # source-level regression guards (the GGML_METAL Apple-only
+  # pre-check, ggml-metal joined the RPATH foreach list, the real
+  # @loader_path/$ORIGIN cross-platform token, the
+  # membrane_stat_mtime_ns() portability helper, no backend-specific
+  # leakage, no overclaim) -- python3 + checkout only, no macOS runner,
+  # no C/C++ build.
+  macos-metal-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify macOS/Metal backend evidence and docs
+        run: python3 scripts/verify-macos-metal.py
+
   # Mega Phase D, PR D4: unlike cuda-backend-build-smoke above, this
-  # runner IS real, genuine Apple hardware -- macos-14 is a real Apple
-  # Silicon (arm64) GitHub-hosted runner, not an emulated/virtualized
-  # x86 environment -- so this job attempts REAL Metal generation, not
-  # just a compile-only smoke. If real generation turns out not to work
-  # reliably in this specific hosted-runner environment, docs/macos-
-  # metal.md and results/macos-metal/validation.json disclose exactly
-  # what level was actually achieved here -- never overclaimed to match
-  # this job's own intent.
+  # runner IS real Apple Silicon hardware -- macos-14 is a real arm64
+  # GitHub-hosted runner, not an x86 emulation -- so this job attempts
+  # REAL Metal generation, not just a compile-only smoke. Confirmed
+  # directly by real output: the job itself executes inside a
+  # paravirtualized VM on that hardware (Metal reports the device as
+  # "Apple Paravirtual device", not a bare-metal GPU) -- real
+  # compatibility evidence, but never a performance claim; see
+  # docs/macos-metal.md's own "Hardware scope" section, which (along
+  # with results/macos-metal/validation.json) discloses exactly what
+  # level was actually achieved here -- never overclaimed to match this
+  # job's own intent.
   macos-metal-smoke:
     runs-on: macos-14
     permissions:

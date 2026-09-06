@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "phase": "mega-phase-d-macos-metal",
+  "membrane_commit": "PENDING -- updated as PR D4 actually merges",
+  "generated_at": "2026-09-06T01:30:00Z",
+  "pr_squash_shas": {
+    "D1": "e0dbad7abbe963730b6846d97eabbc8d47d15d99",
+    "D2": "f923c8fcf6e95d1da73068bd5130d50af1ac1711",
+    "D3": "62a0e8003ca3b19d3df6eaa558cf95419182a8e2",
+    "D4": "PENDING"
+  },
+  "note": "Mega Phase D, PR D4: real macOS/Metal backend + launchd service-lifecycle abstraction. D1/D2/D3's own real squash SHAs backfilled here, matching this mega-phase's own convention. All REAL evidence below comes from GitHub Actions' macos-14 hosted runner (the macos-metal-smoke CI job) across several real, iterative runs -- CI run IDs 34000242949 (initial build failure: memfd_create), 34001074361 (build failure: st_mtim), 34001944212 (own CI job bug: test_launchd_unit never built), 34002663786 (full pipeline green except real generation used --ctx auto, which correctly fails closed on macOS), 34003445799 (full pipeline green including real Metal generation with an explicit --ctx).",
+  "hardware": {
+    "label": "REAL",
+    "gpu": "MTL0 (Apple Paravirtual device), 4778.7 MiB reported total/free",
+    "cpu": "Apple M1 (Virtual)",
+    "runner": "GitHub Actions macos-14 hosted runner -- real Apple Silicon cloud infrastructure, but this job executes inside a paravirtualized VM, not with direct/bare-metal GPU access (confirmed directly by the device's own self-reported name, not inferred)",
+    "caveat": "A materially weaker hardware-scope claim than PR D3's CUDA validation (a real, bare-metal GTX 1650) or the existing Vulkan rows -- real compatibility is genuinely established here, but no performance conclusion should be drawn from this run's own throughput numbers. See docs/macos-metal.md's own 'Hardware scope' section."
+  },
+  "build_integration": {
+    "label": "REAL",
+    "evidence": [
+      "Real CMake configure with -DGGML_METAL=ON on macos-14: '-- Metal framework found', successful 'Embedding Metal library' step, 'Built target ggml-metal' -- no extra dependency install needed (Metal/Foundation/MetalKit ship with the OS).",
+      "A new, MEMBRANE-level CMakeLists.txt pre-check (GGML_METAL AND NOT APPLE -> FATAL_ERROR) mirrors the existing GGML_VULKAN/GGML_CUDA pattern -- fails clearly before ever descending into third_party/llama.cpp's own ggml-metal/CMakeLists.txt find_library(... REQUIRED) calls.",
+      "ggml-metal joined tools/membrane-run/CMakeLists.txt's existing install/RPATH TARGET-guarded foreach loop the same way ggml-cuda/ggml-vulkan already do.",
+      "A real, previously-undiscovered cross-platform RPATH bug was found and fixed BEFORE the first real Metal build was even attempted: the existing install-time RPATH used the Linux/ELF-only '$ORIGIN' token unconditionally, which dyld (macOS) does not understand at all. Fixed via a platform-selected token (MEMBRANE_RPATH_ORIGIN_TOKEN: '@loader_path' on Darwin, unchanged '$ORIGIN' elsewhere), computed once and reused everywhere INSTALL_RPATH is set.",
+      "Two further real, genuine portability bugs were found and fixed via the real macOS CI build's own compiler errors, in order: (1) memfd_create() (tools/membrane-run/main.cpp) -- a real Linux-only glibc/kernel syscall with no Darwin equivalent, replaced with the portable POSIX tmpfile() (a strict improvement, not a workaround); (2) struct stat's st_mtim field (three independent call sites: server.cpp, model_cmd.cpp, doctor_cmd.cpp) -- POSIX.1-2008 naming, real on Linux/glibc but named st_mtimespec on macOS/BSD, fixed via one new shared, portable membrane_stat_mtime_ns() helper (fs_util.h/.cpp) rather than three independent #ifdef copies.",
+      "Zero changes needed anywhere in gpu_policy.c, context_recommender.c, compat_check.c, or the joint planner -- confirmed directly by grep (no hardcoded backend-name string in any of them) and by this PR's own real Metal generation succeeding with zero code changes to any of them, exactly matching PR D3's own CUDA finding.",
+      "Full existing CPU/Vulkan/CUDA-relevant local Linux test suite (build-b1) reconfirmed unaffected across every commit on this branch: 89/89 ctest passed each time, including the two new membrane_launchd_unit-related targets."
+    ]
+  },
+  "real_device_enumeration": {
+    "label": "REAL",
+    "evidence": [
+      "`membrane-run --list-devices` (macos-metal-smoke, real CI output): 'MTL0 (Apple Paravirtual device)' (4778.7 MiB total/free) alongside 'BLAS (Accelerate)' and 'CPU (Apple M1 (Virtual))'.",
+      "`membrane-run --doctor` (same run): '[OK] GPU backend compiled in', '[OK] GPU device: MTL0 (Apple Paravirtual device)' -- no code change needed to report this; the existing, backend-agnostic diagnostic just worked, same finding as PR D3.",
+      "`membrane-run --doctor` also reported '[WARN] host RAM could not be read (non-Linux host, or /proc/meminfo unavailable)' -- a real, honest, pre-existing limitation (host_memory_guard.h's own host-RAM reader is Linux-only), disclosed rather than hidden -- see docs/macos-metal.md's own 'Known limitations'."
+    ]
+  },
+  "real_generation": {
+    "label": "REAL",
+    "evidence": [
+      "Real HTTPS model download from Hugging Face via the existing D1/D2 product path: `membrane model install smollm2:135m --quant q4_k_m` -- real size validation and real GGUF-readability validation both passed ('ok':true, real installed path under ~/.local/share/membrane/models/). checksum_verified came back false: sha256sum (GNU coreutils) is not preinstalled on this runner -- download_manager.cpp's own pre-existing, already-disclosed TOOL_UNAVAILABLE degradation path (PR D1), not a new bug -- confirmed by reading download_manager.cpp's own real source, not assumed.",
+      "Real generation: `membrane-run --model ... --ctx 2048 --auto --gpu-layers auto` (adaptive KV, via --auto) succeeded genuinely: 'ok':true, 'execution':{'success':true,'exit_code':0,'generated_tokens':128}.",
+      "'gpu':{'backend':'MTL','device_selected':'MTL0','gpu_layers_selected':30} -- full 30/30-layer GPU residency, same full-residency outcome PR D3's CUDA run achieved.",
+      "Adaptive KV selected q8 ('adaptive_reason':'Q8_FULL_RESIDENCY'), matching the joint planner's own real, unmodified selection logic.",
+      "Real driver-reported GPU memory delta: device_free_bytes_before=5010800640, device_free_bytes_after=4906663936, observed_delta_bytes=104136704.",
+      "planner.used=true, policy_version='joint-auto-v1', fallback.attempted=false (the primary candidate succeeded immediately) -- confirms the planner treats Metal exactly like every other backend, no special-casing required, same as PR D3's own finding.",
+      "Throughput was very low: decode_tokens_per_second=0.413230 (~310 real seconds for 128 tokens) -- disclosed honestly, not hidden. This is treated as evidence of the paravirtualized GPU's own overhead (the identical model/quant/adaptive-KV combination measured 175 decode tok/s on real bare-metal CUDA hardware in PR D3), not a MEMBRANE inefficiency -- but no strong causal claim is made without a bare-metal Mac to compare against; see docs/macos-metal.md's 'Hardware scope'.",
+      "A real, first-attempt finding at this same step: --ctx auto (the fully-automatic form) failed closed with PLANNER_REJECTED_ALL, because host_memory_guard.h's host-RAM read is Linux-only and there is no host-memory fact to size against on macOS -- this is the project's own existing, deliberate 'never proceed on unknown host memory' safety policy working exactly as designed, not a bug. An explicit --ctx N (the CLI's own documented example 5 for this exact situation) was used instead to obtain the real generation evidence above.",
+      "Only the --kv adaptive (-> q8) default path was exercised for real this phase; --kv q5/native and --kv-placement cpu were not separately tested on Metal -- see docs/compatibility.json's MC-32 row."
+    ]
+  },
+  "service_lifecycle_smoke": {
+    "label": "REAL",
+    "evidence": [
+      "Real launchd LaunchAgent install/start/status/stop/uninstall cycle against a real per-session launchd (gui/<uid>) on the CI runner -- this CI step's own continue-on-error fallback was never actually needed (the full sequence succeeded genuinely).",
+      "`membrane service install`: real plist written to /Users/runner/Library/LaunchAgents/com.membrane.server.plist.",
+      "`membrane service start`: real `launchctl bootstrap gui/<uid> <plist>` succeeded (printed 'start').",
+      "`membrane service status`: real `launchctl print gui/<uid>/com.membrane.server` parsed successfully -- 'state: running (unknown)' (sub_state stays 'unknown' by design on macOS, launchd has no systemd-style SubState concept), a real pid (21558 in the final run), 'http: not reachable' (expected -- the installed binary here is the `membrane` control CLI itself passed via --exec-path, not a real model-serving `membrane serve` invocation, so no HTTP server was actually listening; this smoke validates the launchd lifecycle mechanism, not end-to-end serving).",
+      "`membrane service stop`: real `launchctl bootout` succeeded.",
+      "`membrane service uninstall`: real plist file removed, confirmed by a subsequent 'Uninstalled ...' message and no leftover file."
+    ]
+  },
+  "known_limitations": {
+    "label": "SOURCE_ANALYSIS",
+    "items": [
+      "`--ctx auto` does not work on macOS yet -- host_memory_guard.h's real host-RAM reader is Linux-only (/proc/meminfo); extending it to read real memory on macOS (e.g. sysctl hw.memsize) is real, disclosed future work, out of this PR's own scope.",
+      "Checksum verification (sha256) does not run on a stock macOS install -- sha256sum (GNU coreutils) is not preinstalled; download_manager.cpp's own pre-existing TOOL_UNAVAILABLE degradation handles this gracefully (real size+GGUF validation still occurs), but real checksum verification requires `brew install coreutils` separately.",
+      "`membrane doctor`'s service-status check (tools/membrane/doctor_cmd.cpp) remains systemd/systemctl-specific -- distinct from the cross-platform, real-tested `membrane-run --doctor`. Not exercised by this PR's own CI job; membrane_run_subprocess()'s existing exec-failure handling reports a graceful (if systemd-flavored) message rather than crashing, confirmed by source reading, not a live macOS run.",
+      "One real device tested this phase (a paravirtualized MTL0, GitHub's macos-14 runner) -- not a claim about any other Mac, Apple Silicon generation, or real bare-metal Apple GPU performance.",
+      "No official macOS package (.pkg/Homebrew formula/etc.) exists yet -- source build only, matching PR D3's own CUDA packaging decision.",
+      "--kv q5/native and --kv-placement cpu were not separately exercised on Metal this phase -- only the --kv adaptive (-> q8) default path was real-tested."
+    ]
+  }
+}
