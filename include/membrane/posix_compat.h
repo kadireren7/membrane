@@ -120,12 +120,25 @@ static inline int	fsync(int fd)
 }
 
 /* isatty()/open()/O_WRONLY (used by tools/membrane/setup_cmd.cpp's real
- * TTY check and its own "redirect stdout to the null device" helper) --
- * same reasoning as dup/dup2/close above: only the _-prefixed forms
- * are guaranteed. The null device itself has a different NAME on
- * Windows ("NUL", not "/dev/null") -- a real path string, not
- * something any function-name shim can paper over, so callers use
- * MEMBRANE_NULL_DEVICE instead of hardcoding either spelling. */
+ * TTY check and its own "redirect stdout to the null device" helper,
+ * and by tools/membrane/cli_shared.cpp -- Mega Phase D, PR D6 -- since
+ * that file was extracted out of setup_cmd.cpp) -- same reasoning as
+ * dup/dup2/close above: only the _-prefixed forms are guaranteed. The
+ * null device itself has a different NAME on Windows ("NUL", not
+ * "/dev/null") -- a real path string, not something any function-name
+ * shim can paper over, so callers use MEMBRANE_NULL_DEVICE instead of
+ * hardcoding either spelling.
+ *
+ * Real, first-attempt Windows CI finding (PR D6): _O_WRONLY itself is
+ * declared in <fcntl.h>, not <io.h> -- setup_cmd.cpp's own real Windows
+ * build never surfaced this gap only because it happens to also
+ * include <httplib.h>/<nlohmann/json.hpp>, which transitively pull in
+ * <fcntl.h> on this MSVC/SDK combination; cli_shared.cpp (this same
+ * PR) includes neither, so the SAME macro use here failed with a real,
+ * genuine "'_O_WRONLY': undeclared identifier" until this explicit
+ * include was added -- the correct, root-cause fix, not a workaround
+ * local to one caller. */
+# include <fcntl.h>
 # define isatty _isatty
 # define open _open
 # ifndef O_WRONLY
