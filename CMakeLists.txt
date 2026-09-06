@@ -210,7 +210,7 @@ target_link_libraries(membrane_runtime_core PUBLIC membrane_core
 add_library(membrane_kv_store_telemetry STATIC
   tools/membrane-llama-runtime/kv_store_telemetry.c)
 target_include_directories(membrane_kv_store_telemetry PUBLIC
-  tools/membrane-llama-runtime)
+  tools/membrane-llama-runtime ${CMAKE_SOURCE_DIR}/include)
 
 # membrane-llama-run's CLI argument parser (tools/membrane-llama-runtime/
 # cli_parse.h/.cpp), split out of main.cpp so it -- like
