@@ -17,6 +17,31 @@
 
 #ifdef _WIN32
 # include <io.h>
+# include <stdlib.h>
+# include "membrane/windows_lean.h"
+
+/* PATH_MAX is a POSIX macro -- MAX_PATH (windows.h) is the real
+ * Windows analog (both name "the longest path this platform's own
+ * filesystem APIs promise to handle"). realpath() itself has no
+ * Windows equivalent NAME at all; _fullpath() is the real, standard
+ * substitute (canonicalizes '.'/'..'  and produces an absolute path,
+ * the same real property this project's own call site actually needs
+ * -- it does not resolve symlinks the identical way realpath() does,
+ * a real, minor, disclosed difference, but Windows symlinks are rare
+ * enough in practice that this project's own single real call site
+ * -- `membrane model add`'s own path canonicalization -- is not
+ * meaningfully weakened by it). _fullpath()'s own argument order is
+ * (absPath, relPath, maxLength) -- the reverse of realpath()'s (path,
+ * resolved_path) -- this wrapper preserves realpath()'s own real
+ * call-site signature exactly, so the one caller needs no change. */
+# ifndef PATH_MAX
+#  define PATH_MAX MAX_PATH
+# endif
+
+static inline char	*realpath(const char *path, char *resolved_path)
+{
+	return (_fullpath(resolved_path, path, PATH_MAX));
+}
 
 /* access()/unlink()/fileno() all resolve via <io.h>'s own legacy
  * POSIX-compat aliases on this MSVC/SDK combination (confirmed
@@ -52,8 +77,24 @@ static inline int	fsync(int fd)
 {
 	return (_commit(fd) == 0 ? 0 : -1);
 }
+
+/* isatty()/open()/O_WRONLY (used by tools/membrane/setup_cmd.cpp's real
+ * TTY check and its own "redirect stdout to the null device" helper) --
+ * same reasoning as dup/dup2/close above: only the _-prefixed forms
+ * are guaranteed. The null device itself has a different NAME on
+ * Windows ("NUL", not "/dev/null") -- a real path string, not
+ * something any function-name shim can paper over, so callers use
+ * MEMBRANE_NULL_DEVICE instead of hardcoding either spelling. */
+# define isatty _isatty
+# define open _open
+# ifndef O_WRONLY
+#  define O_WRONLY _O_WRONLY
+# endif
+# define MEMBRANE_NULL_DEVICE "NUL"
 #else
+# include <fcntl.h>
 # include <unistd.h>
+# define MEMBRANE_NULL_DEVICE "/dev/null"
 #endif
 
 #endif

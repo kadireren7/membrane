@@ -240,6 +240,8 @@ target_link_libraries(membrane_setup_cmd PUBLIC membrane_sanitizers
   membrane_registry_core membrane_server_config membrane_doctor_cmd
   membrane_service_cmd membrane_cpp_httplib membrane_product_cli)
 target_include_directories(membrane_setup_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(membrane_setup_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_setup_cmd PRIVATE
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})

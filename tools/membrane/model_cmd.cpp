@@ -9,7 +9,11 @@
 #include <sys/stat.h>
 #include <limits.h>
 #include <stdlib.h>
-#include <unistd.h>
+#ifdef _WIN32
+# include "membrane/posix_compat.h"
+#else
+# include <unistd.h>
+#endif
 
 #include <nlohmann/json.hpp>
 

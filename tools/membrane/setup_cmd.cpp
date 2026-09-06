@@ -7,10 +7,9 @@
 #include <cstring>
 #include <ctime>
 #include <iostream>
-#include <fcntl.h>
 #include <limits.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include "membrane/posix_compat.h"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -211,7 +210,7 @@ class stdout_silencer_t
 				return ;
 			fflush(stdout);
 			saved_fd_ = dup(STDOUT_FILENO);
-			int	devnull = open("/dev/null", O_WRONLY);
+			int	devnull = open(MEMBRANE_NULL_DEVICE, O_WRONLY);
 
 			if (devnull >= 0)
 			{
