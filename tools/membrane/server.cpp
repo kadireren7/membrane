@@ -1235,7 +1235,7 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 				&& gen_res.err.reason_code[0] != '\0')
 			? gen_res.err.reason_code : "GENERATION_FAILED";
 		terminal.error_message = "generation failed for this request";
-		state->req_state.store(membrane_request_state_t::ERROR,
+		state->req_state.store(membrane_request_state_t::FAILED,
 			std::memory_order_relaxed);
 	}
 	else
@@ -1790,7 +1790,7 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 	if (gen_res.cancelled && !nonstream_stop_ctx.matched)
 		req_state = membrane_request_state_t::CANCELLED;
 	else if (!gen_res.ok)
-		req_state = membrane_request_state_t::ERROR;
+		req_state = membrane_request_state_t::FAILED;
 	else
 		req_state = membrane_request_state_t::DONE;
 	if (!gen_res.ok)

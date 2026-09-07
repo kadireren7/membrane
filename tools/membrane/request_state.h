@@ -1,6 +1,19 @@
 #ifndef MEMBRANE_REQUEST_STATE_H
 # define MEMBRANE_REQUEST_STATE_H
 
+/* Real Windows build finding (server-thread-sanitizer's own Windows
+ * counterpart, windows-support-smoke, caught this): the state this
+ * project's own task calls "ERROR" cannot be a literal C++ identifier
+ * named ERROR here -- <windows.h> (pulled in transitively via winsock2
+ * for httplib's own socket code on that platform) #defines ERROR as a
+ * plain macro (0), which silently mangles both this enum's own
+ * declaration and every `membrane_request_state_t::ERROR` use site into
+ * a syntax error before the compiler ever sees a real identifier. Named
+ * FAILED here instead -- membrane_request_state_name() below still
+ * returns the literal string "error" for it, so the OBSERVABLE contract
+ * (the task's own six state names) is unchanged; only the C++ token is
+ * renamed. */
+
 /*
  * Mega Phase E, PR E1, Section 4 of the task: an explicit per-REQUEST
  * lifecycle state -- distinct from s_membrane_model_state (server.cpp's
@@ -28,9 +41,11 @@
  *   DONE       -- generation completed normally (including a stop-
  *                 sequence match, which is a NORMAL completion from the
  *                 client's point of view, not CANCELLED).
- *   ERROR      -- generation failed (gen_res.ok == false), or the request
- *                 never reached generation at all (e.g. model load
- *                 failure, chat template failure).
+ *   FAILED     -- ("error" in membrane_request_state_name() below --
+ *                 see this file's own top comment on the Windows-safe
+ *                 rename) generation failed (gen_res.ok == false), or
+ *                 the request never reached generation at all (e.g.
+ *                 model load failure, chat template failure).
  *
  * This is bookkeeping/observability, not a scheduler policy of its own --
  * decode_concurrency_gate_t/request_admission_gate_t remain the real
@@ -45,7 +60,7 @@ enum class membrane_request_state_t
 	CANCELLING,
 	CANCELLED,
 	DONE,
-	ERROR,
+	FAILED,
 };
 
 static inline const char	*membrane_request_state_name(
@@ -58,7 +73,7 @@ static inline const char	*membrane_request_state_name(
 		case membrane_request_state_t::CANCELLING: return ("cancelling");
 		case membrane_request_state_t::CANCELLED: return ("cancelled");
 		case membrane_request_state_t::DONE: return ("done");
-		case membrane_request_state_t::ERROR: return ("error");
+		case membrane_request_state_t::FAILED: return ("error");
 		default: return ("unknown");
 	}
 }
