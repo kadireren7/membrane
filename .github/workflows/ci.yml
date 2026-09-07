@@ -622,8 +622,25 @@ jobs:
           cmake -S . -B build-server-tsan -DMEMBRANE_ENABLE_LLAMA=ON \
             -DCMAKE_BUILD_TYPE=Debug -DMEMBRANE_ENABLE_TSAN=ON
 
+      # Mega Phase E, PR E1: a real, previously-undetected gap found and
+      # fixed this phase -- test_request_admission (added PR B3) and the
+      # new test_decode_concurrency both live under tools/membrane's own
+      # MEMBRANE_ENABLE_LLAMA-gated CMakeLists.txt (even though neither
+      # test itself needs llama.h -- both are header-only, Threads::
+      # Threads-only), but NO CI job's own Build step ever built them and
+      # no job's own Test step's -R filter ever matched them: build-and-
+      # test/thread-sanitizer never set MEMBRANE_ENABLE_LLAMA at all, and
+      # every job that DOES (this one, packaging-smoke) filtered its own
+      # ctest -R down to test_server/test_setup_cmd/etc only. Confirmed
+      # directly by grepping every job's own Build/-R lines -- both tests
+      # had real ctest coverage on paper (add_test() in CMakeLists.txt)
+      # but zero real CI execution. Fixed here by adding both to this
+      # job's own build target list and -R filter -- cheap (no llama.h
+      # dependency of their own) and this job already pays the real
+      # llama/ggml compile cost for test_server.
       - name: Build (target-scoped)
         run: cmake --build build-server-tsan -j2 --target test_server
+          test_request_admission test_decode_concurrency
 
       - name: Test
         run: |
@@ -636,10 +653,11 @@ jobs:
           # that has nothing to do with TSan -- confirmed as a real bug
           # this PR introduced and fixed in the same change, never left
           # for a later phase to trip over.
-          if ! ctest --test-dir build-server-tsan --output-on-failure -R '^test_server$'; then
+          TSAN_FILTER='^test_server$|^test_request_admission$|^test_decode_concurrency$'
+          if ! ctest --test-dir build-server-tsan --output-on-failure -R "$TSAN_FILTER"; then
             echo "Retrying under TSan with ASLR disabled (setarch -R)"
             setarch "$(uname -m)" -R ctest --test-dir build-server-tsan \
-              --output-on-failure -R '^test_server$'
+              --output-on-failure -R "$TSAN_FILTER"
           fi
 
   # Phase 17: catches install regressions like a backend shared library

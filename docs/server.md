@@ -271,34 +271,58 @@ second switch implementation, so it inherits that function's own
 idempotence (already-active is a no-op, reported as
 `{"already_active": true}`) and failure-recovery guarantees (see below)
 for free. Never unloads a model out from under an in-progress
-generation — it waits (bounded, ~5s) on the same request-serializing
-mutex every chat request already uses, reporting `503 SERVER_BUSY`
-rather than blocking indefinitely or racing a live generation.
+generation — it waits (bounded, ~5s) for every request currently
+decoding against the current model to finish (see "Concurrent decode"
+below), reporting `503 MODEL_SWITCH_BUSY` rather than blocking
+indefinitely or racing a live generation.
 
 ## Model cache policy
 
-One active model at a time (Section 23 of the task):
+One active model at a time (Section 23 of the task; Mega Phase E's own
+multi-model residency work, if any, is a separate, later phase):
 
 - Request model A → load A.
 - Next request for A → reuse the already-loaded A (no reload — proven in
   testing: three sequential requests to the same model triggered exactly
   one real weight load).
-- Request model B → unload A, load B.
+- Request model B → unload A, load B (waits for in-flight A requests to
+  drain first — see "Concurrent decode" below).
 
-Every request to the currently-loaded model is served on a serialized
-path (one internal mutex) — no continuous batching, no concurrent
-generation, streaming included. Correctness first, matching Section 24
-of the task. A concurrent request for a DIFFERENT model simply waits on
-that same mutex — a switch is never a special case, it is the same
-serialization every request already goes through.
+### Concurrent decode (Mega Phase E, PR E1)
+
+Requests against the SAME already-loaded model now decode CONCURRENTLY,
+up to a bounded limit (`MEMBRANE_MAX_CONCURRENT_DECODE`, default 2 —
+deliberately conservative, real-memory-motivated: every request still
+opens its own independent `llama_context`/KV cache, this project's
+unchanged "persistent model, new context per request" architecture, so
+N concurrent decodes means N independent KV caches resident at once).
+Past that bound, an already-admitted request waits its turn (no
+starvation proven for a short request behind a long one — see
+`docs/soak-and-concurrency-testing.md`'s own PR E1 section for the real
+evidence) rather than being rejected — `request_admission_gate_t`
+(below) is the only thing that ever rejects with `503`.
+
+This is bounded CONCURRENT execution over this project's own existing
+per-request-context architecture — deliberately NOT upstream llama.cpp's
+own shared-context/`seq_id`-slot continuous-batching design (reviewed
+and not adopted: it would require one fixed `n_ctx`/KV-dtype shared
+across every concurrent request, which conflicts with this project's own
+real, working per-request adaptive planner — see `decode_concurrency.h`'s
+own top comment for the full reasoning). Each request operates on its
+own copy of the loaded model's session state (never the shared struct
+directly), so concurrent requests cannot race on each other's own
+planner output (`gpu_layers`/`kv_placement`/etc, reported in each
+response's own `"membrane"` block) or corrupt each other's decode.
 
 ### Model-lifecycle state machine (PR B3)
 
 An explicit state, not "loaded bool + name string" — `empty` (never
 loaded, or cleanly unloaded), `loading`, `ready`, `generating`,
-`unloading`, `error`. Reported by `/v1/status` as `model_state`. All
-transitions happen only while the same mutex above is held, so they are
-exactly as synchronized as everything else. `error` is distinct from
+`unloading`, `error`. Reported by `/v1/status` as `model_state`.
+`generating` now means "at least one request is decoding" (PR E1 — it
+could always mean "exactly one" before real concurrent decode existed).
+All transitions happen only while the same admin mutex is held, so they
+are exactly as synchronized as everything else. `error` is distinct from
 `empty` — see the recovery behavior below for when it is reached.
 
 ### Model-switch failure recovery (PR B3, Section 31 of the task)
@@ -335,11 +359,12 @@ just freed the previous model) always sees that current reality.
 single atomic counter, checked before any other work, including before
 the registry lookup) — past that bound, a request gets an immediate
 `503 SERVER_BUSY` with a `Retry-After` header, rather than joining an
-ever-growing queue of threads blocked on the generation mutex. Given
-this server's own full serialization (above), 8 is generous headroom
-above the "1 active generation, the rest waiting" reality — this bound
-exists to fail closed under real overload, not to constrain ordinary
-use.
+ever-growing queue. Since PR E1, up to `MEMBRANE_MAX_CONCURRENT_DECODE`
+(default 2) of those 8 admitted requests can be genuinely decoding at
+once (see "Concurrent decode" above) — 8 remains generous headroom above
+that real concurrent-decode bound, not a claim that all 8 ever run
+simultaneously; this bound exists to fail closed under real overload,
+not to constrain ordinary use.
 
 ### Model registry hot-reload (Section 32 of the task)
 
@@ -375,6 +400,7 @@ SSE `data: {"error": {...}}` event — see "Streaming" above.
 | 400 | `UNSUPPORTED_TOOL_CALLING` | the request included `"tools"`/`"tool_choice"` (PR D7, Section 15: MEMBRANE does not execute tools — rejected explicitly rather than silently ignored, since silently dropping the schema would mislead a client into expecting a tool call back) |
 | 400 | `UNSUPPORTED_RESPONSE_FORMAT` | `"response_format"` requested anything other than the default (`"text"`, or the field omitted) — this server has no constrained-decoding/JSON-mode path that could actually honor it (PR D7, Section 14) |
 | 400 | `CTX_TOO_SMALL_FOR_PROMPT` | the prompt is far larger (raw byte length, a cheap pre-tokenization check) than the model's own real maximum context — rejected before an expensive real tokenization attempt (PR D8, Section 15: a real, disclosed PR D7 finding that an extremely oversized prompt could make the server unresponsive for minutes on a memory-constrained host, root-caused and fixed this phase) |
+| 503 | `MODEL_SWITCH_BUSY` | a switch to a different model was requested, but a request against the currently-loaded model is still decoding and didn't drain within a bounded (~5s) wait (PR E1) — the current model is left fully intact and still serving; retry shortly |
 
 ## Client integration (PR B4)
 
