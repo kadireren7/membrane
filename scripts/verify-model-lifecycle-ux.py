@@ -227,7 +227,7 @@ def _c12():
 def _c13():
 	text = PRODUCT_CLI_H.read_text()
 	m = re.search(r'MEMBRANE_VERSION\s+"([^"]+)"', text)
-	ok = m is not None and m.group(1) == "0.4.0"
+	ok = m is not None and m.group(1) == "0.8.0"
 	return ok, f"MEMBRANE_VERSION={m.group(1) if m else '?'}"
 
 

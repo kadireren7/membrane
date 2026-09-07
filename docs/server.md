@@ -372,6 +372,7 @@ SSE `data: {"error": {...}}` event — see "Streaming" above.
 | 503 | `SERVER_BUSY` | too many chat completion requests are already in flight (PR B3, "Bounded request admission" above) — includes a `Retry-After` header |
 | 400 | `UNSUPPORTED_TOOL_CALLING` | the request included `"tools"`/`"tool_choice"` (PR D7, Section 15: MEMBRANE does not execute tools — rejected explicitly rather than silently ignored, since silently dropping the schema would mislead a client into expecting a tool call back) |
 | 400 | `UNSUPPORTED_RESPONSE_FORMAT` | `"response_format"` requested anything other than the default (`"text"`, or the field omitted) — this server has no constrained-decoding/JSON-mode path that could actually honor it (PR D7, Section 14) |
+| 400 | `CTX_TOO_SMALL_FOR_PROMPT` | the prompt is far larger (raw byte length, a cheap pre-tokenization check) than the model's own real maximum context — rejected before an expensive real tokenization attempt (PR D8, Section 15: a real, disclosed PR D7 finding that an extremely oversized prompt could make the server unresponsive for minutes on a memory-constrained host, root-caused and fixed this phase) |
 
 ## Client integration (PR B4)
 

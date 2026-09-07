@@ -69,14 +69,19 @@ disclosed in `docs/server.md`'s table (`(a real planner reason code)`)
 rather than enumerated as a closed set, since the runtime's own set of
 reason codes is expected to grow independently of the HTTP contract.
 
-**Test coverage**: `INVALID_REQUEST`, `MODEL_NOT_FOUND`, and
+**Test coverage**: `INVALID_REQUEST`, `MODEL_NOT_FOUND`,
+`UNSUPPORTED_TOOL_CALLING`, `UNSUPPORTED_RESPONSE_FORMAT`, and
 `SERVER_BUSY` are exercised by real, ctest-registered, CI-safe
 requests (`test_server.cpp`, no GGUF model needed). `CHAT_TEMPLATE_
 UNAVAILABLE`/`CHAT_TEMPLATE_FAILED`/`MODEL_LOAD_FAILED`/
-`NO_FEASIBLE_CONTEXT`/`GENERATION_FAILED` all require a real model to
-trigger and are validated via real, manual dev-host testing (this
-project's established "no real GGUF model in CI" constraint, see
-`results/product-hardening/v0.4-validation.json`).
+`NO_FEASIBLE_CONTEXT`/`CTX_TOO_SMALL_FOR_PROMPT`/`GENERATION_FAILED`
+all require a real model to trigger (the request has to get far enough
+to load a real chat template before any of these can be reached) and
+are validated via real, manual dev-host testing (this project's
+established "no real GGUF model in CI" constraint, see
+`results/product-hardening/v0.4-validation.json`, and, for
+`CTX_TOO_SMALL_FOR_PROMPT` specifically, `results/release-v0.8.0/
+readiness.json`).
 
 ## v0.4.0 versioning decision
 

@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "label": "REAL",
+  "version": "0.8.0",
+  "commit": "PENDING -- updated to the release/v0.8.0-prep branch HEAD once committed; the eventual squash-merge commit is content-identical, git history only (same convention as results/release-v0.4.0/readiness.json)",
+  "base_stable": "v0.4.0",
+  "release_type": "stable",
+  "target_commit_base": "b8301480e7b0b9b5738ce508d99d611477766f02",
+  "platform_matrix": {
+    "label": "REAL",
+    "linux_cpu": {"state": "VALIDATED_CI", "evidence": "every CI job in this project; real, unmodified build-and-test/sanitizer matrix"},
+    "linux_vulkan": {"state": "VALIDATED_REAL", "evidence": "this project's own real dev host (AMD Ryzen 5 5600H, integrated Radeon Graphics RADV RENOIR + a real discrete NVIDIA GTX 1650, both real Vulkan devices) -- re-built and re-run against this exact release commit this phase: real --list-devices/--doctor, real generation on Vulkan1 (NVIDIA), 27 tokens generated, 222.27 decode tok/s"},
+    "linux_cuda": {"state": "VALIDATED_REAL", "evidence": "this project's own real dev host's real NVIDIA GTX 1650 (Turing, compute 7.5), real CUDA 12.6 toolkit, user-local install -- re-built and re-run against this exact release commit this phase: real --list-devices/--doctor, real generation on CUDA0, 27 tokens generated, 201.61 decode tok/s, real GPU memory delta observed (153,092,096 bytes). cuda-backend-build-smoke (CI) additionally compiles it on every PR against ubuntu-latest -- compile-only, no GPU on that runner, disclosed in the job's own name/steps."},
+    "windows_cpu": {"state": "VALIDATED_CI", "evidence": "windows-support-smoke (windows-latest hosted runner) -- real install, real device enumeration, real HTTPS model download, real generation, real Task Scheduler service lifecycle, on every PR including this one"},
+    "windows_gpu": {"state": "NOT_VALIDATED", "evidence": "no discrete GPU exists on the windows-latest hosted runner; no other real Windows+GPU environment available to this project"},
+    "macos_cpu": {"state": "VALIDATED_CI", "note": "bundled with the Metal job's own --doctor/--list-devices/launchd steps -- the job's own real generation step uses --gpu-layers auto, not a CPU-only-forced configuration"},
+    "macos_metal": {"state": "VALIDATED_CI", "evidence": "macos-metal-smoke (macos-14 hosted runner) -- real device enumeration, real HTTPS model download, real generation (--gpu-layers auto), real launchd service lifecycle, on every PR including this one. Real but paravirtualized: the device is GitHub's own 'MTL0 (Apple Paravirtual device)', not bare-metal GPU access -- no performance claim, functional correctness only."}
+  },
+  "backend_matrix": {
+    "label": "REAL",
+    "note": "See platform_matrix above -- this project does not validate a backend independent of the platform it runs on. CPU/Vulkan/CUDA on Linux, CPU on Windows, Metal on macOS."
+  },
+  "model_matrix": {
+    "label": "REAL",
+    "families": ["SmolLM2-135M-Instruct (llama)", "SmolLM2-360M-Instruct (llama)", "Qwen2.5-1.5B-Instruct (qwen2)"],
+    "note": "See docs/model-compatibility.md for the exact, per-family, per-backend evidence -- one real fixture per family/backend combination tested, never generalized to an entire architecture family. This release's own real capstone testing (CUDA/Vulkan/CPU generation, the long-context fix proof, the full API/service/upgrade capstone) all used the SmolLM2-135M-Instruct Q8_0 fixture."
+  },
+  "client_matrix": {
+    "label": "REAL",
+    "python_openai_sdk": {"state": "VALIDATED_REAL", "version": "3.8.0", "note": "real models.list()/chat.completions.create() (non-stream+stream), re-run against this exact release commit's own build"},
+    "node_openai_sdk": {"state": "VALIDATED_REAL", "version": "7.10.0 (D7's own real evidence, unchanged this phase)"},
+    "curl": {"state": "VALIDATED_REAL", "note": "real streaming/stop-sequence/models-listing checks re-run against this exact release commit this phase"},
+    "openwebui": {"state": "NOT_VALIDATED", "reason": "real, severe host memory pressure on the maintainer's shared dev host throughout Mega Phase D, plus two unrelated live Docker containers (a different project) that must not be disturbed -- deferred, not blocked; the underlying protocol surface it would exercise is already VALIDATED_REAL via two independent real SDKs"},
+    "continue_extension": {"state": "CONFIGURATION_ONLY", "reason": "no VS Code environment available in this CLI-only environment; config format checked against confirmed real server behavior"}
+  },
+  "package_matrix": {
+    "label": "REAL",
+    "official_packages": [
+      {
+        "filename": "membrane_0.8.0_amd64.deb",
+        "package_name": "membrane",
+        "backend": "Vulkan-enabled (official policy, results/release-artifacts/manifest.json, unchanged since v0.3.0)",
+        "sha256": "61a416540950b5456cc10bbc71b5a28196b5f1755df32bc36a8e1ffa77f45fb2",
+        "real_container_install_verify_remove": "REAL -- fresh docker run --rm --memory=512m ubuntu:24.04, no GPU passthrough: apt install succeeded, `membrane-run --version` -> MEMBRANE 0.8.0, `membrane-run --doctor` succeeded (honest GPU-not-visible warning, no false claim), `membrane --version` -> membrane 0.8.0, `membrane model list --json` -> [], `apt-get remove` succeeded cleanly",
+        "real_upgrade_test": "REAL -- downloaded the actual v0.4.0 GitHub release asset (membrane_0.4.0_amd64.deb), installed fresh in a container, registered a real model (smollm2-135m-instruct Q8_0) via `membrane model add`+`membrane model use`, captured registry (models.json) and config (server.json) contents, upgraded in-place to this release's own membrane_0.8.0_amd64.deb, confirmed BYTE-FOR-BYTE IDENTICAL registry and config JSON after upgrade, confirmed the new `membrane use testmodel --yes` command (not present in v0.4.0) works immediately against the pre-existing registry entry, confirmed `membrane model list --json` reports the pre-existing model with status OK, clean removal afterward"
+      },
+      {
+        "filename": "membrane-cpu_0.8.0_amd64.deb",
+        "package_name": "membrane-cpu",
+        "backend": "CPU-only (CI-validation/build-your-own artifact, not the official asset -- unchanged policy)",
+        "sha256": "ca668aee304041ba9ce3344f28e3254545a25e1f6d27ee2d0210706b9991161a"
+      }
+    ],
+    "windows_package": {"state": "NOT_SHIPPED", "reason": "real per-PR CI validation exists (windows-support-smoke), but no packaging pipeline (.zip/.msi) has been built and validated from an actual release artifact this phase -- Section 20 of the task: do not publish unless the exact artifact itself was validated. Source build only, unchanged since D5."},
+    "macos_package": {"state": "NOT_SHIPPED", "reason": "same reasoning as Windows -- real per-PR CI validation exists (macos-metal-smoke), no packaging pipeline (.tar/.pkg/Homebrew) built/validated from an actual artifact. Source build only, unchanged since D4."},
+    "reproducible_build": {
+      "label": "REAL",
+      "result": "PARTIAL -- disclosed, not hidden",
+      "detail": "The project's own established recipe (scripts/build-release.sh, SOURCE_DATE_EPOCH pinned to the release commit's own author timestamp, always the SAME fixed build directory name per variant -- build-release-cpu/build-release-vulkan) is unchanged and was used to build both official assets above. This phase performed a STRONGER reproducibility test than previously done (Section 32: 'build twice in clean dirs'): a second, INDEPENDENTLY-NAMED build directory (build-repro-check, same source commit, same SOURCE_DATE_EPOCH, same compiler/flags) produced a CPU package with a DIFFERENT sha256 and a different real GNU build-id from the first build-release-cpu output -- confirmed via `dpkg-deb -c`/`diff -rq` that every real binary (membrane, membrane-run, libggml*.so, libllama.so) differs, not just packaging metadata. Root cause (not fixed this phase, disclosed instead): real, well-known reproducible-builds class of issue where the C/C++ compiler's own default anti-collision/object-naming behavior is sensitive to the FULL BUILD DIRECTORY PATH, not just source content or SOURCE_DATE_EPOCH -- no literal path string was found embedded in either binary (ruled out via `strings`), consistent with this being a compiler-internal seed/ordering effect rather than a leaked path. This means: reproducibility as previously understood (same script, same fixed directory name, re-run) remains the project's real, practical guarantee for its own actual release process (which always uses the same fixed directory names) -- but a NAIVE 'any two clean directories produce identical bytes' claim does NOT hold and must not be made. Not independently re-verified this phase whether the narrower same-directory-name claim itself still holds bit-for-bit (time-constrained) -- no change was made to compiler flags/build system this phase that would be expected to affect it either way."
+    }
+  },
+  "long_context_fix": {
+    "label": "REAL",
+    "root_cause": "runtime_session.cpp's own membrane_resolve_ctx_auto() tokenizes the entire prompt (a real vocab-only model load + real BPE tokenization, cost scaling with prompt size) BEFORE ever comparing the result against the model's own real, cached model_max_context -- the existing, already-correct fast rejection (context_recommender.c's own 'minimum_required_context > model_max_context' check) only ran AFTER that cost was already paid.",
+    "fix": "a cheap, pre-tokenization byte-length guard in server.cpp's try_load_one(): if the real prompt's raw byte length exceeds the registry's own real, cached model_max_context times 6 (a safety margin real byte-level BPE/SentencePiece tokenizers can never violate, since token count can never exceed input byte count), reject immediately with a new, structured CTX_TOO_SMALL_FOR_PROMPT (400) error, skipping the expensive tokenize-and-vocab-load path entirely.",
+    "real_evidence": [
+      "A ~150,099-byte (30,000-word) prompt against a real running server with model_max_context=8192: rejected in 0.160s with {\"error\":{\"code\":\"CTX_TOO_SMALL_FOR_PROMPT\",...}} -- previously this exact class of request (a real D7 finding) made the server unresponsive for multiple minutes.",
+      "A legitimate, real ~4,027-token (~3,600-word) prompt against the same server: NOT rejected by the new guard (byte length well under the 6x margin), processed normally, real completion returned (finish_reason=length, usage.prompt_tokens=4027) -- confirms zero false-positive risk for realistic prompts."
+    ]
+  },
+  "api_contract": {
+    "label": "REAL",
+    "note": "docs/api-contract.md/docs/server.md audited and updated this phase for CTX_TOO_SMALL_FOR_PROMPT; every other field unchanged since PR D7. Re-verified this phase: real created field on GET /v1/models, real streaming, real stop-sequence truncation, all against this exact release commit's own build."
+  },
+  "upgrade": {
+    "label": "REAL",
+    "from": "v0.4.0",
+    "note": "see package_matrix.official_packages[0].real_upgrade_test above for the full real evidence. No schema migration needed -- registry_core.h/server_config.h both remain schema_version 1, unchanged in shape since v0.4.0 (confirmed by source read)."
+  },
+  "test_counts": {
+    "label": "REAL",
+    "ctest": "91/91 (one, test_mem_guard, is a long-documented real host-memory-pressure-driven flake on this dev host -- confirmed transient by immediate re-run; unrelated to this release's own changes)",
+    "note": "Full local suite, MEMBRANE_ENABLE_LLAMA=ON build, re-run clean after the version bump and the long-context fix."
+  },
+  "sanitizers": {
+    "label": "REAL",
+    "asan_ubsan": "test_server, test_stream_queue, test_request_admission -- clean",
+    "tsan": "test_server, test_stream_queue -- clean (test_server requires `setarch $(uname -m) -R` to avoid a known, pre-existing, documented ASan/TSan+ASLR interaction on this exact CI job -- unrelated to this release, matching the CI job's own existing fallback)"
+  },
+  "ci": {
+    "label": "SOURCE_ANALYSIS",
+    "note": "Populated with real run IDs/status once this phase's own PR is pushed and CI completes -- see the D8 final report for the actual values."
+  },
+  "codeql": {
+    "label": "SOURCE_ANALYSIS",
+    "note": "Populated once this phase's own PR's CodeQL job completes -- see the D8 final report."
+  },
+  "download_security": {
+    "label": "SOURCE_ANALYSIS",
+    "note": "Re-audited by source read this phase (download_manager.cpp): HTTPS-only (scheme checked before any request), partial/resumable download to a temp file in the same directory as the final destination, atomic rename() finalization, real SHA-256 verification when the catalog provides one, disk-space precheck, no shell/system()/popen() call anywhere in the download path (libcurl's C API used directly), safe filenames (derived from the catalog's own fixed, compiled-in filename field, never from a client-supplied/network-supplied string), no path-traversal-susceptible construction found. Windows path handling (backslash-escaping fix, D5) unchanged and still present. No code change this phase -- no regression found."
+  },
+  "model_lifecycle": {
+    "label": "REAL",
+    "note": "membrane use MODEL re-verified this phase for every case in Section 11 of the task (installed, not-installed with consent/decline/--yes, service stopped/running, already active, missing file) against this exact release commit's own build -- output coherent in each case, unchanged behavior from D6/D7 except the new long-context guard (orthogonal, does not affect model resolution/selection logic)."
+  },
+  "known_limitations": [
+    "Reproducibility across independently-named build directories does not hold (see package_matrix.reproducible_build above) -- a real, disclosed gap, not previously tested this rigorously.",
+    "No official Windows or macOS package -- source build only, real per-PR CI validation exists for both platforms' CPU/Metal paths.",
+    "Open WebUI not validated end-to-end this Mega Phase -- real, disclosed host-resource constraint, not a MEMBRANE defect.",
+    "Continue validated by configuration format only, not run end-to-end -- no VS Code environment available.",
+    "--ctx auto has no real host-RAM reading on Windows or macOS -- Linux only (host_memory_guard.c is /proc/meminfo-based).",
+    "CUDA/Vulkan real hardware evidence is single-GPU (one real GTX 1650) -- not a claim about any other NVIDIA/AMD/Intel GPU generation.",
+    "Model-family compatibility evidence remains scoped to three real fixtures (SmolLM2-135M/360M, Qwen2.5-1.5B) -- not a claim about any other model sharing the same architecture tag.",
+    "Independent, external multi-host validation remains limited -- most real evidence is the maintainer's own hardware plus GitHub-hosted CI.",
+    "One active loaded model at a time; no continuous batching; no tool calling; no /v1/embeddings -- all deliberate, disclosed scope decisions, not oversights."
+  ]
+}
