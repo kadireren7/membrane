@@ -2,7 +2,7 @@
   "schema_version": 1,
   "label": "REAL",
   "version": "0.8.0",
-  "commit": "PENDING -- updated to the release/v0.8.0-prep branch HEAD once committed; the eventual squash-merge commit is content-identical, git history only (same convention as results/release-v0.4.0/readiness.json)",
+  "commit": "33d8f270cf94f5b79d1e67a027f676611edf02cc (release/v0.8.0-prep branch HEAD; the eventual squash-merge commit is content-identical, git history only, same convention as results/release-v0.4.0/readiness.json)",
   "base_stable": "v0.4.0",
   "release_type": "stable",
   "target_commit_base": "b8301480e7b0b9b5738ce508d99d611477766f02",
