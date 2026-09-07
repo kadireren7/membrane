@@ -1,10 +1,9 @@
 # MEMBRANE
 
-Adaptive KV-cache planning for llama.cpp under constrained memory.
-
-MEMBRANE resolves GPU offload, KV precision, and CPU/GPU KV residency before
-generation starts — with an inspectable plan and machine-readable
-diagnostics, on top of an unmodified `ggml`/llama.cpp inference path.
+MEMBRANE automatically chooses, fits, installs, runs, and serves local
+AI models on your hardware — install it, tell it which model you want,
+and talk to it over a real OpenAI-compatible API. No manual GPU-layer
+math, no llama.cpp flags to learn first.
 
 [![CI](https://github.com/kadireren7/membrane/actions/workflows/ci.yml/badge.svg)](https://github.com/kadireren7/membrane/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/kadireren7/membrane/actions/workflows/codeql.yml/badge.svg)](https://github.com/kadireren7/membrane/actions/workflows/codeql.yml)
@@ -12,29 +11,120 @@ diagnostics, on top of an unmodified `ggml`/llama.cpp inference path.
 
 ![MEMBRANE resolves a GGUF model and context into GPU layer count, KV precision, and KV placement, then hands the plan to llama.cpp for generation](docs/assets/membrane-hero.svg)
 
-KV-cache memory grows with context length, and on a memory-constrained GPU
-it's often what runs out before compute does. MEMBRANE looks at real device
-memory and model shape before committing to a plan, instead of a fixed
-`-ngl` guess that either wastes headroom or fails mid-run.
-
-## Build
+## Install
 
 Easiest path on Ubuntu/Debian/Pop!_OS: download the latest `.deb` from
 [the Releases page](https://github.com/kadireren7/membrane/releases)
 and `sudo apt install ./membrane_<version>_amd64.deb` — no manual
 CMake flags. That one package is Vulkan-enabled but runs correctly
-CPU-only (GPU offload stays opt-in, `--auto`/`--gpu-layers`); a
-CPU-only `membrane-cpu_<version>_amd64.deb` also exists as a
-CI-validation/build-your-own artifact, not a release asset. You can
-also build a package yourself with `cmake --build <dir> --target
-package` (see [`docs/install.md`](docs/install.md)'s Option A). What
-follows here is building `membrane-run` directly from source.
+CPU-only (GPU offload stays opt-in); a CPU-only
+`membrane-cpu_<version>_amd64.deb` also exists as a CI-validation/
+build-your-own artifact, not a release asset. Building from source, or
+on Windows/macOS (real per-PR CI validation, no official package yet):
+[`docs/install.md`](docs/install.md), [`docs/support-matrix.md`](docs/support-matrix.md).
+
+## Say which model you want
+
+```bash
+membrane use qwen2.5:7b
+```
+
+If `qwen2.5:7b` isn't installed yet, this previews the download (size,
+hardware fit, recommended variant), asks to confirm, installs it, and
+selects it — activating it live if `membrane serve`/the background
+service is already running. Already installed? Same command just
+selects/activates it, no restart needed. `membrane setup` runs the
+same flow for a guided first-run (register a local `.gguf`, or a
+catalog name, and stand up the background service in one pass). See
+[`docs/model-lifecycle.md`](docs/model-lifecycle.md).
+
+## Talk to it from your app
+
+```bash
+curl http://127.0.0.1:8642/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "qwen2.5:7b", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+Or point any OpenAI-compatible client at `http://127.0.0.1:8642/v1`
+with any placeholder API key (this server has no authentication of its
+own — loopback-only is its real security boundary). Real, tested this
+project: the official Python and Node.js `openai` SDKs
+(`client.models.list()`, non-streaming and streaming
+`chat.completions.create()`, real `stop`-sequence early termination,
+real tool-calling/`response_format` rejection). Streaming
+(`stream: true`, real Server-Sent Events) and a live model switch
+(just send a different `"model"` — no restart, no admin call) both
+work the same way. See
+[`docs/client-compatibility.md`](docs/client-compatibility.md) for the
+exact, honestly-labeled client matrix — never "should work," always
+what was actually run.
+
+`membrane doctor` checks installation, hardware, the model registry,
+config, the service, and the HTTP endpoint in one pass, and tells you
+exactly what (if anything) needs attention.
+
+## What MEMBRANE adds on top of llama.cpp
+
+llama.cpp is the inference engine underneath — the real GGUF model
+loader, the real backend kernels (CPU/Vulkan/CUDA/Metal), the real
+decode loop. MEMBRANE doesn't replace or reimplement any of that; it's
+the product/runtime layer on top that a raw inference engine doesn't
+provide on its own:
+
+| Layer | Who owns it |
+|---|---|
+| Model loading, backend kernels, decode loop | llama.cpp (unmodified) |
+| **Model catalog + real HTTPS download + checksum verification** | MEMBRANE |
+| **Hardware-aware variant selection** ("which quant actually fits this machine") | MEMBRANE |
+| **Memory-aware KV-cache/GPU-layer planning** (the `--auto` joint planner) | MEMBRANE |
+| **Model lifecycle**: install, select, live-switch, uninstall guards | MEMBRANE |
+| **Background service** (systemd/launchd/Task Scheduler abstraction) | MEMBRANE |
+| **OpenAI-compatible HTTP API** (streaming, stop sequences, bounded admission) | MEMBRANE |
+| **Client integration** (validated against real SDKs) | MEMBRANE |
+
+If you already know exactly which GGUF file and which llama.cpp flags
+you want, `membrane-run` (below) is still the direct, low-level CLI —
+nothing about it changes underneath MEMBRANE's own product layer.
+
+## Known limitations
+
+Read before you rely on this in production:
+
+- **OpenAI-compatible chat API subset, not the full OpenAI API** — no
+  tool calling (`tools`/`tool_choice` are explicitly rejected, never
+  silently dropped), no `/v1/embeddings`, no `response_format` beyond
+  the default. See [`docs/api-contract.md`](docs/api-contract.md).
+- **One active loaded model at a time** — no multi-model simultaneous
+  residency, no continuous batching yet.
+- **Open WebUI and Continue are not both independently validated
+  end-to-end yet** — real for two SDKs and curl; see
+  [`docs/client-compatibility.md`](docs/client-compatibility.md).
+- **`--ctx auto` cannot read real host memory on Windows or macOS
+  yet** — Linux only; disclosed, not silently assumed to work. See
+  [`docs/support-matrix.md`](docs/support-matrix.md).
+- **Backend/platform evidence is real but scoped**: one real CUDA
+  device, one real (paravirtualized) Metal device, real Windows/macOS
+  CPU on hosted CI — not a claim about every GPU/OS combination. No
+  official Windows or macOS package yet.
+- **Model-family compatibility evidence is scoped to the exact tested
+  fixtures** (SmolLM2-135M/360M, Qwen2.5-1.5B) — see
+  [`docs/model-compatibility.md`](docs/model-compatibility.md); a
+  shared architecture name is not itself evidence.
+- **Independent, external multi-host validation remains limited** —
+  most real evidence is the maintainer's own hardware plus GitHub-
+  hosted CI, disclosed throughout, not hidden.
+- **No authentication on the local server** — loopback-only binding is
+  the real security boundary; remote exposure is your own
+  responsibility (`--allow-non-loopback` warns loudly).
+
+## Advanced: build from source / direct CLI
 
 CPU-only:
 
 ```bash
 cmake -S . -B build-llama -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-llama -j --target membrane-run
+cmake --build build-llama -j --target membrane-run membrane
 ```
 
 Vulkan (needs Vulkan development headers, `glslc`, and SPIR-V headers
@@ -42,20 +132,36 @@ already on the system):
 
 ```bash
 cmake -S . -B build-vulkan -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-vulkan -j --target membrane-run
+cmake --build build-vulkan -j --target membrane-run membrane
+```
+
+CUDA (needs the CUDA toolkit already installed;
+[`docs/cuda-backend.md`](docs/cuda-backend.md)):
+
+```bash
+cmake -S . -B build-cuda -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-cuda -j --target membrane-run membrane
 ```
 
 Full walkthrough (install/uninstall, troubleshooting):
-[`docs/install.md`](docs/install.md). No CUDA, no GPU, no driver needed for
-a CPU-only build. Full flag reference and exit codes: `membrane-run
---help`. Reproduction guide (llama-free core library, sanitizers, CI):
-`docs/reproduction.md`.
+[`docs/install.md`](docs/install.md). Reproduction guide (llama-free
+core library, sanitizers, CI): `docs/reproduction.md`.
 
-## Quick Start
+```bash
+cmake --install build-vulkan --prefix "$HOME/.local"
+```
 
-Install → check → inspect → preview → run. No `Q8_0` block internals, no
-planner internals, no phase history required to get here — just five
-commands, each one optional past the first:
+Installs `membrane-run`/`membrane` plus their shared-library
+dependencies, each with an `$ORIGIN`-relative RPATH, so the installed
+binaries run standalone — no build tree, no `LD_LIBRARY_PATH`.
+`cmake --build build-vulkan --target uninstall` removes exactly what
+that install run recorded.
+
+## Quick Start (`membrane-run`, the direct, non-HTTP CLI)
+
+Prefer the CLI directly, or want the exact plan before you run it? No
+`Q8_0` block internals, no planner internals required to get here —
+each command below is optional past the first:
 
 ```bash
 # Check what MEMBRANE sees on this host (no model needed)
@@ -78,106 +184,14 @@ membrane-run --model model.gguf --prompt "Hello" --ctx 2048 --auto
 
 ![--auto fans out into GPU layers, KV type, and KV residency, all automatically managed; an explicit --kv q8 override fixes only KV type, leaving the other two on auto](docs/assets/membrane-auto.svg)
 
-### As a local OpenAI-compatible backend
+Explicit flags override only the field they name — `--auto --kv q8`
+keeps GPU layers and KV placement on auto while pinning precision to
+`q8`. `membrane-run --list-devices` lists every backend device MEMBRANE
+can see (no model needed). Full flag reference and exit codes:
+`membrane-run --help`.
 
-Prefer talking to MEMBRANE over HTTP instead of the CLI directly (any
-OpenAI-compatible client/library, no code changes beyond `base_url`)?
-Don't have a model file yet? One command picks a model, installs it
-(with your consent), and puts it to work:
-
-```bash
-membrane use qwen2.5:7b
-```
-
-If `qwen2.5:7b` isn't installed yet, this previews the download (size,
-hardware fit, recommended variant), asks to confirm, installs it, and
-selects it — activating it live if `membrane serve`/the service is
-already running. Already installed? Same command just selects/
-activates it, no restart needed. See `docs/model-lifecycle.md`.
-
-Already have a local `.gguf` file and want the guided first-run
-instead? One command handles registration and the background service
-together:
-
-```bash
-membrane setup --model /path/to/model.gguf
-```
-
-`membrane setup` registers the model, offers to make it the default,
-installs and starts the systemd `--user` service, and verifies the
-endpoint answers — safe to re-run any time (it reports what's already
-done rather than repeating it). Prefer to do each step yourself
-instead? It's the same three commands under the hood:
-
-```bash
-membrane model add qwen /path/to/model.gguf
-membrane service install
-membrane service start
-membrane service status
-```
-
-Something not working? `membrane doctor` checks installation, hardware,
-the model registry, config, the service, and the HTTP endpoint in one
-pass, and tells you exactly what (if anything) needs attention.
-
-```bash
-curl http://127.0.0.1:8642/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "qwen", "messages": [{"role": "user", "content": "Hello"}]}'
-```
-
-Streaming (`stream: true`, real Server-Sent Events):
-
-```bash
-curl -N http://127.0.0.1:8642/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "qwen", "messages": [{"role": "user", "content": "Hello"}], "stream": true}'
-```
-
-`ctx`, GPU layers, KV precision, and KV placement are all resolved
-automatically per model, exactly like `--auto` above — no client-side
-tuning. See [`docs/service.md`](docs/service.md) for the service
-commands (`install`/`start`/`stop`/`status`/`logs`/`uninstall`),
-[`docs/server.md`](docs/server.md) for the full endpoint/streaming/
-security/limitations reference, and
-[`docs/model-registry.md`](docs/model-registry.md) for `membrane
-model`.
-
-#### Use with your app
-
-Point any OpenAI-compatible client at `http://127.0.0.1:8642/v1` with
-any placeholder API key (this server has no authentication of its own —
-loopback-only is its real security boundary). Real, tested this project:
-the official Python and Node.js `openai` SDKs (`client.models.list()`,
-non-streaming and streaming `chat.completions.create()`, real tool-
-calling/`response_format` rejection, real `stop`-sequence early
-termination). Open WebUI and editor plugins like Continue use the same
-standard OpenAI-compatible protocol and are expected to work the same
-way, though they have not both been run end-to-end yet — see
-[`docs/client-compatibility.md`](docs/client-compatibility.md) for the
-exact, honestly-labeled matrix (never "should work," always what was
-actually run).
-
-Prefer a single foreground process for debugging instead of the
-service? `membrane serve` (no service install needed) does exactly the
-same thing in a terminal you keep open — see `docs/server.md`.
-`membrane-run` (below) remains the direct, non-HTTP CLI entry point —
-nothing about it changes.
-
-You never need to know `q8`/`q5`, GPU layer counts, or KV placement to use
-`--auto` — see "Precision and placement are separate" below only if you
-want manual control. `membrane-run --list-devices` lists every backend
-device MEMBRANE can see (no model needed).
-
-Explicit flags override only the field they name — `--auto --kv q8` keeps
-GPU layers and KV placement on auto while pinning precision to `q8`.
-Advanced options (KV precision/placement, GPU device selection, JSON
-diagnostics): `membrane-run --help`.
-
-## See the plan before you run it
-
-`--plan-only` resolves the exact same planner a real run uses and prints the
-result without generating a token:
+`--plan-only` resolves the exact same planner a real run uses and
+prints the result without generating a token:
 
 ```bash
 ./build-vulkan/tools/membrane-run/membrane-run \
@@ -189,32 +203,31 @@ result without generating a token:
 Real output — captured verbatim, transcript and command in
 [`docs/assets/source/plan-example.txt`](docs/assets/source/plan-example.txt).
 Add `--json` for the same plan as one machine-readable object
-(`schema_version: 1`) instead of this text block; add `--verbose` for the
-full requested/resolved breakdown and reason trace. Both go to stderr, so
-`--json` on stdout stays pure JSON either way.
+(`schema_version: 1`) instead of this text block; add `--verbose` for
+the full requested/resolved breakdown and reason trace.
 
-## How MEMBRANE works
+### How the planner works
 
 ![GGUF model and context flow into model metadata, then into the MEMBRANE planner, which branches into GPU layers, KV type, and KV placement, converging into one resolved plan handed to llama.cpp for generation](docs/assets/membrane-flow.svg)
 
-One logical planning pipeline, not three independent tools. GPU layer count
-comes from a pre-load memory estimate; KV precision and KV placement finish
-resolving once real model shape is available, before the KV cache/context
-itself is constructed. There is no runtime KV migration and no per-layer
-mixed precision — see "Current scope" below.
-
-## Precision and placement are separate
+One logical planning pipeline, not three independent tools. GPU layer
+count comes from a pre-load memory estimate; KV precision and KV
+placement finish resolving once real model shape is available, before
+the KV cache/context itself is constructed. There is no runtime KV
+migration and no per-layer mixed precision — see "Current scope"
+below.
 
 ![KV cache has two independent axes: representation (native, q8, q5, adaptive) and residency (default, gpu, cpu, auto); changing one never changes the other](docs/assets/membrane-precision-placement.svg)
 
-`--kv` never changes where the cache lives. `--kv-placement` never changes
-how it's encoded.
+`--kv` never changes where the cache lives. `--kv-placement` never
+changes how it's encoded.
 
-## Measured results
+### Measured results
 
-MEMBRANE plans against whatever memory is actually available on the machine
-it runs on. The numbers below are two specific tested configurations, not a
-general hardware claim — a different GPU or model will measure differently.
+MEMBRANE plans against whatever memory is actually available on the
+machine it runs on. The numbers below are two specific tested
+configurations, not a general hardware claim — a different GPU or
+model will measure differently.
 
 ![Bar chart: default all-GPU KV placement succeeds at context 26,500 and fails at context 26,800 with a real Vulkan out-of-device-memory error; MEMBRANE auto and cpu KV placement both succeed at context 28,500 in the same tested configuration](docs/assets/membrane-capacity.svg)
 
@@ -224,9 +237,10 @@ succeeds at `ctx=26500` and fails at `ctx=26800` with a real Vulkan
 out-of-device-memory error; `--kv-placement auto`/`cpu` both succeed at
 `ctx=28500` in the same test. This Qwen2.5 result validates KV
 **placement** at **native** precision — the current `qwen2` architecture
-compatibility check does not validate `q8`/`q5`/adaptive KV **compression**
-for that model family (only `LLM_ARCH_LLAMA` models are validated for
-compressed KV).
+compatibility check does not validate `q8`/`q5`/adaptive KV
+**compression** for that model family (only `LLM_ARCH_LLAMA` models are
+validated for compressed KV) — see
+[`docs/model-compatibility.md`](docs/model-compatibility.md).
 
 ![Bar chart across six tested contexts on SmolLM2-135M: q8 KV VRAM reduction ranges from about 2 percent at small contexts to about 25 percent at context 16384, while generation throughput is about 7 to 18 percent lower than native across the same sweep](docs/assets/membrane-q8-tradeoff.svg)
 
@@ -241,45 +255,39 @@ text only, not a token-ID or numeric quantization-error claim.
 
 ## Current capabilities
 
-| Supported | Not a product path | Research only |
-|---|---|---|
-| CPU inference | CUDA | Dynamic/runtime KV migration |
-| Vulkan GPU offload | | Per-layer mixed `q8`/`q5` precision |
-| KV precision: `q8`, `q5`, adaptive | | FPGA/CXL (simulation/synthesis-tool evidence only) |
-| Static CPU/GPU KV residency | | |
-| `--auto` planning | | |
-| `--plan-only` / `--verbose` diagnostics | | |
-| `--doctor` / `--list-devices` / `--inspect-model` | | |
-| JSON diagnostics (`schema_version: 1`) | | |
+| Supported | Evidence-scoped (real, but narrow) | Not a product path | Research only |
+|---|---|---|---|
+| CPU inference | CUDA (one real device, source build only) | Continuous batching | Dynamic/runtime KV migration |
+| Vulkan GPU offload | Metal (one real, paravirtualized device) | Multi-model simultaneous residency | Per-layer mixed `q8`/`q5` precision |
+| KV precision: `q8`, `q5`, adaptive | Windows (real CPU CI, no GPU tested) | Tool calling / `/v1/embeddings` | FPGA/CXL (simulation/synthesis-tool evidence only) |
+| Static CPU/GPU KV residency | macOS (real CI, paravirtual Metal) | | |
+| `--auto` planning, `membrane use`/`setup`/`doctor` | | | |
+| OpenAI-compatible chat API (streaming, stop, bounded admission) | | | |
+| JSON diagnostics (`schema_version: 1`) | | | |
 
-## Install
-
-```bash
-cmake --install build-vulkan --prefix "$HOME/.local"
-```
-
-Installs `membrane-run` plus its shared-library dependencies (`llama`,
-`ggml*`, and `ggml-vulkan` when built with Vulkan enabled), each with
-an `$ORIGIN`-relative RPATH, so the installed binary runs standalone —
-no build tree, no `LD_LIBRARY_PATH`. `membrane_core` is always linked
-statically into `membrane-run` and is never installed on its own.
-`cmake --build build-vulkan --target uninstall` removes exactly what
-that install run recorded. Full walkthrough,
-troubleshooting, and the CPU-vs-Vulkan dependency footprint:
-[`docs/install.md`](docs/install.md).
+See [`docs/support-matrix.md`](docs/support-matrix.md) for the exact,
+evidence-state-labeled platform/backend matrix and
+[`docs/model-compatibility.md`](docs/model-compatibility.md) for the
+exact validated model families.
 
 ## Current scope
 
-- Linux-focused development and testing.
-- Vulkan is the only product GPU backend; CUDA is not currently supported.
-- KV placement is decided once, before context construction — no runtime
-  migration, promotion, or demotion.
+- Real evidence spans Linux (CPU/Vulkan/CUDA, on real local hardware),
+  Windows (CPU, real per-PR CI), and macOS (real per-PR CI, a
+  paravirtualized Metal device) — see `docs/support-matrix.md` for the
+  exact evidence state per platform/backend; no GPU evidence exists on
+  Windows.
+- KV placement is decided once, before context construction — no
+  runtime migration, promotion, or demotion.
 - Adaptive KV selection is whole-cache (`q8` or `q5` for the entire
   context), never per-layer or per-block.
 - Memory figures in a plan are pre-load estimates and point-in-time
   snapshots, not measured peak VRAM or an OOM guarantee.
 - `q8`/`q5`/adaptive KV precision is validated only for `LLM_ARCH_LLAMA`
   models — checked and rejected for other architectures before use.
+- One model loaded at a time; a live switch (`membrane use`, or simply
+  a different `"model"` field in a chat request) unloads the previous
+  one first.
 
 Mechanism detail: `docs/live-runtime.md` (KV precision) and
 `docs/kv-residency.md` (KV placement). Full architecture/backend/
@@ -297,22 +305,17 @@ live in
 **[kadireren7/membrane-research](https://github.com/kadireren7/membrane-research)**,
 with SHA256-verified provenance back to this repository.
 
-**Release status**: latest stable tag `v0.4.0` (supersedes `v0.3.0`,
-now historical). v0.3.0's own runtime/planner/packaging capabilities
-are unchanged; v0.4.0 adds one-command onboarding (`membrane setup`,
-`membrane doctor`), release-supply-chain maturity (reproducible `.deb`
-builds, an SBOM, a real registry schema-versioning fix), and API/
-runtime hardening (a frozen, doc-checked error contract, real soak/
-concurrency testing, a second real client beyond the Python SDK, a
-privacy/security source audit) — see
-[docs/release-v0.4.0.md](docs/release-v0.4.0.md) for the full release
-notes and [docs/upgrade-v0.3-to-v0.4.md](docs/upgrade-v0.3-to-v0.4.md)
-if you're upgrading from v0.3.0. All real-run validation (CPU, NVIDIA
-Vulkan, AMD Vulkan RADV) is still from the maintainer's own
-development host plus container-based packaging checks —
-**independent multi-host validation remains limited**; this is
-disclosed as a known limitation, not hidden. CPU-only default behavior
-(no flags, or `--gpu-layers 0`) is unchanged by any of this.
+**Release status**: latest stable tag `v0.8.0` (supersedes `v0.4.0`,
+now historical). This release consolidates Mega Phase D: the model
+catalog/download/variant-selection pipeline, real CUDA and Metal
+backend evidence, real Windows support, `membrane use`'s consent-gated
+install/live-switch model lifecycle, and real OpenAI-compatible client
+validation (Python and Node.js SDKs) — see
+[docs/release-v0.8.0.md](docs/release-v0.8.0.md) for the full release
+notes and [docs/upgrade-v0.4-to-v0.8.md](docs/upgrade-v0.4-to-v0.8.md)
+if you're upgrading from v0.4.0. See "Known limitations" above for what
+this release does not claim. CPU-only default behavior (no flags, or
+`--gpu-layers 0`) is unchanged by any of this.
 
 ## AI-assisted development
 

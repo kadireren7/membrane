@@ -40,6 +40,8 @@ EXPECTED_CODES = {
 	"SERVER_BUSY", "GENERATION_FAILED",
 	# Mega Phase D, PR D7:
 	"UNSUPPORTED_TOOL_CALLING", "UNSUPPORTED_RESPONSE_FORMAT",
+	# Mega Phase D, PR D8:
+	"CTX_TOO_SMALL_FOR_PROMPT",
 }
 
 FAILURES = []
@@ -183,7 +185,7 @@ def _c9():
 def _c10():
 	text = (REPO_ROOT / "tools" / "membrane-run" / "product_cli.h").read_text()
 	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', text)
-	ok = m is not None and m.group(1) == "0.4.0"
+	ok = m is not None and m.group(1) == "0.8.0"
 	return ok, f"MEMBRANE_VERSION={m.group(1) if m else '(not found)'}"
 
 

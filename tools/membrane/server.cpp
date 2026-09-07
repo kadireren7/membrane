@@ -298,6 +298,44 @@ static bool	try_load_one(s_membrane_server_model_state *st,
 
 	fill_auto_opts(&o, entry.path.c_str(), gen_tokens);
 
+	/* Mega Phase D, PR D8, Section 15 of the task: a real, disclosed PR
+	 * D7 finding was that an extremely oversized prompt made the server
+	 * unresponsive for minutes on a memory-constrained host, with no
+	 * fast, structured rejection. Root-caused this phase (real source
+	 * read, runtime_session.cpp's own membrane_resolve_ctx_auto()):
+	 * that function tokenizes the ENTIRE prompt (a real vocab-only
+	 * model load + real BPE tokenization, itself scaling with prompt
+	 * size) BEFORE ever comparing the result against entry.model_max_
+	 * context -- the existing, already-correct fast rejection
+	 * (context_recommender.c's own real "minimum_required_context >
+	 * model_max_context" check) only runs AFTER that cost is already
+	 * paid. This cheap, PRE-tokenization guard skips that cost entirely
+	 * for a prompt that could not possibly fit regardless of tokenizer
+	 * behavior: every GGUF tokenizer this project supports (byte-level
+	 * BPE and SentencePiece alike) merges bytes INTO tokens, never the
+	 * reverse, so real token count can never exceed real raw byte
+	 * count -- a x6 margin (real English/code text averages ~4 bytes/
+	 * token; even deliberately dense text stays well above 1.5-2
+	 * bytes/token) leaves zero realistic chance of a false rejection
+	 * while still catching a prompt that is unambiguously, wildly too
+	 * large. entry.model_max_context is already real, cheap, cached
+	 * registry data (captured once at `membrane model add`/`install`
+	 * time) -- no new I/O, no new dependency. A prompt this check lets
+	 * through still goes through the exact same real, unmodified
+	 * tokenize-then-compare pipeline below; this only ever short-
+	 * circuits the unambiguous, extreme case. */
+	if (entry.model_max_context > 0
+		&& first_prompt.size() > (size_t)entry.model_max_context * 6)
+	{
+		*err_code = "CTX_TOO_SMALL_FOR_PROMPT";
+		*err_message = "this prompt is far larger than the model's real "
+			"maximum context (" + std::to_string(entry.model_max_context)
+			+ " tokens) -- rejected before an expensive real tokenization "
+			"attempt; try a shorter prompt";
+		*http_status = 400;
+		return (false);
+	}
+
 	membrane_host_meminfo_t		host;
 	membrane_ctxauto_outcome_t	ctxauto;
 

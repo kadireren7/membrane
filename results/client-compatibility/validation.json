@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "phase": "mega-phase-d-client-compatibility",
-  "membrane_commit": "PENDING -- updated as PR D7 actually merges",
+  "membrane_commit": "b8301480e7b0b9b5738ce508d99d611477766f02",
   "generated_at": "2026-09-07T02:30:00Z",
   "pr_squash_shas": {
     "D1": "e0dbad7abbe963730b6846d97eabbc8d47d15d99",
@@ -10,7 +10,7 @@
     "D4": "b0aec0bc71c7cadce460f60573d7a8053b1b7303",
     "D5": "ace9bb8445302f73112409bde3e64a9c26c27e52",
     "D6": "9df0040891df1aa93220258acf29b150a45a641c",
-    "D7": "PENDING"
+    "D7": "b8301480e7b0b9b5738ce508d99d611477766f02"
   },
   "note": "Mega Phase D, PR D7: real client-compatibility validation of the existing OpenAI-compatible server, plus real API-field-compatibility hardening (stop sequences, explicit tools/response_format rejection, a real GET /v1/models Python-SDK compatibility bug found and fixed). This phase deliberately expanded the API surface only where a real client/workflow needed it -- no /v1/completions, no /v1/embeddings, no tool calling were added, all disclosed with reasons in docs/api-contract.md/docs/server.md.",
   "host_memory_pressure": {

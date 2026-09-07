@@ -3,35 +3,44 @@ message: >-
   If you use MEMBRANE in academic or technical work, please cite this
   software using the metadata in this file.
 title: >-
-  MEMBRANE: Adaptive KV-Cache Planning for llama.cpp
+  MEMBRANE: A Local Model Runtime and Product Layer for llama.cpp
 type: software
 authors:
   - family-names: Altıntaş
     given-names: Kadir Eren
 repository-code: "https://github.com/kadireren7/membrane"
-version: "0.4.0"
-date-released: "2026-09-05"
+version: "0.8.0"
+date-released: "2026-09-07"
 license: Apache-2.0
 abstract: >-
-  MEMBRANE is an open-source llama.cpp runtime layer for KV-cache
-  precision and CPU/GPU residency planning under constrained memory. It
-  plans GPU layer offload, whole-cache Q8/Q5/adaptive KV precision, and
-  static CPU/GPU KV residency before generation (an --auto joint
-  planner with bounded apply-time fallback), with --plan-only/--doctor/
-  --list-devices/--inspect-model diagnostics and machine-readable JSON
-  output, on CPU and Vulkan backends. Compressed KV (q8/q5/adaptive) is
-  validated for LLM_ARCH_LLAMA and LLM_ARCH_QWEN2 models against real
-  local fixtures -- not a claim of universal architecture or hardware
-  coverage; see docs/compatibility.md for the current matrix. An
-  official Debian-family amd64 .deb package is available, installable
-  and onboarded end to end with a single `membrane setup` command
-  (`membrane doctor` for diagnostics); independent multi-host
-  validation beyond the maintainer's own development hardware remains
-  limited as of this release. This citation targets the latest stable
-  release, v0.4.0; the repository's main branch may contain
-  development changes beyond it. Archived experiments, negative
-  results, and benchmark/FPGA/CXL simulation provenance live in the
-  companion repository kadireren7/membrane-research.
+  MEMBRANE is an open-source product/runtime layer built on top of
+  llama.cpp: a built-in model catalog with real HTTPS download and
+  checksum verification, hardware-aware variant selection, memory-aware
+  KV-cache precision/residency planning (an --auto joint planner with
+  bounded apply-time fallback), a persistent local background service
+  with model-lifecycle management (`membrane use MODEL` -- select,
+  consent-gated auto-install, and live model switching with no
+  restart), and a real OpenAI-compatible chat API (streaming, stop
+  sequences, bounded admission) validated against the official Python
+  and Node.js `openai` SDKs. It does not reimplement llama.cpp's own
+  inference engine -- it chooses, fits, installs, plans for, and serves
+  models on top of it. CPU and Vulkan are validated on real local
+  hardware; CUDA and Metal are each validated on one real device (see
+  docs/support-matrix.md for the exact, current evidence-scoped
+  matrix -- not a claim of universal hardware coverage). Windows and
+  macOS are continuously validated on real GitHub-hosted CI runners
+  (CPU-only on Windows; a paravirtualized Metal device on macOS); no
+  official Windows/macOS package exists yet. An official Debian-family
+  amd64 .deb package is available for Linux, installable and onboarded
+  end to end with a single `membrane setup`/`membrane use MODEL`
+  command (`membrane doctor` for diagnostics); independent multi-host
+  validation beyond the maintainer's own development hardware and
+  GitHub-hosted CI remains limited as of this release. This citation
+  targets the latest stable release, v0.8.0; the repository's main
+  branch may contain development changes beyond it. Archived
+  experiments, negative results, and benchmark/FPGA/CXL simulation
+  provenance live in the companion repository
+  kadireren7/membrane-research.
 keywords:
   - llama.cpp
   - LLM
@@ -39,5 +48,9 @@ keywords:
   - inference
   - memory management
   - Vulkan
+  - CUDA
+  - Metal
   - quantization
   - GPU offload
+  - OpenAI-compatible API
+  - local AI

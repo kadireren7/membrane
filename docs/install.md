@@ -51,7 +51,7 @@ in the README rather than hidden. Once you have a
 `membrane_<version>_amd64.deb` file (downloaded, or built yourself):
 
 ```bash
-sudo apt install ./membrane_0.4.0_amd64.deb
+sudo apt install ./membrane_0.8.0_amd64.deb
 ```
 
 (`apt install ./file.deb`, not `dpkg -i`, so apt resolves the package's
