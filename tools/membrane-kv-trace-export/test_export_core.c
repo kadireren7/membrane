@@ -1,4 +1,22 @@
 #define _POSIX_C_SOURCE 200809L
+/*
+ * Darwin's <sys/cdefs.h> lowers __DARWIN_C_LEVEL from its own default
+ * __DARWIN_C_FULL down to the plain POSIX level the moment
+ * _POSIX_C_SOURCE is defined, and several Darwin headers gate real
+ * declarations on __DARWIN_C_LEVEL >= __DARWIN_C_FULL -- so on macOS
+ * the line above takes declarations AWAY instead of adding them.
+ * <unistd.h>'s own mkdtemp() is one of them (POSIX.1-2008 for over a
+ * decade, but Darwin still declares it FULL-only), and this file's own
+ * real temp-directory fixture calls it, so the plain documented build
+ * (`cmake --build build -j`) failed outright on macOS with "call to
+ * undeclared function 'mkdtemp'". _DARWIN_C_SOURCE restores Darwin's
+ * own default level without giving up the _POSIX_C_SOURCE line above,
+ * which is what glibc genuinely needs (strict -std=c11 hides POSIX
+ * there entirely). Apple-only; no effect on any other target.
+ */
+#if defined(__APPLE__)
+# define _DARWIN_C_SOURCE
+#endif
 
 #include <dirent.h>
 #include <stdlib.h>
