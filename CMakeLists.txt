@@ -226,6 +226,21 @@ set_target_properties(membrane_cli_parse PROPERTIES
 target_link_libraries(membrane_cli_parse PUBLIC membrane_runtime_core
   membrane_kv_store_telemetry)
 
+# The server's OpenAI-compatible "stop" string matching (tools/membrane/
+# stop_sequence.h/.cpp), split out of server.cpp for the same reason
+# membrane_cli_parse above was split out of main.cpp: the streaming path
+# it drives cannot be exercised without a real model and a real HTTP
+# round trip, so the decision logic is built and tested (test_stop_
+# sequence) under the default llama-free configuration instead.
+add_library(membrane_stop_sequence STATIC
+  tools/membrane/stop_sequence.cpp)
+set_target_properties(membrane_stop_sequence PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_stop_sequence PUBLIC membrane_sanitizers)
+target_include_directories(membrane_stop_sequence PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+
 # Product Phase 8: membrane-run's product CLI parser and compatibility
 # pre-check -- both llama-free (no model load, no ggml/llama header),
 # built unconditionally like the libraries above.
@@ -814,6 +829,19 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_kv_store_telemetry PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_kv_store_telemetry COMMAND test_kv_store_telemetry)
+
+  # The server's stop-string matching, tested directly -- no
+  # MEMBRANE_ENABLE_LLAMA, no model, no HTTP round trip, same as
+  # test_utf8_stream's own rationale for the sibling boundary problem.
+  add_executable(test_stop_sequence
+    tools/membrane/test_stop_sequence.cpp)
+  set_target_properties(test_stop_sequence PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_stop_sequence PRIVATE membrane_stop_sequence)
+  target_include_directories(test_stop_sequence PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_stop_sequence COMMAND test_stop_sequence)
 
   # Product Phase 8: membrane-run's product CLI parser and
   # compatibility pre-check, tested directly -- no MEMBRANE_ENABLE_LLAMA,

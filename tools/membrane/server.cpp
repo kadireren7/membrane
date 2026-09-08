@@ -24,6 +24,7 @@
 #include "gpu_policy.h"
 #include "product_cli.h"
 #include "utf8_stream.h"
+#include "stop_sequence.h"
 #include "stream_queue.h"
 #include "request_admission.h"
 #include "fs_util.h"
@@ -799,29 +800,11 @@ static void	handle_status(s_membrane_server_model_state *st,
  * the match and sets cancel_flag -- generation genuinely halts (real
  * compute savings, not a post-hoc truncation of output that was already
  * fully generated). Earliest match across every requested stop string
- * wins, matching real OpenAI behavior. */
-static bool	find_stop_match(const std::string &acc,
-				const std::vector<std::string> &stops, size_t *out_pos)
-{
-	bool	found = false;
-	size_t	best = std::string::npos;
-
-	for (const auto &s : stops)
-	{
-		if (s.empty())
-			continue ;
-		size_t	pos = acc.find(s);
-
-		if (pos != std::string::npos && (!found || pos < best))
-		{
-			found = true;
-			best = pos;
-		}
-	}
-	if (found)
-		*out_pos = best;
-	return (found);
-}
+ * wins, matching real OpenAI behavior. Matching itself now lives in
+ * stop_sequence.h (membrane_stop_find_match/membrane_stop_pending_
+ * suffix_len), pulled out for the same reason utf8_stream.h was: the
+ * streaming path cannot be exercised without a real model, so the
+ * decision logic is unit-tested there instead. */
 
 /* The non-streaming analogue of stream_token_cb()'s own stop-matching
  * logic above -- no queue/SSE framing involved, just a plain
@@ -845,7 +828,7 @@ static void	nonstream_stop_token_cb(const char *piece, size_t piece_len,
 	ctx->acc.append(piece, piece_len);
 	size_t	match_pos;
 
-	if (find_stop_match(ctx->acc, *ctx->stops, &match_pos))
+	if (membrane_stop_find_match(ctx->acc, *ctx->stops, &match_pos))
 	{
 		ctx->matched = true;
 		ctx->match_pos = match_pos;
@@ -874,6 +857,10 @@ struct s_stream_worker_ctx
 	 * which has already returned by the time stop_matched is read). */
 	const std::vector<std::string>	*stop_sequences = NULL;
 	std::string					full_acc;
+	/* How much of full_acc has actually been pushed to the queue. Not
+	 * the same as full_acc.size(): a trailing partial stop match is
+	 * held back until a later token proves it is not a stop after all. */
+	size_t						sent_len = 0;
 	bool						stop_matched = false;
 };
 
@@ -897,28 +884,46 @@ static void	stream_token_cb(const char *piece, size_t piece_len, int step,
 	wctx->utf8_pending.erase(0, emit_len);
 	if (wctx->stop_sequences != NULL && !wctx->stop_sequences->empty())
 	{
-		size_t	already_sent = wctx->full_acc.size();
-
 		wctx->full_acc += emit_text;
 		size_t	match_pos;
 
-		if (find_stop_match(wctx->full_acc, *wctx->stop_sequences,
-				&match_pos))
+		if (membrane_stop_find_match(wctx->full_acc,
+				*wctx->stop_sequences, &match_pos))
 		{
-			if (match_pos > already_sent)
+			if (match_pos > wctx->sent_len)
 			{
-				std::string	truncated = emit_text.substr(0,
-						match_pos - already_sent);
 				s_stream_event	ev;
 
 				ev.type = MEMBRANE_STREAM_EVENT_TOKEN;
-				ev.text = truncated;
+				ev.text = wctx->full_acc.substr(wctx->sent_len,
+						match_pos - wctx->sent_len);
 				wctx->queue->push_blocking(std::move(ev));
+				wctx->sent_len = match_pos;
 			}
 			wctx->stop_matched = true;
 			wctx->cancel_flag->store(true, std::memory_order_relaxed);
 			return ;
 		}
+		/* No complete match yet -- but a stop string routinely spans
+		 * several BPE tokens, so any trailing bytes that are already a
+		 * proper prefix of one must be held back rather than sent: once
+		 * they are on the wire they cannot be taken back, and the
+		 * client would see part of a stop sequence it asked to have cut
+		 * (the non-streaming path, which truncates one fully
+		 * accumulated string, never had this problem -- the two paths
+		 * disagreed for exactly these inputs). Held-back bytes are
+		 * released by whichever comes first: a later token that rules
+		 * the match out, or stream_worker_fn()'s own end-of-generation
+		 * flush. */
+		size_t	safe_end = wctx->full_acc.size()
+			- membrane_stop_pending_suffix_len(wctx->full_acc,
+				*wctx->stop_sequences);
+
+		if (safe_end <= wctx->sent_len)
+			return ;
+		emit_text = wctx->full_acc.substr(wctx->sent_len,
+				safe_end - wctx->sent_len);
+		wctx->sent_len = safe_end;
 	}
 	s_stream_event	ev;
 
@@ -1046,13 +1051,23 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 	 * lose output). PR D7: skipped when a stop sequence matched -- those
 	 * trailing bytes are generated content PAST the point the client
 	 * asked to cut the response at, never emitted. */
-	if (!wctx.utf8_pending.empty() && !wctx.stop_matched)
+	if (!wctx.stop_matched)
 	{
-		s_stream_event	flush_ev;
+		/* Any bytes held back as a possible partial stop match turned
+		 * out not to be one -- generation ended first -- so they are
+		 * ordinary output and must still be sent, ahead of the UTF-8
+		 * tail that follows them. */
+		std::string	pending = wctx.full_acc.substr(wctx.sent_len)
+			+ wctx.utf8_pending;
 
-		flush_ev.type = MEMBRANE_STREAM_EVENT_TOKEN;
-		flush_ev.text = wctx.utf8_pending;
-		state->queue.push_blocking(std::move(flush_ev));
+		if (!pending.empty())
+		{
+			s_stream_event	flush_ev;
+
+			flush_ev.type = MEMBRANE_STREAM_EVENT_TOKEN;
+			flush_ev.text = pending;
+			state->queue.push_blocking(std::move(flush_ev));
+		}
 	}
 	s_stream_event	terminal;
 
