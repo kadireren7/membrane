@@ -78,6 +78,12 @@ size_t	membrane_attntrace_entry_count(const membrane_attntrace_header_t *h)
 static void	serialize_header(uint8_t *b,
 				const membrane_attntrace_header_t *h)
 {
+	/* Fields below define bytes [0, 116) of a 128-byte header; the
+	 * caller's buffer is uninitialized automatic storage and all 128
+	 * bytes are written to the file, so [116, 128) must be zeroed here
+	 * to keep the reserved tail canonical. Same as attntrace3.c's own
+	 * serialize_header(). */
+	memset(b, 0, MEMBRANE_ATTNTRACE_HEADER_SIZE);
 	put_le32(b + 0, MEMBRANE_ATTNTRACE_MAGIC);
 	put_le32(b + 4, MEMBRANE_ATTNTRACE_VERSION);
 	memcpy(b + 8, h->model, MEMBRANE_ATTNTRACE_MODEL_CAP);
