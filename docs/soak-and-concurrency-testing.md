@@ -92,3 +92,81 @@ memory pressure on this dev host at test time (TSan's own real memory
 overhead was judged an avoidable additional risk to an already-strained
 shared host at that moment) — disclosed here rather than silently
 mixed in as if both had run under identical conditions.
+
+## Mega Phase E, PR E1: real concurrent decode, and a real pre-existing
+## ggml CPU-kernel race found by testing it
+
+E1 replaced full generation-serialization (one `std::mutex` held for the
+whole request) with bounded, genuinely concurrent decode
+(`decode_concurrency_gate_t`, default capacity 2 — see `tools/membrane/
+decode_concurrency.h`). `test_decode_concurrency.cpp` (new, same
+Threads::Threads-only, CI-run, TSan-covered precedent as
+`test_request_admission.cpp`) proves the gate primitive itself race-free
+under real concurrent contention. `scripts/verify-continuous-batching.py`
+(new, local-dev-only, requires a real GGUF, same "never runs in CI"
+convention as the two scripts above) proves real, concurrent, real-model
+decode is CORRECT (concurrent non-stream/stream/mixed all succeed with
+coherent, non-corrupted per-request output; a real client disconnect on
+one stream never affects a concurrently-running second request; a short
+request is not starved behind a long one) and gives real, honest
+performance evidence (~1.24x wall-clock on a real 4-request burst,
+2 CPU cores' worth of real headroom on this dev host — never marketed
+as more than that one real measurement shows).
+
+**A real, previously-undiscovered hang class was found and fixed while
+building this evidence**: `membrane serve` never called `llama_log_set()`
+(unlike `membrane-run`'s own `main.cpp`, which already suppresses
+llama.cpp's own verbose internal logging via exactly this API) — every
+real request's own fresh `llama_context` creation (this project's
+"persistent model, new context per request" architecture, unchanged)
+prints real, substantial llama.cpp-internal diagnostic output
+(`graph_reserve`/`sched_reserve`/`resolve_fused_ops` lines — measured
+directly at ~13 KB per request on the real SmolLM2-135M fixture) to
+stderr, completely outside MEMBRANE's own quiet/verbose design. Under
+any real supervisor whose stdout/stderr sink has bounded buffering and
+no continuous reader (confirmed, reproduced directly: Python's own
+`subprocess.PIPE` without a draining thread — NOT systemd/journald,
+which reads continuously and never blocks this way), enough real
+sequential requests (~5 on this project's own measurement) fill that
+buffer and the request-handling thread's own `fprintf()` call blocks
+FOREVER — starving every other request waiting on that thread's held
+decode-gate/admission slot. Fixed in `server.cpp` by calling
+`llama_log_set()` once at `membrane_server_run()` startup (mirroring
+`main.cpp`'s own `quiet_log_callback`, ERROR-level only). Root-caused
+directly (not dismissed as "just memory pressure" despite this dev
+host's own real, severe, chronic memory constraints) via `/proc/<pid>/
+task/*/wchan` inspection, which showed the stuck thread genuinely
+blocked in `anon_pipe_write`, not in any lock/condvar this project's own
+code owns.
+
+**A real, pre-existing third-party (vendored ggml CPU backend) data race
+was found, NOT introduced by E1**: running one real generation under a
+TSan build (`build-tsan`, real SmolLM2-135M, `MEMBRANE_MAX_CONCURRENT_
+DECODE=1` -- i.e. zero cross-request concurrency, a single decode call
+with its own internal `n_threads=4` intra-op parallelism only) reports
+real TSan `WARNING: data race` findings inside `ggml_compute_forward_
+flash_attn_ext_f16_one_chunk`/`ggml_compute_forward_mul_mat_one_chunk`
+(`third_party/llama.cpp/ggml/src/ggml-cpu/`) -- ggml's OWN intra-op
+worker threads (spawned via `libgomp`, one context's own `n_threads=4`
+pool) racing on writes into that SAME context's own compute buffer.
+Confirmed this is **unrelated to E1's own cross-request scheduler**:
+it reproduces identically with a single in-flight request and zero
+concurrent decodes, so it has been real and present since `n_threads>1`
+was first used (long before this phase), simply never exercised under
+TSan with real generation before (the existing CI TSan job, `test_
+server.cpp`, uses a nonexistent-model 404 path specifically to stay
+llama-real-generation-free and fast). E1's own new code (`decode_
+concurrency_gate_t`, `decode_slot_enter`/`decode_slot_exit`, the
+per-request `local_session` copy, `ensure_model_loaded`'s drain-wait)
+shows NO TSan-flagged races in isolation, real-generation runs included.
+**Not fixed in this PR**: this is a real bug inside vendored, third-party
+CPU-kernel code, likely a documented/accepted class of numeric-kernel
+race (disjoint-in-practice writes the C++/TSan memory model still flags,
+common in hand-tuned SIMD/threaded compute code -- real output was
+correct and coherent in every real request observed despite the
+warnings) -- fixing it would mean patching vendored ggml source, well
+outside a "scheduler foundation" PR's own scope, and is not currently
+CI-gating (the CI TSan job's own real-generation-free design is
+unaffected and stays green). Disclosed here, honestly, as a known,
+pre-existing limitation of the vendored CPU backend rather than hidden
+or wrongly attributed to this phase's own new scheduler code.

@@ -586,4 +586,17 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_request_admission PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_request_admission COMMAND test_request_admission)
+
+  # Mega Phase E, PR E1: real multi-threaded tests for decode_concurrency.h's
+  # bounded, blocking decode-slot gate -- same header-only,
+  # Threads::Threads-only precedent as test_request_admission above.
+  add_executable(test_decode_concurrency test_decode_concurrency.cpp)
+  set_target_properties(test_decode_concurrency PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_decode_concurrency PRIVATE membrane_sanitizers
+    Threads::Threads)
+  target_include_directories(test_decode_concurrency PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_decode_concurrency COMMAND test_decode_concurrency)
 endif()

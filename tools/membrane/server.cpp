@@ -26,6 +26,8 @@
 #include "utf8_stream.h"
 #include "stream_queue.h"
 #include "request_admission.h"
+#include "decode_concurrency.h"
+#include "request_state.h"
 #include "fs_util.h"
 
 #include <sys/stat.h>
@@ -105,6 +107,25 @@ static int	membrane_max_pending_chat_requests(void)
 	return (MEMBRANE_DEFAULT_MAX_PENDING_CHAT_REQUESTS);
 }
 
+/* Mega Phase E, PR E1: see decode_concurrency.h's own top comment for the
+ * full rationale. Floored at 1 (never 0 -- unlike the admission gate,
+ * whose whole purpose includes a test-only "reject the very first
+ * request" capacity-0 mode, a decode gate that can never admit anything
+ * would deadlock every real request forever, not reject them). */
+static int	membrane_max_concurrent_decode(void)
+{
+	const char	*env = getenv("MEMBRANE_MAX_CONCURRENT_DECODE");
+
+	if (env != NULL && env[0] != '\0')
+	{
+		int	parsed = atoi(env);
+
+		if (parsed >= 1)
+			return (parsed);
+	}
+	return (MEMBRANE_DEFAULT_MAX_CONCURRENT_DECODE);
+}
+
 /*
  * See server.h's own top comment for the full contract. This file never
  * calls any of the CLI's own print_*()/argv-parsing code (Section 1/5 of
@@ -144,10 +165,18 @@ static void	send_json_error(httplib::Response &res, int status,
 
 struct s_membrane_server_model_state
 {
-	std::mutex					mtx;	/* Section 24: serializes every
-										 * generation request -- no
-										 * continuous batching, correctness
-										 * first */
+	/* Mega Phase E, PR E1: mtx's SCOPE narrowed from "held for the whole
+	 * generation" (Section 24 of the Mega Phase A task, the original
+	 * comment this replaces) to "held only while reading/mutating the
+	 * model-lifecycle fields below (model_loaded/loaded_name/session/
+	 * cached_chat_template) and while incrementing decode_inflight" --
+	 * see decode_slot_enter()/decode_slot_exit()/ensure_model_loaded()'s
+	 * own comments. Actual decode (membrane_session_generate()) now runs
+	 * WITHOUT mtx held, on a per-request COPY of `session` (never the
+	 * shared struct itself -- see handle_chat_completions()'s own PR E1
+	 * comment for why a shared-struct copy, not a shared reference, is
+	 * required for correctness). */
+	std::mutex					mtx;
 	membrane_runtime_t			rt = {};
 	bool						model_loaded = false;
 	std::string					loaded_name;
@@ -180,6 +209,32 @@ struct s_membrane_server_model_state
 	 * on mtx. */
 	request_admission_gate_t	admission_gate{membrane_max_pending_chat_requests()};
 
+	/* Mega Phase E, PR E1, Section 5/9/10 of the task: the real concurrent-
+	 * decode bound -- see decode_concurrency.h's own top comment. Distinct
+	 * from admission_gate above: admission_gate bounds "how many requests
+	 * may be admitted at all" (unchanged from PR B3, still 8 by default);
+	 * decode_gate bounds "how many of those admitted requests may be
+	 * inside llama_decode() at the same physical moment" (2 by default) --
+	 * an admitted request past decode_gate's own capacity waits (in the
+	 * QUEUED request_state_t) rather than being rejected. */
+	decode_concurrency_gate_t	decode_gate{membrane_max_concurrent_decode()};
+
+	/* Mega Phase E, PR E1, Section 12/29 of the task: how many requests
+	 * are currently inside membrane_session_generate() for the CURRENTLY
+	 * loaded model, right now -- the real "is it safe to close this
+	 * model's session out from under someone" signal. Every mutation
+	 * (increment in decode_slot_enter(), decrement in decode_slot_exit())
+	 * happens either while mtx is already held (enter) or by taking mtx
+	 * itself around the mutation (exit) specifically so drain_cv's own
+	 * wait_for() predicate check can never race a concurrent decrement
+	 * into a lost wakeup (the standard condition_variable pitfall of
+	 * mutating predicate state without the SAME mutex the waiter checks
+	 * it under) -- see decode_slot_exit()'s own comment. */
+	std::atomic<int>			decode_inflight{0};
+	std::condition_variable	drain_cv;	/* paired with mtx; see
+										 * ensure_model_loaded()'s own PR E1
+										 * drain-wait comment */
+
 	/* Mega Phase B, PR B3, Section 32: the model registry now lives
 	 * HERE (moved out of membrane_server_run()'s own local variable)
 	 * so it can be hot-refreshed from an mtime check without any
@@ -192,6 +247,46 @@ struct s_membrane_server_model_state
 	std::string					registry_path;
 	int64_t						registry_mtime_ns = 0;
 };
+
+/* Mega Phase E, PR E1: call ONLY while st->mtx is already held (both real
+ * call sites -- handle_chat_completions() non-stream and stream branches
+ * -- call this right before releasing/moving the lock they already took
+ * to run ensure_model_loaded()). Bumps decode_inflight and, on the
+ * 0->1 transition, reflects that in model_state -- GENERATING now
+ * honestly means "at least one request is decoding", not "exactly one",
+ * now that E1 allows real concurrency. */
+static void	decode_slot_enter(s_membrane_server_model_state *st)
+{
+	if (st->decode_inflight.fetch_add(1, std::memory_order_acq_rel) == 0)
+		st->model_state.store(MEMBRANE_MODEL_STATE_GENERATING,
+			std::memory_order_relaxed);
+}
+
+/* Mega Phase E, PR E1: the counterpart to decode_slot_enter() -- takes
+ * st->mtx itself (never assume the caller already holds it; unlike enter,
+ * this runs from contexts that do NOT hold mtx, e.g. right after
+ * membrane_session_generate() returns with the lock already released, or
+ * from stream_release() on the streaming worker-join path). Mutating
+ * decode_inflight and checking "did it reach zero" under the SAME mutex
+ * ensure_model_loaded()'s drain_cv.wait_for() predicate also uses is what
+ * makes that wait race-free (see the mtx member's own top comment). The
+ * notify_all() itself deliberately happens AFTER releasing the lock
+ * (the standard "don't wake a thread that will immediately block on a
+ * lock you're still holding" optimization) -- this is safe specifically
+ * because the state mutation that made the predicate true already
+ * happened while the lock was held, so no wakeup can be lost. */
+static void	decode_slot_exit(s_membrane_server_model_state *st)
+{
+	{
+		std::lock_guard<std::mutex>	lock(st->mtx);
+
+		if (st->decode_inflight.fetch_sub(1, std::memory_order_acq_rel) == 1
+			&& st->model_loaded)
+			st->model_state.store(MEMBRANE_MODEL_STATE_READY,
+				std::memory_order_relaxed);
+	}
+	st->drain_cv.notify_all();
+}
 
 static bool	load_chat_template(const std::string &model_path,
 				std::string *out_template, std::string *err_message)
@@ -395,6 +490,7 @@ static bool	try_load_one(s_membrane_server_model_state *st,
  * apart from "a switch attempt left this host unable to serve anything
  * right now". */
 static bool	ensure_model_loaded(s_membrane_server_model_state *st,
+				std::unique_lock<std::mutex> &lock,
 				const membrane_registry_t &registry_snapshot,
 				const membrane_registry_entry_t &entry,
 				const std::string &first_prompt, int gen_tokens,
@@ -409,6 +505,31 @@ static bool	ensure_model_loaded(s_membrane_server_model_state *st,
 
 	if (st->model_loaded)
 	{
+		/* Mega Phase E, PR E1, Section 6/16 of the task: a model switch
+		 * must never free (membrane_model_close(), below) a session a
+		 * concurrently-running request is still decoding against -- that
+		 * request holds its own COPY of st->session (see handle_chat_
+		 * completions()'s own PR E1 comment), but the copy's `model`
+		 * pointer is only valid as long as the ORIGINAL llama_model
+		 * membrane_model_close() would free is still alive. Bounded wait
+		 * (5s, matching the pre-E1 handle_activate_model() retry budget
+		 * this replaces) rather than an indefinite one -- a switch that
+		 * can't get a safe window in 5s reports MODEL_SWITCH_BUSY (503)
+		 * and leaves the CURRENT model fully intact and still serving,
+		 * never a partial/corrupted unload. */
+		bool	drained = st->drain_cv.wait_for(lock,
+				std::chrono::seconds(5),
+				[st] { return (st->decode_inflight.load(
+						std::memory_order_acquire) == 0); });
+
+		if (!drained)
+		{
+			*err_code = "MODEL_SWITCH_BUSY";
+			*err_message = "a generation against the currently-loaded "
+				"model is still in progress -- retry shortly";
+			*http_status = 503;
+			return (false);
+		}
 		st->model_state.store(MEMBRANE_MODEL_STATE_UNLOADING,
 			std::memory_order_relaxed);
 		membrane_model_close(&st->session);
@@ -574,35 +695,18 @@ static void	handle_activate_model(s_membrane_server_model_state *st,
 			+ model_name + "' is registered (see `membrane model list`)");
 		return ;
 	}
-	/* Section 15 of the task: never unload a model beneath an active
-	 * generation. st->mtx already serializes every generation for the
-	 * whole request (Section 24 of the Mega Phase A task) -- a bounded
-	 * try_lock retry here (never an indefinite block) reuses that exact
-	 * same real serialization instead of inventing a second one, and
-	 * reports SERVER_BUSY (the same code/spirit as the admission gate's
-	 * own 503) rather than either blocking forever or racing a live
-	 * generation. */
-	std::unique_lock<std::mutex>	lock(st->mtx, std::defer_lock);
-	bool							locked = false;
+	/* Mega Phase E, PR E1: mtx now only guards the model-lifecycle fields
+	 * (not the whole generation, see mtx's own top comment) -- a plain
+	 * blocking lock is correct and fast here (real generation never holds
+	 * mtx anymore). "Never unload a model beneath an active generation"
+	 * (Section 15 of the original Mega Phase A task) is now enforced by
+	 * ensure_model_loaded()'s own bounded drain-wait against decode_
+	 * inflight (see its PR E1 comment) -- this replaces the old try_lock
+	 * retry loop's SERVER_BUSY with that function's own MODEL_SWITCH_BUSY,
+	 * same "bounded wait, never indefinite, never corrupts anything"
+	 * contract. */
+	std::unique_lock<std::mutex>	lock(st->mtx);
 
-	for (int attempt = 0; attempt < 50 && !locked; ++attempt)
-	{
-		if (lock.try_lock())
-			locked = true;
-		else
-		{
-			struct timespec	ts = {0, 100000000L};
-
-			nanosleep(&ts, NULL);
-		}
-	}
-	if (!locked)
-	{
-		res.set_header("Retry-After", "1");
-		send_json_error(res, 503, "SERVER_BUSY", "a generation is currently "
-			"in progress -- retry shortly");
-		return ;
-	}
 	if (st->model_loaded && st->loaded_name == entry->name)
 	{
 		const char	*kv_name;
@@ -645,8 +749,8 @@ static void	handle_activate_model(s_membrane_server_model_state *st,
 	std::string	err_code;
 	std::string	err_message;
 	int			err_status = 500;
-	bool		ok = ensure_model_loaded(st, reg, *entry, prompt_text, 512,
-			&err_code, &err_message, &err_status);
+	bool		ok = ensure_model_loaded(st, lock, reg, *entry, prompt_text,
+			512, &err_code, &err_message, &err_status);
 
 	if (ok)
 		st->cached_chat_template = tmpl;
@@ -778,15 +882,22 @@ static void	handle_status(s_membrane_server_model_state *st,
  * (decode_loop.h) -- the runtime core itself only ever sees "the caller
  * asked to stop," never any HTTP/socket-specific concept.
  *
- * st->mtx (Section 24's existing full-request-serialization mutex) is
- * held for the ENTIRE request, streaming tail included -- not just the
- * synchronous prefix -- via a std::unique_lock moved into the stream
- * state and released only in the resource_releaser once the whole
- * chunked response (success or failure) is complete. This preserves the
- * exact same "one generation at a time" policy streaming already had to
- * honor for non-streaming requests; a second concurrent request genuinely
- * waits for a still-streaming one to finish, exactly as it already waits
- * for a non-streaming one today.
+ * Mega Phase E, PR E1 UPDATE: st->mtx is now held ONLY for the brief
+ * model-lifecycle setup above (ensure_model_loaded() + snapshotting a
+ * per-request COPY of st->session into state->local_session) -- released
+ * before the worker thread is even spawned. The worker thread instead
+ * acquires a bounded decode_concurrency_gate_t ticket (decode_concurrency.h)
+ * around its own membrane_session_generate() call, so multiple streaming
+ * (and/or non-streaming) requests genuinely decode at the same time, up
+ * to that gate's own capacity -- not serialized on st->mtx anymore. What
+ * IS still serialized/protected: (a) decode_inflight (incremented while
+ * st->mtx is held, at setup time; decremented, under st->mtx again, in
+ * stream_release() once the worker thread has fully joined) guarantees a
+ * model switch can never free a session a request is still using, and
+ * (b) each request operates on its OWN local_session copy, never the
+ * shared st->session, so concurrent requests cannot race on session->gs's
+ * own per-call-mutated planner fields (see s_stream_request_state's own
+ * local_session comment).
  */
 
 /* Mega Phase D, PR D7, Section 12 of the task: real "stop" string
@@ -967,9 +1078,35 @@ struct s_stream_request_state
 											 * alongside `cancel_flag`
 											 * above) */
 	std::thread					worker;
-	std::unique_lock<std::mutex>	server_lock;	/* holds st->mtx for the
-											 * whole request -- see this
-											 * section's own top comment */
+	membrane_model_session_t	local_session;	/* Mega Phase E, PR E1: a
+										 * real VALUE COPY of st->session,
+										 * snapshotted in handle_chat_
+										 * completions() while st->mtx is
+										 * still held, and used for this
+										 * request's own membrane_session_
+										 * generate() call INSTEAD of the
+										 * shared st->session -- required
+										 * for correctness now that decode
+										 * runs without st->mtx held and
+										 * potentially concurrently with
+										 * another request's own decode
+										 * (see handle_chat_completions()'s
+										 * own PR E1 top comment for the
+										 * full race this avoids: gs's
+										 * fields -- adaptive_used, backend_
+										 * selected, gpu_layers_selected,
+										 * kv_placement_resolved -- are
+										 * genuinely re-written per generate()
+										 * call, so two concurrent requests
+										 * sharing one session would race on
+										 * them and could report EACH
+										 * OTHER's planner results). `model`
+										 * itself (the llama_model* the copy
+										 * shares with st->session) stays
+										 * valid for as long as decode_
+										 * inflight is nonzero -- see
+										 * ensure_model_loaded()'s own
+										 * drain-wait. */
 
 	/* Owned here so it outlives handle_chat_completions()'s own return
 	 * (the worker thread and the content-provider/resource-releaser
@@ -997,6 +1134,18 @@ struct s_stream_request_state
 											 * matching codepath in
 											 * stream_token_cb() entirely
 											 * unreached */
+
+	/* Mega Phase E, PR E1, Section 4 of the task: explicit request
+	 * lifecycle -- see request_state.h's own top comment for the full
+	 * state list/meaning. Starts QUEUED (admitted, not yet decoding);
+	 * every later transition below is a plain, traceable store, never
+	 * inferred after the fact from other bookkeeping. Atomic only
+	 * because it is set from the worker thread and could in principle be
+	 * read from another (no reader exists yet -- this is the same
+	 * "observability primitive, not a policy of its own" scope request_
+	 * state.h's own top comment describes). */
+	std::atomic<membrane_request_state_t>	req_state{
+			membrane_request_state_t::QUEUED};
 
 	s_stream_request_state() : queue(&cancel_flag) {}
 };
@@ -1038,7 +1187,16 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 	gen_req.token_cb = stream_token_cb;
 	gen_req.token_cb_ud = &wctx;
 	gen_req.cancel_flag = &state->gen_cancel_flag;
-	membrane_session_generate(&state->st->session, gen_req, &gen_res);
+	/* Mega Phase E, PR E1, Section 5/9: blocks here (never rejects -- this
+	 * request was already admitted) until fewer than decode_gate's own
+	 * capacity requests are actually decoding -- the real bound on
+	 * concurrent llama_decode() load. Released automatically (RAII) the
+	 * moment this scope exits, right after generate() returns below. */
+	decode_concurrency_ticket_t	decode_ticket(&state->st->decode_gate);
+
+	state->req_state.store(membrane_request_state_t::ACTIVE,
+		std::memory_order_relaxed);
+	membrane_session_generate(&state->local_session, gen_req, &gen_res);
 	/* Flush whatever partial UTF-8 tail never resolved -- better to emit
 	 * it than to silently drop real generated bytes (Section 21: only
 	 * reachable if generation stopped (limit/EOG/cancellation) exactly
@@ -1065,7 +1223,11 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 	 * reason "stop"), never the silent-close CANCELLED path a dead
 	 * peer gets. */
 	if (gen_res.cancelled && !wctx.stop_matched)
+	{
 		terminal.type = MEMBRANE_STREAM_EVENT_CANCELLED;
+		state->req_state.store(membrane_request_state_t::CANCELLED,
+			std::memory_order_relaxed);
+	}
 	else if (!gen_res.ok)
 	{
 		terminal.type = MEMBRANE_STREAM_EVENT_ERROR;
@@ -1073,10 +1235,14 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 				&& gen_res.err.reason_code[0] != '\0')
 			? gen_res.err.reason_code : "GENERATION_FAILED";
 		terminal.error_message = "generation failed for this request";
+		state->req_state.store(membrane_request_state_t::FAILED,
+			std::memory_order_relaxed);
 	}
 	else
 	{
 		terminal.type = MEMBRANE_STREAM_EVENT_DONE;
+		state->req_state.store(membrane_request_state_t::DONE,
+			std::memory_order_relaxed);
 		terminal.finish_reason = wctx.stop_matched ? "stop"
 			: (((size_t)gen_res.gen_result.tokens.size()
 					>= (size_t)state->max_tokens) ? "length" : "stop");
@@ -1149,6 +1315,8 @@ static bool	stream_provide(std::shared_ptr<s_stream_request_state> state,
 			 * separate flags, not one). */
 			state->cancel_flag.store(true, std::memory_order_relaxed);
 			state->gen_cancel_flag.store(true, std::memory_order_relaxed);
+			state->req_state.store(membrane_request_state_t::CANCELLING,
+				std::memory_order_relaxed);
 			return (false);
 		}
 		return (true);	/* nothing ready yet, peer still alive -- httplib
@@ -1253,12 +1421,15 @@ static void	stream_release(std::shared_ptr<s_stream_request_state> state,
 	state->gen_cancel_flag.store(true, std::memory_order_relaxed);
 	if (state->worker.joinable())
 		state->worker.join();
-	/* Section 27: back to READY (never left at GENERATING) -- still
-	 * under state->server_lock (still held here, unlocked right below),
-	 * so this transition is exactly as synchronized as every other one. */
-	state->st->model_state.store(MEMBRANE_MODEL_STATE_READY,
-		std::memory_order_relaxed);
-	state->server_lock.unlock();
+	/* Mega Phase E, PR E1: this request is now FULLY done with local_
+	 * session's own copy of the model pointer -- decode_slot_exit()
+	 * decrements decode_inflight (only now, after join(), guaranteeing
+	 * membrane_session_generate() has truly returned) and, on the ->0
+	 * transition, sets model_state back to READY and wakes any
+	 * ensure_model_loaded() drain-wait blocked on a model switch. Section
+	 * 27's original "back to READY" guarantee, preserved -- just no
+	 * longer via server_lock (removed; decode never held st->mtx). */
+	decode_slot_exit(state->st);
 }
 
 static void	handle_chat_completions(s_membrane_server_model_state *st,
@@ -1477,7 +1648,7 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 	std::string	err_message;
 	int			err_status = 500;
 
-	if (!ensure_model_loaded(st, reg, *entry, prompt_text, max_tokens,
+	if (!ensure_model_loaded(st, lock, reg, *entry, prompt_text, max_tokens,
 			&err_code, &err_message, &err_status))
 	{
 		send_json_error(res, err_status, err_code, err_message);
@@ -1519,15 +1690,29 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 		state->include_usage = want_usage_in_stream;
 		state->stop_sequences = stop_sequences;
 		state->id = id_buf;
-		state->server_lock = std::move(lock);
+		state->local_session = st->session;	/* PR E1: real value copy,
+									 * taken while `lock` is still held --
+									 * see s_stream_request_state's own
+									 * local_session comment. */
 		state->admission_ticket = std::move(admission_ticket);	/* Section
 									 * 29: the slot stays held for the
 									 * whole async stream, released by
 									 * stream_release() -- not by this
 									 * function's own (already-passed)
 									 * return. */
-		st->model_state.store(MEMBRANE_MODEL_STATE_GENERATING,
-			std::memory_order_relaxed);
+		decode_slot_enter(st);	/* PR E1: still holding `lock` here --
+									 * marks this request as using the
+									 * current model before the lock (and
+									 * therefore the guarantee nothing else
+									 * can close it out from under us) is
+									 * released, right below. */
+		lock.unlock();	/* PR E1: decode itself never holds st->mtx
+									 * anymore -- released before the
+									 * worker thread is even spawned, so a
+									 * second request's own ensure_model_
+									 * loaded() call can proceed
+									 * immediately if it names the same
+									 * (already-loaded) model. */
 		state->worker = std::thread(stream_worker_fn, state);
 		res.set_header("Cache-Control", "no-cache");
 		res.set_chunked_content_provider("text/event-stream",
@@ -1536,6 +1721,16 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 			[state](bool success) { stream_release(state, success); });
 		return ;
 	}
+
+	/* Mega Phase E, PR E1: same real value-copy-then-release pattern as
+	 * the streaming branch above -- see s_stream_request_state's own
+	 * local_session comment for why a copy (never &st->session directly)
+	 * is required once decode can run concurrently with another
+	 * request's own decode. */
+	membrane_model_session_t	local_session = st->session;
+
+	decode_slot_enter(st);
+	lock.unlock();
 
 	membrane_run_opts_t	req_o;
 
@@ -1566,14 +1761,38 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 		gen_req.token_cb_ud = &nonstream_stop_ctx;
 		gen_req.cancel_flag = &nonstream_stop_flag;
 	}
-	st->model_state.store(MEMBRANE_MODEL_STATE_GENERATING,
-		std::memory_order_relaxed);
-	membrane_session_generate(&st->session, gen_req, &gen_res);
-	st->model_state.store(MEMBRANE_MODEL_STATE_READY,
-		std::memory_order_relaxed);
+	/* Mega Phase E, PR E1, Section 4 of the task: explicit request
+	 * lifecycle for the non-streaming path too -- a plain local (this
+	 * function has no concurrent reader of its own request's state,
+	 * unlike the streaming path's cross-thread s_stream_request_state::
+	 * req_state), same real transition points as stream_worker_fn's own
+	 * QUEUED->ACTIVE->{DONE,CANCELLED,ERROR}. */
+	membrane_request_state_t	req_state = membrane_request_state_t::QUEUED;
+
+	{
+		/* Mega Phase E, PR E1, Section 5/9: bounded, blocking -- see the
+		 * streaming branch's own decode_concurrency_ticket_t comment.
+		 * Scoped so the slot is released the moment generate() returns,
+		 * before decode_slot_exit()'s own (separate) st->mtx acquisition
+		 * below -- no functional requirement either order would break,
+		 * just avoids holding it any longer than needed. */
+		decode_concurrency_ticket_t	decode_ticket(&st->decode_gate);
+
+		req_state = membrane_request_state_t::ACTIVE;
+		membrane_session_generate(&local_session, gen_req, &gen_res);
+	}
+	decode_slot_exit(st);
 	/* A stop-sequence match sets gen_req.cancel_flag, so gen_res.cancelled
 	 * is true here too (ok is unaffected -- see runtime_session.h's own
-	 * doc comment) -- never treated as a real failure. */
+	 * doc comment) -- never treated as a real failure: a stop match is a
+	 * normal, successful completion (DONE), never CANCELLED, same
+	 * distinction stream_worker_fn's own terminal classification makes. */
+	if (gen_res.cancelled && !nonstream_stop_ctx.matched)
+		req_state = membrane_request_state_t::CANCELLED;
+	else if (!gen_res.ok)
+		req_state = membrane_request_state_t::FAILED;
+	else
+		req_state = membrane_request_state_t::DONE;
 	if (!gen_res.ok)
 	{
 		if (gen_res.err.set)
@@ -1616,18 +1835,71 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 	membrane_kv_precision_name_to_json(gen_res.effective_kv_mode, &kv_name);
 	response["membrane"] = {
 		{"context", gen_res.ctx_size},
-		{"gpu_layers", st->session.gs.gpu_layers_selected},
+		{"gpu_layers", local_session.gs.gpu_layers_selected},
 		{"kv_precision", kv_name},
-		{"kv_placement", st->session.gs.kv_placement_resolved
+		{"kv_placement", local_session.gs.kv_placement_resolved
 			? "placed" : "default"},
 		{"sampling", "greedy (temperature/top_p not yet supported -- "
 			"any request value is accepted and ignored)"},
 	};
 	res.set_content(response.dump(), "application/json");
+	/* req_state's own real value (DONE at this point, always -- the
+	 * earlier CANCELLED/ERROR branches both return before reaching here)
+	 * has no external reader yet on the non-streaming path (unlike
+	 * s_stream_request_state::req_state, which a future admin/status
+	 * surface could read cross-thread) -- Section 4 of the task only
+	 * requires the transitions themselves to be explicit, traceable
+	 * stores, not that every request's lifecycle already be exposed
+	 * externally. Silences -Wunused-but-set-variable without faking a
+	 * reader. */
+	(void)req_state;
+}
+
+/* Mega Phase E, PR E1: a real, previously-undiscovered hang-class bug
+ * found via this phase's own real concurrent-load testing (scripts/
+ * verify-continuous-batching.py), root-caused directly rather than
+ * dismissed as environmental. Every chat request opens a brand-new
+ * llama_context (this project's own "persistent model, new context per
+ * request" architecture, unchanged) -- llama.cpp's OWN internal logger
+ * (llama_log_set()'s default, unset here before this fix) writes real,
+ * substantial per-context-creation diagnostic output (graph_reserve/
+ * sched_reserve/resolve_fused_ops lines -- measured directly: ~13 KB per
+ * request on this project's own real SmolLM2-135M fixture) to stderr on
+ * EVERY request, completely outside MEMBRANE's own quiet/verbose design
+ * (tools/membrane-run/main.cpp's own quiet_log_callback already
+ * suppresses this for the CLI, via the exact same llama_log_set() API --
+ * this call site was simply missing on the SERVER path). Under any real
+ * deployment/test harness whose stdout/stderr sink has bounded buffering
+ * and no continuous reader (a plain OS pipe -- e.g. Python's own
+ * subprocess.PIPE without a draining thread, confirmed as this bug's
+ * own real, reproduced trigger; NOT systemd/journald, which reads
+ * continuously and never blocks this way), enough real sequential
+ * requests (~5 on this project's own real measurement) fill that buffer
+ * and the request-handling thread's own fprintf() call BLOCKS FOREVER --
+ * which in turn starves every other request waiting on that thread's
+ * held decode_gate/admission slot, exactly the "one request corrupts/
+ * starves others" failure Section 6 of the task forbids. Suppressing
+ * llama.cpp's own default verbose logging here (server output was never
+ * meant to include raw internal graph-reservation debug lines on every
+ * request in the first place -- a real hygiene fix independent of the
+ * hang) removes the root cause entirely, rather than papering over it by
+ * only fixing this project's OWN test scripts (also done, see scripts/
+ * soak-test-server.py and scripts/concurrency-soak-server.py's own PR E1
+ * updates) -- a real user's own process supervisor could have the exact
+ * same bounded-buffer characteristic this project's test harness
+ * happened to surface first. */
+static void	membrane_server_log_callback(enum ggml_log_level level,
+				const char *text, void *user_data)
+{
+	(void)user_data;
+	if (level == GGML_LOG_LEVEL_ERROR)
+		fputs(text, stderr);
 }
 
 int	membrane_server_run(const membrane_server_options_t &opts)
 {
+	llama_log_set(membrane_server_log_callback, NULL);
+
 	/* Real bug found and fixed during PR B3 development: g_stop_requested
 	 * is a file-scope global (the only race-free way membrane_server_
 	 * request_stop()/a signal handler can reach into a running instance
