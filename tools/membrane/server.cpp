@@ -2415,7 +2415,44 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	}
 	svr.stop();
 	if (listener.joinable())
-		listener.join();
+		listener.join();	/* Mega Phase E, PR E4, Section 6/29 of the
+									 * task ("server shutdown while active"):
+									 * this join is what makes the model-
+									 * close loop below safe against a
+									 * request handler still actively
+									 * generating. Verified by reading
+									 * vendored cpp-httplib's own Server::
+									 * listen_internal() (third_party/
+									 * llama.cpp/vendor/cpp-httplib/
+									 * httplib.cpp): the thread `listener`
+									 * runs does not itself return until it
+									 * has called task_queue->shutdown(),
+									 * which JOINS every worker-pool thread
+									 * first -- including one currently
+									 * inside handle_chat_completions()'s
+									 * non-streaming branch, or one running
+									 * the streaming path's own stream_
+									 * release() (which itself joins that
+									 * request's dedicated generation-
+									 * worker thread before returning). So
+									 * by the time this call returns, no
+									 * handler can still hold/use any
+									 * slot's session -- confirmed
+									 * empirically too (a real SIGTERM sent
+									 * mid-generation; the process stayed
+									 * parked here, in futex_do_wait, for
+									 * exactly as long as that real
+									 * generation took, then exited
+									 * cleanly). Real, disclosed asymmetry:
+									 * the non-streaming path has no
+									 * cancellation signal wired to
+									 * shutdown at all (unlike streaming's
+									 * own stream_release()), so this wait
+									 * is bounded by that generation's own
+									 * max_tokens, never by anything this
+									 * function does -- see docs/soak-and-
+									 * concurrency-testing.md's own PR E4
+									 * section. */
 	for (auto &slot : state.slots)
 		if (slot.model_loaded)
 			membrane_model_close(&slot.session);

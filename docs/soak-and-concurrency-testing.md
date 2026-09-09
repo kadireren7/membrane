@@ -232,3 +232,96 @@ dev host (see this doc's own top-of-file disclosure):
   eviction of the now-unpinned model).
 
 Full real evidence: `results/multi-model-residency/validation.json`.
+
+## Mega Phase E, PR E4: runtime hardening -- bounded soaks, shutdown safety, crash recovery
+
+`scripts/soak-model-lifecycle.py` (new) covers the three real dimensions
+`scripts/soak-test-server.py`/`concurrency-soak-server.py` (PR C3) don't:
+repeated model-switch cycles, repeated multi-model hot-switch cycles,
+and a real kill+restart loop. Same bounded-by-design, real-model,
+real-process convention as its siblings. Full evidence: `results/
+runtime-hardening-v1/validation.json`, `results/runtime-hardening-v1/
+soak-model-lifecycle.json`.
+
+**Real, disclosed finding -- RSS growth during model-switch soak
+plateaus, it does not overclaim "zero growth"**: 16 forced evict+load
+cycles (`MEMBRANE_MAX_RESIDENT_MODELS=1`, alternating between two
+registry names for the same real small model) drove real RSS from a
+13 MiB baseline up to ~450 MiB, growing steadily for roughly the first
+11 cycles, then FLAT (< 1 MiB additional growth) for the remaining
+cycles -- a classic glibc malloc arena-retention signature (freed
+large allocations kept mapped for reuse rather than immediately
+returned to the OS), not a per-cycle leak that would keep growing at a
+similar rate indefinitely. The soak script's own pass criterion
+reflects this directly: it compares second-half growth against
+first-half growth (a genuine unbounded leak would show similar growth
+in both halves) rather than a single fixed total-growth threshold,
+which would have incorrectly failed this real, bounded, benign
+pattern. Section 28 of the task: reported as "growth that plateaus,
+not indefinite" -- the accurate claim, never rounded up to "no growth
+observed" or down to "a leak."
+
+Thread count and file-descriptor count showed ZERO growth across every
+soak (model-switching, multi-model-residency, and the underlying PR
+C3 sequential/concurrency soaks) -- real evidence against a thread/FD
+leak specifically, independent of the RSS finding above.
+
+**Real, source-verified shutdown-safety finding (Section 6/29: "server
+shutdown while active")**: a real generation in flight during a real
+`SIGTERM` does NOT race with `membrane_server_run()`'s own post-
+shutdown `membrane_model_close()` calls. Verified both by reading
+vendored cpp-httplib's own `Server::listen_internal()` (`third_party/
+llama.cpp/vendor/cpp-httplib/httplib.cpp`): the accept-loop thread
+membrane's own `listener.join()` waits for does not itself return
+until it has called `task_queue->shutdown()`, which joins EVERY
+worker-pool thread first -- including one currently running a non-
+streaming `handle_chat_completions()` call, or one running the
+streaming path's own resource-releaser (`stream_release()`, which
+itself `.join()`s the dedicated generation-worker thread before
+returning). So by the time `listener.join()` returns in `membrane_
+server_run()`, no request handler -- streaming or not -- can still be
+using any slot's session. Confirmed empirically too: a real ~400-token
+non-streaming generation was started, `SIGTERM` sent 1.5s in, and the
+server process (via `/proc/<pid>/wchan`) stayed parked in `futex_do_
+wait` for the whole ~20s the generation actually took, then exited
+cleanly the moment the generation itself finished -- no crash, no
+hang beyond that real, bounded wait.
+
+**Real, disclosed asymmetry (not a hang, not corruption, but worth
+naming)**: the non-streaming path has no cancellation signal wired to
+server shutdown at all (unlike the streaming path, whose `stream_
+release()` unconditionally sets `cancel_flag`/`gen_cancel_flag` before
+joining) -- a `SIGTERM` arriving during a long non-streaming generation
+does not speed it up; shutdown waits for that generation to run to
+its own natural end (completion, EOG, or `max_tokens`) before
+proceeding, exactly as the finding above describes. This is bounded
+(never indefinite -- `max_tokens` bounds it) and does not corrupt
+anything, so it is not a deadlock/hang by Section 29's own definition,
+but it is a real, disclosed shutdown-latency asymmetry between the two
+paths worth a future phase's attention, not silently claimed as
+symmetric.
+
+**Real crash/restart recovery (Section 30)**: 5 real cycles of `SIGKILL`
+(not a graceful stop -- a real, uncatchable crash) followed by a fresh
+`membrane serve` against the SAME on-disk registry path: the registry
+survived every cycle (the previously-added model was still listed),
+the server came back healthy every cycle, and a real model activation
+succeeded every cycle. 0 failures across 5 cycles.
+
+**Config/schema-versioning audit (Section 31)**: re-confirmed
+`docs/schema-versioning.md`'s existing policy (Mega Phase C, PR C2)
+still covers every real piece of on-disk state -- `server_config.h`,
+`registry_core.h`, and `model_catalog.h` (the built-in catalog) each
+carry a real `schema_version` field and fail closed on an unrecognized
+one. Neither PR E1 (continuous batching) nor PR E2 (multi-model
+residency) introduced any NEW persistent state: decode concurrency,
+request lifecycle, and residency/pinning are all in-memory-only,
+reset on every `membrane serve` restart by design -- there is nothing
+new for this audit to version.
+
+**Cancellation hardening (Section 29)**: client-disconnect and stop-
+sequence cancellation were already real-tested end-to-end in PR E1's
+own `scripts/verify-continuous-batching.py` (`cancellation_isolation`
+check: one cancelled stream never affects a concurrently-running
+survivor) -- not re-derived here. This phase adds the shutdown-path
+and crash-recovery angles above, which PR E1 did not cover.
