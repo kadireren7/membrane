@@ -292,9 +292,10 @@ Success: `{"ok":true,"model":"NAME","pinned":true|false}`. Pinning
 never violates memory safety on its own — see "Multi-model residency"
 below.
 
-## Multi-model residency (Mega Phase E, PR E2)
+## Model cache policy
 
-Up to `MEMBRANE_MAX_RESIDENT_MODELS` (default 2, hard-capped at 8;
+Multi-model residency (Mega Phase E, PR E2) — up to
+`MEMBRANE_MAX_RESIDENT_MODELS` (default 2, hard-capped at 8;
 deliberately not a documented `server_config.h` setting — same "keep
 minimal" convention as `MEMBRANE_MAX_CONCURRENT_DECODE`) DIFFERENT
 models may be resident (loaded) at the same time, each in its own
@@ -367,9 +368,11 @@ directly), so concurrent requests cannot race on each other's own
 planner output (`gpu_layers`/`kv_placement`/etc, reported in each
 response's own `"membrane"` block) or corrupt each other's decode.
 
-### Model-lifecycle state machine (PR B3; per-slot since PR E2)
+### Model-lifecycle state machine (PR B3)
 
-An explicit state, not "loaded bool + name string" — `empty` (never
+Per-slot since Mega Phase E, PR E2 (was the server's only one, PR B3
+through PR E1). An explicit state, not "loaded bool + name string" —
+`empty` (never
 loaded, or cleanly unloaded), `loading`, `ready`, `generating`,
 `unloading`, `error`. Reported per resident slot by `/v1/status`'s own
 `resident_models[].state` (a slot in state `empty` — never loaded, or
@@ -381,10 +384,12 @@ while that slot's own mutex is held, so they are exactly as synchronized
 as everything else. `error` is distinct from `empty` — see the recovery
 behavior below for when it is reached.
 
-### Model-switch/eviction failure recovery (PR B3, Section 31 of the
-task; per-slot since PR E2)
+### Model-switch failure recovery (PR B3, Section 31 of the task)
 
-A naive "unload A, then try to load B" would leave that slot with NO
+Per-slot since Mega Phase E, PR E2 (also known as eviction, when the
+new model is a THIRD name and there is no free slot — see "Multi-model
+residency" above). A naive "unload A, then try to load B" would leave
+that slot with NO
 model at all if B's own load fails, even though A was working a moment
 ago. Instead: if B fails to load, the server automatically attempts to
 **reload A into the same slot** before giving up. The client's own
