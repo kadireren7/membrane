@@ -82,13 +82,48 @@ def _c1():
 @check("frozen error contract: every literal error code emitted by "
 	"server.cpp appears in docs/server.md's Errors table")
 def _c2():
+	# Mega Phase E, PR E3, Section 19 of the task: genuinely machine-
+	# checkable completeness -- unlike the PR C3-era version of this
+	# check (intersected against a manually-maintained EXPECTED_CODES
+	# allowlist BEFORE ever comparing against the docs, so a new code
+	# added to server.cpp but never added to EXPECTED_CODES would
+	# silently pass this check with zero coverage), this now discovers
+	# candidate codes directly from server.cpp's own text with no
+	# allowlist gate -- a genuinely new, undocumented code is caught
+	# the same run it is introduced, not only if a human remembers to
+	# also update EXPECTED_CODES. The only filter is NON_CODE_CONSTANTS
+	# below, for the small number of real ALL-CAPS string literals in
+	# this file that are env-var NAMES, not error codes (confirmed by
+	# manual audit: as of this phase, exactly the three MEMBRANE_MAX_*
+	# getenv() keys -- see server.cpp's own membrane_max_*() functions).
+	NON_CODE_CONSTANTS = {"MEMBRANE_MAX_CONCURRENT_DECODE",
+		"MEMBRANE_MAX_PENDING_CHAT_REQUESTS", "MEMBRANE_MAX_RESIDENT_MODELS"}
 	text = SERVER_CPP.read_text()
-	codes_in_code = set(re.findall(r'"([A-Z_]{4,})"', text)) & EXPECTED_CODES
+	codes_in_code = set(re.findall(r'"([A-Z_]{4,})"', text)) - NON_CODE_CONSTANTS
 	doc_text = SERVER_MD.read_text()
-	missing_from_docs = [c for c in codes_in_code if c not in doc_text]
+	missing_from_docs = sorted(c for c in codes_in_code if c not in doc_text)
 	return len(missing_from_docs) == 0, (
 		f"codes found in code but missing from docs/server.md: {missing_from_docs}"
 		if missing_from_docs else f"all {len(codes_in_code)} codes documented")
+
+
+@check("frozen error contract, reverse direction (Mega Phase E, PR E3, "
+	"Section 19): every code listed in docs/server.md's own Errors "
+	"table actually exists literally in server.cpp")
+def _c2r():
+	doc_text = SERVER_MD.read_text()
+	m = re.search(r"^## Errors\n(.*?)(?=\n## )", doc_text, re.S | re.M)
+	if not m:
+		return False, "could not find a '## Errors' section in docs/server.md"
+	table = m.group(1)
+	codes_in_table = set(re.findall(r"`([A-Z_]{4,})`", table))
+	server_text = SERVER_CPP.read_text()
+	missing_from_code = sorted(c for c in codes_in_table
+		if f'"{c}"' not in server_text)
+	return len(missing_from_code) == 0, (
+		f"codes documented in the Errors table but not found literally "
+		f"in server.cpp: {missing_from_code}" if missing_from_code
+		else f"all {len(codes_in_table)} documented codes exist in code")
 
 
 @check("frozen error contract: every EXPECTED code still exists "
@@ -236,8 +271,8 @@ def _c13():
 
 
 def main():
-	for fn in (_c1, _c2, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11, _c12,
-			_c13):
+	for fn in (_c1, _c2, _c2r, _c3, _c4, _c5, _c6, _c7, _c8, _c9, _c10, _c11,
+			_c12, _c13):
 		fn()
 	print(f"\n{CHECK_COUNT - len(FAILURES)}/{CHECK_COUNT} checks passed")
 	if FAILURES:
