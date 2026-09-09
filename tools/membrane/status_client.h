@@ -32,7 +32,7 @@ void	membrane_print_server_status_human(const nlohmann::json &status);
 /*
  * Mega Phase D, PR D6: the CLI-side counterpart of server.cpp's new
  * loopback-only POST /membrane/v1/models/activate -- a thin wrapper
- * around ensure_model_loaded() (idempotent if already active, recovers
+ * around acquire_model_slot() (idempotent if already active, recovers
  * the previous model on a failed switch; see server.cpp's own top
  * comments), never a second switch/lifecycle implementation. Deliberately
  * NOT part of the OpenAI-compatible surface (/v1/...) -- a MEMBRANE-
@@ -43,7 +43,7 @@ typedef struct s_membrane_activate_result
 {
 	bool		ok;				/* true iff the server itself reports the
 								 * switch succeeded (mirrors server.cpp's
-								 * own ensure_model_loaded() return value
+								 * own acquire_model_slot() return value
 								 * verbatim -- NEVER set true just because
 								 * a recovery attempt on a FAILED switch
 								 * happened to succeed; Section 16 of the
@@ -76,5 +76,27 @@ typedef struct s_membrane_activate_result
 bool	membrane_activate_model(const std::string &bind, int port,
 			const std::string &model_name,
 			membrane_activate_result_t *out);
+
+/*
+ * Mega Phase E, PR E2: the CLI-side counterpart of server.cpp's new
+ * loopback-only POST /membrane/v1/models/pin and .../unpin (Section 13
+ * of the task) -- same admin namespace, same transport-vs-application-
+ * failure split as membrane_activate_model() above.
+ */
+typedef struct s_membrane_pin_result
+{
+	bool		ok;
+	bool		pinned;			/* the server's real post-call pinned
+								 * state -- meaningful iff ok */
+	std::string	error_code;		/* "" iff ok */
+	std::string	error_message;	/* "" iff ok */
+}	membrane_pin_result_t;
+
+/* Returns false only on a TRANSPORT failure (server unreachable). A real
+ * application-level failure (e.g. the named model is not resident) is
+ * reported via *out with ok == false, error_code/error_message set. */
+bool	membrane_set_model_pin(const std::string &bind, int port,
+			const std::string &model_name, bool pin,
+			membrane_pin_result_t *out);
 
 #endif

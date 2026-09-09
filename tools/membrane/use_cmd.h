@@ -30,7 +30,7 @@
  *   - status_client.h's membrane_fetch_server_status()/
  *     membrane_activate_model() to detect whether a server is running
  *     and to trigger a live model switch through server.cpp's own
- *     already-existing ensure_model_loaded() (idempotent-if-already-
+ *     already-existing acquire_model_slot() (idempotent-if-already-
  *     active, recovers the previous model on a failed switch -- see
  *     server.cpp's own top comments; this module never reimplements
  *     that logic, only calls the new POST /membrane/v1/models/activate

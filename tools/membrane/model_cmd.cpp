@@ -389,6 +389,67 @@ static int	cmd_use(const std::vector<std::string> &args, bool want_json)
 	return (MEMBRANE_EXIT_SUCCESS);
 }
 
+/* Mega Phase E, PR E2, Section 13 of the task: `membrane model pin/
+ * unpin NAME` -- a thin CLI wrapper around the new POST /membrane/v1/
+ * models/pin|unpin admin endpoints (status_client.h's own membrane_
+ * set_model_pin(), never a second implementation). Pinning only ever
+ * applies to a model that is ALREADY resident right now (Section 13:
+ * "does NOT mean violate memory safety") -- this command does not
+ * remember a pin preference for later; a not-yet-resident model must be
+ * activated first (`membrane use NAME`), then pinned. */
+static int	cmd_pin_impl(const std::vector<std::string> &args, bool want_json,
+				bool pin)
+{
+	const char	*verb = pin ? "pin" : "unpin";
+
+	if (args.size() != 1)
+	{
+		print_err(want_json, "CLI_ERROR", std::string("usage: membrane "
+			"model ") + verb + " NAME");
+		return (MEMBRANE_EXIT_CLI_ERROR);
+	}
+	std::string						config_path
+			= membrane_server_config_resolve_path();
+	membrane_server_config_t		cfg = membrane_server_config_defaults();
+	membrane_server_config_error_t	cfg_err;
+
+	if (!config_path.empty())
+		membrane_server_config_load(config_path, &cfg, &cfg_err);
+	membrane_pin_result_t	result;
+	bool	transport_ok = membrane_set_model_pin(cfg.listen_address,
+			cfg.port, args[0], pin, &result);
+
+	if (!transport_ok)
+	{
+		print_err(want_json, "SERVICE_UNAVAILABLE", "could not reach the "
+			"running server -- start it with `membrane service start` "
+			"or `membrane serve`");
+		return (MEMBRANE_EXIT_CLI_ERROR);
+	}
+	if (!result.ok)
+	{
+		print_err(want_json, result.error_code, result.error_message);
+		return (MEMBRANE_EXIT_CLI_ERROR);
+	}
+	if (want_json)
+		printf("{\"ok\":true,\"model\":\"%s\",\"pinned\":%s}\n",
+			args[0].c_str(), result.pinned ? "true" : "false");
+	else
+		printf("%s: %s\n", result.pinned ? "Pinned" : "Unpinned",
+			args[0].c_str());
+	return (MEMBRANE_EXIT_SUCCESS);
+}
+
+static int	cmd_pin(const std::vector<std::string> &args, bool want_json)
+{
+	return (cmd_pin_impl(args, want_json, true));
+}
+
+static int	cmd_unpin(const std::vector<std::string> &args, bool want_json)
+{
+	return (cmd_pin_impl(args, want_json, false));
+}
+
 /* Mega Phase D, PR D1, Section 3/5 of the task: the built-in catalog is
  * pure/offline (model_catalog.h's own top comment) -- `search`/`info`
  * need no network access at all. */
@@ -932,15 +993,33 @@ static int	cmd_uninstall(const std::vector<std::string> &args, bool want_json)
 	bool	reachable = membrane_fetch_server_status(cfg.listen_address,
 			cfg.port, &live_status);
 
-	if (reachable && live_status.contains("loaded_model")
-		&& !live_status["loaded_model"].is_null()
-		&& live_status["loaded_model"].get<std::string>() == args[0])
+	/* Mega Phase E, PR E2: /v1/status's own single `loaded_model` field
+	 * was replaced by `resident_models` (an array -- see server.cpp's
+	 * own handle_status() comment); a model is now unsafe to uninstall
+	 * iff it appears ANYWHERE in that array, not just as a single
+	 * "active" model. */
+	bool	is_resident = false;
+
+	if (reachable && live_status.contains("resident_models")
+		&& live_status["resident_models"].is_array())
+	{
+		for (const auto &m : live_status["resident_models"])
+		{
+			if (m.contains("model") && m["model"].is_string()
+				&& m["model"].get<std::string>() == args[0])
+			{
+				is_resident = true;
+				break ;
+			}
+		}
+	}
+	if (is_resident)
 	{
 		print_err(want_json, "MODEL_ACTIVE", std::string("'") + args[0]
-			+ "' is currently the ACTIVE model on a running server -- "
-			"switch to a different model first (`membrane use OTHER`), "
-			"or stop the service (`membrane service stop`), before "
-			"uninstalling it");
+			+ "' is currently RESIDENT on a running server -- switch to "
+			"a different model first (`membrane use OTHER`), or stop "
+			"the service (`membrane service stop`), before uninstalling "
+			"it");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
 	/* Section 19: never leave a dangling default pointing at a file that
@@ -1020,7 +1099,8 @@ int	membrane_model_cmd_dispatch(const std::vector<std::string> &args,
 	if (args.empty())
 	{
 		print_err(want_json, "CLI_ERROR", "usage: membrane model "
-			"add|remove|list|inspect|use|search|info|install|uninstall ...");
+			"add|remove|list|inspect|use|search|info|install|uninstall|"
+			"pin|unpin ...");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
 	std::vector<std::string>	rest(args.begin() + 1, args.end());
@@ -1043,8 +1123,12 @@ int	membrane_model_cmd_dispatch(const std::vector<std::string> &args,
 		return (cmd_install(rest, want_json));
 	if (args[0] == "uninstall")
 		return (cmd_uninstall(rest, want_json));
+	if (args[0] == "pin")
+		return (cmd_pin(rest, want_json));
+	if (args[0] == "unpin")
+		return (cmd_unpin(rest, want_json));
 	print_err(want_json, "CLI_ERROR", std::string("unknown subcommand '")
 		+ args[0] + "' -- expected add|remove|list|inspect|use|search|"
-		"info|install|uninstall");
+		"info|install|uninstall|pin|unpin");
 	return (MEMBRANE_EXIT_CLI_ERROR);
 }

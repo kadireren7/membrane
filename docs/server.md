@@ -61,11 +61,16 @@ Then point any OpenAI-compatible client at `http://127.0.0.1:8642/v1`.
   the `membrane status` CLI command (PR A4, Section 37 of the task): a
   thin HTTP client against an already-running `serve` instance, never a
   process-management/daemon capability this project doesn't have.
-  `{"running":true,"version":"...","endpoint":"http://...","loaded_model":
-  "qwen"|null,"backend":"CPU"|"Vulkan","gpu_layers":N,"kv_precision":
-  "native"|"q8"|"q5","context_policy":"automatic"}` (the last four
-  fields are omitted/null until the first generation request has loaded
-  a model).
+  `{"running":true,"version":"...","endpoint":"http://...",
+  "resident_model_limit":2,"resident_models":[{"model":"qwen",
+  "state":"ready","pinned":false,"evictable":true,"backend":"CPU",
+  "gpu_layers":N,"kv_precision":"native","estimated_model_bytes":N,
+  "estimated_kv_bytes":N}, ...],"default_model":"qwen"|null,
+  "context_policy":"automatic"}` (Mega Phase E, PR E2: `resident_models`
+  replaces the earlier, singular `loaded_model`/`backend`/`gpu_layers`/
+  `kv_precision` fields now that more than one model can be resident at
+  once — see "Multi-model residency" below; the array is empty, never a
+  null placeholder, until at least one model has been loaded).
 - `POST /v1/chat/completions` — see below.
 
 `POST /v1/completions` (the raw-prompt, non-chat endpoint) is not
@@ -265,28 +270,76 @@ though the *config file*'s own read-once behavior is unchanged. See
 Not part of the OpenAI-compatible surface (`/v1/...`) — a MEMBRANE-
 specific, loopback-only admin route `membrane use` calls internally,
 undocumented for third-party clients. Body: `{"model": "NAME"}` (a
-registered name). A thin wrapper around the exact same `ensure_model_
-loaded()` function `POST /v1/chat/completions` itself uses — never a
-second switch implementation, so it inherits that function's own
-idempotence (already-active is a no-op, reported as
-`{"already_active": true}`) and failure-recovery guarantees (see below)
-for free. Never unloads a model out from under an in-progress
-generation — it waits (bounded, ~5s) for every request currently
-decoding against the current model to finish (see "Concurrent decode"
-below), reporting `503 MODEL_SWITCH_BUSY` rather than blocking
-indefinitely or racing a live generation.
+registered name). A thin wrapper around the exact same `acquire_model_
+slot()` function (Mega Phase E, PR E2 — renamed from PR E1's own
+`acquire_model_slot()` when it was generalized to choose among several
+resident slots) `POST /v1/chat/completions` itself uses — never a second
+switch implementation, so it inherits that function's own idempotence
+(already-active is a no-op, reported as `{"already_active": true}`) and
+failure-recovery guarantees (see below) for free. Never evicts a model
+out from under an in-progress generation, and never evicts a pinned one
+— see "Multi-model residency" below for the real selection/eviction
+policy this endpoint now goes through.
 
-## Model cache policy
+### `POST /membrane/v1/models/pin` / `.../unpin` (PR E2, internal/admin only)
 
-One active model at a time (Section 23 of the task; Mega Phase E's own
-multi-model residency work, if any, is a separate, later phase):
+Same admin namespace as `.../activate` above. Body: `{"model": "NAME"}`.
+Pinning only ever applies to a model that is **already resident right
+now** — it is not a standing preference remembered for later (that is
+`default_model`'s job, above); pinning a name that is not currently
+resident is a real `409 MODEL_NOT_RESIDENT`, never silently queued.
+Success: `{"ok":true,"model":"NAME","pinned":true|false}`. Pinning
+never violates memory safety on its own — see "Multi-model residency"
+below.
 
-- Request model A → load A.
-- Next request for A → reuse the already-loaded A (no reload — proven in
-  testing: three sequential requests to the same model triggered exactly
-  one real weight load).
-- Request model B → unload A, load B (waits for in-flight A requests to
-  drain first — see "Concurrent decode" below).
+## Multi-model residency (Mega Phase E, PR E2)
+
+Up to `MEMBRANE_MAX_RESIDENT_MODELS` (default 2, hard-capped at 8;
+deliberately not a documented `server_config.h` setting — same "keep
+minimal" convention as `MEMBRANE_MAX_CONCURRENT_DECODE`) DIFFERENT
+models may be resident (loaded) at the same time, each in its own
+independent slot with its own `llama_context`/KV cache/lock — a real
+generalization of PR E1's own single-model design, not a second one
+alongside it. Selection policy (`residency_planner.h`'s own pure
+`membrane_plan_residency()`, unit-tested against synthetic slot states
+in `test_residency_planner.cpp`; `acquire_model_slot()` in `server.cpp`
+is the only real caller):
+
+- **Hot switch**: requesting an already-resident model never reloads
+  from disk, regardless of which OTHER models are also resident.
+- **Free slot**: if fewer than the limit are resident, a genuinely new
+  model just fills an empty slot.
+- **LRU eviction**: once every slot is occupied, the LEAST-recently-used
+  resident model among the ones that are neither pinned nor actively
+  generating is evicted (a real `membrane_model_close()`, draining any
+  in-flight decode against it first — bounded ~5s, `503
+  MODEL_SWITCH_BUSY` on timeout, exactly PR E1's own drain-wait contract,
+  now scoped to one slot instead of the server's only one).
+- **Never evicts a pinned or actively-generating model.** If every
+  resident slot is pinned and/or generating (no free slot, nothing
+  evictable), the request fails fast with `503 RESIDENCY_EXHAUSTED` —
+  deliberately BEFORE any drain-wait, since waiting up to 5s for a
+  pinned model to become "evictable" would be pointless (it never will).
+- **No hidden background thrashing**: eviction only ever happens
+  synchronously, in direct response to one real incoming request naming
+  a not-yet-resident model — never on a timer, never speculatively.
+
+Real, real-model evidence (two SmolLM2-135M-Instruct sessions registered
+under two different names — see the script's own top comment for why
+the SAME small file, not two different ones, was used on this project's
+own memory-constrained dev host): both resident simultaneously, each
+independently servable; hot-switching back to the first reported
+`already_active: true`; a slow generation in-flight correctly made a
+competing switch fail `RESIDENCY_EXHAUSTED` (single-slot-forced test)
+while the generation itself completed normally, and the same switch
+then succeeded once idle; pinning the resident model made a competing
+switch fail `RESIDENCY_EXHAUSTED`, and unpinning it let that same
+switch succeed. `scripts/verify-multi-model-residency.py`,
+`results/multi-model-residency/validation.json`.
+
+`GET /v1/status`'s own `resident_models` array (see above) exposes
+`pinned`/`evictable`/`state` per resident slot; `resident_model_limit`
+is the real, current `MEMBRANE_MAX_RESIDENT_MODELS` value.
 
 ### Concurrent decode (Mega Phase E, PR E1)
 
@@ -314,34 +367,38 @@ directly), so concurrent requests cannot race on each other's own
 planner output (`gpu_layers`/`kv_placement`/etc, reported in each
 response's own `"membrane"` block) or corrupt each other's decode.
 
-### Model-lifecycle state machine (PR B3)
+### Model-lifecycle state machine (PR B3; per-slot since PR E2)
 
 An explicit state, not "loaded bool + name string" — `empty` (never
 loaded, or cleanly unloaded), `loading`, `ready`, `generating`,
-`unloading`, `error`. Reported by `/v1/status` as `model_state`.
-`generating` now means "at least one request is decoding" (PR E1 — it
-could always mean "exactly one" before real concurrent decode existed).
-All transitions happen only while the same admin mutex is held, so they
-are exactly as synchronized as everything else. `error` is distinct from
-`empty` — see the recovery behavior below for when it is reached.
+`unloading`, `error`. Reported per resident slot by `/v1/status`'s own
+`resident_models[].state` (a slot in state `empty` — never loaded, or
+evicted back to empty — is simply omitted from that array, not reported
+as a null placeholder). `generating` means "at least one request is
+decoding against THIS slot" (PR E1 — it could always mean "exactly one"
+before real concurrent decode existed). All transitions happen only
+while that slot's own mutex is held, so they are exactly as synchronized
+as everything else. `error` is distinct from `empty` — see the recovery
+behavior below for when it is reached.
 
-### Model-switch failure recovery (PR B3, Section 31 of the task)
+### Model-switch/eviction failure recovery (PR B3, Section 31 of the
+task; per-slot since PR E2)
 
-A naive "unload A, then try to load B" would leave the server with NO
+A naive "unload A, then try to load B" would leave that slot with NO
 model at all if B's own load fails, even though A was working a moment
 ago. Instead: if B fails to load, the server automatically attempts to
-**reload A** before giving up. The client's own request for B is still
-correctly reported as a failure (its real error code/message, never
-silently swapped for a misleading success) — only the server's own
-resting state improves, ending up back at `ready` on A rather than
-`empty`. Only if BOTH B's load and A's own restore attempt fail does the
-server end up in the explicit `error` state.
+**reload A into the same slot** before giving up. The client's own
+request for B is still correctly reported as a failure (its real error
+code/message, never silently swapped for a misleading success) — only
+that slot's own resting state improves, ending up back at `ready` on A
+rather than `empty`. Only if BOTH B's load and A's own restore attempt
+fail does that slot end up in the explicit `error` state.
 
 Real evidence: with model A already loaded, a real switch attempt to an
 oversized model correctly failed with `503 NO_FEASIBLE_CONTEXT` (the
 host genuinely could not fit it) — `/v1/status` immediately afterward
-still reported A as `loaded_model`/`ready`, and a following real request
-to A succeeded normally. Reproduced twice, independently, with two
+still reported A resident and `ready`, and a following real request to
+A succeeded normally. Reproduced twice, independently, with two
 different oversized models. See
 `results/background-service/validation.json`.
 
