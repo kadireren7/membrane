@@ -1,6 +1,7 @@
 #include "server.h"
 #include "membrane/posix_compat.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -20,6 +21,7 @@
 
 #include "llama.h"
 #include "runtime_session.h"
+#include "gpu_device.h"
 #include "registry_core.h"
 #include "gpu_policy.h"
 #include "product_cli.h"
@@ -1002,6 +1004,56 @@ static void	handle_pin_model(s_membrane_server_model_state *st, bool pin,
 	j["ok"] = true;
 	j["model"] = model_name;
 	j["pinned"] = pin;
+	res.set_content(j.dump(), "application/json");
+}
+
+/*
+ * Mega Phase E, PR E3, Section 20 of the task: a MEMBRANE-specific
+ * (never `/v1/...`) capabilities surface -- lets a real client (or a
+ * human) discover what this build/host actually supports without
+ * probing endpoints or reading source. Every field is a REAL fact
+ * about this build/host, never a static aspiration: `backends` comes
+ * from a real, live `membrane_gpu_list_devices()` enumeration (the
+ * exact same one `membrane doctor`/the real GPU-selection pipeline
+ * already use -- never a second, independently-drifting hardware
+ * probe), and `resident_model_limit` is the real, current membrane_
+ * max_resident_models() value (env-overridable, see that function's
+ * own top comment) rather than a hardcoded "2". `tool_calling`/
+ * `embeddings` are honestly `false` -- see docs/api-v1-stability.md's
+ * own "Not implemented" section for why neither is faked via prompt
+ * injection or a stub. */
+static void	handle_capabilities(s_membrane_server_model_state *st,
+				const httplib::Request &, httplib::Response &res)
+{
+	json	j;
+
+	j["streaming"] = true;
+	j["stop"] = true;
+	j["tool_calling"] = false;
+	j["embeddings"] = false;
+
+	membrane_gpu_device_info_t	devices[MEMBRANE_GPU_MAX_DEVICES];
+	size_t						n_devices = membrane_gpu_list_devices(devices,
+			MEMBRANE_GPU_MAX_DEVICES);
+	std::vector<std::string>	backend_names;
+
+	for (size_t i = 0; i < n_devices; ++i)
+	{
+		std::string	name = devices[i].backend;
+
+		if (std::find(backend_names.begin(), backend_names.end(), name)
+			== backend_names.end())
+			backend_names.push_back(name);
+	}
+	j["backends"] = backend_names;
+	j["resident_model_limit"] = (int)st->slots.size();
+#if defined(_WIN32)
+	j["platform"] = "windows";
+#elif defined(__APPLE__)
+	j["platform"] = "macos";
+#else
+	j["platform"] = "linux";
+#endif
 	res.set_content(j.dump(), "application/json");
 }
 
@@ -2319,6 +2371,8 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	svr.Post("/membrane/v1/models/unpin", [&](const httplib::Request &rq,
 			httplib::Response &rs)
 		{ handle_pin_model(&state, false, rq, rs); });
+	svr.Get("/membrane/v1/capabilities", [&](const httplib::Request &rq,
+			httplib::Response &rs) { handle_capabilities(&state, rq, rs); });
 
 	if (!svr.bind_to_port(bind, port))
 	{

@@ -99,6 +99,36 @@ static void	test_health(void)
 	TEST_ASSERT(body.contains("version"), "health reports a version");
 }
 
+/* Mega Phase E, PR E3, Section 20 of the task: GET /membrane/v1/
+ * capabilities -- CI-safe (no real GGUF needed; every field is either
+ * a compile-time/host fact or a real, live device-enumeration call,
+ * none of which depend on any model being registered/loaded). */
+static void	test_capabilities(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	auto			res = cli.Get("/membrane/v1/capabilities");
+
+	TEST_ASSERT(res != nullptr && res->status == 200,
+		"GET /membrane/v1/capabilities returns 200");
+	json	body = json::parse(res->body);
+
+	TEST_ASSERT(body["streaming"] == true, "streaming capability is true");
+	TEST_ASSERT(body["stop"] == true, "stop capability is true");
+	TEST_ASSERT(body["tool_calling"] == false,
+		"tool_calling capability is honestly false");
+	TEST_ASSERT(body["embeddings"] == false,
+		"embeddings capability is honestly false");
+	TEST_ASSERT(body.contains("backends") && body["backends"].is_array()
+		&& !body["backends"].empty(),
+		"backends is a real, non-empty array (CPU always present)");
+	TEST_ASSERT(body.contains("resident_model_limit")
+		&& body["resident_model_limit"].is_number_integer()
+		&& body["resident_model_limit"] >= 1,
+		"resident_model_limit is a real, positive integer");
+	TEST_ASSERT(body.contains("platform") && body["platform"].is_string(),
+		"platform is reported");
+}
+
 static void	test_models_empty_registry(void)
 {
 	httplib::Client	cli("127.0.0.1", TEST_PORT);
@@ -730,6 +760,7 @@ int	main(void)
 
 	start_test_server(dir);
 	test_health();
+	test_capabilities();
 	test_models_empty_registry();
 	test_status_no_model_loaded();
 	test_chat_unknown_model();
