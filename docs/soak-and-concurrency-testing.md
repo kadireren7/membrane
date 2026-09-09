@@ -157,7 +157,10 @@ TSan with real generation before (the existing CI TSan job, `test_
 server.cpp`, uses a nonexistent-model 404 path specifically to stay
 llama-real-generation-free and fast). E1's own new code (`decode_
 concurrency_gate_t`, `decode_slot_enter`/`decode_slot_exit`, the
-per-request `local_session` copy, `ensure_model_loaded`'s drain-wait)
+per-request `local_session` copy, `ensure_model_loaded`'s drain-wait --
+renamed `acquire_model_slot()` in PR E2, when it was generalized to
+choose among several resident slots; the drain-wait logic itself is
+unchanged)
 shows NO TSan-flagged races in isolation, real-generation runs included.
 **Not fixed in this PR**: this is a real bug inside vendored, third-party
 CPU-kernel code, likely a documented/accepted class of numeric-kernel
@@ -170,3 +173,62 @@ CI-gating (the CI TSan job's own real-generation-free design is
 unaffected and stays green). Disclosed here, honestly, as a known,
 pre-existing limitation of the vendored CPU backend rather than hidden
 or wrongly attributed to this phase's own new scheduler code.
+
+## Mega Phase E, PR E2: multi-model residency -- real evidence
+
+`residency_planner.h`'s own pure slot-selection/eviction DECISION logic
+(hot switch, LRU eviction, never-evict-pinned, never-evict-generating,
+fail-safe exhaustion) is unit-tested with synthetic slot states in
+`test_residency_planner.cpp` (ctest, ASan/TSan-covered, no real model
+needed at all -- same convention as `test_variant_selector.cpp`).
+
+The REAL, real-model counterpart -- proving `acquire_model_slot()`
+(`server.cpp`) actually wires that decision logic up correctly against
+real memory, real HTTP, and real generation -- is `scripts/verify-
+multi-model-residency.py` (same local-dev-only, `models/`-is-gitignored
+convention as `scripts/verify-continuous-batching.py`). Real findings
+from running it on this project's own real, severely memory-constrained
+dev host (see this doc's own top-of-file disclosure):
+
+- **Two real, independent model sessions CAN be resident at once**
+  (default `MEMBRANE_MAX_RESIDENT_MODELS=2`), each independently
+  servable, with hot-switching back to either reporting
+  `already_active: true` (never a reload). Verified with two real
+  SmolLM2-135M-Instruct sessions registered under two different
+  registry names, NOT two different model files -- a real, disclosed
+  choice: this host's own real, live memory pressure (other real
+  processes, not this project's) made a genuinely larger second model
+  (SmolLM2-360M-Instruct) fail its own pre-existing, unrelated context-
+  recommendation planner with a real `NO_FEASIBLE_CONTEXT` often enough
+  to make it an unreliable evidence fixture on THIS host, right now --
+  residency is keyed by registry NAME, never by path (`acquire_model_
+  slot()`'s own top comment), so two names pointing at the same real
+  file still exercise two fully independent real `llama_context`s/KV
+  caches/slots, a genuine test of simultaneous residency, just with
+  identical weight content. A host with more headroom, or two smaller
+  real models, would let this same script prove it with two distinct
+  files instead -- nothing in the residency code itself depends on the
+  files being different.
+- **Never evicts an actively-generating slot, for real**: with residency
+  forced to exactly 1 slot, a real, deliberately long generation (96
+  tokens) against the one resident model was still running when a
+  switch to a different model was attempted -- it failed immediately
+  with a real `503 RESIDENCY_EXHAUSTED`, and the ORIGINAL generation
+  still completed successfully afterward (real, coherent output, no
+  corruption). The real rejection code is `RESIDENCY_EXHAUSTED`, not
+  `MODEL_SWITCH_BUSY`: `membrane_plan_residency()` excludes a
+  `generating` slot from eviction candidates at SELECTION time
+  (`residency_mtx`, before any slot mtx or drain-wait is ever touched),
+  so this fails fast rather than wasting up to 5s on a drain-wait that
+  could never succeed -- `MODEL_SWITCH_BUSY` is real but reserved for a
+  narrower race (decode starting in the brief window between the
+  planner's snapshot and the slot's own mtx acquisition). Once the
+  generation finished, the identical switch succeeded (real eviction of
+  the now-idle model).
+- **Never evicts a pinned slot, for real; unpinning releases it, for
+  real**: with residency forced to 1 slot, pinning the resident model
+  made a competing switch fail with a real `503 RESIDENCY_EXHAUSTED`;
+  unpinning it, then retrying the identical switch, succeeded (real
+  eviction of the now-unpinned model).
+
+Full real evidence: `results/multi-model-residency/validation.json`.

@@ -28,6 +28,7 @@
 #include "request_admission.h"
 #include "decode_concurrency.h"
 #include "request_state.h"
+#include "residency_planner.h"
 #include "fs_util.h"
 
 #include <sys/stat.h>
@@ -38,19 +39,21 @@ using json = nlohmann::json;
  * Mega Phase B, PR B3, Section 27 of the task: an explicit model-lifecycle
  * state machine -- replaces the previous implicit "model_loaded bool +
  * loaded_name string" boolean soup with a named, observable state,
- * synchronized the same way every other piece of st's mutable state
- * already is (transitions only ever happen while st->mtx is held).
- * EMPTY: no model has ever been loaded, or the last one was cleanly
- * unloaded -- a healthy, normal state, never an error.
+ * synchronized the same way every other piece of a slot's mutable state
+ * already is (transitions only ever happen while that slot's own mtx --
+ * s_model_slot::mtx, Mega Phase E, PR E2 -- is held).
+ * EMPTY: no model has ever been loaded into this slot, or the last one
+ * was cleanly unloaded/evicted -- a healthy, normal state, never an
+ * error.
  * LOADING / UNLOADING: a load/unload is in progress (both only ever
- * observed transiently, since they happen while st->mtx is held for the
- * whole request -- exposed anyway for /v1/status's own honesty and for
- * a future phase that might narrow the lock).
+ * observed transiently, since they happen while the slot's own mtx is
+ * held for the whole request -- exposed anyway for /v1/status's own
+ * honesty and for a future phase that might narrow the lock).
  * READY: a model is loaded and idle.
  * GENERATING: a model is loaded and actively generating (streaming or
  * not).
- * ERROR: a model switch failed AND the attempt to restore the
- * previously-loaded model (see ensure_model_loaded()'s own recovery
+ * ERROR: a model switch/eviction failed AND the attempt to restore the
+ * previously-loaded model (see acquire_model_slot()'s own recovery
  * logic) also failed -- distinct from EMPTY specifically so /v1/status
  * can tell "never loaded anything" apart from "something went wrong".
  */
@@ -81,8 +84,9 @@ static const char	*membrane_model_state_name(int state)
 /* Section 29: a bounded pending-request admission gate for POST /v1/chat/
  * completions -- see request_admission.h's own top comment. 8
  * concurrently-admitted chat requests is generous headroom above the
- * "1 active generation, the rest waiting on st->mtx" reality this
- * server already has (no continuous batching), while still bounding how
+ * "1 active generation per slot, the rest waiting on that slot's own
+ * mtx" reality this server already has (no intra-model batching), while
+ * still bounding how
  * many requests can pile up before a caller gets an honest, immediate
  * 503 instead of an ever-growing wait. This is deliberately NOT exposed
  * as a documented/supported server_config.h setting (Section 8's own
@@ -126,6 +130,35 @@ static int	membrane_max_concurrent_decode(void)
 	return (MEMBRANE_DEFAULT_MAX_CONCURRENT_DECODE);
 }
 
+/* Mega Phase E, PR E2, Section 10 of the task: "start conservatively --
+ * max 2 resident models, do NOT make this unlimited". Deliberately NOT
+ * exposed as a documented server_config.h setting for the same reason
+ * MEMBRANE_MAX_CONCURRENT_DECODE isn't (Section 8's "keep minimal"
+ * convention) -- the env override exists only so test_server.cpp can
+ * force a small, deterministic slot count (e.g. 1) without needing
+ * MEMBRANE_DEFAULT_MAX_RESIDENT_MODELS-many real models to exhaust
+ * residency. Floored at 1 (a server with zero slots could never load
+ * anything at all) and capped at a generous but bounded 8 -- a
+ * misconfigured huge value would otherwise let a test/operator silently
+ * defeat the whole "bounded, conservative residency" policy Section 10
+ * asks for. */
+# define MEMBRANE_DEFAULT_MAX_RESIDENT_MODELS	2
+# define MEMBRANE_MAX_RESIDENT_MODELS_HARD_CAP	8
+
+static int	membrane_max_resident_models(void)
+{
+	const char	*env = getenv("MEMBRANE_MAX_RESIDENT_MODELS");
+
+	if (env != NULL && env[0] != '\0')
+	{
+		int	parsed = atoi(env);
+
+		if (parsed >= 1 && parsed <= MEMBRANE_MAX_RESIDENT_MODELS_HARD_CAP)
+			return (parsed);
+	}
+	return (MEMBRANE_DEFAULT_MAX_RESIDENT_MODELS);
+}
+
 /*
  * See server.h's own top comment for the full contract. This file never
  * calls any of the CLI's own print_*()/argv-parsing code (Section 1/5 of
@@ -163,129 +196,171 @@ static void	send_json_error(httplib::Response &res, int status,
 	res.set_content(j.dump(), "application/json");
 }
 
-struct s_membrane_server_model_state
+/*
+ * Mega Phase E, PR E2, Section 10-12 of the task: ONE resident-model
+ * slot. Everything that used to be the single, global "the loaded
+ * model" fields on s_membrane_server_model_state (see PR E1's own
+ * comment on that struct, which this replaces) now lives here instead,
+ * multiplied by up to membrane_max_resident_models() -- s_membrane_
+ * server_model_state below holds a std::vector of these rather than one
+ * inline copy. mtx's scope is UNCHANGED from PR E1's own contract, just
+ * narrowed further to "one slot's own lifecycle fields" instead of "the
+ * server's one and only model": held only while reading/mutating this
+ * slot's model_loaded/loaded_name/session/cached_chat_template and while
+ * incrementing decode_inflight; real decode still never holds it (a
+ * per-request COPY of `session` is used instead -- see handle_chat_
+ * completions()'s own PR E1 comment, unchanged by this phase). */
+struct s_model_slot
 {
-	/* Mega Phase E, PR E1: mtx's SCOPE narrowed from "held for the whole
-	 * generation" (Section 24 of the Mega Phase A task, the original
-	 * comment this replaces) to "held only while reading/mutating the
-	 * model-lifecycle fields below (model_loaded/loaded_name/session/
-	 * cached_chat_template) and while incrementing decode_inflight" --
-	 * see decode_slot_enter()/decode_slot_exit()/ensure_model_loaded()'s
-	 * own comments. Actual decode (membrane_session_generate()) now runs
-	 * WITHOUT mtx held, on a per-request COPY of `session` (never the
-	 * shared struct itself -- see handle_chat_completions()'s own PR E1
-	 * comment for why a shared-struct copy, not a shared reference, is
-	 * required for correctness). */
 	std::mutex					mtx;
-	membrane_runtime_t			rt = {};
 	bool						model_loaded = false;
 	std::string					loaded_name;
 	membrane_model_session_t	session;
 	std::string					cached_chat_template;	/* valid iff
 										 * model_loaded is true and refers
-										 * to `loaded_name` -- avoids a
-										 * redundant vocab-only model load
-										 * (real, measured cost: 4 GGUF
-										 * metadata loads for 2 requests
-										 * to the same already-loaded
-										 * model before this cache existed)
-										 * on every request past the first
-										 * to a given model */
+										 * to `loaded_name` -- see PR E1's
+										 * own comment on the field this
+										 * replaces for the real, measured
+										 * cost this cache avoids */
+
+	/* Mega Phase B, PR B3, Section 27 (unchanged by PR E2, just now
+	 * per-slot): only ever mutated while mtx is held, but readable
+	 * atomically (e.g. by /v1/status) without a data race either way. */
+	std::atomic<int>			model_state{MEMBRANE_MODEL_STATE_EMPTY};
+
+	/* Mega Phase E, PR E1, Section 12/29 of the task (unchanged by PR
+	 * E2, just now per-slot): how many requests are currently inside
+	 * membrane_session_generate() against THIS slot's model, right now --
+	 * the real "is it safe to close this out from under someone" signal.
+	 * See decode_slot_exit()'s own comment for the condition_variable
+	 * race this, paired with mtx, avoids. */
+	std::atomic<int>			decode_inflight{0};
+	std::condition_variable	drain_cv;	/* paired with mtx */
+
+	/* Mega Phase E, PR E2, Section 12/13 of the task: eviction/pinning
+	 * state -- see acquire_model_slot()'s own top comment for how these
+	 * are actually used. Both are guarded by mtx (real settled state),
+	 * EXCEPT last_used_seq's own read from acquire_model_slot()'s
+	 * residency_mtx-held selection snapshot, which is a deliberate,
+	 * harmless benign race (see that function's own comment on why a
+	 * slightly-stale LRU timestamp used only to CHOOSE an eviction
+	 * candidate, never to decide correctness, needs no stronger
+	 * synchronization). */
+	bool						pinned = false;
+	int64_t						last_used_seq = 0;
+
+	/* Mega Phase E, PR E2: guarded by s_membrane_server_model_state::
+	 * residency_mtx ONLY (never mtx above) -- the real name this slot
+	 * currently represents to residency SELECTION, kept in sync with
+	 * loaded_name at every settled moment but the one thing a second
+	 * request can observe WITHOUT waiting on this slot's own (possibly
+	 * slow -- disk I/O, a bounded drain-wait) mtx. See residency_
+	 * planner.h's own top comment on membrane_residency_slot_view_t::name
+	 * for the full race this claim-before-you-load marker avoids: two
+	 * concurrent requests for two DIFFERENT new model names must never
+	 * both pick this same free/evictable slot. */
+	std::string					claimed_name;
+};
+
+/*
+ * Mega Phase E, PR E2, Section 10 of the task: the top-level server state.
+ * PR E1's own single inline model (mtx/model_loaded/loaded_name/session/
+ * cached_chat_template/model_state/decode_inflight/drain_cv) is now
+ * `slots` -- a fixed-size (membrane_max_resident_models(), sized once at
+ * construction, never resized afterward) vector of s_model_slot. Two
+ * gates stay deliberately GLOBAL, not per-slot, both for the same real-
+ * memory reason PR E1's own decode_gate comment gives: admission_gate
+ * bounds how many requests may be admitted at all (unchanged since PR
+ * B3); decode_gate bounds how many requests across EVERY resident model
+ * combined may be inside llama_decode() at the same physical moment --
+ * making it per-slot instead would let N slots multiply the real
+ * concurrent-KV-cache memory pressure PR E1's own gate exists to bound,
+ * exactly the "start conservatively" this task's Section 9/26 both ask
+ * for.
+ */
+struct s_membrane_server_model_state
+{
+	membrane_runtime_t			rt = {};
 	std::string					default_model;	/* Section 9 -- "" = none
 										 * configured; a chat request
 										 * omitting "model" falls back to
 										 * this, never proactively loaded */
 
-	/* Mega Phase B, PR B3, Section 27: only ever mutated while mtx is
-	 * held, but readable atomically (e.g. by /v1/status, itself also
-	 * under mtx today -- see handle_status()) without a data race
-	 * either way. */
-	std::atomic<int>			model_state{MEMBRANE_MODEL_STATE_EMPTY};
-
-	/* Section 29: bounded admission for POST /v1/chat/completions --
-	 * deliberately its OWN synchronization primitive, checked BEFORE
-	 * mtx is ever touched, so a caller past capacity gets an immediate
-	 * 503 instead of joining an ever-growing queue of threads blocked
-	 * on mtx. */
 	request_admission_gate_t	admission_gate{membrane_max_pending_chat_requests()};
-
-	/* Mega Phase E, PR E1, Section 5/9/10 of the task: the real concurrent-
-	 * decode bound -- see decode_concurrency.h's own top comment. Distinct
-	 * from admission_gate above: admission_gate bounds "how many requests
-	 * may be admitted at all" (unchanged from PR B3, still 8 by default);
-	 * decode_gate bounds "how many of those admitted requests may be
-	 * inside llama_decode() at the same physical moment" (2 by default) --
-	 * an admitted request past decode_gate's own capacity waits (in the
-	 * QUEUED request_state_t) rather than being rejected. */
 	decode_concurrency_gate_t	decode_gate{membrane_max_concurrent_decode()};
 
-	/* Mega Phase E, PR E1, Section 12/29 of the task: how many requests
-	 * are currently inside membrane_session_generate() for the CURRENTLY
-	 * loaded model, right now -- the real "is it safe to close this
-	 * model's session out from under someone" signal. Every mutation
-	 * (increment in decode_slot_enter(), decrement in decode_slot_exit())
-	 * happens either while mtx is already held (enter) or by taking mtx
-	 * itself around the mutation (exit) specifically so drain_cv's own
-	 * wait_for() predicate check can never race a concurrent decrement
-	 * into a lost wakeup (the standard condition_variable pitfall of
-	 * mutating predicate state without the SAME mutex the waiter checks
-	 * it under) -- see decode_slot_exit()'s own comment. */
-	std::atomic<int>			decode_inflight{0};
-	std::condition_variable	drain_cv;	/* paired with mtx; see
-										 * ensure_model_loaded()'s own PR E1
-										 * drain-wait comment */
+	/* Mega Phase E, PR E2, Section 10-12: residency_mtx guards ONLY the
+	 * brief slot-SELECTION step (which slot serves a given model name --
+	 * see acquire_model_slot()'s own top comment) and each slot's own
+	 * claimed_name/last_used_seq bookkeeping; it is NEVER held during the
+	 * actual (potentially slow) load/evict work, which uses that slot's
+	 * own mtx instead -- a request for an already-resident model in slot
+	 * B never blocks behind a concurrent cold load into slot A. */
+	std::mutex					residency_mtx;
+	std::vector<s_model_slot>	slots;
 
-	/* Mega Phase B, PR B3, Section 32: the model registry now lives
-	 * HERE (moved out of membrane_server_run()'s own local variable)
-	 * so it can be hot-refreshed from an mtime check without any
-	 * caller needing to hold st->mtx for the whole operation --
-	 * registry_mtx is a separate, short-lived lock (registry lookups
-	 * are cheap and must never wait behind a long-running generation
-	 * just to list/resolve model names). */
+	s_membrane_server_model_state() : slots(membrane_max_resident_models())
+	{
+	}
+
+	/* Mega Phase B, PR B3, Section 32 (unchanged by PR E2): the model
+	 * registry lives HERE so it can be hot-refreshed from an mtime check
+	 * without any caller needing to hold a slot's own mtx for the whole
+	 * operation -- registry_mtx is a separate, short-lived lock. */
 	std::mutex					registry_mtx;
 	membrane_registry_t			registry;
 	std::string					registry_path;
 	int64_t						registry_mtime_ns = 0;
 };
 
-/* Mega Phase E, PR E1: call ONLY while st->mtx is already held (both real
- * call sites -- handle_chat_completions() non-stream and stream branches
- * -- call this right before releasing/moving the lock they already took
- * to run ensure_model_loaded()). Bumps decode_inflight and, on the
- * 0->1 transition, reflects that in model_state -- GENERATING now
- * honestly means "at least one request is decoding", not "exactly one",
- * now that E1 allows real concurrency. */
-static void	decode_slot_enter(s_membrane_server_model_state *st)
+/* Mega Phase E, PR E2: a single process-wide monotonic counter standing
+ * in for "time" for LRU purposes -- see s_model_slot::last_used_seq's own
+ * comment. A plain incrementing counter (never wall-clock time) keeps
+ * eviction ordering exactly reproducible in tests (residency_planner.h's
+ * own test suite already covers the pure decision logic against
+ * synthetic sequence numbers; this is the one real source of them). */
+static std::atomic<int64_t>	g_residency_seq{0};
+
+/* Mega Phase E, PR E1 (unchanged in spirit, now per-slot): call ONLY
+ * while slot->mtx is already held (both real call sites -- handle_chat_
+ * completions() non-stream and stream branches -- call this right before
+ * releasing/moving the lock they already took to run acquire_model_
+ * slot()). Bumps decode_inflight and, on the 0->1 transition, reflects
+ * that in model_state -- GENERATING now honestly means "at least one
+ * request is decoding", not "exactly one", now that E1 allows real
+ * concurrency. */
+static void	decode_slot_enter(s_model_slot *slot)
 {
-	if (st->decode_inflight.fetch_add(1, std::memory_order_acq_rel) == 0)
-		st->model_state.store(MEMBRANE_MODEL_STATE_GENERATING,
+	if (slot->decode_inflight.fetch_add(1, std::memory_order_acq_rel) == 0)
+		slot->model_state.store(MEMBRANE_MODEL_STATE_GENERATING,
 			std::memory_order_relaxed);
 }
 
-/* Mega Phase E, PR E1: the counterpart to decode_slot_enter() -- takes
- * st->mtx itself (never assume the caller already holds it; unlike enter,
- * this runs from contexts that do NOT hold mtx, e.g. right after
- * membrane_session_generate() returns with the lock already released, or
- * from stream_release() on the streaming worker-join path). Mutating
- * decode_inflight and checking "did it reach zero" under the SAME mutex
- * ensure_model_loaded()'s drain_cv.wait_for() predicate also uses is what
- * makes that wait race-free (see the mtx member's own top comment). The
- * notify_all() itself deliberately happens AFTER releasing the lock
- * (the standard "don't wake a thread that will immediately block on a
- * lock you're still holding" optimization) -- this is safe specifically
- * because the state mutation that made the predicate true already
- * happened while the lock was held, so no wakeup can be lost. */
-static void	decode_slot_exit(s_membrane_server_model_state *st)
+/* Mega Phase E, PR E1 (unchanged in spirit, now per-slot): the
+ * counterpart to decode_slot_enter() -- takes slot->mtx itself (never
+ * assume the caller already holds it; unlike enter, this runs from
+ * contexts that do NOT hold it, e.g. right after membrane_session_
+ * generate() returns with the lock already released, or from stream_
+ * release() on the streaming worker-join path). Mutating decode_inflight
+ * and checking "did it reach zero" under the SAME mutex acquire_model_
+ * slot()'s drain_cv.wait_for() predicate also uses is what makes that
+ * wait race-free. The notify_all() itself deliberately happens AFTER
+ * releasing the lock (the standard "don't wake a thread that will
+ * immediately block on a lock you're still holding" optimization) --
+ * this is safe specifically because the state mutation that made the
+ * predicate true already happened while the lock was held, so no wakeup
+ * can be lost. */
+static void	decode_slot_exit(s_model_slot *slot)
 {
 	{
-		std::lock_guard<std::mutex>	lock(st->mtx);
+		std::lock_guard<std::mutex>	lock(slot->mtx);
 
-		if (st->decode_inflight.fetch_sub(1, std::memory_order_acq_rel) == 1
-			&& st->model_loaded)
-			st->model_state.store(MEMBRANE_MODEL_STATE_READY,
+		if (slot->decode_inflight.fetch_sub(1, std::memory_order_acq_rel) == 1
+			&& slot->model_loaded)
+			slot->model_state.store(MEMBRANE_MODEL_STATE_READY,
 				std::memory_order_relaxed);
 	}
-	st->drain_cv.notify_all();
+	slot->drain_cv.notify_all();
 }
 
 static bool	load_chat_template(const std::string &model_path,
@@ -379,11 +454,11 @@ static int	membrane_kv_precision_name_to_json(int mode,
  * each time, so a switch attempted after the host's free memory changed
  * -- e.g. another process using more RAM, or this same server having
  * just freed the previous model's memory -- always sees that current
- * reality, not stale data). Factored out of ensure_model_loaded() so the
+ * reality, not stale data). Factored out of acquire_model_slot() so the
  * same real load path can be reused both for the actual requested switch
  * and for automatically restoring a previous model after a failed one
- * (see ensure_model_loaded()'s own recovery logic below). */
-static bool	try_load_one(s_membrane_server_model_state *st,
+ * (see acquire_model_slot()'s own recovery logic below). */
+static bool	try_load_one(membrane_runtime_t *rt, s_model_slot *slot,
 				const membrane_registry_entry_t &entry,
 				const std::string &first_prompt, int gen_tokens,
 				std::string *err_code, std::string *err_message,
@@ -449,7 +524,7 @@ static bool	try_load_one(s_membrane_server_model_state *st,
 	membrane_model_session_t	session;
 	membrane_run_error_t		open_err;
 
-	if (!membrane_model_open(&st->rt, entry.path.c_str(), o, o.ctx, &session,
+	if (!membrane_model_open(rt, entry.path.c_str(), o, o.ctx, &session,
 			&open_err))
 	{
 		*err_code = "MODEL_LOAD_FAILED";
@@ -457,94 +532,147 @@ static bool	try_load_one(s_membrane_server_model_state *st,
 		*http_status = 500;
 		return (false);
 	}
-	st->session = session;
-	st->model_loaded = true;
-	st->loaded_name = entry.name;
+	slot->session = session;
+	slot->model_loaded = true;
+	slot->loaded_name = entry.name;
 	return (true);
 }
 
-/* Loads `entry` as the server's one active model, unloading whatever was
- * loaded before (Section 23: one active model). On the FIRST load of
- * this model, runs the real context-recommendation pipeline against
- * `first_prompt` to decide gpu_layers/KV precision/ctx (Section 21) --
- * this is a REAL, disclosed limitation (documented in docs/server.md):
- * that initial plan is sized for whichever request happens to trigger
- * the load, not a hypothetical future largest prompt; gpu_layers/KV
- * precision cannot change again without a reload.
+/*
+ * Mega Phase E, PR E2, Section 10-14 of the task: resolves which
+ * resident SLOT serves `entry`, loading/evicting/restoring as needed --
+ * the direct multi-slot generalization of PR E1's own ensure_model_
+ * loaded() (which this replaces), now choosing among up to membrane_
+ * max_resident_models() slots instead of always operating on the one
+ * single model.
  *
- * Mega Phase B, PR B3, Section 31: model-switch FAILURE recovery -- a
- * naive "unload A, then try to load B" leaves the server with NO model
- * loaded at all if B fails, even though A was working fine a moment ago
- * (a real regression this project would otherwise be silently
- * introducing relative to "don't leave corrupted state"). This function
- * instead remembers A's own name, and if B's load fails, automatically
- * attempts to RELOAD A (a fresh try_load_one() call, re-validating
- * memory again) before giving up -- the caller's own request for B is
- * still correctly reported as a failure (err_code/err_message/
- * http_status describe B's own failure, never silently swapped for a
- * misleading "success"), but the SERVER itself ends up back in a known-
- * good state (READY on A) rather than EMPTY, whenever that recovery
- * itself succeeds. Only if BOTH B's load and A's own restore attempt
- * fail does the server end up in the explicit ERROR state -- distinct
- * from EMPTY specifically so /v1/status can tell "never loaded anything"
- * apart from "a switch attempt left this host unable to serve anything
- * right now". */
-static bool	ensure_model_loaded(s_membrane_server_model_state *st,
-				std::unique_lock<std::mutex> &lock,
+ * Two-phase, matching s_membrane_server_model_state::residency_mtx's own
+ * top comment: phase 1 (residency_mtx, always brief -- a snapshot copy
+ * plus one pure membrane_plan_residency() call, residency_planner.h)
+ * picks/claims a slot; phase 2 (that ONE slot's own mtx, potentially
+ * slow -- disk I/O, the real context/GPU planner, a bounded drain-wait)
+ * does the real load/evict/restore. A concurrent request naming a
+ * DIFFERENT, already-resident model never blocks on this at all (Section
+ * 14: hot switch never blocks on an unrelated slot's own load) -- it
+ * only ever contends on the brief phase-1 lock, never phase 2's.
+ *
+ * Contract: returns NULL only when membrane_plan_residency() itself
+ * reports EXHAUSTED (Section 12: "if all residents are non-evictable,
+ * fail safely") -- no slot was ever claimed, *err_code/message/status
+ * describe RESIDENCY_EXHAUSTED, and no caller state changed. Every OTHER
+ * outcome returns the real slot that was engaged (with *out_lock holding
+ * ITS mtx, still locked, exactly like PR E1's own `lock` parameter did)
+ * -- callers must check `err_code->empty()` to tell success from
+ * failure, since Section 16's own failure-recovery honesty (a failed
+ * switch that successfully restores the previous model still reports
+ * the ORIGINAL request as a failure, naming the real recovered model in
+ * the slot the caller can still read) needs the slot pointer even when
+ * this returns a failure.
+ */
+static s_model_slot	*acquire_model_slot(s_membrane_server_model_state *st,
+				std::unique_lock<std::mutex> *out_lock,
 				const membrane_registry_t &registry_snapshot,
 				const membrane_registry_entry_t &entry,
 				const std::string &first_prompt, int gen_tokens,
 				std::string *err_code, std::string *err_message,
 				int *http_status)
 {
-	if (st->model_loaded && st->loaded_name == entry.name)
-		return (true);
+	int	slot_index;
 
-	std::string	previous_name = st->loaded_name;
-	bool		had_previous = st->model_loaded;
-
-	if (st->model_loaded)
 	{
-		/* Mega Phase E, PR E1, Section 6/16 of the task: a model switch
-		 * must never free (membrane_model_close(), below) a session a
-		 * concurrently-running request is still decoding against -- that
-		 * request holds its own COPY of st->session (see handle_chat_
-		 * completions()'s own PR E1 comment), but the copy's `model`
-		 * pointer is only valid as long as the ORIGINAL llama_model
-		 * membrane_model_close() would free is still alive. Bounded wait
-		 * (5s, matching the pre-E1 handle_activate_model() retry budget
-		 * this replaces) rather than an indefinite one -- a switch that
-		 * can't get a safe window in 5s reports MODEL_SWITCH_BUSY (503)
-		 * and leaves the CURRENT model fully intact and still serving,
-		 * never a partial/corrupted unload. */
-		bool	drained = st->drain_cv.wait_for(lock,
+		std::lock_guard<std::mutex>						rlock(
+				st->residency_mtx);
+		std::vector<membrane_residency_slot_view_t>		views;
+
+		for (const auto &s : st->slots)
+		{
+			membrane_residency_slot_view_t	v;
+
+			v.name = s.claimed_name;
+			v.model_loaded = s.model_loaded;
+			v.pinned = s.pinned;
+			v.generating = s.decode_inflight.load(
+					std::memory_order_relaxed) > 0;
+			v.last_used_seq = s.last_used_seq;
+			views.push_back(v);
+		}
+		membrane_residency_plan_t	plan = membrane_plan_residency(views,
+				entry.name);
+
+		if (plan.decision == membrane_residency_decision_t::EXHAUSTED)
+		{
+			*err_code = "RESIDENCY_EXHAUSTED";
+			*err_message = "no resident-model slot is available right "
+				"now -- every resident model is either pinned or "
+				"actively generating (see `membrane status`)";
+			*http_status = 503;
+			return (NULL);
+		}
+		slot_index = plan.slot_index;
+		st->slots[slot_index].claimed_name = entry.name;
+	}
+
+	s_model_slot	*slot = &st->slots[slot_index];
+
+	*out_lock = std::unique_lock<std::mutex>(slot->mtx);
+	err_code->clear();
+	err_message->clear();
+	if (slot->model_loaded && slot->loaded_name == entry.name)
+	{
+		std::lock_guard<std::mutex>	rlock(st->residency_mtx);
+
+		slot->last_used_seq = g_residency_seq.fetch_add(1);
+		return (slot);
+	}
+
+	std::string	previous_name = slot->loaded_name;
+	bool		had_previous = slot->model_loaded;
+
+	if (slot->model_loaded)
+	{
+		/* Mega Phase E, PR E1, Section 6/16 of the task (unchanged in
+		 * spirit, now per-slot): a model switch/eviction must never free
+		 * (membrane_model_close(), below) a session a concurrently-
+		 * running request is still decoding against. Bounded wait (5s)
+		 * rather than an indefinite one -- see PR E1's own comment on
+		 * this exact drain-wait for the full rationale. */
+		bool	drained = slot->drain_cv.wait_for(*out_lock,
 				std::chrono::seconds(5),
-				[st] { return (st->decode_inflight.load(
+				[slot] { return (slot->decode_inflight.load(
 						std::memory_order_acquire) == 0); });
 
 		if (!drained)
 		{
+			std::lock_guard<std::mutex>	rlock(st->residency_mtx);
+
+			/* Abort the swap entirely -- the old model is still
+			 * genuinely resident in this slot, so residency selection
+			 * must see it under its OLD name again, not the target's. */
+			slot->claimed_name = previous_name;
 			*err_code = "MODEL_SWITCH_BUSY";
-			*err_message = "a generation against the currently-loaded "
-				"model is still in progress -- retry shortly";
+			*err_message = "a generation against a resident model in "
+				"this slot is still in progress -- retry shortly";
 			*http_status = 503;
-			return (false);
+			return (slot);
 		}
-		st->model_state.store(MEMBRANE_MODEL_STATE_UNLOADING,
+		slot->model_state.store(MEMBRANE_MODEL_STATE_UNLOADING,
 			std::memory_order_relaxed);
-		membrane_model_close(&st->session);
-		st->model_loaded = false;
-		st->loaded_name.clear();
-		st->cached_chat_template.clear();
+		membrane_model_close(&slot->session);
+		slot->model_loaded = false;
+		slot->loaded_name.clear();
+		slot->cached_chat_template.clear();
 	}
-	st->model_state.store(MEMBRANE_MODEL_STATE_LOADING,
+	slot->model_state.store(MEMBRANE_MODEL_STATE_LOADING,
 		std::memory_order_relaxed);
-	if (try_load_one(st, entry, first_prompt, gen_tokens, err_code,
-			err_message, http_status))
+	if (try_load_one(&st->rt, slot, entry, first_prompt, gen_tokens,
+			err_code, err_message, http_status))
 	{
-		st->model_state.store(MEMBRANE_MODEL_STATE_READY,
+		slot->model_state.store(MEMBRANE_MODEL_STATE_READY,
 			std::memory_order_relaxed);
-		return (true);
+		std::lock_guard<std::mutex>	rlock(st->residency_mtx);
+
+		slot->last_used_seq = g_residency_seq.fetch_add(1);
+		return (slot);
 	}
 	if (had_previous)
 	{
@@ -557,25 +685,35 @@ static bool	ensure_model_loaded(s_membrane_server_model_state *st,
 			std::string	restore_err_message;
 			int			restore_http_status = 500;
 
-			st->model_state.store(MEMBRANE_MODEL_STATE_LOADING,
+			slot->model_state.store(MEMBRANE_MODEL_STATE_LOADING,
 				std::memory_order_relaxed);
-			if (try_load_one(st, *prev_entry, first_prompt, gen_tokens,
-					&restore_err_code, &restore_err_message,
+			if (try_load_one(&st->rt, slot, *prev_entry, first_prompt,
+					gen_tokens, &restore_err_code, &restore_err_message,
 					&restore_http_status))
 			{
-				st->model_state.store(MEMBRANE_MODEL_STATE_READY,
+				slot->model_state.store(MEMBRANE_MODEL_STATE_READY,
 					std::memory_order_relaxed);
-				/* The ORIGINAL request (for `entry`) is still a failure
-				 * -- err_code/err_message/http_status already describe
-				 * it and are left untouched -- only the server's own
-				 * resting state improved. */
-				return (false);
+				std::lock_guard<std::mutex>	rlock(st->residency_mtx);
+
+				/* Section 16: the ORIGINAL request (for `entry`) is
+				 * still a failure -- err_code/err_message/http_status
+				 * already describe it and are left untouched -- only
+				 * the SLOT's own resting state improved (back to the
+				 * previous, still-real model). */
+				slot->claimed_name = previous_name;
+				slot->last_used_seq = g_residency_seq.fetch_add(1);
+				return (slot);
 			}
 		}
 	}
-	st->model_state.store(MEMBRANE_MODEL_STATE_ERROR,
+	slot->model_state.store(MEMBRANE_MODEL_STATE_ERROR,
 		std::memory_order_relaxed);
-	return (false);
+	{
+		std::lock_guard<std::mutex>	rlock(st->residency_mtx);
+
+		slot->claimed_name.clear();
+	}
+	return (slot);
 }
 
 static void	handle_health(const httplib::Request &, httplib::Response &res)
@@ -638,16 +776,16 @@ static membrane_registry_t	refresh_and_snapshot_registry(
  * MEMBRANE-specific (never /v1/..., never part of the OpenAI-compatible
  * surface) admin endpoint letting `membrane use` trigger a live model
  * switch without requiring `membrane serve`/the service to be restarted.
- * This is a THIN wrapper around ensure_model_loaded() -- the exact same
+ * This is a THIN wrapper around acquire_model_slot() -- the exact same
  * function handle_chat_completions() itself already calls -- never a
  * second switch/lifecycle policy: Section 17's idempotence ("already
  * active" -> no reload) and Section 16's failure-recovery honesty (a
  * failed switch that successfully restores the previous model is still
  * reported as a FAILURE for the requested model, with the real recovered
- * model named in active_model) both come from ensure_model_loaded()
+ * model named in active_model) both come from acquire_model_slot()
  * itself, for free.
  *
- * The context-recommendation pipeline ensure_model_loaded() drives
+ * The context-recommendation pipeline acquire_model_slot() drives
  * needs SOME real prompt text to size context against (see try_load_
  * one()'s own call to membrane_resolve_ctx_auto()) -- there is no real
  * user message yet for an admin-triggered warm switch, so a short, fixed
@@ -695,34 +833,52 @@ static void	handle_activate_model(s_membrane_server_model_state *st,
 			+ model_name + "' is registered (see `membrane model list`)");
 		return ;
 	}
-	/* Mega Phase E, PR E1: mtx now only guards the model-lifecycle fields
-	 * (not the whole generation, see mtx's own top comment) -- a plain
-	 * blocking lock is correct and fast here (real generation never holds
-	 * mtx anymore). "Never unload a model beneath an active generation"
-	 * (Section 15 of the original Mega Phase A task) is now enforced by
-	 * ensure_model_loaded()'s own bounded drain-wait against decode_
-	 * inflight (see its PR E1 comment) -- this replaces the old try_lock
-	 * retry loop's SERVER_BUSY with that function's own MODEL_SWITCH_BUSY,
-	 * same "bounded wait, never indefinite, never corrupts anything"
-	 * contract. */
-	std::unique_lock<std::mutex>	lock(st->mtx);
-
-	if (st->model_loaded && st->loaded_name == entry->name)
+	/* Mega Phase E, PR E2: a cheap, residency_mtx-only peek for the
+	 * common "already active, nothing to do" case -- skips the chat-
+	 * template warm-up dance entirely when it can, same real-work-
+	 * avoidance PR E1's own single-slot shortcut (which this replaces)
+	 * already provided. Never itself a source of truth for correctness:
+	 * a miss here (model_name resident but this peek raced and missed
+	 * it) just falls through to the full acquire_model_slot() path
+	 * below, which is always correct regardless. */
 	{
-		const char	*kv_name;
+		s_model_slot	*peek = NULL;
 
-		membrane_kv_precision_name_to_json(st->session.gs.adaptive_used
-			? st->session.gs.adaptive_selected_mode : MEMBRANE_KV_STORE_NATIVE,
-			&kv_name);
-		json	j;
+		{
+			std::lock_guard<std::mutex>	rlock(st->residency_mtx);
 
-		j["ok"] = true;
-		j["already_active"] = true;
-		j["active_model"] = st->loaded_name;
-		j["backend"] = st->session.gs.requested
-			? st->session.gs.backend_selected : "CPU";
-		res.set_content(j.dump(), "application/json");
-		return ;
+			for (auto &s : st->slots)
+			{
+				if (s.claimed_name == model_name)
+				{
+					peek = &s;
+					break ;
+				}
+			}
+		}
+		if (peek != NULL)
+		{
+			std::lock_guard<std::mutex>	slock(peek->mtx);
+
+			if (peek->model_loaded && peek->loaded_name == model_name)
+			{
+				const char	*kv_name;
+
+				membrane_kv_precision_name_to_json(
+					peek->session.gs.adaptive_used
+						? peek->session.gs.adaptive_selected_mode
+						: MEMBRANE_KV_STORE_NATIVE, &kv_name);
+				json	j;
+
+				j["ok"] = true;
+				j["already_active"] = true;
+				j["active_model"] = peek->loaded_name;
+				j["backend"] = peek->session.gs.requested
+					? peek->session.gs.backend_selected : "CPU";
+				res.set_content(j.dump(), "application/json");
+				return ;
+			}
+		}
 	}
 	std::string	tmpl;
 	std::string	tmpl_err;
@@ -746,30 +902,106 @@ static void	handle_activate_model(s_membrane_server_model_state *st,
 			"template could not be applied to a warm-up message");
 		return ;
 	}
-	std::string	err_code;
-	std::string	err_message;
-	int			err_status = 500;
-	bool		ok = ensure_model_loaded(st, lock, reg, *entry, prompt_text,
-			512, &err_code, &err_message, &err_status);
+	std::string						err_code;
+	std::string						err_message;
+	int								err_status = 500;
+	std::unique_lock<std::mutex>	lock;
+	s_model_slot					*slot = acquire_model_slot(st, &lock, reg,
+			*entry, prompt_text, 512, &err_code, &err_message, &err_status);
+	bool							ok = slot != NULL && err_code.empty();
 
 	if (ok)
-		st->cached_chat_template = tmpl;
+		slot->cached_chat_template = tmpl;
 	json	j;
 
 	j["ok"] = ok;
 	j["already_active"] = false;
-	j["active_model"] = st->model_loaded ? json(st->loaded_name)
-			: json(nullptr);
-	if (st->model_loaded)
+	j["active_model"] = (slot != NULL && slot->model_loaded)
+			? json(slot->loaded_name) : json(nullptr);
+	if (slot != NULL && slot->model_loaded)
 	{
-		j["backend"] = st->session.gs.requested
-			? st->session.gs.backend_selected : "CPU";
+		j["backend"] = slot->session.gs.requested
+			? slot->session.gs.backend_selected : "CPU";
 	}
 	if (!ok)
 	{
 		j["error"] = {{"code", err_code}, {"message", err_message}};
 		res.status = err_status;
 	}
+	res.set_content(j.dump(), "application/json");
+}
+
+/*
+ * Mega Phase E, PR E2, Section 13 of the task: `membrane model pin/unpin`'s
+ * server-side counterpart -- loopback-only, MEMBRANE-specific (never
+ * /v1/...), same admin namespace as handle_activate_model() above.
+ * "Pinned means: prefer not to evict. It does NOT mean violate memory
+ * safety" (Section 13) -- pinning is a property of a CURRENTLY RESIDENT
+ * slot, not a standing preference remembered for a not-yet-loaded model
+ * (this project's own registry/server_config already own that kind of
+ * durable preference, via default_model); pinning a name that is not
+ * resident right now is a real, explicit 409, never silently
+ * remembered for later. */
+static void	handle_pin_model(s_membrane_server_model_state *st, bool pin,
+				const httplib::Request &req, httplib::Response &res)
+{
+	json	body;
+
+	try
+	{
+		body = json::parse(req.body);
+	}
+	catch (const json::parse_error &)
+	{
+		send_json_error(res, 400, "INVALID_REQUEST", "request body is not "
+			"valid JSON");
+		return ;
+	}
+	if (!body.is_object() || !body.contains("model")
+		|| !body["model"].is_string() || body["model"].get<std::string>()
+			.empty())
+	{
+		send_json_error(res, 400, "INVALID_REQUEST", "request must be a "
+			"JSON object with a non-empty string \"model\"");
+		return ;
+	}
+	std::string		model_name = body["model"];
+	s_model_slot	*target = NULL;
+
+	{
+		std::lock_guard<std::mutex>	rlock(st->residency_mtx);
+
+		for (auto &s : st->slots)
+		{
+			if (s.claimed_name == model_name)
+			{
+				target = &s;
+				break ;
+			}
+		}
+	}
+	if (target == NULL)
+	{
+		send_json_error(res, 409, "MODEL_NOT_RESIDENT", "'" + model_name
+			+ "' is not currently resident -- pin/unpin only applies to "
+			"a model that is already loaded (see `membrane status`)");
+		return ;
+	}
+	std::lock_guard<std::mutex>	slock(target->mtx);
+
+	if (!target->model_loaded || target->loaded_name != model_name)
+	{
+		send_json_error(res, 409, "MODEL_NOT_RESIDENT", "'" + model_name
+			+ "' is not currently resident -- pin/unpin only applies to "
+			"a model that is already loaded (see `membrane status`)");
+		return ;
+	}
+	target->pinned = pin;
+	json	j;
+
+	j["ok"] = true;
+	j["model"] = model_name;
+	j["pinned"] = pin;
 	res.set_content(j.dump(), "application/json");
 }
 
@@ -812,6 +1044,19 @@ static void	handle_models(s_membrane_server_model_state *st,
  * never claims a daemon/process-management capability this project does
  * not have (`serve` stays foreground-only); this is a thin, honest
  * "what does the currently-loaded session look like" read. */
+/*
+ * Mega Phase E, PR E2, Section 15 of the task: "expose clearly in
+ * `membrane status`: active model, resident models, pinned, evictable,
+ * backend, memory estimate". `loaded_model`/single-model `backend`/
+ * `gpu_layers`/`kv_precision` (PR E1's own singular fields) are replaced
+ * by `resident_models` -- an array, one entry per slot that actually
+ * holds a model right now (an EMPTY/never-loaded slot is omitted
+ * entirely, not reported as a null placeholder) -- since more than one
+ * can now be true simultaneously. This MEMBRANE-specific endpoint (see
+ * this function's own pre-existing top comment) is not yet under the
+ * API v1 stability freeze (Section 18, a later phase -- E3), so
+ * reshaping it here, before that freeze, is the intended time to do it,
+ * not a breaking change against any already-frozen contract. */
 static void	handle_status(s_membrane_server_model_state *st,
 				const std::string &bind, int port, const httplib::Request &,
 				httplib::Response &res)
@@ -821,25 +1066,38 @@ static void	handle_status(s_membrane_server_model_state *st,
 	j["running"] = true;
 	j["version"] = MEMBRANE_VERSION;
 	j["endpoint"] = "http://" + bind + ":" + std::to_string(port);
-	std::lock_guard<std::mutex>	lock(st->mtx);
+	j["resident_model_limit"] = (int)st->slots.size();
+	json	resident = json::array();
 
-	j["model_state"] = membrane_model_state_name(
-		st->model_state.load(std::memory_order_relaxed));
-	if (st->model_loaded)
+	for (auto &slot : st->slots)
 	{
+		std::lock_guard<std::mutex>	lock(slot.mtx);
+
+		if (!slot.model_loaded)
+			continue ;
 		const char	*kv_name;
 
 		membrane_kv_precision_name_to_json(
-			st->session.gs.adaptive_used ? st->session.gs.adaptive_selected_mode
+			slot.session.gs.adaptive_used
+				? slot.session.gs.adaptive_selected_mode
 				: MEMBRANE_KV_STORE_NATIVE, &kv_name);
-		j["loaded_model"] = st->loaded_name;
-		j["backend"] = st->session.gs.requested
-			? st->session.gs.backend_selected : "CPU";
-		j["gpu_layers"] = st->session.gs.gpu_layers_selected;
-		j["kv_precision"] = kv_name;
+		json	m;
+
+		m["model"] = slot.loaded_name;
+		m["state"] = membrane_model_state_name(
+			slot.model_state.load(std::memory_order_relaxed));
+		m["pinned"] = slot.pinned;
+		m["evictable"] = !slot.pinned
+			&& slot.decode_inflight.load(std::memory_order_relaxed) == 0;
+		m["backend"] = slot.session.gs.requested
+			? slot.session.gs.backend_selected : "CPU";
+		m["gpu_layers"] = slot.session.gs.gpu_layers_selected;
+		m["kv_precision"] = kv_name;
+		m["estimated_model_bytes"] = slot.session.gs.estimated_model_bytes;
+		m["estimated_kv_bytes"] = slot.session.gs.estimated_kv_bytes;
+		resident.push_back(m);
 	}
-	else
-		j["loaded_model"] = nullptr;
+	j["resident_models"] = resident;
 	/* Mega Phase D, PR D6, Section 20/22: exposes the SAME default_model
 	 * `membrane serve`/the service read at startup (server_config.h,
 	 * unchanged by a live switch -- see server.h's own top comment on
@@ -882,22 +1140,27 @@ static void	handle_status(s_membrane_server_model_state *st,
  * (decode_loop.h) -- the runtime core itself only ever sees "the caller
  * asked to stop," never any HTTP/socket-specific concept.
  *
- * Mega Phase E, PR E1 UPDATE: st->mtx is now held ONLY for the brief
- * model-lifecycle setup above (ensure_model_loaded() + snapshotting a
- * per-request COPY of st->session into state->local_session) -- released
- * before the worker thread is even spawned. The worker thread instead
- * acquires a bounded decode_concurrency_gate_t ticket (decode_concurrency.h)
- * around its own membrane_session_generate() call, so multiple streaming
- * (and/or non-streaming) requests genuinely decode at the same time, up
- * to that gate's own capacity -- not serialized on st->mtx anymore. What
- * IS still serialized/protected: (a) decode_inflight (incremented while
- * st->mtx is held, at setup time; decremented, under st->mtx again, in
- * stream_release() once the worker thread has fully joined) guarantees a
- * model switch can never free a session a request is still using, and
- * (b) each request operates on its OWN local_session copy, never the
- * shared st->session, so concurrent requests cannot race on session->gs's
- * own per-call-mutated planner fields (see s_stream_request_state's own
- * local_session comment).
+ * Mega Phase E, PR E1 UPDATE (and PR E2, Section 10: multi-model
+ * residency): the resolved slot's own mtx (s_model_slot::mtx) is now
+ * held ONLY for the brief model-lifecycle setup above (acquire_model_
+ * slot() + snapshotting a per-request COPY of slot->session into state->
+ * local_session) -- released before the worker thread is even spawned.
+ * The worker thread instead acquires a bounded decode_concurrency_gate_t
+ * ticket (decode_concurrency.h, still GLOBAL across every resident slot
+ * -- see s_membrane_server_model_state's own top comment on why) around
+ * its own membrane_session_generate() call, so multiple streaming (and/
+ * or non-streaming) requests -- against the SAME resident model or, as
+ * of PR E2, DIFFERENT simultaneously-resident ones -- genuinely decode
+ * at the same time, up to that gate's own capacity, never serialized on
+ * any one slot's mtx. What IS still serialized/protected: (a) decode_
+ * inflight (incremented while the slot's mtx is held, at setup time;
+ * decremented, under that same mtx again, in stream_release() once the
+ * worker thread has fully joined) guarantees a model switch/eviction can
+ * never free a session a request is still using, and (b) each request
+ * operates on its OWN local_session copy, never the shared slot->session,
+ * so concurrent requests cannot race on session->gs's own per-call-
+ * mutated planner fields (see s_stream_request_state's own local_session
+ * comment).
  */
 
 /* Mega Phase D, PR D7, Section 12 of the task: real "stop" string
@@ -1078,17 +1341,19 @@ struct s_stream_request_state
 											 * alongside `cancel_flag`
 											 * above) */
 	std::thread					worker;
-	membrane_model_session_t	local_session;	/* Mega Phase E, PR E1: a
-										 * real VALUE COPY of st->session,
-										 * snapshotted in handle_chat_
-										 * completions() while st->mtx is
-										 * still held, and used for this
+	membrane_model_session_t	local_session;	/* Mega Phase E, PR E1
+										 * (unchanged in spirit under PR
+										 * E2): a real VALUE COPY of
+										 * slot->session, snapshotted in
+										 * handle_chat_completions() while
+										 * that slot's own mtx is still
+										 * held, and used for this
 										 * request's own membrane_session_
 										 * generate() call INSTEAD of the
-										 * shared st->session -- required
+										 * shared slot->session -- required
 										 * for correctness now that decode
-										 * runs without st->mtx held and
-										 * potentially concurrently with
+										 * runs without the slot's mtx held
+										 * and potentially concurrently with
 										 * another request's own decode
 										 * (see handle_chat_completions()'s
 										 * own PR E1 top comment for the
@@ -1102,10 +1367,10 @@ struct s_stream_request_state
 										 * them and could report EACH
 										 * OTHER's planner results). `model`
 										 * itself (the llama_model* the copy
-										 * shares with st->session) stays
+										 * shares with slot->session) stays
 										 * valid for as long as decode_
 										 * inflight is nonzero -- see
-										 * ensure_model_loaded()'s own
+										 * acquire_model_slot()'s own
 										 * drain-wait. */
 
 	/* Owned here so it outlives handle_chat_completions()'s own return
@@ -1126,7 +1391,13 @@ struct s_stream_request_state
 	std::string					model_name;
 	int							max_tokens = 0;
 	bool						include_usage = false;
+	/* Mega Phase E, PR E2: `st` (for its now-global decode_gate ONLY --
+	 * see s_membrane_server_model_state's own top comment on why that
+	 * gate stayed global, not per-slot) and `slot` (this request's own
+	 * resolved resident slot, for decode_inflight/model_state/drain_cv)
+	 * are now two separate pointers, where PR E1 only ever needed one. */
 	s_membrane_server_model_state	*st = NULL;
+	s_model_slot					*slot = NULL;
 	std::string					id;
 	request_admission_ticket_t	admission_ticket;
 	std::vector<std::string>	stop_sequences;	/* PR D7 -- empty (the
@@ -1426,10 +1697,11 @@ static void	stream_release(std::shared_ptr<s_stream_request_state> state,
 	 * decrements decode_inflight (only now, after join(), guaranteeing
 	 * membrane_session_generate() has truly returned) and, on the ->0
 	 * transition, sets model_state back to READY and wakes any
-	 * ensure_model_loaded() drain-wait blocked on a model switch. Section
+	 * acquire_model_slot() drain-wait blocked on a model switch. Section
 	 * 27's original "back to READY" guarantee, preserved -- just no
-	 * longer via server_lock (removed; decode never held st->mtx). */
-	decode_slot_exit(state->st);
+	 * longer via a global server lock (removed; decode never held the
+	 * slot's own mtx either). */
+	decode_slot_exit(state->slot);
 }
 
 static void	handle_chat_completions(s_membrane_server_model_state *st,
@@ -1624,14 +1896,41 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 	if (max_tokens < 1)
 		max_tokens = 1;
 
-	std::unique_lock<std::mutex>	lock(st->mtx);
-	std::string					tmpl;
-	std::string					tmpl_err;
+	/* Mega Phase E, PR E2: the chat-template cache check now peeks
+	 * residency_mtx + (briefly) the candidate slot's own mtx, mirroring
+	 * PR E1's own single-slot check -- see acquire_model_slot()'s own
+	 * top comment for why this peek is always SAFE to be wrong (a miss
+	 * just costs one extra real load_chat_template() call, never a
+	 * correctness issue; the real, authoritative load happens inside
+	 * acquire_model_slot() below regardless). */
+	std::string	tmpl;
+	std::string	tmpl_err;
 
-	if (st->model_loaded && st->loaded_name == entry->name
-		&& !st->cached_chat_template.empty())
-		tmpl = st->cached_chat_template;
-	else if (!load_chat_template(entry->path, &tmpl, &tmpl_err))
+	{
+		s_model_slot	*peek = NULL;
+
+		{
+			std::lock_guard<std::mutex>	rlock(st->residency_mtx);
+
+			for (auto &s : st->slots)
+			{
+				if (s.claimed_name == entry->name)
+				{
+					peek = &s;
+					break ;
+				}
+			}
+		}
+		if (peek != NULL)
+		{
+			std::lock_guard<std::mutex>	slock(peek->mtx);
+
+			if (peek->model_loaded && peek->loaded_name == entry->name
+				&& !peek->cached_chat_template.empty())
+				tmpl = peek->cached_chat_template;
+		}
+	}
+	if (tmpl.empty() && !load_chat_template(entry->path, &tmpl, &tmpl_err))
 	{
 		send_json_error(res, 500, "CHAT_TEMPLATE_UNAVAILABLE", tmpl_err);
 		return ;
@@ -1644,17 +1943,20 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 			"chat template could not be applied to these messages");
 		return ;
 	}
-	std::string	err_code;
-	std::string	err_message;
-	int			err_status = 500;
+	std::string						err_code;
+	std::string						err_message;
+	int								err_status = 500;
+	std::unique_lock<std::mutex>	lock;
+	s_model_slot					*slot = acquire_model_slot(st, &lock, reg,
+			*entry, prompt_text, max_tokens, &err_code, &err_message,
+			&err_status);
 
-	if (!ensure_model_loaded(st, lock, reg, *entry, prompt_text, max_tokens,
-			&err_code, &err_message, &err_status))
+	if (slot == NULL || !err_code.empty())
 	{
 		send_json_error(res, err_status, err_code, err_message);
 		return ;
 	}
-	st->cached_chat_template = tmpl;
+	slot->cached_chat_template = tmpl;
 
 	char	id_buf[64];
 
@@ -1672,6 +1974,7 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 		auto	state = std::make_shared<s_stream_request_state>();
 
 		state->st = st;
+		state->slot = slot;
 		state->model_path = entry->path;	/* a real copy -- `entry` points
 									 * into `reg`, a snapshot local to
 									 * THIS function, which is about to be
@@ -1690,7 +1993,7 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 		state->include_usage = want_usage_in_stream;
 		state->stop_sequences = stop_sequences;
 		state->id = id_buf;
-		state->local_session = st->session;	/* PR E1: real value copy,
+		state->local_session = slot->session;	/* PR E1: real value copy,
 									 * taken while `lock` is still held --
 									 * see s_stream_request_state's own
 									 * local_session comment. */
@@ -1700,19 +2003,21 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 									 * stream_release() -- not by this
 									 * function's own (already-passed)
 									 * return. */
-		decode_slot_enter(st);	/* PR E1: still holding `lock` here --
-									 * marks this request as using the
-									 * current model before the lock (and
+		decode_slot_enter(slot);	/* PR E1: still holding `lock` here --
+									 * marks this request as using this
+									 * slot's model before the lock (and
 									 * therefore the guarantee nothing else
 									 * can close it out from under us) is
 									 * released, right below. */
-		lock.unlock();	/* PR E1: decode itself never holds st->mtx
-									 * anymore -- released before the
-									 * worker thread is even spawned, so a
-									 * second request's own ensure_model_
-									 * loaded() call can proceed
+		lock.unlock();	/* PR E1: decode itself never holds the slot's
+									 * own mtx anymore -- released before
+									 * the worker thread is even spawned,
+									 * so a second request's own acquire_
+									 * model_slot() call can proceed
 									 * immediately if it names the same
-									 * (already-loaded) model. */
+									 * (already-loaded) model, or a
+									 * DIFFERENT already-resident one in
+									 * another slot entirely (PR E2). */
 		state->worker = std::thread(stream_worker_fn, state);
 		res.set_header("Cache-Control", "no-cache");
 		res.set_chunked_content_provider("text/event-stream",
@@ -1724,12 +2029,12 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 
 	/* Mega Phase E, PR E1: same real value-copy-then-release pattern as
 	 * the streaming branch above -- see s_stream_request_state's own
-	 * local_session comment for why a copy (never &st->session directly)
-	 * is required once decode can run concurrently with another
-	 * request's own decode. */
-	membrane_model_session_t	local_session = st->session;
+	 * local_session comment for why a copy (never &slot->session
+	 * directly) is required once decode can run concurrently with
+	 * another request's own decode. */
+	membrane_model_session_t	local_session = slot->session;
 
-	decode_slot_enter(st);
+	decode_slot_enter(slot);
 	lock.unlock();
 
 	membrane_run_opts_t	req_o;
@@ -1772,16 +2077,17 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 	{
 		/* Mega Phase E, PR E1, Section 5/9: bounded, blocking -- see the
 		 * streaming branch's own decode_concurrency_ticket_t comment.
-		 * Scoped so the slot is released the moment generate() returns,
-		 * before decode_slot_exit()'s own (separate) st->mtx acquisition
-		 * below -- no functional requirement either order would break,
-		 * just avoids holding it any longer than needed. */
+		 * Scoped so the decode ticket is released the moment generate()
+		 * returns, before decode_slot_exit()'s own (separate) resident-
+		 * slot mtx acquisition below -- no functional requirement either
+		 * order would break, just avoids holding it any longer than
+		 * needed. */
 		decode_concurrency_ticket_t	decode_ticket(&st->decode_gate);
 
 		req_state = membrane_request_state_t::ACTIVE;
 		membrane_session_generate(&local_session, gen_req, &gen_res);
 	}
-	decode_slot_exit(st);
+	decode_slot_exit(slot);
 	/* A stop-sequence match sets gen_req.cancel_flag, so gen_res.cancelled
 	 * is true here too (ok is unaffected -- see runtime_session.h's own
 	 * doc comment) -- never treated as a real failure: a stop match is a
@@ -1982,10 +2288,11 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	 * WHILE THE FIRST IS STILL ACTIVELY LISTENING -- the kernel then
 	 * load-balances incoming connections across both processes'
 	 * completely separate model state, a silent, confusing multi-
-	 * instance situation this project never wants (Section 23: "one
-	 * active model" is a promise about ONE process's own state, not
-	 * something a caller can accidentally defeat by starting a second
-	 * instance). Confirmed directly: a second `membrane serve` on an
+	 * instance situation this project never wants (Section 10/23: bounded
+	 * residency -- at most membrane_max_resident_models() slots -- is a
+	 * promise about ONE process's own state, not something a caller can
+	 * accidentally defeat by starting a second instance). Confirmed
+	 * directly: a second `membrane serve` on an
 	 * already-bound port used to print "MEMBRANE server listening"
 	 * successfully instead of failing. Overriding the socket options to
 	 * SO_REUSEADDR only (still lets a clean restart quickly rebind a
@@ -2006,13 +2313,20 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	svr.Post("/membrane/v1/models/activate", [&](const httplib::Request &rq,
 			httplib::Response &rs)
 		{ handle_activate_model(&state, rq, rs); });
+	svr.Post("/membrane/v1/models/pin", [&](const httplib::Request &rq,
+			httplib::Response &rs)
+		{ handle_pin_model(&state, true, rq, rs); });
+	svr.Post("/membrane/v1/models/unpin", [&](const httplib::Request &rq,
+			httplib::Response &rs)
+		{ handle_pin_model(&state, false, rq, rs); });
 
 	if (!svr.bind_to_port(bind, port))
 	{
 		fprintf(stderr, "membrane serve: could not bind %s:%d (port "
 			"already in use?)\n", bind.c_str(), port);
-		if (state.model_loaded)
-			membrane_model_close(&state.session);
+		for (auto &slot : state.slots)
+			if (slot.model_loaded)
+				membrane_model_close(&slot.session);
 		membrane_runtime_shutdown(&state.rt);
 		return (1);
 	}
@@ -2048,8 +2362,9 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	svr.stop();
 	if (listener.joinable())
 		listener.join();
-	if (state.model_loaded)
-		membrane_model_close(&state.session);
+	for (auto &slot : state.slots)
+		if (slot.model_loaded)
+			membrane_model_close(&slot.session);
 	membrane_runtime_shutdown(&state.rt);
 	printf("MEMBRANE server stopped\n");
 	return (0);
