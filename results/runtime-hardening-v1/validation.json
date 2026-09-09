@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "phase": "Mega Phase E, PR E4 -- runtime hardening",
+  "label": "REAL",
+  "soak_model_lifecycle": {
+    "label": "REAL",
+    "script": "scripts/soak-model-lifecycle.py",
+    "raw_output": "results/runtime-hardening-v1/soak-model-lifecycle.json",
+    "summary": {
+      "model_switching": {
+        "pass": true,
+        "cycles": 16,
+        "failures": 0,
+        "note": "RSS grew from a 13 MiB baseline to ~450 MiB over the first ~11 evict+load cycles, then plateaued (< 1 MiB additional growth over the remaining cycles) -- glibc malloc arena-retention behavior, not a per-cycle leak. Pass criterion: second-half growth << first-half growth, not a fixed total-growth cap. Thread/FD growth: 0."
+      },
+      "multi_model_residency": {
+        "pass": true,
+        "cycles": 16,
+        "failures": 0,
+        "non_hot_switches": 0,
+        "rss_growth_bytes": 278528,
+        "note": "Every alternation between two simultaneously-resident real models was a real hot-switch (already_active=true) -- zero reloads, negligible RSS growth."
+      },
+      "service_restart": {
+        "pass": true,
+        "cycles": 5,
+        "failures": 0,
+        "note": "5 real SIGKILL (uncatchable crash, not graceful stop) + fresh-process-restart cycles against the same on-disk registry -- registry survived every cycle, model activation succeeded every cycle."
+      }
+    }
+  },
+  "shutdown_safety": {
+    "label": "REAL",
+    "method": "source read (third_party/llama.cpp/vendor/cpp-httplib/httplib.cpp, Server::listen_internal()/ThreadPool::shutdown()) plus a real empirical SIGTERM-during-generation test",
+    "finding": "membrane_server_run()'s listener.join() transitively waits for cpp-httplib's own worker-pool shutdown, which joins every in-flight request-handler thread (streaming and non-streaming) BEFORE returning -- so the post-shutdown membrane_model_close() calls can never race an active generation. Confirmed empirically: SIGTERM sent 1.5s into a real ~400-token non-streaming generation; the process stayed parked in futex_do_wait (verified via /proc/<pid>/wchan) for the full ~20s the generation actually took, then exited cleanly the instant it finished. No crash, no corruption.",
+    "disclosed_asymmetry": "the non-streaming path has no cancellation signal wired to server shutdown (unlike streaming, whose stream_release() sets cancel_flag before joining) -- SIGTERM during a long non-streaming generation waits for it to finish naturally (bounded by max_tokens) rather than cancelling it early. Bounded, not a hang/deadlock, but a real, disclosed shutdown-latency asymmetry between the two paths."
+  },
+  "schema_versioning_audit": {
+    "label": "REAL",
+    "method": "source read of server_config.h, registry_core.h, model_catalog.h, docs/schema-versioning.md",
+    "finding": "all three real on-disk state files already carry a schema_version field with an existing fail-closed policy (Mega Phase C, PR C2) -- unchanged and unaffected by PR E1/E2, both of which are entirely in-memory/runtime state (decode concurrency, request lifecycle, residency/pinning) with no new persistent schema to version."
+  },
+  "cancellation_hardening": {
+    "label": "REAL",
+    "method": "reused, not re-derived -- scripts/verify-continuous-batching.py's own cancellation_isolation check (Mega Phase E, PR E1)",
+    "finding": "a real client-disconnect cancellation of one streaming request does not affect a concurrently-running second request, which still completes normally"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "checks": {
+    "model_switching": {
+      "cycles": 16,
+      "failures": 0,
+      "healthy_after": true,
+      "baseline": {
+        "rss_bytes": 14036992,
+        "n_threads": 13,
+        "n_fds": 4
+      },
+      "final": {
+        "rss_bytes": 471138304,
+        "n_threads": 13,
+        "n_fds": 4
+      },
+      "rss_growth_bytes": 457101312,
+      "thread_growth": 0,
+      "fd_growth": 0,
+      "rss_samples_bytes": [
+        14036992,
+        295198720,
+        320389120,
+        335626240,
+        354009088,
+        370819072,
+        387629056,
+        404439040,
+        421249024,
+        438059008,
+        454868992,
+        471658496,
+        471023616,
+        471052288,
+        471080960,
+        471109632,
+        471138304
+      ],
+      "first_half_growth_bytes": 407212032,
+      "second_half_growth_bytes": 49889280,
+      "plateaued": true,
+      "pass": true
+    },
+    "multi_model_residency": {
+      "cycles": 16,
+      "failures": 0,
+      "non_hot_switches": 0,
+      "healthy_after": true,
+      "rss_growth_bytes": 278528,
+      "thread_growth": 0,
+      "fd_growth": 0,
+      "pass": true
+    },
+    "service_restart": {
+      "cycles": 5,
+      "failures": [],
+      "pass": true
+    }
+  }
+}
