@@ -129,8 +129,8 @@ job) — not simulated, not asserted from source reading alone.
   certainly the paravirtualized GPU's own overhead, not a MEMBRANE
   inefficiency (the exact same model/quant/adaptive-KV path measured
   175 decode tok/s on real bare-metal CUDA hardware in PR D3).
-  `--ctx auto` (the fully-automatic form) does **not** yet work on
-  macOS — see "Known limitations".
+  `--ctx auto` (the fully-automatic form) now works on macOS (Mega
+  Phase E, PR E5) — see "Known limitations" for what changed.
 - **Real launchd service lifecycle smoke**: `membrane service install`
   → `start` (real `launchctl bootstrap`) → `status` (real `running`
   state, real pid) → `stop` → `uninstall`, all against a real
@@ -164,21 +164,23 @@ this scope-limited result.
 
 ## Known limitations
 
-- **`--ctx auto` does not work on macOS yet.** `host_memory_guard.h`'s
-  real host-RAM reading (`membrane_read_host_meminfo()`) is
-  Linux-only (`/proc/meminfo`) — confirmed directly:
-  `membrane-run --doctor` reports `[WARN] host RAM could not be read
-  (non-Linux host, or /proc/meminfo unavailable)`, and `--ctx auto`
-  correctly, safely refuses to proceed (`PLANNER_REJECTED_ALL` —
-  "`--ctx auto` never proceeds on unknown host memory" is this
-  project's own existing, deliberate safety policy, not a new
-  restriction). An explicit `--ctx N` (still combined with `--auto`
-  for GPU-layers/KV auto-selection) works today, as demonstrated
-  above. Extending `host_memory_guard.h` to read real memory on macOS
-  (e.g. via `sysctl hw.memsize`/`host_statistics64`) is real,
-  concrete, disclosed future work — out of this PR's own scope
-  (Metal backend + service-lifecycle abstraction), not silently
-  assumed to already work.
+- **`--ctx auto` now works on macOS (Mega Phase E, PR E5).**
+  `membrane_read_host_meminfo()` (`tools/membrane-run/runtime_
+  session.cpp`) previously had no macOS branch at all — Linux-only
+  (`/proc/meminfo`), so `--ctx auto` correctly, safely refused to
+  proceed (`PLANNER_REJECTED_ALL`) rather than guess, exactly as
+  disclosed in earlier phases. Fixed by adding a real macOS branch:
+  `sysctlbyname("hw.memsize")` for total RAM, `host_statistics64
+  (HOST_VM_INFO64)` (free + inactive pages) for a genuine "available"
+  estimate — the same definition `vm_stat`/Activity Monitor use, not a
+  crude total-as-free approximation. Validated for real on this
+  project's own CI `macos-metal-smoke` job (a real `macos-14` runner):
+  the job's own real generation step now passes `--ctx auto` directly
+  (no `--ctx N` workaround) with a hard, non-`continue-on-error` exit-
+  code gate — the previous `[WARN] host RAM could not be read` /
+  `PLANNER_REJECTED_ALL` path is no longer reached on this platform.
+  Swap is left unread/0 on macOS deliberately (diagnostic-only
+  everywhere in this project, never gates a decision).
 - **Checksum verification degrades gracefully, not silently, but
   doesn't actually run** on a stock macOS install: `sha256sum` (GNU
   coreutils) is not preinstalled on macOS (this project's own real CI

@@ -255,18 +255,27 @@ evidence record, and `docs/compatibility.json`'s MC-33/MC-34 rows.
 
 ## Known limitations
 
-- **`--ctx auto` does not report real host-RAM figures on Windows**
-  (`host_memory.available:false` in the real generation JSON above) —
-  `host_memory_guard.h`'s host-RAM reader is Linux-only (`/proc/meminfo`);
-  unlike macOS (where `--ctx auto` fails closed entirely for this
-  reason, per PR D4), Windows's own real run above still succeeded
-  because `--auto`'s own GPU/KV auto-selection path does not require a
-  host-RAM fact when there is no GPU to reason about residency
-  against — but a real `--ctx auto` *context-sizing* decision on
-  Windows would hit the identical `PLANNER_REJECTED_ALL` gap PR D4
-  disclosed for macOS. Extending `host_memory_guard.h` to read real
-  memory on Windows (`GlobalMemoryStatusEx`) is real, concrete,
-  disclosed future work — out of this PR's own scope.
+- ~~`--ctx auto` does not report real host-RAM figures on Windows~~ —
+  **fixed in Mega Phase E, PR E5.** At PR D5 (the evidence above),
+  `host_memory_guard.h`'s host-RAM reader was Linux-only (`/proc/
+  meminfo`); the real generation run cited above happened to still
+  succeed only because `--auto`'s own GPU/KV auto-selection path does
+  not require a host-RAM fact when there is no GPU to reason about
+  residency against, but a real `--ctx auto` *context-sizing* decision
+  would have hit the identical `PLANNER_REJECTED_ALL` gap PR D4
+  disclosed for macOS. PR E5 added a real Windows branch to `membrane_
+  read_host_meminfo()` (`tools/membrane-run/runtime_session.cpp`):
+  `GlobalMemoryStatusEx()`/`MEMORYSTATUSEX` — the identical,
+  already-vendored pattern this project's own llama.cpp submodule
+  already uses for the same purpose (`ggml-cpu.cpp`'s own CPU-device
+  memory query) — `ullAvailPhys` is a real, OS-reported "available"
+  figure, not an approximation. Validated for real on this project's
+  own CI `windows-support-smoke` job (a real `windows-latest` runner):
+  the job's own real generation step now passes `--ctx auto` directly
+  (no `--ctx N` workaround) with a hard, non-`continue-on-error` exit-
+  code gate. Swap (page-file) is left unread/0 on Windows deliberately
+  (diagnostic-only everywhere in this project, never gates a
+  decision).
 - **`schtasks.exe` exposes no PID** — `membrane service status`'s own
   `pid`/`main_pid` field stays `0`/unknown on Windows, unlike
   systemd/launchd (both of which report a real one).
