@@ -1059,21 +1059,23 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  # Mega Phase D, PR D8: validates v0.8.0 stable-release readiness (live
-  # tree state: MEMBRANE_VERSION, CITATION.cff, release notes, the
-  # support/model-compatibility matrices' own evidence-state vocabulary,
-  # official package policy, no CUDA/Windows-GPU/Open-WebUI-validated/
-  # "complete OpenAI API"/production-ready overclaim, README release
-  # status, D1-D7's own evidence carrying real squash SHAs, the real
-  # long-context fix, an honest reproducibility disclosure, and that
-  # historical v0.3.0/v0.4.0 release docs/evidence remain untouched) --
-  # python3 + checkout only, no GPU, no model download, no C/C++ build,
-  # no Docker. Same standalone-script/own-CI-job pattern as
-  # release-v040-check before it (retired this same PR, see that job's
-  # own removal comment for the precedent) -- this job is itself
-  # expected to need the same retirement once a future release
-  # supersedes v0.8.0.
-  release-v080-check:
+  # Mega Phase E, PR E6: release-v080-check (Mega Phase D, PR D8) is
+  # RETIRED from CI as of this PR, exactly as its own comment predicted
+  # ("expected to need the same retirement once a future release
+  # supersedes v0.8.0") and the same precedent as release-v040-check's/
+  # release-v030-check's own removal before it. scripts/verify-release-
+  # v0.8.0.py's assertions ("MEMBRANE_VERSION == 0.8.0", "CITATION.cff
+  # version == 0.8.0", README's release-status line naming v0.8.0 as
+  # latest stable) become permanently false by design once the version
+  # legitimately moves on to v1.0.0 -- the script FILE is untouched
+  # (still documents exactly what PR D8 checked at the time), only this
+  # CI wiring is removed. scripts/verify-release-supply-chain.py's/
+  # verify-api-contract.py's/etc. own live-MEMBRANE_VERSION checks
+  # (updated to 1.0.0 this PR) remain this job's successor for ongoing
+  # live-version tracking; release-v100-check (below, this PR's own new
+  # validator) is release-v080-check's real successor for release-
+  # specific readiness.
+  release-v100-check:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1081,8 +1083,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Verify v0.8.0 stable-release readiness
-        run: python3 scripts/verify-release-v0.8.0.py
+      - name: Verify v1.0.0 stable-release readiness
+        run: python3 scripts/verify-release-v1.0.0.py
 
   # Mega Phase D, PR D3: validates the committed real-CUDA-hardware
   # evidence (results/cuda-backend/validation.json) and a handful of
