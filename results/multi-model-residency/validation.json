@@ -1,0 +1,146 @@
+{
+  "checks": {
+    "two_models_resident_at_once": {
+      "pass": true,
+      "activate_a": {
+        "active_model": "model-a",
+        "already_active": false,
+        "backend": "CPU",
+        "ok": true
+      },
+      "activate_b": {
+        "active_model": "model-b",
+        "already_active": false,
+        "backend": "CPU",
+        "ok": true
+      },
+      "resident_after_both": [
+        {
+          "backend": "CPU",
+          "estimated_kv_bytes": 0,
+          "estimated_model_bytes": 0,
+          "evictable": true,
+          "gpu_layers": 0,
+          "kv_precision": "native",
+          "model": "model-a",
+          "pinned": false,
+          "state": "ready"
+        },
+        {
+          "backend": "CPU",
+          "estimated_kv_bytes": 0,
+          "estimated_model_bytes": 0,
+          "evictable": true,
+          "gpu_layers": 0,
+          "kv_precision": "native",
+          "model": "model-b",
+          "pinned": false,
+          "state": "ready"
+        }
+      ],
+      "hot_switch_activate_a": {
+        "active_model": "model-a",
+        "already_active": true,
+        "backend": "CPU",
+        "ok": true
+      },
+      "chat_a_status": 200,
+      "chat_b_status": 200
+    },
+    "never_evicts_generating": {
+      "pass": true,
+      "activate_a": {
+        "active_model": "model-a",
+        "already_active": false,
+        "backend": "CPU",
+        "ok": true
+      },
+      "switch_while_generating": {
+        "status": 503,
+        "body": {
+          "active_model": null,
+          "already_active": false,
+          "error": {
+            "code": "RESIDENCY_EXHAUSTED",
+            "message": "no resident-model slot is available right now -- every resident model is either pinned or actively generating (see `membrane status`)"
+          },
+          "ok": false
+        }
+      },
+      "generation_result": {
+        "status": 200,
+        "body": {
+          "choices": [
+            {
+              "finish_reason": "length",
+              "index": 0,
+              "message": {
+                "content": "\nHere's a breakdown of the code:\n\n*   The `user` variable is initialized to an empty string.\n*   The `im_start` variable is initialized to an empty string.\n*   The `im_end` variable is initialized to an empty string.\n*   The `user` variable is initialized to an empty string.\n*   The `im_start` and `im_end` variables are initialized to an empty string",
+                "role": "assistant"
+              }
+            }
+          ],
+          "created": 1788968503,
+          "id": "chatcmpl-760655def5a3",
+          "membrane": {
+            "context": 137,
+            "gpu_layers": 0,
+            "kv_placement": "default",
+            "kv_precision": "q8",
+            "sampling": "greedy (temperature/top_p not yet supported -- any request value is accepted and ignored)"
+          },
+          "model": "model-a",
+          "object": "chat.completion",
+          "usage": {
+            "completion_tokens": 96,
+            "prompt_tokens": 33,
+            "total_tokens": 129
+          }
+        }
+      },
+      "switch_after_idle": {
+        "status": 200,
+        "body": {
+          "active_model": "model-c",
+          "already_active": false,
+          "backend": "CPU",
+          "ok": true
+        }
+      }
+    },
+    "pin_protects_and_unpin_releases": {
+      "pass": true,
+      "pin": {
+        "model": "model-a",
+        "ok": true,
+        "pinned": true
+      },
+      "blocked_while_pinned": {
+        "status": 503,
+        "body": {
+          "active_model": null,
+          "already_active": false,
+          "error": {
+            "code": "RESIDENCY_EXHAUSTED",
+            "message": "no resident-model slot is available right now -- every resident model is either pinned or actively generating (see `membrane status`)"
+          },
+          "ok": false
+        }
+      },
+      "unpin": {
+        "model": "model-a",
+        "ok": true,
+        "pinned": false
+      },
+      "freed_after_unpin": {
+        "status": 200,
+        "body": {
+          "active_model": "model-c",
+          "already_active": false,
+          "backend": "CPU",
+          "ok": true
+        }
+      }
+    }
+  }
+}

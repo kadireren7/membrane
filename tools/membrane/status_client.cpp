@@ -43,16 +43,36 @@ void	membrane_print_server_status_human(const json &j)
 			j["default_model"].get<std::string>().c_str());
 	else
 		printf("  default model: (none configured)\n");
-	if (j.contains("loaded_model") && !j["loaded_model"].is_null())
+	/* Mega Phase E, PR E2, Section 15 of the task: "resident models,
+	 * pinned, evictable, backend, memory estimate" -- replaces PR E1's
+	 * own single "active model" line, since more than one model can now
+	 * be resident simultaneously (see server.cpp's own handle_status()
+	 * comment for the /v1/status field this reads). */
+	bool	printed_any = false;
+
+	if (j.contains("resident_models") && j["resident_models"].is_array())
 	{
-		printf("  active model: %s\n",
-			j["loaded_model"].get<std::string>().c_str());
-		printf("  backend: %s\n", j.value("backend", std::string("?")).c_str());
-		printf("  kv precision: %s\n",
-			j.value("kv_precision", std::string("?")).c_str());
+		for (const auto &m : j["resident_models"])
+		{
+			printed_any = true;
+			printf("  resident model: %s (%s%s)\n",
+				m.value("model", std::string("?")).c_str(),
+				m.value("state", std::string("?")).c_str(),
+				m.value("pinned", false) ? ", pinned" : "");
+			printf("    backend: %s\n",
+				m.value("backend", std::string("?")).c_str());
+			printf("    kv precision: %s\n",
+				m.value("kv_precision", std::string("?")).c_str());
+			printf("    evictable: %s\n",
+				m.value("evictable", false) ? "yes" : "no");
+		}
 	}
-	else
-		printf("  active model: (none loaded yet)\n");
+	if (!printed_any)
+		printf("  resident models: (none loaded yet)\n");
+	printf("  resident model limit: %s\n",
+		j.contains("resident_model_limit")
+			? std::to_string(j.value("resident_model_limit", 0)).c_str()
+			: "?");
 	printf("  context policy: %s\n",
 		j.value("context_policy", std::string("?")).c_str());
 }
@@ -98,6 +118,48 @@ bool	membrane_activate_model(const std::string &bind, int port,
 			&& !parsed["active_model"].is_null())
 		? parsed["active_model"].get<std::string>() : std::string();
 	out->backend = parsed.value("backend", std::string());
+	if (parsed.contains("error") && parsed["error"].is_object())
+	{
+		out->error_code = parsed["error"].value("code", std::string());
+		out->error_message = parsed["error"].value("message", std::string());
+	}
+	else
+	{
+		out->error_code.clear();
+		out->error_message.clear();
+	}
+	return (true);
+}
+
+bool	membrane_set_model_pin(const std::string &bind, int port,
+			const std::string &model_name, bool pin,
+			membrane_pin_result_t *out)
+{
+	httplib::Client	cli(bind, port);
+
+	cli.set_connection_timeout(0, 500000);
+	cli.set_read_timeout(5, 0);
+
+	json	body;
+
+	body["model"] = model_name;
+	auto	res = cli.Post(pin ? "/membrane/v1/models/pin"
+			: "/membrane/v1/models/unpin", body.dump(), "application/json");
+
+	if (!res)
+		return (false);
+	json	parsed;
+
+	try
+	{
+		parsed = json::parse(res->body);
+	}
+	catch (const json::parse_error &)
+	{
+		return (false);
+	}
+	out->ok = parsed.value("ok", false);
+	out->pinned = parsed.value("pinned", false);
 	if (parsed.contains("error") && parsed["error"].is_object())
 	{
 		out->error_code = parsed["error"].value("code", std::string());

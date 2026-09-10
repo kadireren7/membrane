@@ -1,8 +1,12 @@
 # API contract
 
-Mega Phase C, PR C3. This document is the top-level contract summary;
-`docs/server.md` remains the detailed, authoritative reference for
-every endpoint, request/response shape, and the full error table —
+Mega Phase C, PR C3 (versioning/error-contract policy); Mega Phase E,
+PR E3 adds `docs/api-v1-stability.md`, the authoritative frozen v1
+stability promise (stable paths/error shape/required fields,
+additive-change and deprecation policy) — this page stays the
+versioning-policy/scope-statement reference, that page is the contract
+itself. `docs/server.md` remains the detailed, authoritative reference
+for every endpoint, request/response shape, and the full error table —
 this page never duplicates that table, it freezes and versions it.
 
 ## Scope: a compatible subset, never "the complete OpenAI API"
@@ -13,8 +17,11 @@ OpenAI SDKs and OpenAI-protocol clients to work against it (see
 `docs/client-compatibility.md`). It is not, and is not claimed to be, a
 complete reimplementation of OpenAI's API — `docs/server.md`'s own "Not
 implemented" section lists the concrete, disclosed gaps (no
-`/v1/completions`, no sampling beyond greedy decoding, no multi-model
-residency, no idle-model timeout). This scope statement is itself a
+`/v1/completions`, no sampling beyond greedy decoding, no idle-model
+timeout). Bounded multi-model residency (up to
+`MEMBRANE_MAX_RESIDENT_MODELS`, default 2) shipped in Mega Phase E, PR
+E2 — see `docs/server.md`'s own "Multi-model residency" section; this
+is a real, current capability now, not a gap. This scope statement is itself a
 regression-guarded claim (`scripts/verify-api-contract.py`): no file in
 this repo may claim "complete"/"full" OpenAI API support.
 
@@ -45,6 +52,10 @@ or clearly separate:
   (`context`, `gpu_layers`, `kv_precision`, `kv_placement`, `sampling`)
   — see `docs/server.md`'s "`POST /v1/chat/completions`" section.
 - `GET /v1/status` — a MEMBRANE-specific, non-OpenAI endpoint.
+- `GET /membrane/v1/capabilities` (Mega Phase E, PR E3, new) —
+  real, live capability discovery. Under the `/membrane/` namespace
+  specifically (not `/v1/...`), same as the pin/unpin/activate admin
+  routes below.
 - `Retry-After` header on a `503 SERVER_BUSY` response specifically
   (not on every 503 — see "Frozen error contract" below).
 

@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "phase": "Mega Phase E, PR E1 -- continuous batching / scheduler foundation",
+  "base_commit": "2f3f3215eecec8f375c2b4997c13a488d03b027e",
+  "design_summary": "Replaced full-request-serialization (one std::mutex held for the whole generation) with bounded, genuinely concurrent decode. Deliberately NOT upstream llama.cpp's own shared-context/seq_id-slot design -- this project's per-request architecture (a brand-new llama_context per request, unchanged) is kept, because it is required by the existing real per-request adaptive planner (ctx sizing, KV quantization, GPU-layer split); a single shared context could not accommodate per-request-tuned parameters. Concurrency is bounded by decode_concurrency_gate_t (tools/membrane/decode_concurrency.h, default capacity 2, env MEMBRANE_MAX_CONCURRENT_DECODE), which every request acquires (blocking, never rejecting) before its own membrane_session_generate() call. Each request operates on a real value COPY of the loaded model's session state, never the shared struct, avoiding a cross-request race on planner-output fields. A model switch drains (bounded ~5s wait) all in-flight decodes against the current model before closing it, reporting 503 MODEL_SWITCH_BUSY on timeout rather than corrupting anything.",
+  "request_state_model": {
+    "states": ["QUEUED", "ACTIVE", "CANCELLING", "CANCELLED", "DONE", "ERROR"],
+    "defined_in": "tools/membrane/request_state.h",
+    "wired_into": "tools/membrane/server.cpp (s_stream_request_state::req_state for streaming, a local req_state for non-streaming)"
+  },
+  "correctness_evidence": {
+    "method": "scripts/verify-continuous-batching.py, real SmolLM2-135M-Instruct-f16.gguf, real membrane serve process, real concurrent HTTP requests (local-dev-only -- requires a real GGUF, models/ is gitignored, matches soak-test-server.py/concurrency-soak-server.py's own established no-CI convention)",
+    "result": "PASS -- see the full JSON result below",
+    "checks": {
+      "concurrent_nonstream": "PASS -- 3 concurrent non-streaming requests, all succeeded with coherent, non-empty, non-corrupted content",
+      "concurrent_stream": "PASS -- 3 concurrent streaming requests, all completed with a real data: [DONE] terminal frame",
+      "mixed_stream_nonstream": "PASS -- 2 non-stream + 2 stream concurrently, all succeeded",
+      "cancellation_isolation": "PASS -- a real client disconnect on one streaming request (cut after 1 chunk) never affected a concurrently-running second request, which completed normally (14 chunks, got_done=true)",
+      "fairness": "PASS -- a short request (8 max_tokens) started just after a long request (64 max_tokens) completed BEFORE the long one (1.6s vs 3.6s) -- no starvation observed; strict FIFO ordering is NOT claimed or guaranteed (decode_concurrency_gate_t uses a plain condition_variable, disclosed in its own top comment)"
+    },
+    "full_result_json": "see stdout of the script invocation above -- not duplicated here verbatim to keep this file small; reproducible via: scripts/verify-continuous-batching.py --model models/SmolLM2-135M-Instruct-f16.gguf"
+  },
+  "performance_evidence": {
+    "method": "same script, --backend CPU, real SmolLM2-135M, 4 identical non-stream requests (max_tokens=24), two FRESH server instances (one MEMBRANE_MAX_CONCURRENT_DECODE=1 = serialized baseline, one =2 = E1 default), wall-clock time compared honestly",
+    "serialized_baseline_wall_s": 6.446551933011506,
+    "concurrent_default_wall_s": 5.190530486986972,
+    "wall_clock_speedup_x": 1.2419832518416891,
+    "disclosure": "A real, modest ~1.24x wall-clock improvement on this dev host (12 real CPU cores, CPU-only backend, no GPU offload in this measurement) -- never marketed as more than this one real measurement shows. Not re-measured on CUDA/Vulkan backends this PR (out of scope for a scheduler-foundation PR; the concurrency mechanism itself is backend-agnostic, since concurrency is bounded at the per-request-context level, not inside any one backend's own kernels)."
+  },
+  "real_bugs_found_and_fixed_during_this_phase": [
+    {
+      "id": "E1-BUG-1",
+      "title": "membrane serve never suppressed llama.cpp's own verbose internal logging, causing a real hang class under bounded-buffer output sinks",
+      "root_cause": "llama_log_set() was only ever called in membrane-run's own main.cpp (the CLI), never in server.cpp. Every chat request's fresh llama_context creation (unchanged 'persistent model, new context per request' architecture) printed ~13 KB of real llama.cpp-internal diagnostic output (graph_reserve/sched_reserve/resolve_fused_ops) to stderr, measured directly on the real SmolLM2-135M fixture, four requests producing 51554 bytes.",
+      "impact": "Under any real supervisor/harness whose stdout/stderr sink has bounded buffering and no continuous reader (confirmed and reproduced directly: Python subprocess.PIPE without a draining thread -- NOT systemd/journald, which reads continuously), enough real sequential requests (~5 measured) fill the OS pipe buffer and the request-handling thread's own fprintf() call blocks forever, starving every other request waiting on that thread's held decode-gate/admission slot.",
+      "diagnosis_method": "/proc/<pid>/task/*/wchan inspection on the live, stuck process confirmed the stuck thread was genuinely blocked in anon_pipe_write, not in any lock/condvar this project's own code owns -- ruled out a scheduler deadlock directly rather than assumed.",
+      "fix": "tools/membrane/server.cpp: membrane_server_run() now calls llama_log_set(membrane_server_log_callback, NULL) once at startup (ERROR-level only passed through), mirroring main.cpp's own quiet_log_callback.",
+      "verified": "Re-ran the exact same real 6-request sequence after the fix: stdout stayed at 52 bytes (just the startup banner). Re-ran the full verify-continuous-batching.py suite: all checks now PASS (previously 3/5 failed with 60s client-side timeouts)."
+    },
+    {
+      "id": "E1-FINDING-1 (not a bug fixed in this PR -- disclosed, third-party, pre-existing)",
+      "title": "A real TSan-flagged data race exists inside vendored ggml's own CPU-backend intra-op compute kernels (ggml_compute_forward_flash_attn_ext_f16_one_chunk / ggml_compute_forward_mul_mat_one_chunk)",
+      "attribution": "Confirmed NOT caused by E1's own cross-request scheduler: reproduces identically with MEMBRANE_MAX_CONCURRENT_DECODE=1 and exactly ONE in-flight request (zero cross-request concurrency) -- ggml's own n_threads=4 intra-op worker threads (spawned via libgomp for that single context's own decode) race on writes into that same context's own compute buffer. This has been real and present since n_threads>1 was first used (long before this phase); it was simply never exercised under a TSan build with real generation before (the existing CI TSan job, test_server.cpp, deliberately stays real-generation-free via a nonexistent-model 404 path).",
+      "scope_decision": "NOT fixed in this PR -- patching vendored, third-party ggml CPU-kernel source is well outside a scheduler-foundation PR's scope, and real output was observed correct/coherent in every request despite the warnings (consistent with a class of hand-tuned numeric-kernel races that are benign in practice on real hardware but technically flagged by TSan's memory model). Does not affect CI (the CI TSan job's own real-generation-free design is unaffected and stays green). Disclosed honestly in docs/soak-and-concurrency-testing.md rather than hidden or wrongly attributed to E1's own new code.",
+      "e1_own_code_status": "decode_concurrency_gate_t, decode_slot_enter/decode_slot_exit, the per-request local_session copy, and ensure_model_loaded's drain-wait show NO TSan-flagged races in isolation, including under real concurrent generation."
+    },
+    {
+      "id": "E1-FINDING-2 (pre-existing CI coverage gap, fixed in this PR)",
+      "title": "test_request_admission (added Mega Phase B, PR B3) had zero real CI execution despite being ctest-registered",
+      "root_cause": "It lives under tools/membrane's own MEMBRANE_ENABLE_LLAMA-gated CMakeLists.txt even though the test itself is header-only/Threads::Threads-only. build-and-test and thread-sanitizer never set MEMBRANE_ENABLE_LLAMA at all; server-thread-sanitizer and packaging-smoke both set it but filtered their own ctest -R down to test_server/test_setup_cmd/etc, never test_request_admission.",
+      "fix": ".github/workflows/ci.yml: server-thread-sanitizer's own Build step now also builds test_decode_concurrency (new, this PR) and test_request_admission (pre-existing), and its Test step's -R filter now matches both alongside test_server.",
+      "verified": "Locally replicated the updated filter against build-tsan: all 3 tests (test_server, test_request_admission, test_decode_concurrency) pass under TSan."
+    }
+  ],
+  "unrelated_pre_existing_failure_noted_not_fixed": {
+    "test": "test_quant_simd_parity",
+    "observation": "Deterministically fails with a halfway-rounding SIMD-vs-scalar mismatch on this dev host, unrelated to E1 -- confirmed via `git diff --stat` that this branch touches zero quantization/SIMD files. Out of scope for a continuous-batching PR; flagged for a future runtime-hardening phase (E4) or a dedicated fix."
+  },
+  "sanitizers": {
+    "tsan": "test_decode_concurrency and the full test_server suite both clean under TSan (setarch -R). Real concurrent generation (2 requests) run manually against a TSan build revealed the pre-existing ggml finding above -- not CI-gating, disclosed.",
+    "asan": "test_decode_concurrency and the full test_server suite both clean under ASan. Real concurrent generation (including a real model-switch-drain-then-close-then-recovery-reload cycle under concurrent decode) run manually against an ASan build: zero AddressSanitizer errors."
+  },
+  "ctest": "91/92 local tests pass in build-release-cpu; the one failure (test_quant_simd_parity) is the pre-existing, unrelated issue noted above."
+}
