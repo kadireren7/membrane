@@ -1,0 +1,163 @@
+# Contributor agreement check.
+#
+# What this verifies: for an EXTERNAL pull request (see the skip condition
+# below), CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27 requires a VERIFIED
+# signature (Path A qualified/secure e-signature, or Path B wet-ink -- never
+# a bare PR comment) recorded in docs/contributor-agreements.md's Accepted
+# table (status literally "VERIFIED"), or an explicit recorded waiver in its
+# Maintainer-recorded waivers table, before the PR may be merged. This
+# workflow reports that as a real pass/fail result so it CAN be promoted to
+# a required status check later -- it does not unconditionally exit 0.
+#
+# This workflow itself cannot verify a signature -- signing happens outside
+# GitHub (Agreement Section 27). It only checks whether the maintainer has
+# already recorded a VERIFIED row after doing that verification themselves.
+# It deliberately does NOT accept a PR comment, CI status, or the PR
+# author's GitHub identity alone as evidence -- those are exactly the
+# things Agreement Section 27, item 4 says never count.
+#
+# It is NOT added to branch protection as a required check by this change --
+# see docs/contributor-governance.md for why enabling that is a separate,
+# later, maintainer decision, not something this workflow file does on its
+# own by existing.
+#
+# Security design (see docs/contributor-governance.md "Automation
+# recommendation" for the full reasoning):
+#   - Triggered by plain `pull_request`, never `pull_request_target` -- this
+#     check touches no secrets and runs no code from the fork, so it does not
+#     need pull_request_target's elevated token/secret access, and avoiding
+#     it avoids that trigger's known secret-exfiltration/RCE-class risk when
+#     combined with checking out and executing untrusted fork content.
+#   - permissions is explicitly minimal: contents: read only. No PR-write,
+#     no issues-write, nothing that could post a comment or alter the PR.
+#   - The registry file is read ONLY from the base branch
+#     (github.base_ref), fetched via a *separate*, explicit checkout step --
+#     never from the PR's own head/merge commit. This is deliberate: it
+#     stops a malicious fork PR from adding a fake acceptance row to its own
+#     copy of docs/contributor-agreements.md to pass its own check. The
+#     actual PR diff is never checked out or executed by this workflow at
+#     all -- only the base-branch registry file's contents are read.
+#   - Lookup is deterministic: an awk field-based match on the registry's
+#     own pipe-delimited table columns, not a hand-rolled regex over the
+#     whole line -- an earlier draft of this check used a `grep -E` pattern
+#     that looked plausible but was empirically verified (real test rows,
+#     not just read by eye) to NEVER match a real row, because the
+#     PR-number column sat immediately next to the handle column with only
+#     one `|` between them, and that regex required a second, distinct `|`
+#     to appear before the number. It would have silently reported "no
+#     acceptance found" for every real acceptance. The current awk version
+#     tracks which of the two registry tables (Accepted / Maintainer-
+#     recorded waivers) each line belongs to via the `## ` section headers,
+#     matches the handle case-insensitively, and: in the Accepted table,
+#     requires the `Verification status` column to read exactly `VERIFIED`
+#     and the PR to appear as one of possibly several numbers in the
+#     `Covered PR(s)` column (a single signature may name more than one
+#     PR -- Agreement Section 27, item 7); in the waivers table, matches the
+#     single PR column directly. Verified against six real test cases
+#     (a VERIFIED multi-PR row, case-insensitive handle match, a non-
+#     matching PR for an otherwise-VERIFIED author, a PENDING-not-VERIFIED
+#     row correctly rejected, a waiver-table match, and a non-matching
+#     author) before being committed here.
+#   - No third-party GitHub App or external service is used.
+name: Contributor agreement check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  check-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip for internal/maintainer contributions
+        id: gate
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          # External == the PR comes from a fork. A PR opened from a branch
+          # in this repository itself is treated as internal (maintainer or
+          # someone already trusted with direct repo write access) and is
+          # exempt from the acceptance requirement -- CONTRIBUTOR_RIGHTS_AGREEMENT.md
+          # only ever requires this for *external* contributions.
+          if [ "${IS_FORK}" != "true" ]; then
+            echo "internal=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "internal=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out registry file from the base branch only
+        if: steps.gate.outputs.internal != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: |
+            docs/contributor-agreements.md
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Look up this PR in the contributor agreement registry
+        if: steps.gate.outputs.internal != 'true'
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -u
+          echo "## Contributor agreement status" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          REGISTRY="docs/contributor-agreements.md"
+          if [ ! -f "$REGISTRY" ]; then
+            echo "Registry file not found on base branch -- treating as no VERIFIED signature or waiver on record." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::No VERIFIED CONTRIBUTOR_RIGHTS_AGREEMENT.md signature or waiver on record for @${PR_AUTHOR} / PR #${PR_NUMBER}. See CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27."
+            exit 1
+          fi
+
+          # Deterministic, section-aware match. In the Accepted table:
+          # column 2 (GitHub handle) case-insensitively equals PR_AUTHOR,
+          # column 8 (Verification status) is exactly "VERIFIED", and
+          # PR_NUMBER appears as one of possibly several numbers in column 3
+          # (Covered PR(s)) -- a single signature may cover more than one PR
+          # (Agreement Section 27, item 7). In the Maintainer-recorded
+          # waivers table: column 2 (handle) matches and column 3 (PR,
+          # optional leading '#') equals PR_NUMBER. A row in the Accepted
+          # table with any other status (e.g. "PENDING") does not pass.
+          if awk -F'|' -v author="${PR_AUTHOR}" -v num="${PR_NUMBER}" '
+              /^## Accepted/ { section="accepted"; next }
+              /^## Maintainer-recorded waivers/ { section="waived"; next }
+              /^## / { section=""; next }
+              section=="accepted" {
+                h=$2; gsub(/^[ \t]+|[ \t]+$/, "", h)
+                prs=$3
+                status=$8; gsub(/^[ \t]+|[ \t]+$/, "", status)
+                if (tolower(h) == tolower(author) && toupper(status) == "VERIFIED") {
+                  m = split(prs, arr, /[^0-9]+/)
+                  for (i=1; i<=m; i++) { if (arr[i] == num) { found=1 } }
+                }
+              }
+              section=="waived" {
+                h=$2; gsub(/^[ \t]+|[ \t]+$/, "", h)
+                p=$3; gsub(/^[ \t]+|[ \t]+$/, "", p)
+                gsub(/^#/, "", p)
+                if (tolower(h) == tolower(author) && p == num) { found=1 }
+              }
+              END { exit(found ? 0 : 1) }
+            ' "$REGISTRY"; then
+            echo "A VERIFIED signature (or maintainer waiver) covering @${PR_AUTHOR} / PR #${PR_NUMBER} was found." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "No VERIFIED CONTRIBUTOR_RIGHTS_AGREEMENT.md signature or waiver found for @${PR_AUTHOR} / PR #${PR_NUMBER}." >> "$GITHUB_STEP_SUMMARY"
+          echo "Per CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27, this PR should not be merged until a valid Path A or Path B signature is obtained and recorded VERIFIED (or the maintainer records an explicit waiver). A PR comment alone is never sufficient." >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::No VERIFIED CONTRIBUTOR_RIGHTS_AGREEMENT.md signature or waiver on record for @${PR_AUTHOR} / PR #${PR_NUMBER}. See CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27."
+          exit 1
+
+      - name: Internal contribution -- exempt
+        if: steps.gate.outputs.internal == 'true'
+        run: |
+          echo "## Contributor agreement status" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "This PR originates from a branch in this repository (not a fork), so it is treated as an internal contribution exempt from the external-contributor acceptance requirement." >> "$GITHUB_STEP_SUMMARY"

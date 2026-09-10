@@ -106,6 +106,41 @@ repository's own `experiments/` tree.
 (`v0.1.0-research` and later) are immutable snapshots of `main` at a
 point in time — see `docs/research-release-freeze.md`.
 
+## Contributor rights and licensing
+
+This project is Apache License 2.0 (`LICENSE`). That license still governs
+the repository as a whole, and its own Section 5 ("Submission of
+Contributions") still applies to anything submitted.
+
+**For external contributions going forward, plain Apache-2.0 licensing is
+no longer sufficient on its own for a PR to be merged.**
+`CONTRIBUTOR_RIGHTS_AGREEMENT.md` (copyright assignment, with a fallback
+license where assignment isn't legally possible) is the required path: no
+external pull request is merged unless every rightsholder identified in it
+has **validly signed** that Agreement for the specific PR(s), following
+Section 27's procedure. **A GitHub PR comment is not, by itself, a
+signature** — signing happens through a qualified/secure electronic
+signature (Section 27, Path A) or a wet-ink signed document (Path B), and
+only a maintainer-recorded `VERIFIED` entry in
+`docs/contributor-agreements.md` counts. Opening a PR, CI passing, a
+maintainer's review approval, or a plain acceptance comment do **not**
+count — see Section 27 for exactly what does.
+
+**"External"** means anyone other than the maintainer or someone the
+maintainer has authorized to commit directly; the maintainer's own commits
+obviously need no acceptance from themselves. **The only exception** is a
+case-by-case waiver the maintainer records explicitly and in writing (see
+Agreement Section 27, item 6) — this is not a routine alternative, and a
+contributor cannot invoke it unilaterally by simply declining to accept.
+
+This requirement applies **from the date this policy was adopted,
+non-retroactively** — see `docs/contributor-governance.md` for exactly
+what "adopted" means and its effective date, and for why pull requests
+opened before adoption (including #68–#71) are not automatically covered
+and require their own fresh acceptance before they can be merged under
+this Agreement. See `docs/contributor-agreements.md` for the real, current
+list of who has accepted it, for which PR, and any recorded waivers.
+
 ## Pull requests
 
 Keep pull requests scoped to one logical change. Every pull request into
