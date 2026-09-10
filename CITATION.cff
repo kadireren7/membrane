@@ -9,8 +9,8 @@ authors:
   - family-names: Altıntaş
     given-names: Kadir Eren
 repository-code: "https://github.com/kadireren7/membrane"
-version: "0.8.0"
-date-released: "2026-09-07"
+version: "1.0.0"
+date-released: "2026-09-10"
 license: Apache-2.0
 abstract: >-
   MEMBRANE is an open-source product/runtime layer built on top of
@@ -20,27 +20,31 @@ abstract: >-
   bounded apply-time fallback), a persistent local background service
   with model-lifecycle management (`membrane use MODEL` -- select,
   consent-gated auto-install, and live model switching with no
-  restart), and a real OpenAI-compatible chat API (streaming, stop
-  sequences, bounded admission) validated against the official Python
-  and Node.js `openai` SDKs. It does not reimplement llama.cpp's own
-  inference engine -- it chooses, fits, installs, plans for, and serves
-  models on top of it. CPU and Vulkan are validated on real local
-  hardware; CUDA and Metal are each validated on one real device (see
-  docs/support-matrix.md for the exact, current evidence-scoped
-  matrix -- not a claim of universal hardware coverage). Windows and
-  macOS are continuously validated on real GitHub-hosted CI runners
-  (CPU-only on Windows; a paravirtualized Metal device on macOS); no
-  official Windows/macOS package exists yet. An official Debian-family
-  amd64 .deb package is available for Linux, installable and onboarded
-  end to end with a single `membrane setup`/`membrane use MODEL`
-  command (`membrane doctor` for diagnostics); independent multi-host
-  validation beyond the maintainer's own development hardware and
-  GitHub-hosted CI remains limited as of this release. This citation
-  targets the latest stable release, v0.8.0; the repository's main
-  branch may contain development changes beyond it. Archived
-  experiments, negative results, and benchmark/FPGA/CXL simulation
-  provenance live in the companion repository
-  kadireren7/membrane-research.
+  restart), bounded concurrent decode (multiple simultaneous chat
+  requests, not full serialization) and bounded multi-model residency
+  (up to two models loaded at once, LRU eviction, pinning), and a real
+  OpenAI-compatible chat API (streaming, stop sequences, bounded
+  admission, a real capabilities-discovery endpoint) validated against
+  the official Python and Node.js `openai` SDKs. It does not
+  reimplement llama.cpp's own inference engine -- it chooses, fits,
+  installs, plans for, and serves models on top of it. CPU and Vulkan
+  are validated on real local hardware; CUDA and Metal are each
+  validated on one real device (see docs/support-matrix.md for the
+  exact, current evidence-scoped matrix -- not a claim of universal
+  hardware coverage). Windows and macOS are continuously validated on
+  real GitHub-hosted CI runners (CPU-only on Windows; a paravirtualized
+  Metal device on macOS), including real automatic host-memory-aware
+  context sizing (`--ctx auto`) on both as of this release; no official
+  Windows/macOS package exists yet. An official Debian-family amd64
+  .deb package is available for Linux, installable and onboarded end to
+  end with a single `membrane setup`/`membrane use MODEL` command
+  (`membrane doctor` for diagnostics); independent multi-host validation
+  beyond the maintainer's own development hardware and GitHub-hosted CI
+  remains limited as of this release. This citation targets the latest
+  stable release, v1.0.0; the repository's main branch may contain
+  development changes beyond it. Archived experiments, negative
+  results, and benchmark/FPGA/CXL simulation provenance live in the
+  companion repository kadireren7/membrane-research.
 keywords:
   - llama.cpp
   - LLM

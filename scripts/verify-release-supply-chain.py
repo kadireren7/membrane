@@ -197,7 +197,7 @@ def _c11():
 def _c12():
 	text = (REPO_ROOT / "tools" / "membrane-run" / "product_cli.h").read_text()
 	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', text)
-	ok = m is not None and m.group(1) == "0.8.0"
+	ok = m is not None and m.group(1) == "1.0.0"
 	return ok, f"MEMBRANE_VERSION={m.group(1) if m else '(not found)'}"
 
 

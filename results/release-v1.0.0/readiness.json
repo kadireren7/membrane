@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "label": "REAL",
+  "version": "1.0.0",
+  "commit": "35166209c57ffb6e9502fcd4f937cf904d241f39 (release/v1.0.0-prep branch base; the eventual squash-merge commit is content-identical, git history only, same convention as results/release-v0.8.0/readiness.json)",
+  "base_stable": "v0.8.0",
+  "release_type": "stable",
+  "target_commit_base": "3a2c359 (E4 merge point) through 3516620 (E5 merge point, the actual base this prep branch is built on)",
+  "mega_phase_e_summary": {
+    "label": "REAL",
+    "prs_merged": [
+      {"id": "E1", "title": "bounded concurrent decode (continuous batching scheduler foundation)", "squash_sha": "9df4b3ecb2ccfa7d24d8b2b772ebd9d3085242ce"},
+      {"id": "E2", "title": "multi-model residency (bounded, up to 2 resident models)", "squash_sha": "f181d6b76eb9f0d888ec315ae3ec8cec1bd4f9f2"},
+      {"id": "E3", "title": "API v1 maturity (capabilities endpoint, frozen stability contract)", "squash_sha": "8c0d317a878141445f7bf70c2ad142be588fb016"},
+      {"id": "E4", "title": "runtime hardening (bounded soaks, shutdown-safety verification, crash recovery)", "squash_sha": "3a2c35956bd5b0db5285a11f1d62aced0d68fbb8"},
+      {"id": "E5", "title": "real Windows/macOS host-RAM reading, external-validation audit", "squash_sha": "35166209c57ffb6e9502fcd4f937cf904d241f39"}
+    ]
+  },
+  "platform_matrix": {
+    "label": "REAL",
+    "linux_cpu": {"state": "VALIDATED_CI", "evidence": "every CI job in this project; real, unmodified build-and-test/sanitizer matrix, including this release's own new test_residency_planner/test_capabilities/test_stop_sequence-class coverage"},
+    "linux_vulkan": {"state": "VALIDATED_MAINTAINER", "evidence": "real local dual-GPU dev host (AMD Ryzen 5 5600H iGPU + real discrete NVIDIA GTX 1650) -- unchanged since v0.8.0, not re-run this specific phase (no Vulkan/GPU-path code touched by E1-E5)"},
+    "linux_cuda": {"state": "COMPILE_VALIDATED_CI", "evidence": "cuda-backend-build-smoke compiles the CUDA backend on every PR this phase (E1-E5 all green); no discrete GPU on this dev host or any CI runner used by this project -- real CUDA generation has never been executed by this project, only real compilation. Never overclaimed as more."},
+    "windows_cpu": {"state": "VALIDATED_CI_REAL_HARDWARE", "evidence": "windows-support-smoke (real windows-latest runner) -- real device enumeration, real HTTPS download, real generation, real Task Scheduler lifecycle, on every PR this phase. PR E5's own real fix (GlobalMemoryStatusEx) additionally confirmed --ctx auto now works for real on this runner (previously PLANNER_REJECTED_ALL)."},
+    "windows_gpu": {"state": "NOT_VALIDATED", "evidence": "unchanged -- no discrete GPU on the windows-latest runner"},
+    "macos_metal": {"state": "VALIDATED_CI_REAL_HARDWARE", "evidence": "macos-metal-smoke (real macos-14 runner) -- real device enumeration, real download, real Metal generation, real launchd lifecycle, on every PR this phase. PR E5's own real fix (host_statistics64) additionally confirmed --ctx auto now works for real on this runner."},
+    "official_windows_macos_package": {"state": "NOT_SHIPPED", "reason": "Section 39/40/52 of the task: real per-PR CI validation exists for both platforms, but no packaging pipeline (.zip/.msi/.tar/.pkg) has been built and validated from an actual release artifact on a real matching platform this phase or any prior one -- never published as official without that, per explicit instruction this phase."}
+  },
+  "scheduler_and_batching": {
+    "label": "REAL",
+    "design": "bounded concurrent decode (decode_concurrency_gate_t, default 2, env-overridable) over this project's existing per-request-context architecture -- deliberately NOT upstream llama.cpp's shared-context/seq_id-slot design (reviewed, rejected: conflicts with this project's own per-request adaptive planner)",
+    "correctness_evidence": "scripts/verify-continuous-batching.py -- concurrent non-stream/stream/mixed requests, cancellation isolation (one cancelled stream never affects a concurrent survivor), fairness (a long request never indefinitely starves a short one), all real, all PASS. test_decode_concurrency ctest, TSan-clean.",
+    "performance": "not claimed as a speedup -- Section 8/33 of the task: correctness over speed; no consistent, reproducible throughput win was established as this project's own headline claim this phase."
+  },
+  "multi_model_residency": {
+    "label": "REAL",
+    "resident_limit": 2,
+    "eviction_policy": "deterministic LRU among slots that are neither pinned nor actively generating; fails safely (RESIDENCY_EXHAUSTED, 503) if nothing is evictable -- never violates either rule",
+    "correctness_evidence": "test_residency_planner (pure, synthetic-state, ctest) covers every policy branch directly. scripts/verify-multi-model-residency.py -- real: two simultaneously-resident real models, real hot-switch (already_active=true, never a reload), real never-evict-generating (a real 96-token generation in flight made a competing switch fail RESIDENCY_EXHAUSTED, completed normally afterward, then the switch succeeded once idle), real never-evict-pinned + unpin-releases. All PASS.",
+    "pinning": "membrane model pin/unpin -- applies only to a currently-resident model (409 MODEL_NOT_RESIDENT otherwise), never a standing preference"
+  },
+  "api_v1_contract": {
+    "label": "REAL",
+    "frozen_contract_doc": "docs/api-v1-stability.md",
+    "error_contract_completeness": "scripts/verify-api-contract.py -- 14/14, genuinely bidirectional (every code server.cpp can emit is documented; every documented code exists in server.cpp), no manually-maintained allowlist gate (a real gap in the PR C3-era version of this check, closed this phase)",
+    "capabilities_endpoint": "GET /membrane/v1/capabilities -- real, live fields (streaming/stop/tool_calling/embeddings/backends/resident_model_limit/platform), real device enumeration for backends, real current MEMBRANE_MAX_RESIDENT_MODELS value",
+    "tool_calling_decision": "still explicitly rejected (400 UNSUPPORTED_TOOL_CALLING) -- re-evaluated, not relaxed: no real end-to-end test against a real tool-call-capable model/chat-template exists",
+    "embeddings_decision": "still unimplemented, no /v1/embeddings -- re-evaluated, not relaxed: no real embedding-extraction runtime path exists"
+  },
+  "client_matrix": {
+    "label": "REAL",
+    "python_openai_sdk": {"state": "VALIDATED_REAL", "version": "3.11.0", "note": "re-validated this phase against the post-E1/E2 build, zero client-visible regression, 10/10 checks"},
+    "node_openai_sdk": {"state": "VALIDATED_REAL", "version": "7.13.0", "note": "re-validated this phase, 8/8 checks"},
+    "node_builtin_fetch": {"state": "VALIDATED_REAL", "note": "scripts/node-client-check.mjs, 7/7 checks, also validates the new capabilities endpoint and pin/unpin routes via curl"},
+    "openwebui": {"state": "NOT_VALIDATED", "reason": "unchanged from v0.8.0's own disclosed reason -- real, severe host memory pressure on the shared dev host"},
+    "continue_extension": {"state": "CONFIGURATION_ONLY", "reason": "unchanged -- no VS Code environment available"}
+  },
+  "package_matrix": {
+    "label": "REAL",
+    "official_packages": [
+      {
+        "filename": "membrane_1.0.0_amd64.deb",
+        "package_name": "membrane",
+        "backend": "Vulkan-enabled (official policy, results/release-artifacts/manifest.json, unchanged since v0.3.0)",
+        "sha256": "8f20dcc1e88a5a9f398cb3ecb554224d02241be7d63ed9fa74c37499997513f6",
+        "built_from_commit": "35166209c57ffb6e9502fcd4f937cf904d241f39",
+        "note": "built via scripts/build-release.sh --backend vulkan; the ACTUAL release asset for the tag will be rebuilt from the exact final merged squash commit (Section 55 of the task) -- this SHA is release-CANDIDATE evidence for readiness/upgrade testing, not the final tagged asset's own hash."
+      },
+      {
+        "filename": "membrane-cpu_1.0.0_amd64.deb",
+        "package_name": "membrane-cpu",
+        "backend": "CPU-only (CI-validation/build-your-own artifact, not the official asset)",
+        "sha256": "2e9a7d7cab445f7ab6d4ea00c3b573a6a1f057f31426669130addf18d9397824",
+        "built_from_commit": "35166209c57ffb6e9502fcd4f937cf904d241f39"
+      }
+    ],
+    "real_upgrade_test": {
+      "label": "REAL",
+      "method": "real, isolated Docker container (ubuntu:24.04, --memory=512m, no other containers touched), real v0.8.0 GitHub release asset downloaded and checksum-verified, installed fresh, real model registered (membrane model add + use), real registry (models.json)/config (server.json) captured, real in-place upgrade via apt install ./membrane_1.0.0_amd64.deb (the candidate build above), post-upgrade diff.",
+      "result": "membrane --version reports 1.0.0 after upgrade; models.json and server.json are BYTE-FOR-BYTE IDENTICAL before/after (diff: no output); membrane model list --json still reports the pre-existing model with status OK; the new v1.0.0-only admin endpoints (POST /membrane/v1/models/activate, .../pin, .../unpin) and GET /membrane/v1/capabilities all work immediately against the pre-upgrade registry with zero additional setup -- real end-to-end confirmed: activated a second, real instruct model, pinned it, confirmed /v1/status reported pinned:true, unpinned it. Container cleaned up afterward."
+    },
+    "windows_package": {"state": "NOT_SHIPPED", "reason": "unchanged from v0.8.0 -- real per-PR CI validation only, no packaging pipeline built/validated from an actual artifact"},
+    "macos_package": {"state": "NOT_SHIPPED", "reason": "unchanged from v0.8.0 -- same reasoning"}
+  },
+  "runtime_hardening": {
+    "label": "REAL",
+    "note": "See results/runtime-hardening-v1/validation.json (PR E4) for the full soak/shutdown-safety/crash-recovery evidence -- not re-run in this prep phase, already real and current (no code change since E4 affects any of it)."
+  },
+  "external_validation": {
+    "label": "REAL",
+    "note": "See results/v1-external-validation/validation.json (PR E5). Zero open GitHub issues. 4 real, independent external pull requests found and independently verified (local build+test clean) but deliberately left unmerged this phase per maintainer decision -- reviewed separately after this mega-phase."
+  },
+  "test_counts": {
+    "label": "REAL",
+    "ctest": "91/93 (test_quant_simd_parity: pre-existing, unrelated failure disclosed since PR #67; test_mem_guard: a long-documented real host-memory-pressure-driven flake on this dev host, confirmed transient by repeated re-runs across this whole mega-phase, unrelated to any change in it)",
+    "note": "Full local suite, MEMBRANE_ENABLE_LLAMA=ON build, re-run at this exact commit."
+  },
+  "sanitizers": {
+    "label": "REAL",
+    "asan_ubsan": "test_server, test_residency_planner, test_decode_concurrency -- clean across every E-phase PR",
+    "tsan": "test_server, test_residency_planner, test_decode_concurrency -- clean (test_server requires `setarch $(uname -m) -R` on this specific sandbox to avoid a known, pre-existing, documented ASan/TSan+ASLR interaction -- unrelated to this release; CI's own thread-sanitizer job needs no such workaround)"
+  },
+  "ci": {
+    "label": "REAL",
+    "note": "Every E1-E5 PR merged with 100% green CI (all platform/sanitizer/CodeQL jobs), including real windows-support-smoke/macos-metal-smoke/cuda-backend-build-smoke on every one."
+  },
+  "codeql": {
+    "label": "REAL",
+    "note": "CodeQL c-cpp analysis passed on every E1-E5 PR, no new alerts introduced."
+  },
+  "known_limitations": [
+    "No official Windows or macOS package -- source build only, real per-PR CI validation exists for both platforms.",
+    "CUDA real hardware evidence is compile-only in CI; real generation evidence is limited to the maintainer's own single local GPU, not re-run this specific phase (no CUDA-path code changed).",
+    "Vulkan real hardware evidence is the maintainer's own local dual-GPU host, not re-run this specific phase (no Vulkan-path code changed).",
+    "Open WebUI not validated end-to-end -- real, disclosed host-resource constraint, not a MEMBRANE defect.",
+    "Continue validated by configuration format only, not run end-to-end -- no VS Code environment available.",
+    "Independent, external multi-host validation remains limited to CI -- 4 real external pull requests exist and were independently verified but are deliberately not merged/counted as shipped validation this release.",
+    "No continuous-batching throughput claim is made -- bounded concurrent decode is a correctness/fairness feature, not a marketed speedup.",
+    "Max 2 resident models, max 2 concurrent decodes -- deliberately conservative, not tuned for maximum throughput.",
+    "No tool calling, no /v1/embeddings, no structured JSON response_format -- all deliberate, re-evaluated, disclosed scope decisions, not oversights.",
+    "Model-family compatibility evidence remains scoped to the same fixtures as v0.8.0 (SmolLM2-135M/360M, Qwen2.5-1.5B) -- not re-expanded this phase."
+  ]
+}

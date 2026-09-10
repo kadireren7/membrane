@@ -95,25 +95,33 @@ Read before you rely on this in production:
   tool calling (`tools`/`tool_choice` are explicitly rejected, never
   silently dropped), no `/v1/embeddings`, no `response_format` beyond
   the default. See [`docs/api-contract.md`](docs/api-contract.md).
-- **One active loaded model at a time** — no multi-model simultaneous
-  residency, no continuous batching yet.
+- **Bounded concurrency, not unlimited throughput** — up to 2 resident
+  models at once (LRU eviction, pinning), up to 2 concurrent decodes
+  per process (both env-overridable for testing only, not documented/
+  supported knobs) — deliberately conservative, real-memory-motivated,
+  never marketed as a performance/throughput feature. See
+  [`docs/soak-and-concurrency-testing.md`](docs/soak-and-concurrency-testing.md).
 - **Open WebUI and Continue are not both independently validated
   end-to-end yet** — real for two SDKs and curl; see
   [`docs/client-compatibility.md`](docs/client-compatibility.md).
-- **`--ctx auto` cannot read real host memory on Windows or macOS
-  yet** — Linux only; disclosed, not silently assumed to work. See
+- **No official Windows or macOS package yet** — real per-PR CI
+  validation exists for both (including real `--ctx auto` host-memory
+  sizing as of v1.0.0), source build only. See
   [`docs/support-matrix.md`](docs/support-matrix.md).
 - **Backend/platform evidence is real but scoped**: one real CUDA
   device, one real (paravirtualized) Metal device, real Windows/macOS
-  CPU on hosted CI — not a claim about every GPU/OS combination. No
-  official Windows or macOS package yet.
+  CPU on hosted CI — not a claim about every GPU/OS combination.
 - **Model-family compatibility evidence is scoped to the exact tested
   fixtures** (SmolLM2-135M/360M, Qwen2.5-1.5B) — see
   [`docs/model-compatibility.md`](docs/model-compatibility.md); a
   shared architecture name is not itself evidence.
 - **Independent, external multi-host validation remains limited** —
   most real evidence is the maintainer's own hardware plus GitHub-
-  hosted CI, disclosed throughout, not hidden.
+  hosted CI, disclosed throughout, not hidden. Real external
+  contributions do exist (see
+  [`docs/external-validation.md`](docs/external-validation.md)) but
+  are reviewed on their own timeline, not folded into a release
+  automatically.
 - **No authentication on the local server** — loopback-only binding is
   the real security boundary; remote exposure is your own
   responsibility (`--allow-non-loopback` warns loudly).
@@ -257,12 +265,15 @@ text only, not a token-ID or numeric quantization-error claim.
 
 | Supported | Evidence-scoped (real, but narrow) | Not a product path | Research only |
 |---|---|---|---|
-| CPU inference | CUDA (one real device, source build only) | Continuous batching | Dynamic/runtime KV migration |
-| Vulkan GPU offload | Metal (one real, paravirtualized device) | Multi-model simultaneous residency | Per-layer mixed `q8`/`q5` precision |
-| KV precision: `q8`, `q5`, adaptive | Windows (real CPU CI, no GPU tested) | Tool calling / `/v1/embeddings` | FPGA/CXL (simulation/synthesis-tool evidence only) |
-| Static CPU/GPU KV residency | macOS (real CI, paravirtual Metal) | | |
+| CPU inference | CUDA (one real device, source build only) | Tool calling / `/v1/embeddings` | Dynamic/runtime KV migration |
+| Vulkan GPU offload | Metal (one real, paravirtualized device) | Structured JSON response mode | Per-layer mixed `q8`/`q5` precision |
+| KV precision: `q8`, `q5`, adaptive | Windows (real CPU CI, real `--ctx auto`) | | FPGA/CXL (simulation/synthesis-tool evidence only) |
+| Static CPU/GPU KV residency | macOS (real CI, paravirtual Metal, real `--ctx auto`) | | |
 | `--auto` planning, `membrane use`/`setup`/`doctor` | | | |
 | OpenAI-compatible chat API (streaming, stop, bounded admission) | | | |
+| Bounded concurrent decode (multiple simultaneous requests) | | | |
+| Bounded multi-model residency (up to 2, LRU eviction, pinning) | | | |
+| `GET /membrane/v1/capabilities` (real, live discovery) | | | |
 | JSON diagnostics (`schema_version: 1`) | | | |
 
 See [`docs/support-matrix.md`](docs/support-matrix.md) for the exact,
@@ -285,9 +296,13 @@ exact validated model families.
   snapshots, not measured peak VRAM or an OOM guarantee.
 - `q8`/`q5`/adaptive KV precision is validated only for `LLM_ARCH_LLAMA`
   models — checked and rejected for other architectures before use.
-- One model loaded at a time; a live switch (`membrane use`, or simply
-  a different `"model"` field in a chat request) unloads the previous
-  one first.
+- Up to 2 resident models at once (deterministic LRU eviction,
+  optional pinning); a live switch (`membrane use`, or simply a
+  different `"model"` field in a chat request) reuses an already-
+  resident model instantly, or evicts the least-recently-used
+  unpinned/idle one to make room — never unlimited, never silent.
+  `docs/server.md`'s own "Multi-model residency" section has the full
+  policy.
 
 Mechanism detail: `docs/live-runtime.md` (KV precision) and
 `docs/kv-residency.md` (KV placement). Full architecture/backend/
@@ -305,15 +320,17 @@ live in
 **[kadireren7/membrane-research](https://github.com/kadireren7/membrane-research)**,
 with SHA256-verified provenance back to this repository.
 
-**Release status**: latest stable tag `v0.8.0` (supersedes `v0.4.0`,
-now historical). This release consolidates Mega Phase D: the model
-catalog/download/variant-selection pipeline, real CUDA and Metal
-backend evidence, real Windows support, `membrane use`'s consent-gated
-install/live-switch model lifecycle, and real OpenAI-compatible client
-validation (Python and Node.js SDKs) — see
-[docs/release-v0.8.0.md](docs/release-v0.8.0.md) for the full release
-notes and [docs/upgrade-v0.4-to-v0.8.md](docs/upgrade-v0.4-to-v0.8.md)
-if you're upgrading from v0.4.0. See "Known limitations" above for what
+**Release status**: latest stable tag `v1.0.0` (supersedes `v0.8.0`,
+now historical). This release is a stability/hardening milestone, not
+a features-stopped one: bounded concurrent decode, bounded multi-model
+residency (up to 2 resident models, LRU eviction, pinning), a frozen
+API v1 contract (`docs/api-v1-stability.md`) and CLI contract
+(`docs/cli-stability-contract.md`), real Windows/macOS host-memory-
+aware `--ctx auto`, and a real, tested v0.8→v1.0 upgrade path with zero
+registry/config disruption — see
+[docs/release-v1.0.0.md](docs/release-v1.0.0.md) for the full release
+notes and [docs/upgrade-v0.8-to-v1.0.md](docs/upgrade-v0.8-to-v1.0.md)
+if you're upgrading from v0.8.0. See "Known limitations" above for what
 this release does not claim. CPU-only default behavior (no flags, or
 `--gpu-layers 0`) is unchanged by any of this.
 

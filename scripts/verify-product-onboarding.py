@@ -112,15 +112,20 @@ def _c5():
 	return ok, f"has_setup={has_setup} has_doctor={has_doctor}"
 
 
-@check("no premature v1.0/CUDA-support/GUI claim anywhere in README "
-	"(Mega Phase C's own explicit scope boundaries) -- a disclaimer "
-	"that CUDA/a GUI is NOT supported is fine and expected, only a "
-	"positive claim of either is flagged")
+@check("no premature CUDA-enabled-by-default/GUI claim anywhere in "
+	"README (Mega Phase C's own explicit scope boundaries) -- a "
+	"disclaimer that CUDA/a GUI is NOT supported is fine and expected, "
+	"only a positive claim of either is flagged. The sibling v1.0.x "
+	"guard this check originally also carried was retired in Mega "
+	"Phase E, PR E6: v1.0.0 is this project's own real, current, "
+	"evidence-backed release as of that phase, not a premature claim "
+	"-- see docs/release-v1.0.0.md/results/release-v1.0.0/"
+	"readiness.json for the real evidence a v1.0 claim now rests on.")
 def _c6():
 	text = README_PATH.read_text()
 	bad = []
 	pattern = re.compile(
-		r"\bv1\.0\.\d+\b|\bCUDA[- ]enabled\b|\bsupports? CUDA\b|"
+		r"\bCUDA[- ]enabled\b|\bsupports? CUDA\b|"
 		r"\bCUDA support\b(?!\s+is not)|\bhas a (?:graphical|native) "
 		r"(?:user interface|GUI)\b", re.IGNORECASE)
 	for m in pattern.finditer(text):
@@ -132,7 +137,7 @@ def _c6():
 def _c7():
 	text = PRODUCT_CLI_H_PATH.read_text()
 	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', text)
-	ok = m is not None and m.group(1) == "0.8.0"
+	ok = m is not None and m.group(1) == "1.0.0"
 	return ok, f"MEMBRANE_VERSION={m.group(1) if m else '(not found)'}"
 
 
