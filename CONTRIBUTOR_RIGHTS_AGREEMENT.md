@@ -541,8 +541,7 @@ Agreement should be treated as final.
 > in this Section deprives a Contributor of any protection they are
 > entitled to under a mandatory provision of the law of their own country
 > of residence that cannot be excluded by agreement. The courts of
-> [maintainer's home city/province, Türkiye — to be filled in by the
-> Project Owner] have non-exclusive jurisdiction over any dispute arising
+> Denizli, Türkiye have non-exclusive jurisdiction over any dispute arising
 > from this Agreement, without prejudice to the Project Owner's own right
 > to seek relief in any other court of competent jurisdiction where a
 > Contributor or infringing use is actually located.
@@ -620,9 +619,10 @@ Agreement should be treated as final.
   arbitration clause (instead of, or alongside, the courts named above)
   would serve the Project Owner better for a genuinely international
   contributor base;
-- confirming the exact city/province for the jurisdiction clause and
-  reviewing the "mandatory law of the Contributor's own residence"
-  carve-out for correctness under Turkish conflict-of-laws rules.
+- reviewing the "mandatory law of the Contributor's own residence"
+  carve-out for correctness under Turkish conflict-of-laws rules (the
+  venue city itself, Denizli — the Project Owner's own residence — is
+  filled in above, not an open item).
 - **This draft should not be read as "final and enforceable everywhere."**
   It is a real, reasoned starting point for the Project Owner's own
   review, and for a licensed lawyer's review before the Agreement is
