@@ -1224,20 +1224,18 @@ jobs:
             smollm2:135m --quant q4_k_m --json | tee /tmp/install-result.json
           echo "MODEL_PATH=$(python3 -c 'import json;print(json.load(open("/tmp/install-result.json"))["path"])')" >> "$GITHUB_ENV"
 
-      # A real, genuine finding from this job's own first real run:
-      # --ctx auto correctly refuses to proceed (PLANNER_REJECTED_ALL)
-      # on this runner -- host_memory_guard's host-RAM read is Linux-
-      # only (/proc/meminfo), so --ctx auto has no host-memory fact to
-      # size against on macOS yet (a real, disclosed, pre-existing gap,
-      # out of this PR's own scope -- see docs/macos-metal.md's known
-      # limitations). An explicit --ctx N (still combined with --auto
-      # for GPU-layers/KV auto-selection) is the CLI's own documented
-      # example 5 for exactly this situation and is what actually
-      # exercises real Metal generation here.
-      - name: Real generation on Metal (--gpu-layers auto)
+      # Mega Phase E, PR E5, Section 38: membrane_read_host_meminfo()
+      # (tools/membrane-run/runtime_session.cpp) now has a real macOS
+      # branch (sysctlbyname("hw.memsize")/host_statistics64()) --
+      # --ctx auto's own real host-memory sizing now has a genuine
+      # fact to size against on this runner (previously a real,
+      # disclosed gap: PLANNER_REJECTED_ALL, host-RAM read was Linux-
+      # only). Real --ctx auto (not an explicit --ctx N workaround)
+      # exercises that new code path directly on real hardware.
+      - name: Real generation on Metal (--ctx auto, --gpu-layers auto)
         run: |
           ./build-metal-smoke/tools/membrane-run/membrane-run \
-            --model "$MODEL_PATH" --prompt "Hello" --ctx 2048 --auto \
+            --model "$MODEL_PATH" --prompt "Hello" --ctx auto \
             --gpu-layers auto --json | tee /tmp/generation-result.json
           python3 -c "import json,sys; d=json.load(open('/tmp/generation-result.json')); sys.exit(0 if d.get('ok') is True else 1)"
 
@@ -1376,10 +1374,16 @@ jobs:
             smollm2:135m --quant q4_k_m --json | tee install-result.json
           echo "MODEL_PATH=$(python3 -c 'import json;print(json.load(open("install-result.json"))["path"])')" >> "$GITHUB_ENV"
 
-      - name: Real CPU generation
+      # Mega Phase E, PR E5, Section 37: membrane_read_host_meminfo()
+      # (tools/membrane-run/runtime_session.cpp) now has a real Windows
+      # branch (GlobalMemoryStatusEx() -- the same, already-vendored
+      # pattern ggml-cpu.cpp's own CPU-device memory query already
+      # uses) -- real --ctx auto (not an explicit --ctx N workaround)
+      # exercises that new code path directly on real hardware.
+      - name: Real CPU generation (--ctx auto)
         run: |
           ./install-windows-smoke/bin/membrane-run.exe \
-            --model "$MODEL_PATH" --prompt "Hello" --ctx 2048 --auto \
+            --model "$MODEL_PATH" --prompt "Hello" --ctx auto \
             --json | tee generation-result.json
           python3 -c "import json,sys; d=json.load(open('generation-result.json')); sys.exit(0 if d.get('ok') is True else 1)"
 

@@ -56,23 +56,91 @@ static void	membrane_set_err(membrane_run_error_t *err, int exit_code,
 		err->available_devices = *available_devices;
 }
 
-/* Phase 13.2, Section 17: Linux-only host-memory OBSERVABILITY (never a
- * safety mechanism -- nothing in this file conditions a pass/fail
- * decision on these numbers, only reports them). Isolated in this one
- * function so the /proc/meminfo dependency stays contained rather than
- * spread across call sites -- ok stays false (fields left at 0) on any
- * non-Linux host or unreadable /proc, and every caller already treats
- * that the same way membrane_kv_store_rss_t's own proc_status_ok does:
- * omit the fields rather than report a fabricated zero as real. */
+#if defined(_WIN32)
+# ifndef NOMINMAX
+#  define NOMINMAX
+# endif
+# include <windows.h>
+#elif defined(__APPLE__)
+# include <mach/mach.h>
+# include <mach/mach_host.h>
+# include <sys/sysctl.h>
+#endif
 
+/* Phase 13.2, Section 17 (Linux); Mega Phase E, PR E5, Section 37/38 of
+ * the task (Windows/macOS): real host-memory OBSERVABILITY -- never a
+ * safety mechanism ON ITS OWN (nothing in THIS file conditions a pass/
+ * fail decision on these numbers), but the real caller this project
+ * actually gates ctx-auto sizing on (context_recommender.c, via
+ * membrane_resolve_ctx_auto()) DOES rely on `ok`/`available_bytes`
+ * being real, honest numbers -- a fabricated "everything is free"
+ * value here would be a real, disclosed regression risk (an
+ * oversized KV budget on a genuinely memory-constrained host), not an
+ * improvement. This is why swap is left at 0 (memset below) rather
+ * than approximated on Windows/macOS: `ok` only ever requires the two
+ * REAL memory fields (see the existing CodeRabbit fix comment below,
+ * preserved) -- swap is diagnostic-only everywhere in this project,
+ * never gates anything, so reporting "0/unknown" honestly rather than
+ * guessing is the same policy this function already used for a Linux
+ * kernel built without swap support.
+ *
+ * Windows: `GlobalMemoryStatusEx()`/`MEMORYSTATUSEX` is the exact,
+ * already-vendored, already-CI-building pattern this project's own
+ * llama.cpp submodule uses for the identical purpose (ggml-cpu.cpp's
+ * own `ggml_backend_cpu_device_get_memory()`) -- `ullAvailPhys` is a
+ * real, OS-reported "available" figure (Windows' own analog of
+ * Linux's `MemAvailable`), not a crude "total == free" approximation.
+ *
+ * macOS: `sysctlbyname("hw.memsize", ...)` for total (a plain, single
+ * sysctl, the same family already used elsewhere in this repo's own
+ * vendored ggml for CPU brand-string reads); `host_statistics64()`
+ * (`HOST_VM_INFO64`) for available -- summing `free_count` +
+ * `inactive_count` pages (a real, standard "available" estimate on
+ * macOS: inactive pages are reclaimable without swapping, the same
+ * definition `vm_stat`/Activity Monitor's own "Memory Used" figure is
+ * built from) times the real page size (`vm_kernel_page_size` on a
+ * fresh-enough SDK, falling back to `getpagesize()`). Both APIs have
+ * been stable since macOS 10.9 -- no version-specific fallback needed.
+ */
 void	membrane_read_host_meminfo(membrane_host_meminfo_t *out)
 {
+	memset(out, 0, sizeof(*out));
+#if defined(_WIN32)
+	MEMORYSTATUSEX	status;
+
+	status.dwLength = sizeof(status);
+	if (!GlobalMemoryStatusEx(&status))
+		return ;
+	out->total_bytes = (uint64_t)status.ullTotalPhys;
+	out->available_bytes = (uint64_t)status.ullAvailPhys;
+	out->ok = true;
+#elif defined(__APPLE__)
+	uint64_t	total = 0;
+	size_t		total_len = sizeof(total);
+
+	if (sysctlbyname("hw.memsize", &total, &total_len, NULL, 0) != 0
+		|| total == 0)
+		return ;
+
+	vm_size_t				page_size = 0;
+	mach_port_t				host = mach_host_self();
+	vm_statistics64_data_t	vm_stat;
+	mach_msg_type_number_t	count = HOST_VM_INFO64_COUNT;
+
+	if (host_page_size(host, &page_size) != KERN_SUCCESS
+		|| host_statistics64(host, HOST_VM_INFO64,
+			(host_info64_t)&vm_stat, &count) != KERN_SUCCESS)
+		return ;
+	out->total_bytes = total;
+	out->available_bytes = ((uint64_t)vm_stat.free_count
+			+ (uint64_t)vm_stat.inactive_count) * (uint64_t)page_size;
+	out->ok = true;
+#else
 	FILE		*f;
 	char		line[256];
 	unsigned long long	kb;
 	int			found = 0;
 
-	memset(out, 0, sizeof(*out));
 	f = fopen("/proc/meminfo", "r");
 	if (f == NULL)
 		return ;
@@ -97,6 +165,7 @@ void	membrane_read_host_meminfo(membrane_host_meminfo_t *out)
 	 * zeroed swap fields (memset above) are a truthful "0 swap" in that
 	 * case, not a fabricated value. */
 	out->ok = ((found & 3) == 3);
+#endif
 }
 
 
