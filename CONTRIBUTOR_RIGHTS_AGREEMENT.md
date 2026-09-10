@@ -121,6 +121,38 @@ This is a representation of the Contributor's actual, reasonable knowledge —
 To the maximum extent permitted by applicable law, the Contributor hereby
 **assigns to the Project Owner** all right, title, and interest, including
 all copyright and related rights worldwide, in and to the Contribution.
+**This general assignment is deliberately not left as a single blanket
+clause** — some jurisdictions relevant to this Agreement (see Section 26)
+treat an unqualified "all my rights" clause as too indefinite to validly
+transfer economic rights, and instead require each transferred right to
+be identified individually. Accordingly, the assignment above specifically
+includes, without limitation, the exclusive right to:
+
+- reproduce the Contribution, in whole or in part, by any means;
+- adapt, translate, modify, and prepare derivative works based on the
+  Contribution;
+- distribute copies of the Contribution to the public, by sale, rental,
+  or otherwise;
+- publicly display and publicly perform the Contribution, where
+  applicable to its content;
+- communicate the Contribution to the public and make it available to
+  the public by wire or wireless means, including over the internet, in
+  a way that members of the public may access it from a place and at a
+  time individually chosen by them;
+- sublicense and relicense the Contribution, including under different
+  license terms than this Agreement or the Project's own license;
+- exploit the Contribution commercially, including as part of a
+  proprietary or paid product or service;
+- transfer any and all of the foregoing rights to a successor entity, as
+  Section 8 makes explicit.
+
+This enumerated list is intended to satisfy an individual-enumeration
+requirement wherever the applicable law imposes one, and does not narrow
+the general assignment above — it is deliberately expressed as "includes,
+without limitation" rather than as an exhaustive substitute for it. This
+Agreement does not claim, and does not attempt, to transfer any right
+that the applicable law does not recognize as transferable in the first
+place.
 
 This assignment is limited strictly to the Contribution as reaching
 AGREEMENT ACCEPTED status under Section 27 — it does **not** cover:
@@ -134,7 +166,7 @@ AGREEMENT ACCEPTED status under Section 27 — it does **not** cover:
 
 Where assignment takes legal effect, the Project Owner becomes the
 copyright owner of the Contribution and may exercise, license, sublicense,
-relicense, or transfer it as described in Section 8 and Section 13, without
+relicense, or transfer it as described in Section 8 and Section 9, without
 further consent from or payment to the Contributor, except as a separate
 written agreement may otherwise provide.
 
@@ -159,11 +191,20 @@ further action required, a:
 - relicensable,
 - non-exclusive
 
-license to reproduce, prepare derivative works of, publicly display,
-publicly perform, sublicense, relicense, and distribute the Contribution
-and such derivative works, in source or object form, for any purpose,
+license to reproduce, adapt (including translate and modify), prepare
+derivative works of, publicly display, publicly perform, communicate to
+the public and make available to the public (including over the
+internet), sublicense, relicense, and distribute the Contribution and
+such derivative works, in source or object form, for any purpose,
 including commercial purposes, under any license terms the Project Owner
 chooses.
+
+This license is deliberately worded to cover the same enumerated rights
+as the assignment in Section 4, for the same reason: so that it stands on
+its own as a complete, independently sufficient grant — not merely a
+residual clause riding on the assignment's own drafting — regardless of
+which specific right, or which Contribution, the assignment turns out to
+be ineffective for.
 
 This fallback is intended to give the Project Owner, as nearly as legally
 possible, the same practical rights an effective assignment would have
@@ -210,18 +251,37 @@ as void as a matter of public policy, regardless of what any contract
 says.** A "waiver" clause presented as the primary mechanism would be
 misleading about its own real effect there.
 
-Accordingly: the Contributor agrees **not to assert** moral rights (such as
-the right of attribution and the right of integrity) in the Contribution
-against the Project Owner, its successors, licensees, or sublicensees, to
-the maximum extent such an agreement not to assert is legally permitted in
-the relevant jurisdiction.
+Accordingly, this section relies on two mechanisms Turkish legal
+commentary and case law treat as distinct from an outright waiver, and
+therefore as capable of remaining effective even under a law (like
+Turkey's) that voids waiver itself as a matter of public policy:
+
+- **Consent to specific exercise.** The Contributor **consents in
+  advance** to the Project Owner's specific acts of exercising this
+  Agreement's own rights — including modifying, adapting, relicensing,
+  and distributing the Contribution under different attribution or
+  branding than the Contributor might otherwise choose. Under Turkish
+  doctrine, an author consenting to a specific, described use is treated
+  as materially different from purporting to waive the underlying moral
+  right itself: the right is retained, but its holder has agreed in
+  advance that this particular exercise of it does not constitute an
+  infringement to be asserted against the Project Owner.
+- **Non-assert.** Separately and additionally, the Contributor agrees
+  **not to assert** moral rights (such as the right of attribution and
+  the right of integrity) in the Contribution against the Project Owner,
+  its successors, licensees, or sublicensees, to the maximum extent such
+  an agreement not to assert is legally permitted in the relevant
+  jurisdiction.
 
 **Separately, and only where the applicable law actually permits a
 further, effective waiver of moral rights** (this varies by jurisdiction
 and is not true everywhere, including not being true under Turkish law),
 the Contributor additionally **waives** those moral rights, to that
-jurisdiction's own maximum legal extent, as a stronger measure on top of
-the non-assert commitment above.
+jurisdiction's own maximum legal extent, as a stronger measure layered on
+top of the consent and non-assert commitments above — never as a
+substitute for them, since a waiver clause held invalid in a given
+jurisdiction does not affect the validity of the consent/non-assert
+mechanisms in that same jurisdiction.
 
 This Agreement does **not** claim that moral rights can be eliminated
 everywhere, and does not claim the non-assert commitment itself survives
@@ -497,25 +557,59 @@ Agreement should be treated as final.
   (i.e., rights that do not yet exist) — a narrower point than ordinary
   assignment of currently-existing economic rights, which Turkish law
   does generally permit through licensing/transfer agreements.
-- **What still genuinely needs a licensed Turkish IP/contract lawyer**,
-  not general research, before this Agreement is treated as final:
-  - whether FSEK imposes a **written-form / specific-enumeration**
-    requirement on transfers of economic rights (a common civil-law
-    pattern — requiring a transfer to name which specific economic
-    rights, e.g. reproduction, adaptation, distribution, are being
-    transferred, rather than a single blanket "all rights" clause being
-    automatically sufficient) that Section 4's own assignment language
-    should be adapted to satisfy explicitly;
-  - whether software specifically receives any different treatment under
-    FSEK compared to other categories of protected work;
-  - the practical cross-border enforceability of a Turkish-law judgment
-    against a Contributor resident in a different country, and whether an
-    arbitration clause (instead of, or alongside, the courts named above)
-    would serve the Project Owner better for a genuinely international
-    contributor base;
-  - confirming the exact city/province for the jurisdiction clause and
-    reviewing the "mandatory law of the Contributor's own residence"
-    carve-out for correctness under Turkish conflict-of-laws rules.
+- **Confirmed, and specifically addressed in this revision:** FSEK
+  Article 52 requires that contracts and disposals concerning economic
+  rights be **in writing**, with the rights constituting their subject
+  matter **specified individually** — Turkish courts and commentary treat
+  an unqualified "I transfer all my rights" clause as too indefinite to
+  be valid on the enumeration half of that requirement. Section 4 was
+  rewritten to enumerate the specific economic rights assigned
+  (reproduction, adaptation, distribution, public performance,
+  communication/making available to the public, sublicensing/relicensing,
+  commercial exploitation, successor transfer) instead of relying only on
+  generic "all right, title and interest" language, and Section 5's
+  fallback license mirrors the same enumeration so it stands on its own.
+  **This addresses the enumeration half of Article 52. The "in writing"
+  half is a separate, still-open question — see the next bullet.**
+- **A real, specific, still-open uncertainty: does a GitHub PR acceptance
+  comment satisfy FSEK Article 52's "in writing" requirement?** Research
+  into the Turkish Code of Obligations (TBK) Articles 14–15 indicates
+  that "written form" for a Turkish contract is satisfied by a
+  handwritten signature or by a **secure/qualified electronic signature**
+  (per Turkey's Electronic Signature Law No. 5070) — and that ordinary,
+  unsigned electronic text (a plain email, and by direct analogy a plain
+  GitHub comment) does **not**, by itself, clearly meet that standard,
+  even though such records are generally admissible as evidence
+  ("belge") under Code of Civil Procedure Article 199, assessed
+  case-by-case. **In practice: a GitHub acceptance comment, as Section 27
+  defines it, is real, strong *evidence* of the Contributor's consent —
+  GitHub authenticates the commenting account, and the platform's own
+  timestamp and edit history support it — but may not, on its own,
+  satisfy Article 52's formal written-form requirement absent a qualified
+  electronic signature.** This is exactly the kind of formal question a
+  licensed Turkish lawyer needs to confirm before this Agreement is
+  treated as legally watertight — this document cannot responsibly
+  resolve it alone. Two things already reduce, without eliminating, the
+  practical exposure: Section 5's fallback license applies independently
+  of *why* the Section 4 assignment might fail, including a possible
+  Article 52 formal defect, so the Project Owner's practical rights do
+  not collapse to zero even if a bare GitHub comment turns out not to
+  satisfy it; and nothing prevents the Project Owner from later asking a
+  specific Contributor to countersign a short qualified-e-signature or
+  wet-ink confirmation of an already-posted GitHub acceptance where the
+  formality genuinely matters (e.g. before a corporate/commercial
+  transaction — see Section 22).
+- whether software specifically receives any different treatment under
+  FSEK compared to other categories of protected work, beyond the
+  employer-ownership default already reflected in Section 21;
+- the practical cross-border enforceability of a Turkish-law judgment
+  against a Contributor resident in a different country, and whether an
+  arbitration clause (instead of, or alongside, the courts named above)
+  would serve the Project Owner better for a genuinely international
+  contributor base;
+- confirming the exact city/province for the jurisdiction clause and
+  reviewing the "mandatory law of the Contributor's own residence"
+  carve-out for correctness under Turkish conflict-of-laws rules.
 - **This draft should not be read as "final and enforceable everywhere."**
   It is a real, reasoned starting point for the Project Owner's own
   review, and for a licensed lawyer's review before the Agreement is

@@ -28,9 +28,19 @@
 #     copy of docs/contributor-agreements.md to pass its own check. The
 #     actual PR diff is never checked out or executed by this workflow at
 #     all -- only the base-branch registry file's contents are read.
-#   - Lookup is deterministic: a case-insensitive match on the literal
-#     GitHub login and PR number appearing together in one registry table
-#     row (ACCEPTED) or waiver row (WAIVED), nothing fuzzier.
+#   - Lookup is deterministic: an awk field-based match on the registry's
+#     own pipe-delimited table columns (field 2 = GitHub handle, field 3 =
+#     PR number), not a hand-rolled regex over the whole line -- an earlier
+#     draft of this check used a `grep -E` pattern that looked plausible but
+#     was empirically verified (real test rows, not just read by eye) to
+#     NEVER match a real row, because the PR-number column sits immediately
+#     next to the handle column with only one `|` between them, and that
+#     regex required a second, distinct `|` to appear before the number. It
+#     would have silently reported "no acceptance found" for every real
+#     acceptance. The current awk version was verified against five real
+#     test cases (case-insensitive match, `#`-prefixed PR number, a match in
+#     the waiver table, a non-matching author, and a matching author with
+#     the wrong PR number) before being committed here.
 #   - No third-party GitHub App or external service is used.
 name: Contributor agreement check
 
@@ -89,11 +99,21 @@ jobs:
             exit 1
           fi
 
-          # Deterministic match: PR_AUTHOR and PR_NUMBER both appear as
-          # distinct pipe-delimited cells in the same table row, in either
-          # the acceptance table or a recorded "WAIVED" row. Case-insensitive
-          # on the handle only.
-          if grep -iE "^\| *${PR_AUTHOR} *\|.*\| *#?${PR_NUMBER} *\|" "$REGISTRY" > /dev/null 2>&1; then
+          # Deterministic match: field 2 (GitHub handle) case-insensitively
+          # equals PR_AUTHOR, and field 3 (PR number, optional leading '#')
+          # equals PR_NUMBER, in the same pipe-delimited row -- checked
+          # across the whole file, so it matches either the Accepted table
+          # or the Maintainer-recorded waivers table without needing to know
+          # which one in advance.
+          if awk -F'|' -v author="${PR_AUTHOR}" -v num="${PR_NUMBER}" '
+              {
+                h=$2; gsub(/^[ \t]+|[ \t]+$/, "", h)
+                p=$3; gsub(/^[ \t]+|[ \t]+$/, "", p)
+                gsub(/^#/, "", p)
+                if (tolower(h) == tolower(author) && p == num) { found=1 }
+              }
+              END { exit(found ? 0 : 1) }
+            ' "$REGISTRY"; then
             echo "Recorded acceptance (or maintainer waiver) found for @${PR_AUTHOR} / PR #${PR_NUMBER}." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
