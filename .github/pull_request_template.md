@@ -15,16 +15,16 @@ show). Reproducible commands preferred.
 
 ## Contributor rights
 
-This repository is Apache License 2.0. By default, submitting a PR
-licenses your contribution to the project under Apache-2.0's own
-Section 5 (no extra step needed).
-
-If you'd like your contribution to be eligible for the broader
-copyright-assignment terms in
+**If you are external to the project** (not the maintainer, and not
+someone the maintainer has authorized to commit directly): this
+repository requires explicit acceptance of
 [`CONTRIBUTOR_RIGHTS_AGREEMENT.md`](../CONTRIBUTOR_RIGHTS_AGREEMENT.md)
-(entirely optional — never required for a PR to be reviewed or merged
-under plain Apache-2.0), post a separate comment on this PR in the exact
-form described in that document's own Section 25.
+before your contribution can be merged. Opening this PR, CI passing, or a
+maintainer's review approval do **not** count as acceptance. Post a
+separate comment on this PR in the exact form described in that
+document's own Section 27 — see `CONTRIBUTING.md`'s "Contributor rights
+and licensing" section for the full policy, including the narrow
+maintainer-waiver exception.
 
 ## AI assistance disclosure
 

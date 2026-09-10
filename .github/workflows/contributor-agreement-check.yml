@@ -1,19 +1,38 @@
-# Non-enforcing, informational-only check for the OPTIONAL
-# CONTRIBUTOR_RIGHTS_AGREEMENT.md (see docs/contributor-governance.md for
-# why this exists alongside plain Apache-2.0, which every PR is already
-# covered by regardless of this workflow's outcome).
+# Contributor agreement check.
 #
-# Deliberately NOT a required status check, NOT a merge blocker, and does
-# NOT post any comment on anyone's behalf -- it only reports, in its own
-# job summary, whether docs/contributor-agreements.md already contains a
-# real, recorded acceptance entry for this exact PR's author + number. A
-# maintainer reads that summary and decides what it means; this workflow
-# never decides anything itself.
+# What this verifies: for an EXTERNAL pull request (see the skip condition
+# below), CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27 requires a recorded
+# acceptance (or an explicit recorded waiver) in docs/contributor-agreements.md
+# before the PR may be merged. This workflow reports that as a real pass/fail
+# result so it CAN be promoted to a required status check later -- unlike the
+# prior version of this file, it does not unconditionally exit 0.
 #
-# Lowest-permission option evaluated (docs/contributor-governance.md's own
-# "Automation recommendation" section): contents: read only, no PR-write
-# permission, no third-party GitHub App installed.
-name: Contributor agreement check (informational)
+# It is NOT added to branch protection as a required check by this change --
+# see docs/contributor-governance.md for why enabling that is a separate,
+# later, maintainer decision, not something this workflow file does on its
+# own by existing.
+#
+# Security design (see docs/contributor-governance.md "Automation
+# recommendation" for the full reasoning):
+#   - Triggered by plain `pull_request`, never `pull_request_target` -- this
+#     check touches no secrets and runs no code from the fork, so it does not
+#     need pull_request_target's elevated token/secret access, and avoiding
+#     it avoids that trigger's known secret-exfiltration/RCE-class risk when
+#     combined with checking out and executing untrusted fork content.
+#   - permissions is explicitly minimal: contents: read only. No PR-write,
+#     no issues-write, nothing that could post a comment or alter the PR.
+#   - The registry file is read ONLY from the base branch
+#     (github.base_ref), fetched via a *separate*, explicit checkout step --
+#     never from the PR's own head/merge commit. This is deliberate: it
+#     stops a malicious fork PR from adding a fake acceptance row to its own
+#     copy of docs/contributor-agreements.md to pass its own check. The
+#     actual PR diff is never checked out or executed by this workflow at
+#     all -- only the base-branch registry file's contents are read.
+#   - Lookup is deterministic: a case-insensitive match on the literal
+#     GitHub login and PR number appearing together in one registry table
+#     row (ACCEPTED) or waiver row (WAIVED), nothing fuzzier.
+#   - No third-party GitHub App or external service is used.
+name: Contributor agreement check
 
 on:
   pull_request:
@@ -26,23 +45,67 @@ jobs:
   check-registry:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Skip for internal/maintainer contributions
+        id: gate
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          # External == the PR comes from a fork. A PR opened from a branch
+          # in this repository itself is treated as internal (maintainer or
+          # someone already trusted with direct repo write access) and is
+          # exempt from the acceptance requirement -- CONTRIBUTOR_RIGHTS_AGREEMENT.md
+          # only ever requires this for *external* contributions.
+          if [ "${IS_FORK}" != "true" ]; then
+            echo "internal=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "internal=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out registry file from the base branch only
+        if: steps.gate.outputs.internal != 'true'
+        uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: |
+            docs/contributor-agreements.md
+          sparse-checkout-cone-mode: false
           persist-credentials: false
 
       - name: Look up this PR in the contributor agreement registry
+        if: steps.gate.outputs.internal != 'true'
         env:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          echo "## Contributor agreement status (informational only)" >> "$GITHUB_STEP_SUMMARY"
+          set -u
+          echo "## Contributor agreement status" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          if grep -qi "| *${PR_AUTHOR} *|.*${PR_NUMBER}.*|" docs/contributor-agreements.md 2>/dev/null; then
-            echo "A recorded acceptance entry for @${PR_AUTHOR} / PR #${PR_NUMBER} was found in docs/contributor-agreements.md." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "No recorded CONTRIBUTOR_RIGHTS_AGREEMENT.md acceptance entry found for @${PR_AUTHOR} / PR #${PR_NUMBER}." >> "$GITHUB_STEP_SUMMARY"
-            echo "This is expected and fine for most PRs -- the optional Agreement is not required; plain Apache-2.0 (LICENSE Section 5) already covers this contribution regardless." >> "$GITHUB_STEP_SUMMARY"
-            echo "See CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 25 if the contributor wants to accept it for this PR." >> "$GITHUB_STEP_SUMMARY"
+
+          REGISTRY="docs/contributor-agreements.md"
+          if [ ! -f "$REGISTRY" ]; then
+            echo "Registry file not found on base branch -- treating as no acceptance on record." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::No CONTRIBUTOR_RIGHTS_AGREEMENT.md acceptance or waiver on record for @${PR_AUTHOR} / PR #${PR_NUMBER}. See CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27."
+            exit 1
           fi
-          # Always exits 0 -- this check can never fail a PR or block a merge.
-          exit 0
+
+          # Deterministic match: PR_AUTHOR and PR_NUMBER both appear as
+          # distinct pipe-delimited cells in the same table row, in either
+          # the acceptance table or a recorded "WAIVED" row. Case-insensitive
+          # on the handle only.
+          if grep -iE "^\| *${PR_AUTHOR} *\|.*\| *#?${PR_NUMBER} *\|" "$REGISTRY" > /dev/null 2>&1; then
+            echo "Recorded acceptance (or maintainer waiver) found for @${PR_AUTHOR} / PR #${PR_NUMBER}." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "No recorded CONTRIBUTOR_RIGHTS_AGREEMENT.md acceptance or waiver found for @${PR_AUTHOR} / PR #${PR_NUMBER}." >> "$GITHUB_STEP_SUMMARY"
+          echo "Per CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27, this PR should not be merged until the contributor posts the acceptance comment described there (or the maintainer records an explicit waiver)." >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::No CONTRIBUTOR_RIGHTS_AGREEMENT.md acceptance or waiver on record for @${PR_AUTHOR} / PR #${PR_NUMBER}. See CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27."
+          exit 1
+
+      - name: Internal contribution -- exempt
+        if: steps.gate.outputs.internal == 'true'
+        run: |
+          echo "## Contributor agreement status" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "This PR originates from a branch in this repository (not a fork), so it is treated as an internal contribution exempt from the external-contributor acceptance requirement." >> "$GITHUB_STEP_SUMMARY"

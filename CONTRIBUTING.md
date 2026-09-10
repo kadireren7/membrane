@@ -108,25 +108,34 @@ point in time — see `docs/research-release-freeze.md`.
 
 ## Contributor rights and licensing
 
-This project is Apache License 2.0 (`LICENSE`). Submitting a pull request
-licenses your contribution to the project under Apache-2.0's own Section 5
-("Submission of Contributions") automatically — no extra step needed, and
-this remains true whether or not you ever look at the rest of this
-section.
+This project is Apache License 2.0 (`LICENSE`). That license still governs
+the repository as a whole, and its own Section 5 ("Submission of
+Contributions") still applies to anything submitted.
 
-Separately, and entirely optionally, `CONTRIBUTOR_RIGHTS_AGREEMENT.md`
-offers a broader agreement (copyright assignment, with a fallback license
-where assignment isn't legally possible) that gives the project more
-relicensing/commercial flexibility over your specific contribution, in
-exchange for the assurances described in that document (no equity, no
-partnership, no compensation, no governance rights, and — after
-acceptance — no unilateral withdrawal). It only ever applies to a
-Contribution you've explicitly, affirmatively accepted it for, following
-the exact procedure in that document's own Section 25 — never by default,
-never retroactively, and never merely by opening a PR. See
-`docs/contributor-governance.md` for the reasoning behind why this exists
-alongside plain Apache-2.0, and `docs/contributor-agreements.md` for the
-real, current list of who has accepted it and for which PR.
+**For external contributions going forward, plain Apache-2.0 licensing is
+no longer sufficient on its own for a PR to be merged.**
+`CONTRIBUTOR_RIGHTS_AGREEMENT.md` (copyright assignment, with a fallback
+license where assignment isn't legally possible) is the required path: no
+external pull request is merged unless every rightsholder identified in it
+has explicitly, affirmatively accepted that Agreement for that specific
+PR, following the exact procedure in the Agreement's own Section 27.
+Opening a PR, CI passing, or a maintainer's review approval do **not**
+count as acceptance — see Section 27 for exactly what does.
+
+**"External"** means anyone other than the maintainer or someone the
+maintainer has authorized to commit directly; the maintainer's own commits
+obviously need no acceptance from themselves. **The only exception** is a
+case-by-case waiver the maintainer records explicitly and in writing (see
+Agreement Section 27, item 6) — this is not a routine alternative, and a
+contributor cannot invoke it unilaterally by simply declining to accept.
+
+This requirement applies **from the date this policy was adopted,
+non-retroactively** — see `docs/contributor-governance.md` for exactly
+what "adopted" means and its effective date, and for why pull requests
+opened before adoption (including #68–#71) are not automatically covered
+and require their own fresh acceptance before they can be merged under
+this Agreement. See `docs/contributor-agreements.md` for the real, current
+list of who has accepted it, for which PR, and any recorded waivers.
 
 ## Pull requests
 
