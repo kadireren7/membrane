@@ -408,16 +408,44 @@ int	membrane_use_cmd_dispatch(const std::vector<std::string> &args,
 
 	result["endpoint"] = endpoint;
 
-	std::string	currently_active = (status_json.contains("loaded_model")
-			&& !status_json["loaded_model"].is_null())
-		? status_json["loaded_model"].get<std::string>() : std::string();
+	/* Mega Phase E, PR E2: /v1/status's own single `loaded_model` field
+	 * was replaced by `resident_models` (an array -- more than one model
+	 * can be resident at once now, see server.cpp's own handle_status()
+	 * comment) -- "currently active" for THIS purpose means "already
+	 * resident", checked by membership rather than a single equality. */
+	bool		currently_active = false;
+	std::string	first_resident_name;	/* diagnostic-only fallback for
+									 * the "switch was unreachable" report
+									 * below -- the FIRST resident model's
+									 * name, if any (multiple may now be
+									 * resident; this is a best-effort
+									 * "what was resident before this
+									 * attempt", never a claim that it is
+									 * THE active one). */
+
+	if (status_json.contains("resident_models")
+		&& status_json["resident_models"].is_array())
+	{
+		for (const auto &m : status_json["resident_models"])
+		{
+			if (!m.contains("model") || !m["model"].is_string())
+				continue ;
+			if (first_resident_name.empty())
+				first_resident_name = m["model"].get<std::string>();
+			if (m["model"].get<std::string>() == resolved_name)
+			{
+				currently_active = true;
+				break ;
+			}
+		}
+	}
 
 	/* Section 17: idempotent if already active -- checked here via the
 	 * real /v1/status read, before ever calling the activate endpoint at
 	 * all, so a re-run against an already-correct server does zero extra
 	 * work (not merely "reload skipped once you get to the server side"
 	 * -- no HTTP switch attempt happens at all). */
-	if (currently_active == resolved_name)
+	if (currently_active)
 	{
 		result["active_model"] = resolved_name;
 		result["backend"] = status_json.value("backend", std::string("?"));
@@ -440,8 +468,8 @@ int	membrane_use_cmd_dispatch(const std::vector<std::string> &args,
 
 	if (!transport_ok)
 	{
-		result["active_model"] = currently_active.empty() ? json(nullptr)
-				: json(currently_active);
+		result["active_model"] = first_resident_name.empty() ? json(nullptr)
+				: json(first_resident_name);
 		result["result"] = "switch_unreachable";
 		result["error"] = {{"code", "SERVICE_UNAVAILABLE"},
 			{"message", "the server did not respond to the activation "

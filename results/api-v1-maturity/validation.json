@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "phase": "Mega Phase E, PR E3 -- API v1 maturity",
+  "label": "REAL",
+  "capabilities_endpoint": {
+    "label": "REAL",
+    "method": "curl against a real running membrane serve instance, no model registered",
+    "request": "GET /membrane/v1/capabilities",
+    "response": {
+      "streaming": true,
+      "stop": true,
+      "tool_calling": false,
+      "embeddings": false,
+      "backends": ["CPU"],
+      "resident_model_limit": 2,
+      "platform": "linux"
+    },
+    "note": "backends/resident_model_limit are live facts from this host/build (real membrane_gpu_list_devices() enumeration and the real, current MEMBRANE_MAX_RESIDENT_MODELS value), not hardcoded"
+  },
+  "error_contract_completeness": {
+    "label": "REAL",
+    "method": "scripts/verify-api-contract.py, both directions now genuinely machine-checked with no manually-maintained allowlist gating the code-to-docs direction (closes a real completeness gap in the PR C3-era version of this check)",
+    "result": "14/14 checks passed",
+    "codes_covered": 14
+  },
+  "client_revalidation": {
+    "python_openai_sdk": {
+      "label": "VALIDATED_REAL",
+      "version": "3.11.0",
+      "previous_version_at_pr_d7": "3.8.0",
+      "model": "SmolLM2-135M-Instruct (real GGUF)",
+      "checks_passed": 10,
+      "checks_failed": 0,
+      "checks": ["models.list()", "non-streaming chat", "usage present",
+        "streaming chat", "unknown model rejected (404)",
+        "tools rejected (400 UNSUPPORTED_TOOL_CALLING)",
+        "stop sequence real early termination", "seed field accepted",
+        "multi-turn chat", "UTF-8 round trip"]
+    },
+    "node_openai_sdk": {
+      "label": "VALIDATED_REAL",
+      "version": "7.13.0",
+      "previous_version_at_pr_d7": "7.10.0",
+      "model": "SmolLM2-135M-Instruct (real GGUF)",
+      "checks_passed": 8,
+      "checks_failed": 0
+    },
+    "node_builtin_fetch": {
+      "label": "VALIDATED_REAL",
+      "script": "scripts/node-client-check.mjs",
+      "checks_passed": 7,
+      "checks_failed": 0
+    },
+    "conclusion": "Neither PR E1 (continuous batching) nor PR E2 (multi-model residency) changed the /v1/chat/completions or /v1/models wire shape -- real re-validation against the post-E1/E2 build confirms zero client-visible regression."
+  },
+  "not_revalidated_this_phase": {
+    "open_webui": {"label": "NOT_VALIDATED", "reason": "unchanged from PR D7's own disclosed reason -- real, severe, chronic host memory pressure on this shared dev host makes pulling/running an additional container disproportionate risk for a surface already VALIDATED_REAL via three independent real clients"},
+    "continue_vscode": {"label": "CONFIGURATION_ONLY", "reason": "unchanged from PR D7 -- no VS Code environment available in this CLI-only sandbox"}
+  },
+  "decisions_reaffirmed_not_relaxed": {
+    "tool_calling": "still explicitly rejected -- no real end-to-end test against a real tool-call-capable model/chat-template exists",
+    "embeddings": "still unimplemented -- no real embedding-extraction runtime path exists",
+    "structured_response_format": "still rejected for anything but default text -- no constrained-decoding/grammar path exists"
+  }
+}
