@@ -99,6 +99,36 @@ static void	test_health(void)
 	TEST_ASSERT(body.contains("version"), "health reports a version");
 }
 
+/* Mega Phase E, PR E3, Section 20 of the task: GET /membrane/v1/
+ * capabilities -- CI-safe (no real GGUF needed; every field is either
+ * a compile-time/host fact or a real, live device-enumeration call,
+ * none of which depend on any model being registered/loaded). */
+static void	test_capabilities(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	auto			res = cli.Get("/membrane/v1/capabilities");
+
+	TEST_ASSERT(res != nullptr && res->status == 200,
+		"GET /membrane/v1/capabilities returns 200");
+	json	body = json::parse(res->body);
+
+	TEST_ASSERT(body["streaming"] == true, "streaming capability is true");
+	TEST_ASSERT(body["stop"] == true, "stop capability is true");
+	TEST_ASSERT(body["tool_calling"] == false,
+		"tool_calling capability is honestly false");
+	TEST_ASSERT(body["embeddings"] == false,
+		"embeddings capability is honestly false");
+	TEST_ASSERT(body.contains("backends") && body["backends"].is_array()
+		&& !body["backends"].empty(),
+		"backends is a real, non-empty array (CPU always present)");
+	TEST_ASSERT(body.contains("resident_model_limit")
+		&& body["resident_model_limit"].is_number_integer()
+		&& body["resident_model_limit"] >= 1,
+		"resident_model_limit is a real, positive integer");
+	TEST_ASSERT(body.contains("platform") && body["platform"].is_string(),
+		"platform is reported");
+}
+
 static void	test_models_empty_registry(void)
 {
 	httplib::Client	cli("127.0.0.1", TEST_PORT);
@@ -123,8 +153,20 @@ static void	test_status_no_model_loaded(void)
 	json	body = json::parse(res->body);
 
 	TEST_ASSERT(body["running"] == true, "running is true");
-	TEST_ASSERT(body["loaded_model"].is_null(),
-		"loaded_model is null before any generation request");
+	/* Mega Phase E, PR E2: `loaded_model` (singular) was replaced by
+	 * `resident_models` (an array) -- see server.cpp's own handle_
+	 * status() comment. Before any generation/activation request, every
+	 * slot is empty, so the array is present but empty (never a null
+	 * placeholder, and never omitted). */
+	TEST_ASSERT(body.contains("resident_models")
+		&& body["resident_models"].is_array()
+		&& body["resident_models"].empty(),
+		"resident_models is an empty array before any generation "
+		"request");
+	TEST_ASSERT(body.contains("resident_model_limit")
+		&& body["resident_model_limit"].is_number_integer()
+		&& body["resident_model_limit"] >= 1,
+		"resident_model_limit is a real, positive integer");
 	TEST_ASSERT(body.contains("endpoint"), "endpoint field is present");
 	TEST_ASSERT(body["context_policy"] == "automatic",
 		"context_policy is \"automatic\"");
@@ -150,6 +192,57 @@ static void	test_chat_unknown_model(void)
 	 * must never contain an absolute path shape. */
 	TEST_ASSERT(body["error"]["message"].get<std::string>().find("/tmp/")
 		== std::string::npos, "error message contains no filesystem path");
+}
+
+/* Mega Phase E, PR E2, Section 13 of the task: pin/unpin only ever
+ * applies to a model that is ALREADY resident -- CI-safe (no real GGUF
+ * needed), since this only needs to prove the "not resident" rejection,
+ * never a real load. */
+static void	test_pin_unpin_not_resident_returns_409(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json				req = {{"model", "nonexistent-model"}};
+
+	auto	pin_res = cli.Post("/membrane/v1/models/pin", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(pin_res != nullptr && pin_res->status == 409,
+		"pinning a non-resident model returns 409");
+	json	pin_body = json::parse(pin_res->body);
+
+	TEST_ASSERT(pin_body["error"]["code"] == "MODEL_NOT_RESIDENT",
+		"error code is MODEL_NOT_RESIDENT for pin");
+
+	auto	unpin_res = cli.Post("/membrane/v1/models/unpin", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(unpin_res != nullptr && unpin_res->status == 409,
+		"unpinning a non-resident model also returns 409");
+	json	unpin_body = json::parse(unpin_res->body);
+
+	TEST_ASSERT(unpin_body["error"]["code"] == "MODEL_NOT_RESIDENT",
+		"error code is MODEL_NOT_RESIDENT for unpin");
+}
+
+static void	test_pin_invalid_request_shape(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	auto			res = cli.Post("/membrane/v1/models/pin",
+			"not json at all", "application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 400,
+		"invalid JSON to the pin endpoint returns 400");
+	json	body = json::parse(res->body);
+
+	TEST_ASSERT(body["error"]["code"] == "INVALID_REQUEST",
+		"error code is INVALID_REQUEST");
+
+	json	missing_model = json::object();
+	auto	res2 = cli.Post("/membrane/v1/models/pin", missing_model.dump(),
+			"application/json");
+
+	TEST_ASSERT(res2 != nullptr && res2->status == 400,
+		"a pin request with no \"model\" field returns 400");
 }
 
 static void	test_chat_invalid_json(void)
@@ -667,6 +760,7 @@ int	main(void)
 
 	start_test_server(dir);
 	test_health();
+	test_capabilities();
 	test_models_empty_registry();
 	test_status_no_model_loaded();
 	test_chat_unknown_model();
@@ -686,6 +780,8 @@ int	main(void)
 	test_chat_stop_valid_shape_reaches_model_resolution();
 	test_auth_header_is_tolerated();
 	test_concurrent_requests_are_thread_safe();
+	test_pin_unpin_not_resident_returns_409();
+	test_pin_invalid_request_shape();
 	test_second_instance_same_port_fails_to_bind(dir);
 	/* Mutates the shared registry permanently for the rest of this
 	 * process's run -- kept LAST among the TEST_PORT-based tests so no

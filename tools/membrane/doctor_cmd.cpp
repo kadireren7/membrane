@@ -1,5 +1,6 @@
 #include "doctor_cmd.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -475,12 +476,19 @@ static s_doctor_check	check_http(bool service_installed, bool service_active)
 
 	if (reachable)
 	{
+		/* Mega Phase E, PR E2: /v1/status's own single `loaded_model`/
+		 * `model_state` fields were replaced by `resident_models` (an
+		 * array -- see server.cpp's own handle_status() comment); this
+		 * check just forwards that array (and the real, current
+		 * resident_model_limit) verbatim -- check_model_lifecycle()
+		 * below derives the "active model" comparison from it. */
 		c.status = MEMBRANE_DOCTOR_STATUS_OK;
 		c.detail = {{"reachable", true}, {"endpoint", "http://"
 			+ cfg.listen_address + ":" + std::to_string(cfg.port)},
-			{"loaded_model", status_json.value("loaded_model", json(nullptr))},
-			{"model_state", status_json.value("model_state",
-				std::string("unknown"))}};
+			{"resident_models", status_json.value("resident_models",
+				json::array())},
+			{"resident_model_limit", status_json.value(
+				"resident_model_limit", 0)}};
 		return (c);
 	}
 	c.detail = {{"reachable", false}, {"endpoint", "http://"
@@ -529,32 +537,45 @@ static s_doctor_check	check_model_lifecycle(bool http_reachable,
 	if (!http_reachable)
 	{
 		c.status = MEMBRANE_DOCTOR_STATUS_OK;
-		c.detail["active_model"] = nullptr;
+		c.detail["resident_models"] = json::array();
 		return (c);
 	}
-	json	active = http_detail.value("loaded_model", json(nullptr));
+	/* Mega Phase E, PR E2: "the active model" is now "the resident
+	 * models" (plural, possibly more than one -- see check_http()'s own
+	 * comment on the /v1/status shape this reads). This check's own
+	 * intent -- warn if the configured default is neither resident nor
+	 * (with nothing configured) is anything resident at all -- is
+	 * preserved by checking MEMBERSHIP instead of equality. */
+	json	resident = http_detail.value("resident_models", json::array());
+	std::vector<std::string>	resident_names;
 
-	c.detail["active_model"] = active;
-	if (cfg.default_model.empty() && active.is_null())
+	for (const auto &m : resident)
+		if (m.contains("model") && m["model"].is_string())
+			resident_names.push_back(m["model"].get<std::string>());
+	c.detail["resident_models"] = resident;
+	if (cfg.default_model.empty() && resident_names.empty())
 	{
 		c.status = MEMBRANE_DOCTOR_STATUS_WARN;
 		c.detail["message"] = "the service is running, but no default "
-			"model is configured and none is currently active -- a chat "
+			"model is configured and none is currently resident -- a chat "
 			"request with no explicit \"model\" field will be refused. "
 			"Run `membrane use MODEL` to pick one";
 		return (c);
 	}
-	if (!active.is_null() && !cfg.default_model.empty()
-		&& active.get<std::string>() != cfg.default_model)
+	if (!resident_names.empty() && !cfg.default_model.empty()
+		&& std::find(resident_names.begin(), resident_names.end(),
+			cfg.default_model) == resident_names.end())
 	{
 		c.status = MEMBRANE_DOCTOR_STATUS_WARN;
-		c.detail["message"] = "the running server's active model ('"
-			+ active.get<std::string>() + "') differs from the configured "
-			"default ('" + cfg.default_model + "') -- normal right after a "
-			"live `membrane use` switch to a non-default model; run "
-			"`membrane use " + cfg.default_model + "` to realign them, or "
-			"`membrane use " + active.get<std::string>() + "` to make the "
-			"active one the new default";
+		c.detail["message"] = "the running server's resident model(s) ('"
+			+ resident_names[0] + "'"
+			+ (resident_names.size() > 1 ? ", ..." : "")
+			+ ") do not include the configured default ('"
+			+ cfg.default_model + "') -- normal right after a live "
+			"`membrane use` switch to a non-default model; run `membrane "
+			"use " + cfg.default_model + "` to realign them, or `membrane "
+			"use " + resident_names[0] + "` to make a resident one the "
+			"new default";
 		return (c);
 	}
 	c.status = MEMBRANE_DOCTOR_STATUS_OK;
