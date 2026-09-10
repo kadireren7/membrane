@@ -35,7 +35,7 @@
  * against a real (if intentionally non-GGUF) file -- CI-safe (no real
  * multi-hundred-MB model, matching test_server.cpp's own "no real GGUF
  * model anywhere in this file" precedent) while still exercising
- * ensure_model_loaded()'s own real failure path end to end, not a mock.
+ * acquire_model_slot()'s own real failure path end to end, not a mock.
  */
 
 # define TEST_PORT	18943

@@ -130,7 +130,7 @@ A new, loopback-only, MEMBRANE-specific admin endpoint —
 `POST /membrane/v1/models/activate` (see `docs/server.md`) — lets
 `membrane use` trigger an immediate model switch on an already-running
 server, with **no restart**. This is a thin wrapper around
-`ensure_model_loaded()`, the exact same function `POST
+`acquire_model_slot()`, the exact same function `POST
 /v1/chat/completions` itself already calls for every request — never a
 second switch/lifecycle policy. Two guarantees fall out of that reuse
 for free:
@@ -155,7 +155,7 @@ Try: membrane doctor
 ```
 
 This exact failure/recovery path was exercised for real (a real HTTP
-round trip through the new admin endpoint, a real `ensure_model_loaded()`
+round trip through the new admin endpoint, a real `acquire_model_slot()`
 attempt) — see `results/model-lifecycle-ux/validation.json`.
 
 **Never unloads a model beneath an active generation** (Section 15):
@@ -167,7 +167,7 @@ blocking indefinitely or racing a live generation.
 **Context sizing for a switch with no real prompt yet**: the endpoint
 applies a short, fixed placeholder chat turn through the model's own
 real chat template (the same templating `/v1/chat/completions` uses) so
-`ensure_model_loaded()` has real text to size context against. Real,
+`acquire_model_slot()` has real text to size context against. Real,
 disclosed design finding: `context_recommender.c`'s own algorithm always
 maximizes the recommended context to fit real host memory — the
 triggering prompt's own token count is only ever a floor — so this
