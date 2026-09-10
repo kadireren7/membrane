@@ -1,48 +1,53 @@
 # Contributor agreement acceptance registry
 
-Records who has explicitly accepted the
+Records which Contributors have a **validly signed** copy of the
 [MEMBRANE Contributor Rights Agreement](../CONTRIBUTOR_RIGHTS_AGREEMENT.md)
-for which pull request, and when. Only entries added through the real
-acceptance procedure in that Agreement's own Section 27 belong here — never
-a contributor who merely opened a PR. This file is read directly by
-`.github/workflows/contributor-agreement-check.yml` (from the base branch
-only — see that file's own comments) — keep both tables' column order and
-the `#<number>` format in the PR column intact, since the check's lookup
-depends on it.
+on file — via Path A (qualified/secure electronic signature) or Path B
+(wet-ink signature), per that Agreement's own Section 27 — and which pull
+requests each signature covers. **A GitHub PR comment alone is never
+sufficient and must never be recorded as VERIFIED here** — see Agreement
+Section 27 for why v3.0 removed the earlier, comment-only mechanism.
 
-Only public information is stored here: GitHub handle, PR number, agreement
-version and commit/blob hash, a link to the contributor's own public
-acceptance comment, and the acceptance timestamp. No legal names,
-signatures, or other personal data. If a future need arises for signed
-legal names (e.g. after incorporating a company or receiving substantial
-corporate contributions), migrate to a proper CLA service instead of
-extending this table.
+This file is read directly by `.github/workflows/contributor-agreement-check.yml`
+(from the base branch only — see that file's own comments). Keep the table
+headers, column order, and the `## Accepted` / `## Maintainer-recorded
+waivers` section headings intact, since the check's lookup depends on them.
 
-Every field below is filled in for a valid entry — an incomplete row is not
-a valid recorded acceptance. `Agreement commit/blob hash` is the exact
-`CONTRIBUTOR_RIGHTS_AGREEMENT.md` commit hash the Contributor's own
-acceptance comment named (see Agreement Section 27, item 2), recorded here
-directly so this table is self-contained evidence and doesn't require
-dereferencing the linked comment to know which version was accepted.
-`Timestamp` is the acceptance comment's own GitHub-recorded creation time
-(UTC), which — together with the comment URL and the platform's
-authentication of the commenting account — is the practical evidentiary
-basis for acceptance; see `CONTRIBUTOR_RIGHTS_AGREEMENT.md` Section 26,
-Part B for the open question of whether this satisfies Turkish law's
-formal "written form" requirement on its own.
+**The actual signed agreement is never stored in this file or anywhere in
+this public repository.** The electronic-signature envelope (Path A) or
+the scanned/physical wet-ink document (Path B) is retained privately and
+securely by the Project Owner — see Agreement Section 27, "Signed-document
+storage." Only the metadata below, all of it either already public
+(GitHub handle, PR numbers) or non-sensitive (version, hash, method,
+dates, status, an internal reference ID), is recorded here. Never record:
+a signature image, a signed PDF/scan itself, a home address, a national ID
+number, a private email address, e-signature certificate material, or any
+other personal data beyond what's listed.
+
+Every field is filled in for a valid entry — an incomplete row is not a
+valid VERIFIED entry, and the enforcement workflow does not treat it as
+one. `Covered PR(s)` may list more than one PR for a single signature
+(e.g. `#68, #69, #70, #71`) when one signed agreement explicitly names all
+of them (Agreement Section 27, item 7). `Verification status` must be the
+literal word `VERIFIED` for the workflow to treat the row as satisfying
+the requirement — any other value (e.g. `PENDING`, used while a signature
+is in progress but not yet confirmed) does not pass the check. `Reference
+ID` is an internal pointer (e.g. a filename or case ID in the Project
+Owner's private, secure document store) — not a public URL, and not the
+document itself.
 
 ## Accepted
 
-| GitHub handle | PR | Agreement version | Agreement commit/blob hash | Acceptance comment URL | Timestamp (UTC) |
-|---|---|---|---|---|---|
-| _(none yet)_ | | | | | |
+| GitHub handle | Covered PR(s) | Agreement version | Agreement commit/blob hash | Signing method | Verification date (UTC) | Verification status | Reference ID |
+|---|---|---|---|---|---|---|---|
+| _(none yet)_ | | | | | | | |
 
 ## Maintainer-recorded waivers
 
 Per Agreement Section 27, item 6: each row here must correspond to a
-separate, explicit, written maintainer decision to waive the acceptance
-requirement for one specific PR — never a routine or implied exception. The
-reason column is mandatory and must not be left blank.
+separate, explicit, written maintainer decision to waive the signature
+requirement for one specific PR — never a routine or implied exception.
+The reason column is mandatory and must not be left blank.
 
 | GitHub handle | PR | Reason | Date | Waived by |
 |---|---|---|---|---|

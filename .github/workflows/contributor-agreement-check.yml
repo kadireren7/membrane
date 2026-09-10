@@ -1,11 +1,20 @@
 # Contributor agreement check.
 #
 # What this verifies: for an EXTERNAL pull request (see the skip condition
-# below), CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27 requires a recorded
-# acceptance (or an explicit recorded waiver) in docs/contributor-agreements.md
-# before the PR may be merged. This workflow reports that as a real pass/fail
-# result so it CAN be promoted to a required status check later -- unlike the
-# prior version of this file, it does not unconditionally exit 0.
+# below), CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27 requires a VERIFIED
+# signature (Path A qualified/secure e-signature, or Path B wet-ink -- never
+# a bare PR comment) recorded in docs/contributor-agreements.md's Accepted
+# table (status literally "VERIFIED"), or an explicit recorded waiver in its
+# Maintainer-recorded waivers table, before the PR may be merged. This
+# workflow reports that as a real pass/fail result so it CAN be promoted to
+# a required status check later -- it does not unconditionally exit 0.
+#
+# This workflow itself cannot verify a signature -- signing happens outside
+# GitHub (Agreement Section 27). It only checks whether the maintainer has
+# already recorded a VERIFIED row after doing that verification themselves.
+# It deliberately does NOT accept a PR comment, CI status, or the PR
+# author's GitHub identity alone as evidence -- those are exactly the
+# things Agreement Section 27, item 4 says never count.
 #
 # It is NOT added to branch protection as a required check by this change --
 # see docs/contributor-governance.md for why enabling that is a separate,
@@ -29,18 +38,26 @@
 #     actual PR diff is never checked out or executed by this workflow at
 #     all -- only the base-branch registry file's contents are read.
 #   - Lookup is deterministic: an awk field-based match on the registry's
-#     own pipe-delimited table columns (field 2 = GitHub handle, field 3 =
-#     PR number), not a hand-rolled regex over the whole line -- an earlier
-#     draft of this check used a `grep -E` pattern that looked plausible but
-#     was empirically verified (real test rows, not just read by eye) to
-#     NEVER match a real row, because the PR-number column sits immediately
-#     next to the handle column with only one `|` between them, and that
-#     regex required a second, distinct `|` to appear before the number. It
-#     would have silently reported "no acceptance found" for every real
-#     acceptance. The current awk version was verified against five real
-#     test cases (case-insensitive match, `#`-prefixed PR number, a match in
-#     the waiver table, a non-matching author, and a matching author with
-#     the wrong PR number) before being committed here.
+#     own pipe-delimited table columns, not a hand-rolled regex over the
+#     whole line -- an earlier draft of this check used a `grep -E` pattern
+#     that looked plausible but was empirically verified (real test rows,
+#     not just read by eye) to NEVER match a real row, because the
+#     PR-number column sat immediately next to the handle column with only
+#     one `|` between them, and that regex required a second, distinct `|`
+#     to appear before the number. It would have silently reported "no
+#     acceptance found" for every real acceptance. The current awk version
+#     tracks which of the two registry tables (Accepted / Maintainer-
+#     recorded waivers) each line belongs to via the `## ` section headers,
+#     matches the handle case-insensitively, and: in the Accepted table,
+#     requires the `Verification status` column to read exactly `VERIFIED`
+#     and the PR to appear as one of possibly several numbers in the
+#     `Covered PR(s)` column (a single signature may name more than one
+#     PR -- Agreement Section 27, item 7); in the waivers table, matches the
+#     single PR column directly. Verified against six real test cases
+#     (a VERIFIED multi-PR row, case-insensitive handle match, a non-
+#     matching PR for an otherwise-VERIFIED author, a PENDING-not-VERIFIED
+#     row correctly rejected, a waiver-table match, and a non-matching
+#     author) before being committed here.
 #   - No third-party GitHub App or external service is used.
 name: Contributor agreement check
 
@@ -94,19 +111,34 @@ jobs:
 
           REGISTRY="docs/contributor-agreements.md"
           if [ ! -f "$REGISTRY" ]; then
-            echo "Registry file not found on base branch -- treating as no acceptance on record." >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::No CONTRIBUTOR_RIGHTS_AGREEMENT.md acceptance or waiver on record for @${PR_AUTHOR} / PR #${PR_NUMBER}. See CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27."
+            echo "Registry file not found on base branch -- treating as no VERIFIED signature or waiver on record." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::No VERIFIED CONTRIBUTOR_RIGHTS_AGREEMENT.md signature or waiver on record for @${PR_AUTHOR} / PR #${PR_NUMBER}. See CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27."
             exit 1
           fi
 
-          # Deterministic match: field 2 (GitHub handle) case-insensitively
-          # equals PR_AUTHOR, and field 3 (PR number, optional leading '#')
-          # equals PR_NUMBER, in the same pipe-delimited row -- checked
-          # across the whole file, so it matches either the Accepted table
-          # or the Maintainer-recorded waivers table without needing to know
-          # which one in advance.
+          # Deterministic, section-aware match. In the Accepted table:
+          # column 2 (GitHub handle) case-insensitively equals PR_AUTHOR,
+          # column 8 (Verification status) is exactly "VERIFIED", and
+          # PR_NUMBER appears as one of possibly several numbers in column 3
+          # (Covered PR(s)) -- a single signature may cover more than one PR
+          # (Agreement Section 27, item 7). In the Maintainer-recorded
+          # waivers table: column 2 (handle) matches and column 3 (PR,
+          # optional leading '#') equals PR_NUMBER. A row in the Accepted
+          # table with any other status (e.g. "PENDING") does not pass.
           if awk -F'|' -v author="${PR_AUTHOR}" -v num="${PR_NUMBER}" '
-              {
+              /^## Accepted/ { section="accepted"; next }
+              /^## Maintainer-recorded waivers/ { section="waived"; next }
+              /^## / { section=""; next }
+              section=="accepted" {
+                h=$2; gsub(/^[ \t]+|[ \t]+$/, "", h)
+                prs=$3
+                status=$8; gsub(/^[ \t]+|[ \t]+$/, "", status)
+                if (tolower(h) == tolower(author) && toupper(status) == "VERIFIED") {
+                  m = split(prs, arr, /[^0-9]+/)
+                  for (i=1; i<=m; i++) { if (arr[i] == num) { found=1 } }
+                }
+              }
+              section=="waived" {
                 h=$2; gsub(/^[ \t]+|[ \t]+$/, "", h)
                 p=$3; gsub(/^[ \t]+|[ \t]+$/, "", p)
                 gsub(/^#/, "", p)
@@ -114,13 +146,13 @@ jobs:
               }
               END { exit(found ? 0 : 1) }
             ' "$REGISTRY"; then
-            echo "Recorded acceptance (or maintainer waiver) found for @${PR_AUTHOR} / PR #${PR_NUMBER}." >> "$GITHUB_STEP_SUMMARY"
+            echo "A VERIFIED signature (or maintainer waiver) covering @${PR_AUTHOR} / PR #${PR_NUMBER} was found." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          echo "No recorded CONTRIBUTOR_RIGHTS_AGREEMENT.md acceptance or waiver found for @${PR_AUTHOR} / PR #${PR_NUMBER}." >> "$GITHUB_STEP_SUMMARY"
-          echo "Per CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27, this PR should not be merged until the contributor posts the acceptance comment described there (or the maintainer records an explicit waiver)." >> "$GITHUB_STEP_SUMMARY"
-          echo "::error::No CONTRIBUTOR_RIGHTS_AGREEMENT.md acceptance or waiver on record for @${PR_AUTHOR} / PR #${PR_NUMBER}. See CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27."
+          echo "No VERIFIED CONTRIBUTOR_RIGHTS_AGREEMENT.md signature or waiver found for @${PR_AUTHOR} / PR #${PR_NUMBER}." >> "$GITHUB_STEP_SUMMARY"
+          echo "Per CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27, this PR should not be merged until a valid Path A or Path B signature is obtained and recorded VERIFIED (or the maintainer records an explicit waiver). A PR comment alone is never sufficient." >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::No VERIFIED CONTRIBUTOR_RIGHTS_AGREEMENT.md signature or waiver on record for @${PR_AUTHOR} / PR #${PR_NUMBER}. See CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 27."
           exit 1
 
       - name: Internal contribution -- exempt

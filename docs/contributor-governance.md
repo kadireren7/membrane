@@ -9,18 +9,36 @@ the design rationale and audit trail behind it, not a restatement of it.
 - **v1.0 draft:** initial copyright-assignment-plus-fallback-license draft,
   framed as entirely optional for contributors, with plain Apache-2.0 kept
   as an always-available alternative path. Never adopted.
-- **v2.0 (current):** revises the v1.0 draft after further maintainer
-  review before adoption. The most consequential change: the Agreement is
-  no longer optional for external contributions — see "The mandatory
-  flow" below. Also fixes a dangling cross-reference (former Section
-  21→22), rewrites the AI-disclosure clause to be operational rather than
-  unverifiable, resolves the governing-law placeholder with real
-  jurisdiction-specific research (Turkish moral-rights law), adds precise
-  non-circular acceptance-state definitions with named edge cases, adds a
+- **v2.0:** revises the v1.0 draft after further maintainer review before
+  adoption. The most consequential change: the Agreement is no longer
+  optional for external contributions — see "The mandatory flow" below.
+  Also fixes a dangling cross-reference (former Section 21→22), rewrites
+  the AI-disclosure clause to be operational rather than unverifiable,
+  resolves the governing-law placeholder with real jurisdiction-specific
+  research (Turkish moral-rights law), adds precise non-circular
+  acceptance-state definitions with named edge cases, adds a
   multiple-rightsholder/co-author rule, and redesigns the enforcement
   workflow so it can actually fail a check instead of always reporting
-  success. Section numbers in the Agreement changed between v1.0 and v2.0
-  — do not assume a v1.0 section number still refers to the same clause.
+  success. A later same-version formalities pass enumerated the specific
+  economic rights assigned/licensed (FSEK Article 52), restructured moral
+  rights around consent-to-exercise + non-assert rather than waiver, and
+  disclosed a real open question: whether a plain GitHub acceptance
+  comment satisfies Turkish law's "in writing" requirement at all.
+- **v3.0 (current):** resolves that open question by **removing the
+  GitHub-comment-only acceptance mechanism entirely.** A comment cannot
+  reliably satisfy FSEK Article 52's written-form requirement (Turkish
+  Code of Obligations Art. 14–15 ties "written form" to a handwritten or
+  secure/qualified electronic signature, which an ordinary comment is
+  not). Section 27 now requires an actual signature via Path A (qualified/
+  secure electronic signature) or Path B (wet-ink), verified by the
+  maintainer and recorded as a `VERIFIED` row in
+  `docs/contributor-agreements.md` before a PR may be merged — a comment
+  can still be used to start the process, never to complete it. The
+  registry schema, the enforcement workflow's lookup logic, and every
+  other document referencing the old comment-based mechanism were updated
+  to match. Section numbers in the Agreement are unchanged between v2.0
+  and v3.0; only Section 27's own mechanism and the registry schema
+  changed.
 
 ## Adoption
 
@@ -117,12 +135,13 @@ this Agreement's adoption): merely being SUBMITTED before adoption is not
 itself acceptance of anything, under either the pre-adoption or
 post-adoption posture — see Agreement Section 27's own closing paragraph.
 If the maintainer wants to merge any of #68–#71 after this Agreement is
-adopted, each PR's author must post a fresh, explicit acceptance comment
-for that specific PR, per Section 27, before it is merged — there is no
-grandfather clause that lets an already-open PR merge under the old,
-optional posture just because it predates adoption. See the draft
-acceptance-request comments prepared (not posted) for exactly this
-purpose, referenced in the PR description for this governance change.
+adopted, the author must obtain a valid Path A or Path B signature
+covering the relevant PR(s), and the maintainer must record it `VERIFIED`
+in `docs/contributor-agreements.md`, per Section 27, before merging — a
+GitHub comment alone is never sufficient, and there is no grandfather
+clause that lets an already-open PR merge under an older, weaker posture
+just because it predates adoption. See the draft signing-request message
+prepared (not sent) for exactly this purpose.
 
 ## What this change does NOT do
 
@@ -153,12 +172,18 @@ Two real options were evaluated:
 `.github/workflows/contributor-agreement-check.yml`. Its design, reasoned
 through explicitly rather than defaulted to:
 
-- **Real failure, not just reporting.** The workflow now `exit 1`s (with
-  a `::error::` annotation) when no matching acceptance or waiver row is
-  found for an external PR, instead of unconditionally exiting 0. This
-  makes it something the maintainer *can* later add to branch protection's
-  required-status-checks list, if and when they choose to — this PR does
-  not make that change itself (see "What this change does NOT do").
+- **Real failure, not just reporting.** The workflow `exit 1`s (with a
+  `::error::` annotation) unless it finds a matching row whose
+  `Verification status` is literally `VERIFIED` (or a matching waiver
+  row) for an external PR, instead of unconditionally exiting 0 or
+  accepting a weaker signal. It cannot itself verify a signature — that
+  happens outside GitHub (Agreement Section 27) — it only checks whether
+  the maintainer already recorded the result of doing so. A single
+  `VERIFIED` row can cover more than one PR number (Section 27, item 7).
+  This makes it something the maintainer *can* later add to branch
+  protection's required-status-checks list, if and when they choose to —
+  this PR does not make that change itself (see "What this change does
+  NOT do").
 - **`pull_request`, not `pull_request_target`.** The check needs no
   secrets and runs none of the fork's own code, so it doesn't need
   `pull_request_target`'s elevated permissions — and avoiding that trigger
@@ -185,9 +210,23 @@ maintainer separately decides to require it.
 
 ## Contributor registry
 
-`docs/contributor-agreements.md` — a plain Markdown table: GitHub handle,
-PR number, agreement version, acceptance comment URL, date. No legal
-names, no signatures, no personal data beyond the public GitHub handle
-already visible on the PR itself. If a real CLA service or signed legal
-names are ever needed (e.g. once a company forms), migrate to a proper
-CLA service rather than storing that in this repository.
+`docs/contributor-agreements.md` — two plain Markdown tables. **Accepted**
+records, per validly signed Contributor: GitHub handle, the PR(s) the
+signature covers, Agreement version, Agreement commit/blob hash, signing
+method (Path A/Path B), verification date (UTC), verification status
+(must read `VERIFIED` for the enforcement workflow to treat it as
+satisfying the requirement — a `PENDING` row is a legitimate way to track
+a signature in progress without it passing the check early), and an
+internal reference ID pointing at the Project Owner's own private,
+secure document store. **Maintainer-recorded waivers** records the narrow
+Section 27 item 6 exception: handle, PR, reason, date, and who waived it.
+
+**The actual signed agreement (electronic-signature envelope or
+wet-ink scan) is never stored in this file or anywhere in this public
+repository** — see Agreement Section 27, "Signed-document storage," for
+where it must be kept instead. No legal names, no signature images, no
+home address, no national ID, no private email, and no e-signature
+certificate material belong in this table — only the metadata above, most
+of which (GitHub handle, PR numbers) is already public. If a real CLA
+service is ever needed at larger scale, migrate to one rather than
+extending this table indefinitely.

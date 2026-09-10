@@ -1,7 +1,14 @@
 # MEMBRANE Contributor Rights Agreement
 
-**Version:** 2.0 (supersedes the 1.0 draft; see `docs/contributor-governance.md`
-for the revision history and why each change was made)
+**Version:** 3.0 (supersedes the 2.0 draft; see `docs/contributor-governance.md`
+for the revision history and why each change was made). **The change from
+2.0 to 3.0 is not editorial** — v2.0 treated a plain GitHub PR comment as
+sufficient to accept this Agreement, and that mechanism was found, on
+further review, not to reliably satisfy the "in writing" requirement
+Turkish law (FSEK Article 52) imposes on a transfer of economic rights (see
+Section 26). **v3.0 removes the GitHub-comment-only path.** A GitHub
+comment can still be used to *start* the process (Section 27), but no
+longer to *complete* it on its own.
 **Status:** DRAFT — pending maintainer adoption and the professional legal
 review identified in Section 26. This document binds no one on its own;
 see Section 27 for exactly what makes it apply to a given Contribution.
@@ -58,14 +65,19 @@ with, do not accept it — you are always free not to contribute.
   2.0 Section 5 already provides, and creates no obligation on either
   side.
 - **AGREEMENT ACCEPTED.** A Contribution's terms become **AGREEMENT
-  ACCEPTED** only once the specific procedure in Section 27 has actually
-  happened for that Contribution: a real, affirmative acceptance comment,
-  naming this Agreement's version and the exact PR number, posted by a
-  person or entity who is themselves a rightsholder in the Contribution
-  (or properly authorized under Section 21–23), and recorded per Section
-  27. This is the point at which the rights described in Sections 4–6
-  become effective (see Section 28) — it does not require the PR to be
-  merged, and does not, by itself, obligate the Project Owner to merge it.
+  ACCEPTED** only once the Contributor has validly **signed** this
+  Agreement through one of the two paths in Section 27 (a legally
+  effective qualified/secure electronic signature, or a wet-ink signed
+  agreement handled through an appropriate legal process), the
+  Contribution and PR(s) it covers are identified in that signed
+  agreement, the signer is themselves a rightsholder in the Contribution
+  (or properly authorized under Section 21–23), and the Project Owner has
+  recorded the resulting **VERIFIED** entry in `docs/contributor-agreements.md`
+  per Section 27. **A GitHub comment, by itself, is not AGREEMENT
+  ACCEPTED** — it may be used only to initiate the process (Section 27).
+  This is the point at which the rights described in Sections 4–6 become
+  effective (see Section 28) — it does not require the PR to be merged,
+  and does not, by itself, obligate the Project Owner to merge it.
 - **PROJECT ACCEPTED / MERGED.** A Contribution is **PROJECT ACCEPTED**
   (used interchangeably with **MERGED** in this Agreement) when a
   maintainer actually merges it into `main` or another designated branch
@@ -482,8 +494,8 @@ pull request, paired-programming co-authorship, or several people's
 separable work combined into one submission), **each** person or entity
 holding rights in a separable portion of the Contribution must either:
 
-- independently reach AGREEMENT ACCEPTED status for their own portion
-  (posting their own acceptance comment, per Section 27), or
+- independently reach AGREEMENT ACCEPTED status for their own portion (a
+  valid Path A or Path B signature of their own, per Section 27), or
 - be properly authorized to act on behalf of that other rightsholder (for
   example, under Section 21's employer-authorization mechanism, or a
   co-author's own explicit, written permission naming the accepting party
@@ -571,34 +583,35 @@ Agreement should be treated as final.
   fallback license mirrors the same enumeration so it stands on its own.
   **This addresses the enumeration half of Article 52. The "in writing"
   half is a separate, still-open question — see the next bullet.**
-- **A real, specific, still-open uncertainty: does a GitHub PR acceptance
-  comment satisfy FSEK Article 52's "in writing" requirement?** Research
-  into the Turkish Code of Obligations (TBK) Articles 14–15 indicates
-  that "written form" for a Turkish contract is satisfied by a
-  handwritten signature or by a **secure/qualified electronic signature**
-  (per Turkey's Electronic Signature Law No. 5070) — and that ordinary,
-  unsigned electronic text (a plain email, and by direct analogy a plain
-  GitHub comment) does **not**, by itself, clearly meet that standard,
-  even though such records are generally admissible as evidence
-  ("belge") under Code of Civil Procedure Article 199, assessed
-  case-by-case. **In practice: a GitHub acceptance comment, as Section 27
-  defines it, is real, strong *evidence* of the Contributor's consent —
-  GitHub authenticates the commenting account, and the platform's own
-  timestamp and edit history support it — but may not, on its own,
-  satisfy Article 52's formal written-form requirement absent a qualified
-  electronic signature.** This is exactly the kind of formal question a
-  licensed Turkish lawyer needs to confirm before this Agreement is
-  treated as legally watertight — this document cannot responsibly
-  resolve it alone. Two things already reduce, without eliminating, the
-  practical exposure: Section 5's fallback license applies independently
-  of *why* the Section 4 assignment might fail, including a possible
-  Article 52 formal defect, so the Project Owner's practical rights do
-  not collapse to zero even if a bare GitHub comment turns out not to
-  satisfy it; and nothing prevents the Project Owner from later asking a
-  specific Contributor to countersign a short qualified-e-signature or
-  wet-ink confirmation of an already-posted GitHub acceptance where the
-  formality genuinely matters (e.g. before a corporate/commercial
-  transaction — see Section 22).
+- **This is exactly why v3.0 removed the GitHub-comment-only acceptance
+  mechanism v2.0 used.** Research into the Turkish Code of Obligations
+  (TBK) Articles 14–15 indicates that "written form" for a Turkish
+  contract is satisfied by a handwritten signature or by a
+  **secure/qualified electronic signature** (per Turkey's Electronic
+  Signature Law No. 5070) — and that ordinary, unsigned electronic text
+  (a plain email, and by direct analogy a plain GitHub comment) does
+  **not**, by itself, clearly meet that standard, even though such
+  records are generally admissible as evidence ("belge") under Code of
+  Civil Procedure Article 199, assessed case-by-case. Section 27's Path A
+  (qualified/secure electronic signature) is designed specifically to
+  satisfy TBK Art. 14–15 for a Turkey-resident signer. **What remains a
+  real, specific, still-open uncertainty is cross-border recognition**:
+  whether a *foreign* Contributor's own country's qualified-signature
+  platform is legally equivalent to a Turkish secure electronic signature
+  under Turkish conflict-of-laws and electronic-signature-recognition
+  rules is genuinely jurisdiction-dependent and not something this
+  document can respons­ibly resolve for every possible Contributor
+  country in advance — see Section 27's own disclosure of this limit.
+  This is exactly the kind of question a licensed Turkish lawyer should
+  confirm, at least at the level of "which major e-signature providers'
+  outputs are Turkey-recognized," before Path A is relied on at scale for
+  non-Turkey-resident Contributors. Path B (wet-ink) does not depend on
+  this cross-border question at all, at the cost of being slower and
+  higher-friction. Section 5's fallback license continues to apply
+  independently of *why* a Section 4 assignment might fail for a given
+  Contributor, including a cross-border Path A recognition gap, so the
+  Project Owner's practical rights do not collapse to zero purely because
+  one specific signature's formal equivalence turns out to be doubtful.
 - whether software specifically receives any different treatment under
   FSEK compared to other categories of protected work, beyond the
   employer-ownership default already reflected in Section 21;
@@ -618,7 +631,7 @@ Agreement should be treated as final.
   investment, meaningful commercial licensing, or accepting a substantial
   corporate contribution — see Section 22).
 
-## 27. Mandatory Acceptance Procedure for External Contributions
+## 27. Signing and Acceptance Procedure for External Contributions
 
 **Once the Project Owner adopts this Agreement (a decision separate from,
 and later than, merging this document into the repository — see `docs/
@@ -631,31 +644,75 @@ Concretely, from that point on:
    every rightsholder identified in it (Section 23). "External" means
    submitted by anyone other than the Project Owner or someone the
    Project Owner has authorized to commit directly.
-2. AGREEMENT ACCEPTED status requires the Contributor to post an
-   affirmative, explicit comment on the exact pull request, in
-   substantially this form:
+2. **AGREEMENT ACCEPTED status is reached only through a valid signature**,
+   via one of two paths:
 
-   > I have read and agree to the MEMBRANE Contributor Rights Agreement
-   > version `<version>` (commit `<git-hash-of-this-file>`) and confirm
-   > that my contribution in PR #`<NN>` is submitted under that
-   > agreement.
+   - **Path A — qualified/secure electronic signature.** The Contributor
+     signs this Agreement (identifying the exact version, the PR(s)
+     covered, and their own identity) using a legally effective
+     qualified or secure electronic signature mechanism recognized where
+     the signature is made — for a Turkey-resident signer, this means a
+     signature meeting Turkish Electronic Signature Law No. 5070's
+     "secure electronic signature" standard. **For a Contributor located
+     outside Turkey, this Agreement does not assume that their own
+     country's e-signature platform (e.g. a foreign qualified trust
+     service) is automatically equivalent to a Turkish secure electronic
+     signature** — cross-border recognition of a foreign electronic
+     signature under Turkish law is a real, jurisdiction-specific
+     question this document does not resolve, and it is the kind of
+     question the Project Owner should confirm (generally, not
+     necessarily per-signature) before relying on Path A for
+     non-Turkey-resident Contributors at scale. See Section 26.
+   - **Path B — wet-ink signature.** The Contributor and the Project
+     Owner (or someone with actual authority to sign on the Project
+     Owner's behalf) each sign a physical, printed copy of this
+     Agreement, identifying the exact version and the PR(s) covered, and
+     the signed document is exchanged through an appropriate process
+     (e.g. countersigned scans exchanged and the physical originals
+     retained, or another process a lawyer confirms is adequate for the
+     signer's own jurisdiction).
 
-3. The Project Owner (or an authorized maintainer) records that
-   acceptance in `docs/contributor-agreements.md` before merging.
-4. **None of the following count as acceptance:** silence, merely opening
-   a pull request, CI passing, a maintainer's code-review approval,
-   merging without the Contributor's own affirmative comment, or
-   continuing to contribute after this file was added to the repository.
-5. **If the Contributor does not post the acceptance comment, the pull
-   request is not merged**, regardless of its technical quality, until
-   either the Contributor accepts or the maintainer records an explicit
-   waiver under item 6 below.
+   **A GitHub PR comment is not, by itself, either of these** — it has no
+   signature. It may be used only to *initiate* the process (e.g., the
+   Contributor or maintainer commenting to say signing is underway, or to
+   link to where a signed copy has been exchanged) — never to complete
+   AGREEMENT ACCEPTED status on its own.
+3. Once a valid Path A or Path B signature exists, the Project Owner (or
+   an authorized maintainer) independently confirms it covers the
+   Contribution and PR(s) in question and that the signer is a
+   rightsholder or properly authorized (Section 21–23), then records a
+   **VERIFIED** entry in `docs/contributor-agreements.md` before merging.
+   **The signed agreement itself (the electronic signature envelope, or
+   the scanned/physical wet-ink document) is never stored in this public
+   repository** — see the storage rules below. The public registry
+   records only non-sensitive metadata about the fact and scope of a
+   verified signature, never the signed document, a signature image, or
+   personal data beyond a public GitHub handle.
+4. **None of the following count as acceptance, and none may be recorded
+   as VERIFIED:** silence, merely opening a pull request, CI passing, a
+   maintainer's code-review approval, a plain GitHub comment (even one
+   naming this Agreement's version and PR number), merging without a
+   valid Path A/B signature, or continuing to contribute after this file
+   was added to the repository. **The Project Owner does not sign on a
+   Contributor's behalf, and does not fabricate or infer a signature that
+   does not exist.**
+5. **If a valid Path A or Path B signature does not exist for a
+   Contributor, the pull request is not merged**, regardless of its
+   technical quality, until either a valid signature is obtained and
+   VERIFIED, or the maintainer records an explicit waiver under item 6.
 6. **The only exception** is a documented, case-by-case decision by the
    Project Owner to waive the requirement for a specific Contribution —
    this must itself be a separate, explicit, written decision (recorded
-   in `docs/contributor-agreements.md` as a "WAIVED" entry naming the PR
-   and the reason), never a silent or implied exception, and never the
+   in `docs/contributor-agreements.md`'s waiver table, naming the PR and
+   the reason), never a silent or implied exception, and never the
    Project's default posture for external contributions.
+7. **One signed agreement may cover more than one identified PR** from
+   the same Contributor (e.g. a single signature naming "PR #68, #69,
+   #70, #71"), provided the signed document itself lists each covered PR
+   explicitly — a signature covering "all my past and future
+   contributions" in the abstract does not satisfy the individual-
+   identification expectations this Agreement otherwise holds itself to
+   (see Section 26's own discussion of FSEK Article 52 enumeration).
 
 A Contribution that reached AGREEMENT ACCEPTED status **before** this
 Agreement's adoption (there are none as of this version) would be governed
@@ -664,12 +721,28 @@ merely SUBMITTED (e.g. an open pull request) before adoption, but never
 separately AGREEMENT ACCEPTED, is governed by this Section going forward
 like any other external contribution — submission before adoption is not
 itself acceptance of anything, under either the old or the new posture.
+This includes a Contribution that had only a GitHub acceptance *comment*
+recorded under this Agreement's earlier v2.0 posture (there are none as of
+this version) — a v2.0-style comment alone does not constitute a v3.0
+signature, and must be replaced by a valid Path A or Path B signature to
+reach AGREEMENT ACCEPTED status going forward.
+
+### Signed-document storage
+
+The actual signed agreement — the electronic-signature envelope/certificate
+from Path A, or the scanned/physical wet-ink document from Path B — must be
+stored **privately and securely** by the Project Owner (e.g. encrypted
+local/offline storage, or a private, access-controlled document store),
+never committed to this public repository, and never attached to a public
+PR or issue. The public registry (`docs/contributor-agreements.md`) exists
+precisely so that the fact and scope of a signature can be verified
+publicly without exposing the document itself.
 
 ## 28. Timing and Scope of the Rights Grant
 
 The rights described in Sections 4–6 become effective **no later than**
 the moment a Contribution reaches AGREEMENT ACCEPTED status for the
-specific PR identified in the acceptance comment, and remain effective if
+specific PR(s) identified in the signed agreement, and remain effective if
 that Contribution is subsequently merged (PROJECT ACCEPTED).
 
 To remove ambiguity about specific real situations:
@@ -683,9 +756,9 @@ To remove ambiguity about specific real situations:
   rejected, unmerged Contribution, since there is nothing to un-merge.
 - **Contributor accepts, then pushes further commits to the same PR
   (ordinary iteration, same author, same underlying Contribution).** The
-  original acceptance continues to cover the Contribution as it evolves,
-  without needing to be re-posted for every push — this is a continuation
-  of the same Contribution, not a new one.
+  original signed acceptance continues to cover the Contribution as it
+  evolves, without needing a new signature for every push — this is a
+  continuation of the same Contribution, not a new one.
 - **A different person (a co-author) adds commits to the same PR after
   the original Contributor's acceptance.** This changes the rightsholder
   scope: the new commits are a separate Contribution-portion under

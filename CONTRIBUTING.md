@@ -117,10 +117,14 @@ no longer sufficient on its own for a PR to be merged.**
 `CONTRIBUTOR_RIGHTS_AGREEMENT.md` (copyright assignment, with a fallback
 license where assignment isn't legally possible) is the required path: no
 external pull request is merged unless every rightsholder identified in it
-has explicitly, affirmatively accepted that Agreement for that specific
-PR, following the exact procedure in the Agreement's own Section 27.
-Opening a PR, CI passing, or a maintainer's review approval do **not**
-count as acceptance — see Section 27 for exactly what does.
+has **validly signed** that Agreement for the specific PR(s), following
+Section 27's procedure. **A GitHub PR comment is not, by itself, a
+signature** — signing happens through a qualified/secure electronic
+signature (Section 27, Path A) or a wet-ink signed document (Path B), and
+only a maintainer-recorded `VERIFIED` entry in
+`docs/contributor-agreements.md` counts. Opening a PR, CI passing, a
+maintainer's review approval, or a plain acceptance comment do **not**
+count — see Section 27 for exactly what does.
 
 **"External"** means anyone other than the maintainer or someone the
 maintainer has authorized to commit directly; the maintainer's own commits
