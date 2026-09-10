@@ -106,6 +106,28 @@ repository's own `experiments/` tree.
 (`v0.1.0-research` and later) are immutable snapshots of `main` at a
 point in time — see `docs/research-release-freeze.md`.
 
+## Contributor rights and licensing
+
+This project is Apache License 2.0 (`LICENSE`). Submitting a pull request
+licenses your contribution to the project under Apache-2.0's own Section 5
+("Submission of Contributions") automatically — no extra step needed, and
+this remains true whether or not you ever look at the rest of this
+section.
+
+Separately, and entirely optionally, `CONTRIBUTOR_RIGHTS_AGREEMENT.md`
+offers a broader agreement (copyright assignment, with a fallback license
+where assignment isn't legally possible) that gives the project more
+relicensing/commercial flexibility over your specific contribution, in
+exchange for the assurances described in that document (no equity, no
+partnership, no compensation, no governance rights, and — after
+acceptance — no unilateral withdrawal). It only ever applies to a
+Contribution you've explicitly, affirmatively accepted it for, following
+the exact procedure in that document's own Section 25 — never by default,
+never retroactively, and never merely by opening a PR. See
+`docs/contributor-governance.md` for the reasoning behind why this exists
+alongside plain Apache-2.0, and `docs/contributor-agreements.md` for the
+real, current list of who has accepted it and for which PR.
+
 ## Pull requests
 
 Keep pull requests scoped to one logical change. Every pull request into

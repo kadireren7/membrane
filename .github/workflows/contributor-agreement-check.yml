@@ -1,0 +1,48 @@
+# Non-enforcing, informational-only check for the OPTIONAL
+# CONTRIBUTOR_RIGHTS_AGREEMENT.md (see docs/contributor-governance.md for
+# why this exists alongside plain Apache-2.0, which every PR is already
+# covered by regardless of this workflow's outcome).
+#
+# Deliberately NOT a required status check, NOT a merge blocker, and does
+# NOT post any comment on anyone's behalf -- it only reports, in its own
+# job summary, whether docs/contributor-agreements.md already contains a
+# real, recorded acceptance entry for this exact PR's author + number. A
+# maintainer reads that summary and decides what it means; this workflow
+# never decides anything itself.
+#
+# Lowest-permission option evaluated (docs/contributor-governance.md's own
+# "Automation recommendation" section): contents: read only, no PR-write
+# permission, no third-party GitHub App installed.
+name: Contributor agreement check (informational)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  check-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Look up this PR in the contributor agreement registry
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "## Contributor agreement status (informational only)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if grep -qi "| *${PR_AUTHOR} *|.*${PR_NUMBER}.*|" docs/contributor-agreements.md 2>/dev/null; then
+            echo "A recorded acceptance entry for @${PR_AUTHOR} / PR #${PR_NUMBER} was found in docs/contributor-agreements.md." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No recorded CONTRIBUTOR_RIGHTS_AGREEMENT.md acceptance entry found for @${PR_AUTHOR} / PR #${PR_NUMBER}." >> "$GITHUB_STEP_SUMMARY"
+            echo "This is expected and fine for most PRs -- the optional Agreement is not required; plain Apache-2.0 (LICENSE Section 5) already covers this contribution regardless." >> "$GITHUB_STEP_SUMMARY"
+            echo "See CONTRIBUTOR_RIGHTS_AGREEMENT.md Section 25 if the contributor wants to accept it for this PR." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Always exits 0 -- this check can never fail a PR or block a merge.
+          exit 0
