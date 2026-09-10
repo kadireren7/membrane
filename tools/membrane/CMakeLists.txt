@@ -157,7 +157,7 @@ set_target_properties(membrane_server PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_server PUBLIC membrane_registry_core
   membrane_runtime_session membrane_cpp_httplib membrane_product_cli
-  membrane_utf8_stream llama)
+  membrane_utf8_stream membrane_stop_sequence llama)
 target_include_directories(membrane_server PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_server PRIVATE
