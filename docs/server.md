@@ -33,6 +33,12 @@ membrane model add qwen /path/to/model.gguf
 membrane serve
 ```
 
+**Post-v1 product-polish, prompt 3:** for a human at a terminal (as
+opposed to an app/SDK integration), `membrane chat` is the normal way to
+talk to this server — an interactive REPL client of the exact same API
+this document describes, never a second inference path. See
+`docs/chat.md`.
+
 Then point any OpenAI-compatible client at `http://127.0.0.1:8642/v1`.
 
 ## Security scope

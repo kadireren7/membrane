@@ -38,7 +38,35 @@ same flow for a guided first-run (register a local `.gguf`, or a
 catalog name, and stand up the background service in one pass). See
 [`docs/model-lifecycle.md`](docs/model-lifecycle.md).
 
+## Chat from your terminal
+
+```bash
+membrane serve      # or: membrane service install && membrane service start
+membrane chat
+```
+
+```
+MEMBRANE Chat -- qwen2.5:7b
+Endpoint: http://127.0.0.1:8642
+Type /help for commands.
+
+You: hello
+Assistant: Hello! How can I help?
+```
+
+An interactive REPL on top of the same local server — streamed replies,
+in-memory conversation history for the session (never written to disk),
+and a handful of slash commands (`/help`, `/clear`, `/model`, `/exit`).
+`membrane chat MODEL` resolves and selects `MODEL` first (the same
+resolution `membrane use MODEL` already does) before starting the
+session. This is a thin client of the API below — nothing here talks to
+llama.cpp directly.
+
 ## Talk to it from your app
+
+The same server also speaks a real OpenAI-compatible HTTP API, for
+integrating MEMBRANE into your own code rather than typing at it
+directly:
 
 ```bash
 curl http://127.0.0.1:8642/v1/chat/completions \

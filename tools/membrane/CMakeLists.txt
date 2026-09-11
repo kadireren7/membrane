@@ -322,6 +322,40 @@ target_include_directories(membrane_use_cmd PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
 
+# Post-v1 product-polish, prompt 3: the pure, llama-free/httplib-free
+# SSE incremental parser `membrane chat` uses to turn the server's own
+# real streamed wire format into plain text -- its own tiny library so
+# its unit test links nothing heavier than this one module (chat_stream_
+# parser.h's own top comment).
+add_library(membrane_chat_stream_parser STATIC chat_stream_parser.cpp)
+set_target_properties(membrane_chat_stream_parser PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_chat_stream_parser PUBLIC membrane_sanitizers)
+target_include_directories(membrane_chat_stream_parser PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+target_include_directories(membrane_chat_stream_parser PRIVATE
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
+# Post-v1 product-polish, prompt 3: `membrane chat` -- a thin, human-
+# facing terminal client of the EXISTING OpenAI-compatible server
+# (chat_cmd.h's own top comment has the full architectural contract).
+# Reuses membrane_use_cmd for model resolution and membrane_doctor_cmd
+# for server-reachability guidance -- never a second model-lifecycle or
+# service-state implementation.
+add_library(membrane_chat_cmd STATIC chat_cmd.cpp)
+set_target_properties(membrane_chat_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_chat_cmd PUBLIC membrane_sanitizers
+  membrane_chat_stream_parser membrane_server_config membrane_status_client
+  membrane_doctor_cmd membrane_use_cmd membrane_cpp_httplib
+  membrane_product_cli)
+target_include_directories(membrane_chat_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+target_include_directories(membrane_chat_cmd PRIVATE
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
 add_executable(membrane main.cpp model_cmd.cpp)
 set_target_properties(membrane PROPERTIES
   CXX_STANDARD 17
@@ -331,7 +365,8 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_runtime_session membrane_server membrane_service_cmd
   membrane_status_client membrane_server_config membrane_doctor_cmd
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
-  membrane_variant_selector membrane_use_cmd membrane_cli_shared llama)
+  membrane_variant_selector membrane_use_cmd membrane_chat_cmd
+  membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
   ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
@@ -479,6 +514,48 @@ if(MEMBRANE_BUILD_TESTS)
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
   add_test(NAME test_use_cmd COMMAND test_use_cmd)
+
+  # Post-v1 product-polish, prompt 3: pure, no-network unit tests for
+  # the SSE incremental parser `membrane chat` uses.
+  add_executable(test_chat_stream_parser test_chat_stream_parser.cpp)
+  set_target_properties(test_chat_stream_parser PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_chat_stream_parser PRIVATE
+    membrane_chat_stream_parser)
+  target_include_directories(test_chat_stream_parser PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_chat_stream_parser COMMAND test_chat_stream_parser)
+
+  # Post-v1 product-polish, prompt 3: `membrane chat` -- argument
+  # parsing and slash commands need no network at all; the HTTP-round-
+  # trip cases run against a real, local httplib::Server test fixture
+  # (test_chat_cmd.cpp's own top comment) that scripts exactly the
+  # responses a real MEMBRANE server would send -- never a real model,
+  # never a real MEMBRANE server process. Needs model_cmd.cpp compiled
+  # directly in, and therefore llama/gpu_device/runtime_session/etc.,
+  # for the exact same reason test_use_cmd above does (chat_cmd.cpp
+  # calls membrane_use_cmd_dispatch(), which calls membrane_model_cmd_
+  # dispatch() -- Section 2 of the task: reuse `membrane use`, never a
+  # second model-lifecycle implementation, and this is the honest link-
+  # time cost of that reuse).
+  add_executable(test_chat_cmd test_chat_cmd.cpp model_cmd.cpp)
+  set_target_properties(test_chat_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_chat_cmd PRIVATE membrane_chat_cmd
+    membrane_use_cmd membrane_server membrane_registry_core
+    membrane_server_config membrane_product_cli membrane_gpu_device
+    membrane_runtime_core membrane_runtime_session membrane_model_catalog
+    membrane_download_manager membrane_variant_selector
+    membrane_status_client membrane_doctor_cmd membrane_cli_shared llama)
+  target_include_directories(test_chat_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_chat_cmd COMMAND test_chat_cmd)
 
   # Mega Phase B, PR B1, Section 13: pure tests for the new service-
   # lifecycle modules -- unit generation/path handling, config

@@ -14,6 +14,7 @@
 #include "doctor_cmd.h"
 #include "setup_cmd.h"
 #include "use_cmd.h"
+#include "chat_cmd.h"
 #include "product_cli.h"
 
 using json = nlohmann::json;
@@ -55,6 +56,9 @@ static void	print_usage(FILE *out)
 	fprintf(out, "  membrane use MODEL                 select/activate "
 		"MODEL -- installs it first (with consent) if not already "
 		"installed\n");
+	fprintf(out, "  membrane chat [MODEL]              interactive "
+		"terminal chat with the local server (see membrane chat "
+		"--help)\n");
 	fprintf(out, "  membrane serve                    start a local "
 		"OpenAI-compatible HTTP server (foreground)\n");
 	fprintf(out, "  membrane status                    check a running "
@@ -144,6 +148,24 @@ int	main(int argc, char **argv)
 	bool						want_json = false;
 	int							i;
 
+	/* Special-cased BEFORE the generic --help/--json scan below so
+	 * `membrane chat --help` shows chat's own per-command help text
+	 * (Section 20 of the task) instead of this file's top-level usage --
+	 * every other subcommand's `--help` is still intercepted globally by
+	 * that scan, unchanged, pre-existing behavior (deliberately out of
+	 * this prompt's narrow scope). `membrane chat` is also the one
+	 * subcommand that reads raw stdin itself (an interactive REPL), so
+	 * it parses its own remaining argv directly rather than going
+	 * through the shared want_json/args plumbing below, which no other
+	 * subcommand needs either. */
+	if (argc >= 2 && std::string(argv[1]) == "chat")
+	{
+		std::vector<std::string>	chat_args;
+
+		for (int k = 2; k < argc; ++k)
+			chat_args.push_back(argv[k]);
+		return (membrane_chat_cmd_dispatch(chat_args, false));
+	}
 	i = 1;
 	while (i < argc)
 	{
