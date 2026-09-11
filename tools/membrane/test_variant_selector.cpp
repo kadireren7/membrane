@@ -143,6 +143,46 @@ static void	test_deterministic(void)
 		"identical inputs always produce an identical result");
 }
 
+/*
+ * Post-v1 product-polish, PR 1: regression coverage for the real
+ * v1.0.0 user-session bug (`membrane use` previewed a variant as
+ * HOST_MEMORY_FIT, then its own internal re-dispatch of `membrane
+ * model install` got HOST_MEMORY_INSUFFICIENT for the SAME variant and
+ * silently treated that as "the user forced it") -- see variant_
+ * selector.h's own membrane_variant_install_decide() top comment for
+ * the full root-cause narrative. Pure booleans in, no real host meminfo
+ * or catalog/network involved.
+ */
+static void	test_install_decide_proceeds_when_it_fits(void)
+{
+	TEST_ASSERT(membrane_variant_install_decide(true, true)
+			== MEMBRANE_VARIANT_INSTALL_PROCEED,
+		"an auto-selected variant that still fits proceeds with no "
+		"warning");
+	TEST_ASSERT(membrane_variant_install_decide(true, false)
+			== MEMBRANE_VARIANT_INSTALL_PROCEED,
+		"a manually-typed --quant that fits proceeds with no warning");
+}
+
+static void	test_install_decide_flags_stale_recommendation(void)
+{
+	TEST_ASSERT(membrane_variant_install_decide(false, true)
+			== MEMBRANE_VARIANT_INSTALL_STALE,
+		"an auto-selected variant that no longer fits is a STALE "
+		"recommendation (available memory changed since `membrane use` "
+		"checked it) -- never silently downgraded to \"the user forced "
+		"it\"");
+}
+
+static void	test_install_decide_preserves_explicit_override(void)
+{
+	TEST_ASSERT(membrane_variant_install_decide(false, false)
+			== MEMBRANE_VARIANT_INSTALL_FORCED,
+		"a real, manually-typed --quant override that does not fit is "
+		"still honored (FORCED, warn-and-proceed) -- explicit user "
+		"override semantics are preserved exactly");
+}
+
 int	main(void)
 {
 	test_selects_largest_fitting_variant();
@@ -150,6 +190,9 @@ int	main(void)
 	test_no_variant_fits_returns_null_with_reasons();
 	test_unknown_available_memory_fails_closed();
 	test_deterministic();
+	test_install_decide_proceeds_when_it_fits();
+	test_install_decide_flags_stale_recommendation();
+	test_install_decide_preserves_explicit_override();
 	printf("test_variant_selector: all tests passed\n");
 	return (0);
 }

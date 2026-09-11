@@ -60,9 +60,22 @@ since been deleted or moved is refused with `MODEL_FILE_MISSING`, never
 silently "selected" as if it still worked.
 
 - **Service stopped**: `default_model` is still set; reported as
-  `Selected model: NAME` / `Service is not running. Start it with:
-  membrane service start` — a real, successful outcome (Section 13 of
-  the task), never a failure just because nothing is currently running.
+  `Selected model: NAME` plus state-aware next-step guidance — a real,
+  successful outcome (Section 13 of the task), never a failure just
+  because nothing is currently running. The guidance itself checks
+  whether a background service unit actually exists (the same shared
+  probe `membrane doctor`'s own `service` check uses, `service_state.h`)
+  before ever suggesting `membrane service start`:
+  - Nothing installed at all: `Service is not installed.` plus `Run
+    membrane serve for the current terminal, or install the background
+    service with: membrane service install`.
+  - Installed but stopped: `Service is installed but not running.`
+    plus `Start it with: membrane service start` — the one case where
+    that command will actually work.
+  A real, fixed v1.0.0 bug had this message unconditionally say "Start
+  it with: `membrane service start`" even when no background service
+  had ever been installed, which then failed with systemd's own raw
+  `Unit membrane.service not found.`
 - **Service running, different model active**: a real, live switch is
   attempted (see below).
 - **Service running, already active**: idempotent — `Already active:
@@ -111,6 +124,39 @@ one clean summary) with the previewed variant pinned via `--quant`, so
 the file actually installed is byte-identical to what was shown and
 consented to. See `docs/model-catalog.md`/D1's own download pipeline —
 never a second downloader.
+
+`membrane model install` re-validates that same variant's fit against a
+**fresh** host-memory read immediately before actually downloading —
+real available memory can genuinely change in the time between the
+preview and this point. This internal re-invocation marks the variant
+as MEMBRANE's own automatic recommendation (an internal `--auto-selected`
+flag, never seen by a real user), which matters if the fresh check
+disagrees with the preview: a real, fixed v1.0.0 bug had that
+disagreement silently reported as "proceeding anyway because you asked
+for it explicitly" — even though the user never asked for that specific
+variant, MEMBRANE's own recommendation did. It is now reported honestly
+instead (`HOST_MEMORY_STALE_AT_INSTALL`), and nothing is downloaded:
+
+```
+$ membrane use qwen2.5:7b
+...
+Estimated hardware fit: HOST_MEMORY_FIT
+Download and install this model? [Y/n]: y
+membrane model install: the recommended variant 'Q4_K_M' of 'qwen2.5:7b'
+no longer fits real host memory -- it changed since `membrane use`
+checked it: required=... reserve=... available=.... Try again (available
+memory may recover), re-run `membrane use qwen2.5:7b` for a fresh
+recommendation, or force this variant anyway with `membrane model
+install qwen2.5:7b --quant Q4_K_M`.
+```
+
+This is distinct from a real, manually-typed `membrane use qwen2.5:7b
+--quant Q4_K_M` (or `membrane model install ... --quant Q4_K_M`
+directly) — that remains a genuine explicit override, unconditionally
+honored with the existing warn-and-proceed behavior
+(`docs/model-variant-selection.md`'s own "Explicit override" section).
+See `variant_selector.h`'s own `membrane_variant_install_decide()` for
+the one, shared, authoritative decision both call sites use.
 
 If the install itself fails partway (checksum mismatch, disk space,
 network), `membrane use` reports the failure and stops — **no model is
@@ -250,7 +296,12 @@ specific code — it usually does, e.g. `NO_FEASIBLE_CONTEXT`/
 (the server answered an earlier `/v1/status` but became unreachable for
 the activation call itself — a real, rare race, never fatal to the
 "selected" outcome since `default_model` is already saved by that
-point).
+point). `HOST_MEMORY_STALE_AT_INSTALL` (raised by the internally
+re-invoked `membrane model install`, folded into `DOWNLOAD_FAILED`'s own
+coarse wrapper the same way every other underlying install failure is)
+means real available memory changed between the preview and the actual
+install attempt for MEMBRANE's own auto-selected variant — see "Not
+installed" above.
 
 ## Cross-platform (Sections 24-26)
 

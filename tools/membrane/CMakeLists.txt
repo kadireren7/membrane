@@ -181,6 +181,23 @@ target_include_directories(membrane_status_client PUBLIC
 target_include_directories(membrane_status_client PRIVATE
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
 
+# Post-v1 product-polish, PR 1: the one real per-platform "is MEMBRANE's
+# own background service installed/active right now" probe (service_
+# state.h's own top comment) -- extracted out of doctor_cmd.cpp's
+# pre-existing check_service() so `membrane doctor`, `membrane use`,
+# `membrane model pin/unpin`, and `membrane service start`'s own new
+# not-installed guard (below) all read the exact same real state instead
+# of five independently-drifting subprocess calls.
+add_library(membrane_service_state STATIC service_state.cpp)
+set_target_properties(membrane_service_state PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_service_state PUBLIC membrane_sanitizers
+  membrane_subprocess membrane_systemd_unit membrane_launchd_unit
+  membrane_windows_task)
+target_include_directories(membrane_service_state PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+
 # Mega Phase B, PR B1: `membrane service ...` itself (service_cmd.h's own
 # top comment) -- installs/manages membrane.service as a systemd --user
 # unit; never a second daemon-supervision implementation.
@@ -199,7 +216,7 @@ set_target_properties(membrane_service_cmd PROPERTIES
 target_link_libraries(membrane_service_cmd PUBLIC membrane_sanitizers
   membrane_systemd_unit membrane_launchd_unit membrane_windows_task
   membrane_server_config membrane_subprocess membrane_status_client
-  membrane_fs_util membrane_product_cli)
+  membrane_service_state membrane_fs_util membrane_product_cli)
 target_include_directories(membrane_service_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_service_cmd PRIVATE
@@ -215,9 +232,8 @@ set_target_properties(membrane_doctor_cmd PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_doctor_cmd PUBLIC membrane_sanitizers
-  membrane_registry_core membrane_server_config membrane_systemd_unit
-  membrane_launchd_unit membrane_windows_task membrane_subprocess
-  membrane_status_client membrane_product_cli)
+  membrane_registry_core membrane_server_config membrane_subprocess
+  membrane_status_client membrane_service_state membrane_product_cli)
 target_include_directories(membrane_doctor_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_doctor_cmd PRIVATE
@@ -315,7 +331,7 @@ set_target_properties(membrane_use_cmd PROPERTIES
 target_link_libraries(membrane_use_cmd PUBLIC membrane_sanitizers
   membrane_registry_core membrane_server_config membrane_model_catalog
   membrane_variant_selector membrane_status_client membrane_doctor_cmd
-  membrane_cli_shared membrane_product_cli llama)
+  membrane_service_state membrane_cli_shared membrane_product_cli llama)
 target_include_directories(membrane_use_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_use_cmd PRIVATE
@@ -331,7 +347,8 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_runtime_session membrane_server membrane_service_cmd
   membrane_status_client membrane_server_config membrane_doctor_cmd
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
-  membrane_variant_selector membrane_use_cmd membrane_cli_shared llama)
+  membrane_variant_selector membrane_use_cmd membrane_service_state
+  membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
   ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime
@@ -486,6 +503,32 @@ if(MEMBRANE_BUILD_TESTS)
   # these touch a real systemd/journalctl (that is the real local smoke
   # test's job, run manually -- see docs/service.md), so they are CI-safe
   # and hermetic like every other test in this file.
+  # Post-v1 product-polish, PR 1: pure/hermetic tests for the shared
+  # service-lifecycle probe (service_state.h) and the `membrane service
+  # start` not-installed guard built on top of it -- see both test
+  # files' own top comments for the real v1.0.0 user-session bug this
+  # closes. Driven entirely through MEMBRANE_SERVICE_PROBE_OVERRIDE, so
+  # neither test ever touches a real systemctl/launchctl/schtasks call.
+  add_executable(test_service_state test_service_state.cpp)
+  set_target_properties(test_service_state PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_service_state PRIVATE membrane_service_state)
+  target_include_directories(test_service_state PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_service_state COMMAND test_service_state)
+
+  add_executable(test_service_cmd test_service_cmd.cpp)
+  set_target_properties(test_service_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_service_cmd PRIVATE membrane_service_cmd
+    membrane_product_cli)
+  target_include_directories(test_service_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run)
+  add_test(NAME test_service_cmd COMMAND test_service_cmd)
+
   add_executable(test_systemd_unit test_systemd_unit.cpp)
   set_target_properties(test_systemd_unit PROPERTIES
     CXX_STANDARD 17
