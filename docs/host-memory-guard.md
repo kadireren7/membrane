@@ -244,6 +244,25 @@ Real, larger-model-scale host-memory evidence remains not gathered
 (same 5.6 GiB dev-host constraint as Phase 34) -- the reserve policy's
 percentage term is still unvalidated beyond SmolLM2-135M's own scale.
 
+## Post-v1 product-polish handoff -- model variant selection
+
+The same "fresh re-check immediately before the real, expensive
+step, fail clearly on disagreement rather than proceed on a stale
+snapshot" pattern above was applied to a second, independent caller: a
+real v1.0.0 user session found `membrane use`'s own not-yet-installed
+preview report `HOST_MEMORY_FIT` for its auto-selected variant, then
+`membrane model install`'s internal re-invocation of the exact same
+variant re-check `HOST_MEMORY_INSUFFICIENT` against a freshly-read host
+snapshot -- and silently treat that disagreement as "the user forced an
+unsafe choice," which was never true (MEMBRANE's own recommendation
+picked that variant, not the user). Fixed the same way `--ctx auto`
+already was: the fresh recheck still runs (this guard's own
+`membrane_host_memory_guard_resolve()`, unchanged), but a disagreement
+for MEMBRANE's own auto-selected variant now fails clearly
+(`HOST_MEMORY_STALE_AT_INSTALL`, `docs/model-lifecycle.md`) instead of
+being folded into the pre-existing manual-`--quant`-override warning
+path. See `variant_selector.h`'s own `membrane_variant_install_decide()`.
+
 The deferred CPU-only adaptive fix inside `joint_planner.c` itself is
 **still not implemented** -- Phase 35 did not touch `joint_planner.c`
 at all. Instead, `--ctx auto` routes the one broken combination

@@ -68,4 +68,57 @@ const membrane_catalog_variant_t	*membrane_select_variant(
 			const membrane_variant_selector_input_t &hw,
 			std::vector<membrane_variant_fit_t> *out_all_considered);
 
+/*
+ * Post-v1 product-polish, PR 1: the ONE authoritative "what should
+ * `membrane model install` do with this variant's fit result" decision --
+ * shared by both of `membrane model install`'s own call sites (a real,
+ * manually-typed `--quant` override, and `membrane use`'s own internal
+ * re-dispatch of the variant IT already selected via membrane_select_
+ * variant() above) so they can no longer diverge.
+ *
+ * Root cause this closes (a real v1.0.0 user session): `membrane use`
+ * previewed a variant as HOST_MEMORY_FIT (checked once, via membrane_
+ * select_variant() above), then internally re-invoked `membrane model
+ * install NAME --quant <that same variant>` -- which re-checks fit
+ * against a FRESH host-memory read and, on a real host, found
+ * HOST_MEMORY_INSUFFICIENT instead (available memory can genuinely
+ * change between the two reads). Because that internal re-invocation is
+ * indistinguishable, at the CLI-argument level, from a user who typed
+ * `--quant` themselves, the fresh failure was silently treated as an
+ * explicit override ("proceeding anyway because you asked for it
+ * explicitly") -- even though the user never asked for that specific
+ * variant; MEMBRANE's own automatic recommendation did.
+ *
+ * This function is the single place that distinguishes the two cases:
+ *   - auto_selected == false (a real, manually-typed --quant): an
+ *     unsafe variant is still honored -- MEMBRANE_VARIANT_INSTALL_FORCED
+ *     -- Section 5's own "explicit user override must still work"
+ *     requirement, unchanged from the pre-existing behavior.
+ *   - auto_selected == true (MEMBRANE's own recommendation, re-checked
+ *     immediately before the real install/download): an unsafe result
+ *     here means available memory genuinely changed since the
+ *     recommendation was made -- MEMBRANE_VARIANT_INSTALL_STALE --
+ *     never silently downgraded to "the user forced it."
+ * variant_fits is always considered.fits (see variant_selector.h's own
+ * s_membrane_variant_fit) for the SAME family+quant already evaluated
+ * by membrane_select_variant() -- never a second, independently-
+ * computed fit boolean.
+ * Pure, deterministic, no I/O -- directly unit-testable with synthetic
+ * booleans, no real host meminfo or catalog/network involved.
+ */
+typedef enum e_membrane_variant_install_decision
+{
+	MEMBRANE_VARIANT_INSTALL_PROCEED,	/* fits (or fit not a concern) --
+										 * install with no warning */
+	MEMBRANE_VARIANT_INSTALL_STALE,	/* auto-selected, no longer fits --
+										 * refuse; memory changed since
+										 * the recommendation was made */
+	MEMBRANE_VARIANT_INSTALL_FORCED,	/* a real, explicit --quant
+										 * override does not fit -- warn,
+										 * then proceed anyway */
+}	membrane_variant_install_decision_t;
+
+membrane_variant_install_decision_t	membrane_variant_install_decide(
+			bool variant_fits, bool auto_selected);
+
 #endif

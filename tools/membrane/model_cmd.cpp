@@ -28,6 +28,7 @@
 #include "fs_util.h"
 #include "variant_selector.h"
 #include "status_client.h"
+#include "service_state.h"
 
 using json = nlohmann::json;
 
@@ -421,9 +422,21 @@ static int	cmd_pin_impl(const std::vector<std::string> &args, bool want_json,
 
 	if (!transport_ok)
 	{
+		membrane_service_probe_t	probe = membrane_probe_service();
+		std::string					hint;
+
+		if (!probe.manager_available || !probe.installed)
+			hint = "the background service is not installed -- run "
+				"`membrane serve` in a terminal, or `membrane service "
+				"install` for a persistent background service";
+		else if (!probe.active)
+			hint = "the background service is installed but not running "
+				"-- start it with `membrane service start`";
+		else
+			hint = "the background service reports running but is not "
+				"reachable -- check `membrane service logs`";
 		print_err(want_json, "SERVICE_UNAVAILABLE", "could not reach the "
-			"running server -- start it with `membrane service start` "
-			"or `membrane serve`");
+			"running server -- " + hint);
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
 	if (!result.ok)
@@ -620,6 +633,7 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 	std::string	name;
 	std::string	requested_quant;
 	bool		dry_run = false;
+	bool		auto_selected = false;
 
 	for (size_t i = 0; i < args.size(); ++i)
 	{
@@ -632,6 +646,17 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 		if (args[i] == "--dry-run")
 		{
 			dry_run = true;
+			continue ;
+		}
+		/* Internal-only: set by `membrane use`'s own re-dispatch (never
+		 * by a real user) to mark that --quant above names the variant
+		 * membrane_select_variant() already picked automatically, not a
+		 * manually-typed override -- see variant_selector.h's own
+		 * membrane_variant_install_decide() top comment for exactly why
+		 * that distinction matters. */
+		if (args[i] == "--auto-selected")
+		{
+			auto_selected = true;
 			continue ;
 		}
 		if (name.empty())
@@ -681,20 +706,50 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 		 * honored, never blocked by this real fit estimate. But
 		 * Section 11 ("warn before download") still applies: disclose
 		 * a real, likely-to-fail estimate rather than silently
-		 * proceeding as if everything were fine. */
+		 * proceeding as if everything were fine. A `membrane use`-
+		 * internal re-dispatch of its OWN already-checked recommendation
+		 * (auto_selected) gets different treatment on a no-longer-fits
+		 * result -- see membrane_variant_install_decide()'s own top
+		 * comment: real available memory changed since the
+		 * recommendation, never "the user forced this." */
 		membrane_select_variant(*f, hw, &considered);
+
+		bool		variant_fits = true;
+		std::string	fit_reason;
+
 		for (const auto &c : considered)
-		{
-			if (c.quant == variant->quant && !c.fits && !want_json)
+			if (c.quant == variant->quant)
 			{
-				printf("Warning: '%s' (%s) is estimated NOT to fit this "
-					"host's available memory (%s) -- proceeding anyway "
-					"because you asked for it explicitly. Consider a "
-					"smaller --quant, or `membrane model search` for a "
-					"smaller model.\n", f->name.c_str(),
-					variant->quant.c_str(), c.reason.c_str());
+				variant_fits = c.fits;
+				fit_reason = c.reason;
 				break ;
 			}
+
+		membrane_variant_install_decision_t	decision
+				= membrane_variant_install_decide(variant_fits,
+					auto_selected);
+
+		if (decision == MEMBRANE_VARIANT_INSTALL_STALE)
+		{
+			print_err(want_json, "HOST_MEMORY_STALE_AT_INSTALL",
+				"the recommended variant '" + variant->quant + "' of '"
+				+ f->name + "' no longer fits real host memory -- it "
+				"changed since `membrane use` checked it: " + fit_reason
+				+ ". Try again (available memory may recover), re-run "
+				"`membrane use " + f->name + "` for a fresh "
+				"recommendation, or force this variant anyway with "
+				"`membrane model install " + f->name + " --quant "
+				+ variant->quant + "`.");
+			return (MEMBRANE_EXIT_MODEL_ERROR);
+		}
+		if (decision == MEMBRANE_VARIANT_INSTALL_FORCED && !want_json)
+		{
+			printf("Warning: '%s' (%s) is estimated NOT to fit this "
+				"host's available memory (%s) -- proceeding anyway "
+				"because you asked for it explicitly. Consider a "
+				"smaller --quant, or `membrane model search` for a "
+				"smaller model.\n", f->name.c_str(),
+				variant->quant.c_str(), fit_reason.c_str());
 		}
 	}
 	else

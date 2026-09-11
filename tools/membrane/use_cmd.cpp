@@ -15,6 +15,7 @@
 #include "model_cmd.h"
 #include "status_client.h"
 #include "doctor_cmd.h"
+#include "service_state.h"
 #include "cli_shared.h"
 #include "product_cli.h"
 #include "runtime_session.h"
@@ -284,9 +285,30 @@ int	membrane_use_cmd_dispatch(const std::vector<std::string> &args,
 		if (consent_rc != MEMBRANE_EXIT_SUCCESS)
 			return (consent_rc);
 
+		/* --auto-selected: passed ONLY when o.requested_quant was empty,
+		 * i.e. this variant is MEMBRANE's OWN recommendation from
+		 * membrane_select_variant() above (already fit-checked in
+		 * preview_and_consent()'s own preview output) -- never sent when
+		 * the user themselves typed `membrane use ... --quant X`, which
+		 * is a real, manual override and must keep cmd_install's existing
+		 * "warn and proceed anyway" treatment. This distinction lets
+		 * cmd_install's fresh, immediately-before-download re-check tell
+		 * "available memory genuinely changed since the recommendation"
+		 * apart from "the user forced this" when the two disagree -- see
+		 * variant_selector.h's own membrane_variant_install_decide() top
+		 * comment for the real v1.0.0 user-session bug this closes (this
+		 * exact internal re-dispatch used to be indistinguishable from a
+		 * real --quant override, so a stale recommendation silently
+		 * became "proceeding anyway because you asked for it
+		 * explicitly"). */
+		std::vector<std::string>	install_args = {"install", fam->name,
+				"--quant", variant->quant};
+
+		if (o.requested_quant.empty())
+			install_args.push_back("--auto-selected");
+
 		int	install_rc = membrane_cli_dispatch_silently_if_json(want_json,
-				{"install", fam->name, "--quant", variant->quant},
-				membrane_model_cmd_dispatch);
+				install_args, membrane_model_cmd_dispatch);
 
 		if (install_rc != MEMBRANE_EXIT_SUCCESS)
 		{
@@ -387,8 +409,18 @@ int	membrane_use_cmd_dispatch(const std::vector<std::string> &args,
 
 	if (!reachable)
 	{
+		/* Real v1.0.0 user-session finding: this used to unconditionally
+		 * say "Start it with: membrane service start" even when no
+		 * background service had ever been installed -- `membrane
+		 * service start` then failed with systemd's raw "Unit
+		 * membrane.service not found." State-aware guidance via the one
+		 * shared probe (service_state.h) instead: never recommends
+		 * `service start` unless a real unit/plist/task actually exists. */
+		membrane_service_probe_t	probe = membrane_probe_service();
+
 		result["active_model"] = nullptr;
 		result["result"] = "selected";
+		result["service_installed"] = probe.installed;
 		if (want_json)
 			printf("%s\n", result.dump().c_str());
 		else
@@ -398,8 +430,17 @@ int	membrane_use_cmd_dispatch(const std::vector<std::string> &args,
 				printf("Note: the registered file's size/mtime changed "
 					"since it was added -- cached metadata may be "
 					"stale.\n");
-			printf("Service is not running. Start it with: membrane "
-				"service start\n");
+			if (!probe.manager_available || !probe.installed)
+				printf("Service is not installed.\nRun `membrane serve` "
+					"for the current terminal, or install the background "
+					"service with:\n  membrane service install\n");
+			else if (!probe.active)
+				printf("Service is installed but not running.\nStart it "
+					"with:\n  membrane service start\n");
+			else
+				printf("Service is installed and reports running, but is "
+					"not reachable yet -- it may still be starting; check "
+					"`membrane service logs`.\n");
 		}
 		return (MEMBRANE_EXIT_SUCCESS);
 	}
