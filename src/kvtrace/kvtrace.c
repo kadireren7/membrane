@@ -33,6 +33,12 @@ static uint64_t	get_le64(const uint8_t *p)
 
 static void	serialize_header(uint8_t *b, const membrane_kvtrace_header_t *h)
 {
+	/* Fields below define bytes [0, 108) of a 128-byte header; the
+	 * caller's buffer is uninitialized automatic storage and all 128
+	 * bytes are written to the file, so [108, 128) must be zeroed here
+	 * to keep the reserved tail canonical. Same as
+	 * src/attntrace/attntrace3.c's own serialize_header(). */
+	memset(b, 0, MEMBRANE_KVTRACE_HEADER_SIZE);
 	put_le32(b + 0, MEMBRANE_KVTRACE_MAGIC);
 	put_le32(b + 4, MEMBRANE_KVTRACE_VERSION);
 	memcpy(b + 8, h->model, MEMBRANE_KVTRACE_MODEL_CAP);
