@@ -313,6 +313,64 @@ typedef struct s_membrane_generation_request
 											 * be cancelled, byte-
 											 * identical to every pre-B2
 											 * caller */
+	bool						parse_special_tokens;	/* Post-v1 product-
+											 * polish: whether prompt_text's
+											 * OWN literal control-token
+											 * substrings (e.g. "<|im_start|>")
+											 * should be recognized as real
+											 * special tokens (llama_tokenize()'s
+											 * own parse_special, llama.h) --
+											 * false (the default, and every
+											 * pre-existing caller's exact
+											 * prior behavior: membrane-run's
+											 * own CLI, whose prompt_text is
+											 * arbitrary user/file/stdin text
+											 * that must never be silently
+											 * reinterpreted) treats such
+											 * substrings as plain text. MUST
+											 * be true whenever prompt_text
+											 * was produced by apply_chat_
+											 * template() (server.cpp's chat-
+											 * completions path): a rendered
+											 * chat template's literal
+											 * control-token text is exactly
+											 * what the model was fine-tuned
+											 * to see as ITS real, single
+											 * special-token id, never as
+											 * ordinary sub-word text -- a
+											 * real, confirmed v1.0.0 bug
+											 * (docs/server.md's own "Chat
+											 * template and tokenization"
+											 * section) had this always false,
+											 * corrupting every chat-templated
+											 * prompt's own turn structure. */
+	bool						hide_control_tokens;	/* Post-v1 product-
+											 * polish: false (the default --
+											 * `membrane_generation_request_t
+											 * req = {};` zero-initializes it,
+											 * so every pre-existing caller
+											 * keeps its EXACT prior
+											 * behavior) forwards run_
+											 * generation()'s own render_
+											 * special_tokens=true, i.e.
+											 * a control/special token's own
+											 * literal text is rendered into
+											 * text_out/token_cb (membrane-
+											 * run's own CLI/comparison
+											 * tooling wants this -- real,
+											 * useful debug visibility, never
+											 * an "API response" a real
+											 * client parses). true forwards
+											 * render_special_tokens=false
+											 * instead, suppressing such a
+											 * token's text entirely via
+											 * llama.h's own token-attribute
+											 * classification (decode_loop.h's
+											 * own run_generation() doc
+											 * comment) -- server.cpp's chat-
+											 * completions path sets this,
+											 * closing a real, fixed v1.0.0
+											 * special-token-leakage bug. */
 }	membrane_generation_request_t;
 
 typedef struct s_membrane_generation_result

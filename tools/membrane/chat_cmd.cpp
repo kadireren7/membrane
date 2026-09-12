@@ -6,7 +6,11 @@
 #include <cstdlib>
 #include <cstring>
 
-#include <unistd.h>
+#ifndef _WIN32
+# include <unistd.h>
+#else
+# include <iostream>
+#endif
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -14,7 +18,7 @@
 #include "chat_stream_parser.h"
 #include "server_config.h"
 #include "status_client.h"
-#include "doctor_cmd.h"
+#include "service_state.h"
 #include "use_cmd.h"
 #include "product_cli.h"
 
@@ -23,40 +27,22 @@ using json = nlohmann::json;
 /*
  * See chat_cmd.h's own top comment for the full architectural contract.
  *
- * PR #78 (fix/service-and-fit-consistency, unmerged as of this file)
- * introduces a dedicated, shared `membrane_probe_service()`
- * (service_state.h) that several commands (doctor, `membrane use`,
- * `membrane service start`) are refactored to call instead of each
- * reading systemd/launchd/schtasks state independently. This file
- * predates that refactor (it branches from `main`, not from PR #78,
- * per this task's own instructions) and deliberately does NOT copy that
- * implementation -- print_server_not_running_guidance() below instead
- * reuses the one already-public abstraction that exists on `main`
- * today, doctor_cmd.h's own membrane_doctor_collect(), reading its
- * "service" check's real `installed`/`active_state` detail fields
- * (the exact same fields setup_cmd.cpp's own pre-existing
- * already_installed/already_active local variables already read this
- * same way). Expected integration once PR #78 merges: this function's
- * body can be simplified to a direct membrane_probe_service() call
- * instead of round-tripping through the full doctor JSON -- a small,
- * mechanical follow-up, not a redesign (see this repo's PR description
- * for the full merge-order note).
+ * Post-merge integration cleanup: this file originally branched from
+ * `main` before PR #78 (fix/service-and-fit-consistency) merged, so it
+ * read server-reachability guidance out of doctor_cmd.h's own
+ * membrane_doctor_collect() (a full doctor-check JSON round trip, just
+ * to reach one boolean). Now that PR #78's own shared probe
+ * (service_state.h's membrane_probe_service()) is available on `main`,
+ * this reuses it directly -- the exact small, mechanical follow-up that
+ * file's own top comment already anticipated, never a second service-
+ * state layer.
  */
 static void	print_server_not_running_guidance(void)
 {
-	json	doctor_root;
+	membrane_service_probe_t	probe = membrane_probe_service();
 
-	membrane_doctor_collect(&doctor_root);
-
-	bool	installed = false;
-
-	if (doctor_root.contains("checks") && doctor_root["checks"].is_array())
-		for (const auto &c : doctor_root["checks"])
-			if (c.value("name", std::string()) == "service")
-				installed = c.contains("detail")
-					&& c["detail"].value("installed", false);
 	printf("MEMBRANE server is not running.\n\n");
-	if (!installed)
+	if (!probe.installed)
 	{
 		printf("Run it in this terminal:\n  membrane serve\n\n");
 		printf("Or install the background service:\n  membrane service "
@@ -338,9 +324,18 @@ static void	print_chat_help(void)
  * kept separate from Ctrl+D/EOF so the caller can give each its own,
  * correct UX (Section 8/9 of the task) without guessing from a single
  * bool. Deliberately no readline/libedit dependency (Section 10: "no
- * large new third-party dependency") -- a plain byte-at-a-time read()
- * is simple, has no line-editing of its own to get wrong, and is UTF-8-
- * transparent (it moves raw bytes, never interprets/truncates them). */
+ * large new third-party dependency") -- on POSIX, a plain byte-at-a-time
+ * read() is simple, has no line-editing of its own to get wrong, and is
+ * UTF-8-transparent (it moves raw bytes, never interprets/truncates
+ * them), AND is what makes CHAT_READLINE_INTERRUPTED observable at all
+ * (a blocking read() genuinely returns EINTR when a signal is delivered
+ * mid-call -- see the sigaction() SA_RESTART note below). Windows has no
+ * EINTR/SIGINT-interrupts-a-blocking-read equivalent for console input,
+ * so CHAT_READLINE_INTERRUPTED is never produced there -- a real,
+ * disclosed platform difference (Ctrl+C during a streamed reply still
+ * cancels the in-flight request on every platform via the same
+ * cancel_flag membrane_chat_send_turn() polls; only the idle-at-prompt
+ * "stay in the REPL" hint is POSIX-only), not a silent gap. */
 typedef enum e_chat_readline_result
 {
 	CHAT_READLINE_OK,
@@ -366,6 +361,7 @@ static void	chat_sigint_handler(int)
 	g_chat_cancel_requested.store(true, std::memory_order_relaxed);
 }
 
+#ifndef _WIN32
 static chat_readline_result_t	chat_read_line(std::string *out)
 {
 	out->clear();
@@ -387,6 +383,19 @@ static chat_readline_result_t	chat_read_line(std::string *out)
 		out->push_back(c);
 	}
 }
+#else
+/* Windows fallback: no raw byte-at-a-time read()/EINTR here (see this
+ * enum's own top comment) -- std::getline() over std::cin is simple,
+ * correct, and just as UTF-8-transparent (it moves bytes, never
+ * interprets them) even though it cannot surface
+ * CHAT_READLINE_INTERRUPTED. */
+static chat_readline_result_t	chat_read_line(std::string *out)
+{
+	if (!std::getline(std::cin, *out))
+		return (CHAT_READLINE_EOF);
+	return (CHAT_READLINE_OK);
+}
+#endif
 
 static std::string	trim(const std::string &s)
 {
@@ -467,8 +476,10 @@ int	membrane_chat_cmd_dispatch(const std::vector<std::string> &args,
 	printf("Type /help for commands.\n\n");
 
 	std::vector<membrane_chat_message_t>	history;
-	struct sigaction						sa;
-	struct sigaction						old_sa;
+
+#ifndef _WIN32
+	struct sigaction	sa;
+	struct sigaction	old_sa;
 
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = chat_sigint_handler;
@@ -479,6 +490,13 @@ int	membrane_chat_cmd_dispatch(const std::vector<std::string> &args,
 						 * silently resumed, so Ctrl+C is visible where
 						 * it happens (Section 8 of the task) */
 	sigaction(SIGINT, &sa, &old_sa);
+#else
+	/* No sigaction()/EINTR on Windows (see chat_read_line()'s own top
+	 * comment) -- plain signal() is still real Ctrl+C handling for the
+	 * one case that matters most cross-platform, cancelling an in-flight
+	 * streamed request via the same g_chat_cancel_requested flag. */
+	void	(*old_handler)(int) = signal(SIGINT, chat_sigint_handler);
+#endif
 
 	int	exit_code = MEMBRANE_EXIT_SUCCESS;
 
@@ -542,6 +560,10 @@ int	membrane_chat_cmd_dispatch(const std::vector<std::string> &args,
 		else
 			printf("\n%s\n", error_message.c_str());
 	}
+#ifndef _WIN32
 	sigaction(SIGINT, &old_sa, NULL);
+#else
+	signal(SIGINT, old_handler);
+#endif
 	return (exit_code);
 }

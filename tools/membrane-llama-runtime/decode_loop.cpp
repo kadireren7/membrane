@@ -135,7 +135,8 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 				uint64_t *abs_pos, std::string *text_out,
 				gen_run_result_t *out, membrane_token_cb_t token_cb,
 				void *token_cb_ud, double *out_first_token_ms,
-				const std::atomic<bool> *cancel_flag, bool *out_cancelled)
+				const std::atomic<bool> *cancel_flag, bool *out_cancelled,
+				bool render_special_tokens)
 {
 	int			step;
 	int			limit;
@@ -152,6 +153,7 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 	if (out_cancelled != NULL)
 		*out_cancelled = false;
 	out->ok = true;
+	out->stopped_eog = false;
 	limit = teacher_force != NULL ? (int)teacher_force->size() : gen_tokens;
 	step = 0;
 	while (step < limit)
@@ -190,14 +192,17 @@ void	run_generation(llama_context *ctx, const llama_vocab *vocab,
 		{
 			tok = (llama_token)argmax(logits, n_vocab);
 			if (llama_vocab_is_eog(vocab, tok))
+			{
+				out->stopped_eog = true;
 				break ;
+			}
 		}
 		out->tokens.push_back((int32_t)tok);
 		piece_len = 0;
 		if (text_out != NULL || (token_cb != NULL && teacher_force == NULL))
 		{
 			piece_len = llama_token_to_piece(vocab, tok, piece,
-					sizeof(piece), 0, true);
+					sizeof(piece), 0, render_special_tokens);
 			if (piece_len > 0 && text_out != NULL)
 				text_out->append(piece, piece_len);
 		}
@@ -254,7 +259,7 @@ bool	run_kv_store_pass(llama_model *model,
 				gen_run_result_t *out, membrane_token_cb_t token_cb,
 				void *token_cb_ud, const membrane_kv_placement_map_t *kv_placement,
 				int *out_failure_stage, const std::atomic<bool> *cancel_flag,
-				bool *out_cancelled)
+				bool *out_cancelled, bool render_special_tokens)
 {
 	llama_context				*ctx;
 	llama_context_params		cp;
@@ -356,7 +361,8 @@ bool	run_kv_store_pass(llama_model *model,
 	clock_gettime(CLOCK_MONOTONIC, &t0);
 	run_generation(ctx, vocab, n_vocab, gen_tokens, collector, NULL, debug,
 		capture_logits, teacher_force, &abs_pos, text_out, out, token_cb,
-		token_cb_ud, &tel->first_token_ms, cancel_flag, out_cancelled);
+		token_cb_ud, &tel->first_token_ms, cancel_flag, out_cancelled,
+		render_special_tokens);
 	gen_seconds = seconds_since(&t0);
 	membrane_kv_store_read_rss(&tel->rss_final);
 	tel->prompt_ms = prompt_seconds * 1000.0;

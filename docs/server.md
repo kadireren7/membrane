@@ -154,17 +154,40 @@ Response (OpenAI shape plus one additive `membrane` object):
 }
 ```
 
-`finish_reason` is `"length"` when generation hit the requested token
-limit, `"stop"` otherwise (an inferred distinction — there is no
-explicit "why did generation stop" signal from the decode loop beyond
-token count vs. limit).
+`finish_reason` is `"stop"` when a user-supplied `stop` sequence matched
+or the model itself emitted a real end-of-generation token
+(`llama_vocab_is_eog()`, decode_loop.cpp — a real, tracked signal, not
+inferred from token count), and `"length"` only when neither happened
+before the requested token limit was reached. Streaming and
+non-streaming share the exact same decision
+(`membrane_chat_finish_reason()`, `chat_finish_reason.h`).
 
 ### Chat templates
 
 The model's own embedded chat template (`llama_chat_apply_template()`,
-real llama.cpp API, GGUF metadata) is always used — never a naive manual
-`"User: ... Assistant: ..."` join. A model with no usable template
-returns `500 CHAT_TEMPLATE_UNAVAILABLE`; there is no fallback formatting.
+real llama.cpp API, GGUF metadata) is always used exactly once per
+request, with `add_ass=true` so the rendered prompt ends in the real
+assistant-generation suffix — never a naive manual
+`"User: ... Assistant: ..."` join, never applied twice. A model with no
+usable template returns `500 CHAT_TEMPLATE_UNAVAILABLE`; there is no
+fallback formatting.
+
+**Tokenization and generated-content guarantees** (a real, fixed
+v1.0.0 bug — see `results/chat-template-and-eos/validation.json`): the
+rendered template's own literal control-token text
+(`<|im_start|>`, `<|im_end|>`, and equivalents for other chat formats)
+is tokenized with `llama_tokenize()`'s own `parse_special=true`, so the
+model sees its real, single special-token ids exactly as it was
+fine-tuned to — never re-split into ordinary sub-word text. A prior bug
+here (`parse_special` hardcoded `false`) corrupted every chat-templated
+prompt's own turn structure, which is what caused the model to echo the
+prompt and never reliably terminate. Generated tokens are converted back
+to API-facing text with `llama_token_to_piece()`'s own `special=false`,
+so a chat-control token's literal text is never exposed in assistant
+`content` (llama.h's own token-attribute classification, never a
+hardcoded string cleanup pass) — the model's real generated output,
+starting exactly after the prompt's own tokens, is all a client ever
+sees.
 
 ### Context, GPU layers, and KV precision — fully automatic
 

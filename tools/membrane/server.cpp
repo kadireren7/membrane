@@ -31,6 +31,7 @@
 #include "decode_concurrency.h"
 #include "request_state.h"
 #include "residency_planner.h"
+#include "chat_finish_reason.h"
 #include "fs_util.h"
 
 #include <sys/stat.h>
@@ -1510,6 +1511,17 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 	gen_req.token_cb = stream_token_cb;
 	gen_req.token_cb_ud = &wctx;
 	gen_req.cancel_flag = &state->gen_cancel_flag;
+	/* Real v1.0.0 user-session finding: prompt_text here is always
+	 * apply_chat_template()'s own rendered output, whose literal
+	 * "<|im_start|>"/"<|im_end|>"-style control-token text MUST be
+	 * recognized as the model's real special tokens, never tokenized as
+	 * plain sub-word text -- see membrane_generation_request_t's own
+	 * top comment (runtime_session.h). */
+	gen_req.parse_special_tokens = true;
+	/* Real v1.0.0 user-session finding: an API client parses assistant
+	 * content as plain text -- a chat-control token's own literal text
+	 * (e.g. "<|im_start|>") must never appear in it. */
+	gen_req.hide_control_tokens = true;
 	/* Mega Phase E, PR E1, Section 5/9: blocks here (never rejects -- this
 	 * request was already admitted) until fewer than decode_gate's own
 	 * capacity requests are actually decoding -- the real bound on
@@ -1566,9 +1578,8 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 		terminal.type = MEMBRANE_STREAM_EVENT_DONE;
 		state->req_state.store(membrane_request_state_t::DONE,
 			std::memory_order_relaxed);
-		terminal.finish_reason = wctx.stop_matched ? "stop"
-			: (((size_t)gen_res.gen_result.tokens.size()
-					>= (size_t)state->max_tokens) ? "length" : "stop");
+		terminal.finish_reason = membrane_chat_finish_reason(
+			wctx.stop_matched, gen_res.gen_result.stopped_eog);
 		terminal.prompt_tokens = gen_res.prompt_tokens.size();
 		/* PR D7: gen_res.gen_result.tokens.size() counts every token the
 		 * runtime actually decoded, including the one whose OWN piece
@@ -2103,6 +2114,10 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 							 * were already fixed at load time -- Section
 							 * 5 of the task: "persistent model, new
 							 * context per request." */
+	/* Same real fix as the streaming branch above -- prompt_text is
+	 * always a rendered chat template here too. */
+	gen_req.parse_special_tokens = true;
+	gen_req.hide_control_tokens = true;
 	gen_req.token_cb = NULL;
 	/* PR D7: only wired up when the request actually asked for one (the
 	 * default -- empty stop_sequences -- keeps this branch's own
@@ -2176,9 +2191,8 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 
 	choice["index"] = 0;
 	choice["message"] = {{"role", "assistant"}, {"content", final_text}};
-	choice["finish_reason"] = nonstream_stop_ctx.matched ? "stop"
-		: (((size_t)gen_res.gen_result.tokens.size()
-				>= (size_t)max_tokens) ? "length" : "stop");
+	choice["finish_reason"] = membrane_chat_finish_reason(
+		nonstream_stop_ctx.matched, gen_res.gen_result.stopped_eog);
 	response["choices"] = json::array({choice});
 	size_t	prompt_tokens = gen_res.prompt_tokens.size();
 	size_t	completion_tokens = gen_res.gen_result.tokens.size();

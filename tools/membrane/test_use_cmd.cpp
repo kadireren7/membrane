@@ -4,12 +4,17 @@
 #include <string>
 #include <thread>
 
+#ifndef _WIN32
+# include <unistd.h>
+#endif
+
 #include <httplib.h>
 
 #include "use_cmd.h"
 #include "server.h"
 #include "registry_core.h"
 #include "server_config.h"
+#include "service_state.h"
 #include "product_cli.h"
 #include "test_helpers.h"
 
@@ -144,6 +149,92 @@ static void	test_installed_but_service_stopped(void)
 		"default_model was set even though the service is stopped -- "
 		"Section 11/13: default changes, active stays none");
 }
+
+#ifndef _WIN32
+/* Real v1.0.0 user-session finding: `membrane use` used to say "Service
+ * is not running. Start it with: membrane service start" unconditionally,
+ * even when no background service had ever been installed -- `membrane
+ * service start` then failed with systemd's raw "Unit membrane.service
+ * not found." These two tests drive the real, unmodified printf() output
+ * through MEMBRANE_SERVICE_PROBE_OVERRIDE (service_state.h's own
+ * documented test-only hook), capturing stdout via the same dup()/dup2()
+ * technique cli_shared.cpp's own stdout_silencer_t already uses -- never
+ * a real systemctl call, so this stays hermetic regardless of whatever
+ * real per-user service state exists on the machine running the test. */
+static std::string	capture_stdout_of_use_dispatch(
+				const std::vector<std::string> &args, int *out_rc)
+{
+	fflush(stdout);
+	char	tmpl[] = "/tmp/membrane-use-cmd-test-capture-XXXXXX";
+	int		fd = mkstemp(tmpl);
+
+	TEST_ASSERT(fd >= 0, "could create a temp file to capture stdout into");
+	int	saved_fd = dup(STDOUT_FILENO);
+
+	dup2(fd, STDOUT_FILENO);
+	close(fd);
+	*out_rc = membrane_use_cmd_dispatch(args, false);
+	fflush(stdout);
+	dup2(saved_fd, STDOUT_FILENO);
+	close(saved_fd);
+
+	FILE	*f = fopen(tmpl, "r");
+	std::string	captured;
+	char		buf[4096];
+	size_t		n;
+
+	TEST_ASSERT(f != NULL, "could reopen the captured-stdout temp file");
+	while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+		captured.append(buf, n);
+	fclose(f);
+	remove(tmpl);
+	return (captured);
+}
+
+static void	test_guidance_when_not_installed(void)
+{
+	s_isolated_env	env;
+	std::string		fake_path = env.dir + "/fake.gguf";
+
+	write_file(fake_path, "not a real gguf");
+	register_entry(env.dir + "/models.json", "my-model", fake_path);
+	setenv(MEMBRANE_SERVICE_PROBE_OVERRIDE_ENV, "not_installed", 1);
+
+	int			rc;
+	std::string	out = capture_stdout_of_use_dispatch({"my-model"}, &rc);
+
+	unsetenv(MEMBRANE_SERVICE_PROBE_OVERRIDE_ENV);
+	TEST_ASSERT(rc == MEMBRANE_EXIT_SUCCESS, "selection itself still "
+		"succeeds regardless of service state");
+	TEST_ASSERT(out.find("membrane service start") == std::string::npos,
+		"never recommends `membrane service start` when no background "
+		"service is installed at all");
+	TEST_ASSERT(out.find("not installed") != std::string::npos,
+		"clearly says the service is not installed");
+	TEST_ASSERT(out.find("membrane serve") != std::string::npos,
+		"offers the real, immediately-usable foreground alternative");
+}
+
+static void	test_guidance_when_installed_but_stopped(void)
+{
+	s_isolated_env	env;
+	std::string		fake_path = env.dir + "/fake.gguf";
+
+	write_file(fake_path, "not a real gguf");
+	register_entry(env.dir + "/models.json", "my-model", fake_path);
+	setenv(MEMBRANE_SERVICE_PROBE_OVERRIDE_ENV, "installed_inactive", 1);
+
+	int			rc;
+	std::string	out = capture_stdout_of_use_dispatch({"my-model"}, &rc);
+
+	unsetenv(MEMBRANE_SERVICE_PROBE_OVERRIDE_ENV);
+	TEST_ASSERT(rc == MEMBRANE_EXIT_SUCCESS, "selection succeeds");
+	TEST_ASSERT(out.find("membrane service start") != std::string::npos,
+		"DOES recommend `membrane service start` once a real unit is "
+		"installed but stopped -- this is exactly the state where that "
+		"command would actually work");
+}
+#endif
 
 static void	test_installed_but_file_missing(void)
 {
@@ -287,6 +378,10 @@ int	main(void)
 	test_noninteractive_without_yes_requires_consent();
 	test_invalid_variant_override_is_refused();
 	test_switch_to_invalid_gguf_reports_failure();
+#ifndef _WIN32
+	test_guidance_when_not_installed();
+	test_guidance_when_installed_but_stopped();
+#endif
 	printf("test_use_cmd: all tests passed\n");
 	return (0);
 }

@@ -41,9 +41,11 @@ no second HTTP/JSON library:
   (`docs/model-lifecycle.md`) when a `MODEL` argument is given — the
   exact same install-with-consent-if-needed/select/live-switch flow,
   never a second implementation.
-- Server-reachability guidance reuses `membrane doctor`'s own real
-  service check (`membrane_doctor_collect()`) — see "Server not
-  running" below for the one small, disclosed exception.
+- Server-reachability guidance reuses the shared service-lifecycle
+  probe (`service_state.h`'s `membrane_probe_service()`, post-v1
+  product-polish PR #78) `membrane doctor`/`membrane use`/`membrane
+  service start` all already call — never a second service-state
+  implementation.
 - Requests go through the standard `httplib::Client` this project
   already vendors (the same library `membrane status`/`membrane
   service status` already use for their own HTTP calls) and are parsed
@@ -109,18 +111,10 @@ Start it with:
   membrane service start
 ```
 
-This reuses `membrane doctor`'s own existing `membrane_doctor_collect()`
-(the "service" check's real `installed`/`active_state` fields) —
-**not** a second service-state probe. Post-v1 product-polish prompt 1
-(`fix/service-and-fit-consistency`, PR #78, unmerged as of this writing)
-introduces a dedicated, shared `membrane_probe_service()` several other
-commands are refactored to call instead; this file predates that
-refactor (it branches from `main`, per this prompt's own instructions,
-not from PR #78) and deliberately does not copy that implementation.
-Expected follow-up once PR #78 merges: `chat_cmd.cpp`'s own
-`print_server_not_running_guidance()` can be simplified to call
-`membrane_probe_service()` directly instead of round-tripping through
-the full doctor JSON — a small, mechanical change, not a redesign.
+This reuses `service_state.h`'s `membrane_probe_service()` directly —
+the same shared probe `membrane doctor`, `membrane use`, and `membrane
+service start`'s own not-installed guard all call — never a second,
+independently-drifting service-state implementation.
 
 ## Conversation history
 

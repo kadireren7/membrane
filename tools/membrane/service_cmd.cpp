@@ -5,6 +5,7 @@
 #include "server_config.h"
 #include "subprocess.h"
 #include "status_client.h"
+#include "service_state.h"
 #include "fs_util.h"
 
 #include <cerrno>
@@ -834,6 +835,31 @@ int	membrane_service_cmd_dispatch(const std::vector<std::string> &args,
 		return (cmd_install(rest, want_json));
 	if (args[0] == "uninstall")
 		return (cmd_uninstall(want_json));
+	/* Real v1.0.0 user-session finding: `membrane service start` used to
+	 * let systemd's raw "Unit membrane.service not found." be the
+	 * primary UX whenever the service had never been installed --
+	 * confusing given `membrane use`'s own guidance (now fixed
+	 * separately, see use_cmd.cpp) had told the user to run exactly this
+	 * command. Checked here, once, via the same shared probe every other
+	 * command now uses (service_state.h) -- never a silent auto-install
+	 * (Section 2 of the task: installation stays an explicit user
+	 * action). `stop`/`restart` are left to the real service manager's
+	 * own (already reasonably clear) "not loaded"/"no such unit"
+	 * response -- only `start` is the one guidance path this project
+	 * actively steers users toward when nothing is installed yet. */
+	if (args[0] == "start")
+	{
+		membrane_service_probe_t	probe = membrane_probe_service();
+
+		if (membrane_service_start_should_be_blocked(probe))
+		{
+			print_err(want_json, "SERVICE_NOT_INSTALLED",
+				"MEMBRANE background service is not installed. Run "
+				"`membrane service install` first, or use `membrane "
+				"serve` to run in the current terminal.");
+			return (MEMBRANE_EXIT_RUNTIME_ERROR);
+		}
+	}
 	if (args[0] == "start" || args[0] == "stop" || args[0] == "restart")
 #ifdef __APPLE__
 		return (cmd_launchd_verb(args[0], want_json));

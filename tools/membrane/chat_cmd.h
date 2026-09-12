@@ -20,12 +20,9 @@
  * a MODEL argument is given (Section 2 of the task: "do not duplicate
  * model lifecycle logic") -- this file only ever reads server_config.h's
  * own default_model afterward, never re-implements catalog/registry
- * resolution. Server-reachability guidance reuses doctor_cmd.h's own
- * membrane_doctor_collect() (the "service" check's real installed/
- * active_state fields) rather than a second service-state probe -- see
- * this file's own top-of-.cpp comment for the documented, expected small
- * integration once PR #78 (fix/service-and-fit-consistency, unmerged as
- * of this file) lands its own shared membrane_probe_service().
+ * resolution. Server-reachability guidance reuses service_state.h's own
+ * shared membrane_probe_service() (post-v1 product-polish, PR #78) --
+ * never a second service-state probe.
  */
 
 typedef struct s_membrane_chat_message

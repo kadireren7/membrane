@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "phase": "post-v1-product-polish-2-chat-template-and-eos",
+  "note": "Post-v1 product-polish prompt 2 of 3: fixed a real v1.0.0 user-session bug (prompt echo, leaked <|im_start|>/<|im_end|> chat-control tokens, generation never stopping before max_tokens) reported against a real `membrane serve` + SmolLM2-360M-Instruct chat completion. Traced to two independent, systemic (not model-specific) root causes in the shared generation path, both confirmed empirically before and after the fix.",
+  "real_user_report": {
+    "model": "smollm2-360m-instruct",
+    "request": "POST /v1/chat/completions, single user message \"Hello! Tell me one sentence about yourself.\"",
+    "observed": "content echoed the prompt then repeated <|im_end|>/<|im_start|> control-token text until finish_reason=length at completion_tokens=512, despite gpu_layers/kv_placement/kv_precision all reporting normally"
+  },
+  "root_causes": [
+    {
+      "id": "1-prompt-tokenization",
+      "severity": "primary",
+      "location": "tools/membrane-run/runtime_session.cpp, membrane_session_generate()",
+      "description": "llama_tokenize() was called with parse_special hardcoded to false when tokenizing the chat-template-rendered prompt. Per llama.h's own documented contract, parse_special=false means the rendered template's own literal control-token text (\"<|im_start|>\", \"<|im_end|>\") is 'not exposed and treated as plaintext' -- i.e. shattered into ordinary sub-word tokens instead of the model's real, single, fine-tuned special-token ids. The model never actually saw a correct chat turn structure.",
+      "systemic": true,
+      "confirmed_against": [
+        "third_party/llama.cpp/models/ggml-vocab-qwen2.gguf (vocab-only, real Qwen2/Qwen2.5-Instruct tokenizer)",
+        "models/SmolLM2-135M-Instruct-f16.gguf (real, local, vocab-only load)",
+        "models/qwen2.5-1.5b-instruct-fp16.gguf (real, local, vocab-only load)"
+      ],
+      "empirical_evidence": "For the real SmolLM2-135M-Instruct GGUF, tokenizing the exact rendered chat prompt with parse_special=false produced 35 tokens and NEVER included the real <|im_end|> token id (151645/2 depending on model); parse_special=true produced 18 tokens and correctly included it. Identical pattern reproduced against the real Qwen2/Qwen2.5 tokenizer (30 tokens broken vs. 17 fixed) -- proving the bug is systemic across at least two independent model families, not a SmolLM2-specific quirk.",
+      "reference": "llama.cpp's own canonical server (third_party/llama.cpp/tools/server/server-context.cpp:4085) always tokenizes chat-completion prompts with parse_special=true; MEMBRANE's own value diverged from that canonical reference implementation.",
+      "fix": "membrane_generation_request_t gained a parse_special_tokens field (default false, byte-identical to every pre-existing caller); server.cpp's two chat-completion call sites (streaming and non-streaming) set it true, since their prompt_text is always apply_chat_template()'s own rendered output. membrane-run's own raw-prompt CLI path is unaffected (field left at its default)."
+    },
+    {
+      "id": "2-special-token-rendering",
+      "severity": "secondary",
+      "location": "tools/membrane-llama-runtime/decode_loop.cpp, run_generation()",
+      "description": "llama_token_to_piece() was called with special hardcoded to true when converting each generated token back to text for both text_out (non-streaming) and the streaming token_cb. Per llama.h's own contract, special=true renders a control/special token's own literal text; the canonical fix is special=false, which uses llama.h's own LLAMA_TOKEN_ATTR_CONTROL/UNKNOWN classification (llama-vocab.cpp's own token_to_piece()) to suppress such a token's text entirely -- never a hardcoded string cleanup pass.",
+      "systemic": true,
+      "note": "Less severe in isolation than root cause 1 (the real end-of-generation token itself, once correctly detected via llama_vocab_is_eog(), is never converted to text at all -- the loop breaks first), but closes a real gap for any OTHER non-EOG control token (e.g. a degenerate mid-generation <|im_start|>) that could otherwise still leak into API-facing content.",
+      "fix": "membrane_generation_request_t gained a hide_control_tokens field (default false, preserving membrane-run CLI's own existing debug-visible behavior); server.cpp's two chat-completion call sites set it true. Threaded through run_kv_store_pass()/run_generation()'s new render_special_tokens parameter (default true, every pre-existing caller unaffected)."
+    },
+    {
+      "id": "3-finish-reason-inference",
+      "severity": "hardening",
+      "location": "tools/membrane/server.cpp, both finish_reason derivations",
+      "description": "finish_reason was inferred from a token-count comparison (gen_result.tokens.size() >= max_tokens) rather than from a real, tracked 'why did generation stop' signal. This was mathematically sound given the surrounding invariants (gen_tokens == max_tokens exactly, an EOG break always strictly reduces the count) but relied on that invariant holding rather than tracking the real cause -- exactly the kind of coincidental correctness the task's own Section 8 flags.",
+      "systemic": true,
+      "fix": "gen_run_result_t gained a stopped_eog field, set at the exact llama_vocab_is_eog() break point in run_generation() (the one shared decode loop both the streaming and non-streaming, and both the joint-planner-fallback and direct KV-store-pass, code paths already funnel through). A new, pure, unit-tested membrane_chat_finish_reason(stop_matched, stopped_eog) function (chat_finish_reason.h) is now the one shared decision both server.cpp call sites use."
+    }
+  ],
+  "fix_verification": {
+    "unit_tests_added": [
+      "tools/membrane-llama-runtime/test_chat_control_tokens.cpp -- deterministic, CI-safe (vocab_only load, no decode, no download) reproduction of root causes 1 and 2 against the real, vendored ggml-vocab-qwen2.gguf fixture (same file llama.cpp's own test-tokenizer-0 suite already uses)",
+      "tools/membrane/test_chat_finish_reason.cpp -- pure unit tests for the new shared finish_reason decision"
+    ],
+    "existing_tests_reconfirmed_passing": [
+      "test_server", "test_use_cmd", "test_setup_cmd", "test_doctor_cmd",
+      "test_variant_selector", "test_decode_loop", "test_runtime_session",
+      "test_cli_parse", "test_product_cli"
+    ],
+    "real_smoke_test": {
+      "performed": true,
+      "model": "models/SmolLM2-135M-Instruct-f16.gguf (real, local, already present -- the smaller sibling of the exact model family from the real user report; SmolLM2-360M/Qwen2.5-1.5B were not used for the live-generation smoke test to respect this dev host's severe memory constraints (5.6 GiB total, ~600 MiB-900 MiB available during this session) -- their tokenizer/template behavior was still verified directly, see confirmed_against above)",
+      "method": "real `membrane serve` (built from this branch) + real curl requests, before and after the fix, using the exact real user-report request shape",
+      "before_fix": {
+        "max_tokens": 64,
+        "prompt_tokens": 35,
+        "completion_tokens": 64,
+        "finish_reason": "length",
+        "content_quality": "incoherent, no relation to the prompt (matches the real user report's own qualitative symptom)"
+      },
+      "after_fix": {
+        "max_tokens_64_run": {"prompt_tokens": 18, "completion_tokens": 64, "finish_reason": "length", "content_quality": "coherent, on-topic, no leaked control tokens, no prompt echo"},
+        "max_tokens_150_run": {"prompt_tokens": 18, "completion_tokens": 68, "finish_reason": "stop", "content_quality": "coherent, on-topic, complete sentence, naturally terminated well before the 150-token limit"},
+        "streaming": "verified real SSE chunks, coherent short response, terminal finish_reason=stop",
+        "user_stop_sequence": "verified real early termination on a matched user-supplied stop string, finish_reason=stop, unchanged pre-existing semantics"
+      }
+    }
+  },
+  "prompt_1_interaction": {
+    "note": "This work branched from `main` (current HEAD at the time), not from PR #78 (fix/service-and-fit-consistency, Prompt 1, still unmerged) -- no dependency on unmerged Prompt 1 code. One file textually overlaps between the two PRs' changed-file sets: tools/membrane/CMakeLists.txt (both add new add_library/add_executable blocks in different locations of the same file). This is a plain textual merge overlap, not a functional conflict -- neither PR references a symbol/target the other defines. PR #78 was not merged, rebased onto, or cherry-picked from; whichever of the two merges first will require an ordinary merge-conflict resolution on this one file when the other is merged afterward."
+  },
+  "scope_exclusions": [
+    "membrane chat UX (not started)",
+    "runtime redesign (none performed)",
+    "service lifecycle / model-selection UX (untouched, Prompt 1's own scope)",
+    "v1.0.0 tag/release (untouched)"
+  ]
+}

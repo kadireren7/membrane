@@ -33,6 +33,25 @@ if(MEMBRANE_BUILD_TESTS)
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
   add_test(NAME test_decode_loop COMMAND test_decode_loop)
+
+  # Post-v1 product-polish: deterministic, CI-safe reproduction of the
+  # real v1.0.0 chat-template/EOS bug (test_chat_control_tokens.cpp's
+  # own top comment has the full root-cause narrative) -- a real
+  # vocab-only load (no tensors, no decode) of the vendored, CI-present
+  # ggml-vocab-qwen2.gguf fixture (llama.cpp's own test-tokenizer-0
+  # suite already uses this exact file the exact same way, see
+  # third_party/llama.cpp/tests/CMakeLists.txt), never a new multi-GB
+  # download.
+  add_executable(test_chat_control_tokens test_chat_control_tokens.cpp)
+  set_target_properties(test_chat_control_tokens PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_chat_control_tokens PRIVATE llama)
+  target_include_directories(test_chat_control_tokens PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_chat_control_tokens COMMAND test_chat_control_tokens
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/models/ggml-vocab-qwen2.gguf)
 endif()
 
 add_executable(membrane-llama-run main.cpp)

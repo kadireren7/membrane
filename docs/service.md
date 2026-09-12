@@ -13,6 +13,27 @@ page otherwise describes the Linux/systemd path.
 as before for foreground/debug use — it is also literally what the
 generated unit's own `ExecStart` runs.
 
+## Foreground vs. background — which one do I want?
+
+Two distinct, independent ways to actually run MEMBRANE:
+
+| | Command | Lifetime |
+|---|---|---|
+| Foreground, temporary | `membrane serve` | Runs in the current terminal; stops when you close it or press Ctrl-C. Nothing to install first. |
+| Background, persistent | `membrane service install` then `membrane service start` | Keeps running across terminal sessions/reboots, supervised by systemd `--user` (or launchd/Task Scheduler — see below). |
+
+You do not need to memorize this to get correct guidance: `membrane
+use`, `membrane doctor`, and `membrane model pin`/`unpin` all check the
+*real* state of the background service before recommending anything —
+they say "Service is not installed" (and offer `membrane serve` or
+`membrane service install`) when no unit/plist/task exists at all, and
+only ever say "Start it with: `membrane service start`" once one
+genuinely does. A real, fixed v1.0.0 bug had `membrane use` recommend
+`membrane service start` unconditionally, which then failed with
+systemd's own raw `Unit membrane.service not found.` when nothing had
+been installed yet — every one of these commands now shares a single
+real state probe (`service_state.h`) instead of guessing.
+
 ## Quickstart
 
 ```
@@ -31,7 +52,7 @@ Then point any OpenAI-compatible client at `http://127.0.0.1:8642/v1`
 |---|---|
 | `membrane service install` | Writes a systemd `--user` unit and runs `systemctl --user daemon-reload`. Does **not** start the service. |
 | `membrane service uninstall` | Stops the service (best-effort) and removes the unit file. |
-| `membrane service start` / `stop` / `restart` | Thin wrapper over `systemctl --user <verb> membrane.service`. |
+| `membrane service start` / `stop` / `restart` | Thin wrapper over `systemctl --user <verb> membrane.service`. `start` refuses up front with a clean `SERVICE_NOT_INSTALLED` error (never invoking `systemctl` at all) when no real unit exists yet — see "Foreground vs. background" above. |
 | `membrane service status` | Combines real `systemctl --user show` state (installed/active/pid) with a real `GET /v1/status` call against the running server — never fakes loaded-model status from a config file. |
 | `membrane service logs [-n N]` | Delegates to `journalctl --user -u membrane.service -n N --no-pager` (default 50, bounded to [1, 10000]). |
 

@@ -39,3 +39,13 @@ const membrane_catalog_variant_t	*membrane_select_variant(
 	}
 	return (best);
 }
+
+membrane_variant_install_decision_t	membrane_variant_install_decide(
+			bool variant_fits, bool auto_selected)
+{
+	if (variant_fits)
+		return (MEMBRANE_VARIANT_INSTALL_PROCEED);
+	if (auto_selected)
+		return (MEMBRANE_VARIANT_INSTALL_STALE);
+	return (MEMBRANE_VARIANT_INSTALL_FORCED);
+}
