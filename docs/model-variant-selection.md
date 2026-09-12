@@ -45,6 +45,18 @@ estimate says that exact variant won't fit, `install` **warns** (never
 blocks) and proceeds anyway, since the user asked for it explicitly
 (Section 12 of the task).
 
+This is distinct from `membrane use`'s own internal re-invocation of
+`membrane model install ... --quant <the variant it already selected>`
+(`docs/model-lifecycle.md`) — that path carries an internal-only
+`--auto-selected` marker so `install`'s fresh, immediately-before-
+download re-check of the SAME variant can tell "MEMBRANE's own
+recommendation, re-validated" apart from "a real user typed `--quant`."
+Only the latter gets the warn-and-proceed treatment; the former fails
+clearly (`HOST_MEMORY_STALE_AT_INSTALL`) if real available memory
+changed since the recommendation, rather than silently claiming the
+user forced an unsafe choice they never actually made. See
+`variant_selector.h`'s own `membrane_variant_install_decide()`.
+
 ## `--dry-run`
 
 Reports the real selection decision (or every real reason nothing

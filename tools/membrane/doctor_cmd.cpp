@@ -16,12 +16,10 @@
 
 #include "registry_core.h"
 #include "server_config.h"
-#include "systemd_unit.h"
-#include "launchd_unit.h"
-#include "windows_task.h"
 #include "fs_util.h"
 #include "subprocess.h"
 #include "status_client.h"
+#include "service_state.h"
 #include "product_cli.h"
 
 using json = nlohmann::json;
@@ -306,156 +304,33 @@ static s_doctor_check	check_config(void)
 static s_doctor_check	check_service(bool *out_installed, bool *out_active,
 				int *out_port)
 {
-	s_doctor_check	c;
+	s_doctor_check				c;
+	membrane_service_probe_t	probe = membrane_probe_service();
 
 	c.name = "service";
-	*out_installed = false;
-	*out_active = false;
-
-	std::string	active_state = "unknown";
-	bool		manager_available = true;
-	std::string	manager_name;
-#ifdef __APPLE__
-	manager_name = "launchctl";
-
-	membrane_subprocess_result_t	print_result;
-	bool	ran = membrane_run_subprocess({"launchctl", "print",
-			"gui/" + std::to_string(getuid()) + "/" MEMBRANE_LAUNCHD_LABEL},
-			&print_result, 5);
-
-	if (!ran || print_result.exit_code == 127)
-		manager_available = false;
-	else if (print_result.exit_code == 0)
-	{
-		*out_installed = true;
-		std::istringstream	iss(print_result.stdout_output);
-		std::string			line;
-
-		while (std::getline(iss, line))
-		{
-			size_t	eq = line.find('=');
-
-			if (eq == std::string::npos)
-				continue ;
-			std::string	key = line.substr(0, eq);
-			size_t		ks = key.find_first_not_of(" \t");
-			size_t		ke = key.find_last_not_of(" \t");
-
-			if (ks == std::string::npos)
-				continue ;
-			key = key.substr(ks, ke - ks + 1);
-			if (key == "state")
-			{
-				std::string	val = line.substr(eq + 1);
-				size_t		vs = val.find_first_not_of(" \t");
-
-				active_state = vs != std::string::npos
-						? val.substr(vs) : "";
-			}
-		}
-	}
-#elif defined(_WIN32)
-	manager_name = "schtasks";
-
-	membrane_subprocess_result_t	query_result;
-	bool	ran = membrane_run_subprocess({"schtasks", "/query", "/tn",
-			membrane_task_name(), "/fo", "list", "/v"}, &query_result, 5);
-
-	if (!ran || query_result.exit_code == 1)
-		manager_available = false;
-	else if (query_result.exit_code == 0)
-	{
-		*out_installed = true;
-		std::istringstream	iss(query_result.stdout_output);
-		std::string			line;
-
-		while (std::getline(iss, line))
-		{
-			size_t	colon = line.find(':');
-
-			if (colon == std::string::npos)
-				continue ;
-			if (line.substr(0, colon).find("Status") != std::string::npos)
-			{
-				std::string	val = line.substr(colon + 1);
-				size_t		vs = val.find_first_not_of(" \t");
-
-				active_state = vs != std::string::npos
-						? val.substr(vs) : "";
-			}
-		}
-	}
-#else
-	manager_name = "systemctl";
-
-	std::string	unit_path = membrane_unit_file_path();
-	bool		unit_exists = false;
-
-	if (!unit_path.empty())
-	{
-		struct stat	st;
-
-		unit_exists = (stat(unit_path.c_str(), &st) == 0);
-	}
-	membrane_subprocess_result_t	show_result;
-	bool	ran = membrane_run_subprocess({"systemctl", "--user", "show",
-			MEMBRANE_UNIT_NAME, "--property=ActiveState,LoadState"},
-			&show_result, 5);
-
-	/* execvp() itself failing (systemctl not found on PATH at all -- a
-	 * real, observed condition in a bare `ubuntu:24.04` container, see
-	 * this file's own top comment) makes the CHILD exit 127
-	 * (subprocess.h's own documented execvp-failure convention) -- ran
-	 * is still true (fork/pipe setup succeeded), only exit_code reveals
-	 * it. */
-	if (!ran || show_result.exit_code == 127)
-		manager_available = false;
-	else if (show_result.exit_code == 0)
-	{
-		std::istringstream	iss(show_result.stdout_output);
-		std::string			line;
-		std::string			load_state = "unknown";
-
-		while (std::getline(iss, line))
-		{
-			size_t	eq = line.find('=');
-
-			if (eq == std::string::npos)
-				continue ;
-			std::string	key = line.substr(0, eq);
-			std::string	val = line.substr(eq + 1);
-
-			if (key == "ActiveState")
-				active_state = val;
-			else if (key == "LoadState")
-				load_state = val;
-		}
-		*out_installed = (load_state == "loaded");
-	}
-	else
-		*out_installed = unit_exists;
-#endif
+	*out_installed = probe.installed;
+	*out_active = probe.active;
+	(void)out_port;
 	/* Reported as its own clear WARN rather than an unhelpful "(no
 	 * output)" a real `membrane service start` attempt used to give in
 	 * this exact situation (Mega Phase C's own original finding, now
 	 * applied to all three platforms' own service-manager binary). */
-	if (!manager_available)
+	if (!probe.manager_available)
 	{
 		c.status = MEMBRANE_DOCTOR_STATUS_WARN;
-		c.detail = {{manager_name + "_available", false},
-			{"message", manager_name + " is not available in this "
+		c.detail = {{probe.manager_name + "_available", false},
+			{"message", probe.manager_name + " is not available in this "
 				"environment -- `membrane service` commands cannot work "
 				"here; use `membrane serve` directly instead"}};
 		return (c);
 	}
-	*out_active = (active_state == "active" || active_state == "Running");
 	c.status = MEMBRANE_DOCTOR_STATUS_OK;
-	c.detail = {{manager_name + "_available", true},
-		{"installed", *out_installed}, {"active_state", active_state}};
-	if (!*out_installed)
+	c.detail = {{probe.manager_name + "_available", true},
+		{"installed", probe.installed},
+		{"active_state", probe.active_state_raw}};
+	if (!probe.installed)
 		c.detail["message"] = "not installed -- run `membrane service "
 			"install` to run MEMBRANE as a background service";
-	(void)out_port;
 	return (c);
 }
 
