@@ -1140,6 +1140,17 @@ typedef struct s_real_apply_ctx
 											 * comment; NULL = never
 											 * cancellable, unchanged for
 											 * every pre-B2 caller */
+	bool								render_special_tokens;	/* Post-v1
+											 * product-polish: forwarded
+											 * verbatim to run_kv_store_
+											 * pass()/run_generation() --
+											 * always explicitly set by
+											 * membrane_session_generate()
+											 * (this struct's one real
+											 * caller) from req.hide_
+											 * control_tokens, never relies
+											 * on this struct's own `= {}`
+											 * zero-init default. */
 	membrane_gpu_state_t				*gs;
 
 	/* Outputs -- meaningful only after a successful call. */
@@ -1274,7 +1285,7 @@ static int	real_apply_fn(const membrane_joint_candidate_t *c,
 			ctx->o->gen_tokens, kv_mode, ctx->ctx_size, ctx->o->verbose,
 			NULL, false, 0, &ctx->text, &ctx->tel, &ctx->gen_result, ctx->cb,
 			ctx->cb_ud, placement_arg, &failure_stage, ctx->cancel_flag,
-			&ctx->cancelled);
+			&ctx->cancelled, ctx->render_special_tokens);
 	if (!ok)
 	{
 		out->ok = 0;
@@ -1894,9 +1905,14 @@ bool	membrane_session_generate(membrane_model_session_t *session,
 	out->text.clear();
 	vocab = llama_model_get_vocab(session->model);
 	prompt_tokens.resize(req.prompt_text.size() + 8);
+	/* Post-v1 product-polish: parse_special defaults to false (byte-
+	 * identical to every pre-existing caller's prior behavior) unless
+	 * the caller explicitly says prompt_text is a rendered chat template
+	 * (req.parse_special_tokens) -- see membrane_generation_request_t's
+	 * own top comment for the real v1.0.0 bug this closes. */
 	rc = llama_tokenize(vocab, req.prompt_text.c_str(),
 			(int32_t)req.prompt_text.size(), prompt_tokens.data(),
-			(int32_t)prompt_tokens.size(), true, false);
+			(int32_t)prompt_tokens.size(), true, req.parse_special_tokens);
 	if (rc < 0)
 	{
 		membrane_set_err(&out->err, MEMBRANE_EXIT_RUNTIME_ERROR,
@@ -1982,6 +1998,7 @@ bool	membrane_session_generate(membrane_model_session_t *session,
 		actx.cb = req.token_cb;
 		actx.cb_ud = req.token_cb_ud;
 		actx.cancel_flag = req.cancel_flag;
+		actx.render_special_tokens = !req.hide_control_tokens;
 		actx.gs = &session->gs;
 		session->gs.fallback_engaged = true;
 		out->fallback_engaged = true;
@@ -2037,7 +2054,7 @@ bool	membrane_session_generate(membrane_model_session_t *session,
 				effective_o.kv_mode, ctx_size, o.verbose, NULL, false, 0,
 				&out->text, &out->tel, &out->gen_result, req.token_cb,
 				req.token_cb_ud, placement_arg, NULL, req.cancel_flag,
-				&out->cancelled))
+				&out->cancelled, !req.hide_control_tokens))
 		{
 			membrane_set_err(&out->err, MEMBRANE_EXIT_RUNTIME_ERROR,
 				MEMBRANE_REASON_GENERATION_FAILED,

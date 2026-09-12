@@ -151,13 +151,25 @@ target_include_directories(membrane_utf8_stream PUBLIC
 # directly into the `membrane` executable, so test_server.cpp (below) can
 # link and drive a REAL membrane_server_run() instance without duplicating
 # any of its code.
+## Post-v1 product-polish: the ONE authoritative chat-completion
+## finish_reason decision (chat_finish_reason.h's own top comment) --
+## its own tiny, pure, llama-free/httplib-free library so its unit test
+## links nothing heavier than this one function.
+add_library(membrane_chat_finish_reason STATIC chat_finish_reason.cpp)
+set_target_properties(membrane_chat_finish_reason PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_chat_finish_reason PUBLIC membrane_sanitizers)
+target_include_directories(membrane_chat_finish_reason PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+
 add_library(membrane_server STATIC server.cpp)
 set_target_properties(membrane_server PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_server PUBLIC membrane_registry_core
   membrane_runtime_session membrane_cpp_httplib membrane_product_cli
-  membrane_utf8_stream llama)
+  membrane_utf8_stream membrane_chat_finish_reason llama)
 target_include_directories(membrane_server PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_server PRIVATE
@@ -528,6 +540,18 @@ if(MEMBRANE_BUILD_TESTS)
     ${CMAKE_SOURCE_DIR}/tests/unit
     ${CMAKE_SOURCE_DIR}/tools/membrane-run)
   add_test(NAME test_service_cmd COMMAND test_service_cmd)
+
+  # Post-v1 product-polish: pure unit tests for the shared chat-
+  # completion finish_reason decision -- no llama/httplib needed at all.
+  add_executable(test_chat_finish_reason test_chat_finish_reason.cpp)
+  set_target_properties(test_chat_finish_reason PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_chat_finish_reason PRIVATE
+    membrane_chat_finish_reason)
+  target_include_directories(test_chat_finish_reason PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_chat_finish_reason COMMAND test_chat_finish_reason)
 
   add_executable(test_systemd_unit test_systemd_unit.cpp)
   set_target_properties(test_systemd_unit PROPERTIES
