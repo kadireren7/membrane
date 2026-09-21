@@ -398,6 +398,28 @@ jobs:
       - name: Verify model-variant-selection evidence and docs
         run: python3 scripts/verify-model-variant-selection.py
 
+  # Milestone G3: validates results/planner-v2-evidence/validation.json's
+  # schema, classification-vs-outcome consistency (a TRUE_FEASIBLE/
+  # TRUE_REJECT/FALSE_REJECT/etc. label must agree with its own recorded
+  # plan_feasible/real_load_generate_succeeded booleans), and that the
+  # performance-floor threshold was declared before the results it
+  # classifies. Same reasoning as every other *-check job above:
+  # python3 + checkout only, no GPU, no model download, no C/C++ build
+  # -- this validates the already-committed, already-curated evidence
+  # file; it never re-runs any real Planner v2 workload itself (that
+  # happened once, manually, on a real host -- see
+  # docs/planner-v2-evidence.md).
+  planner-v2-evidence-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify Planner v2 evidence artifact
+        run: python3 scripts/verify-planner-v2-evidence.py
+
   # Phase 21: exercises the fallback controller's own test suite
   # (llama-free, ASan/UBSan-friendly) plus test_joint_planner without
   # paying for a full llama.cpp/ggml build -- both are registered
