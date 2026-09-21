@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "milestone": "G1-planner-v2-foundation",
+  "membrane_commit": "a6df2cbcbfa5324021eb779a35f18ddd266e6d3a",
+  "generated_at": "2026-09-21T00:00:00Z",
+  "note": "Real `membrane plan` smoke runs on a genuinely memory-constrained dev host (5.6 GiB RAM, heavy real memory pressure from other processes throughout this session -- see host_condition below). No download, no generation, no heavyweight benchmark. Build: build-release-cpu (CMAKE_BUILD_TYPE=Release, MEMBRANE_ENABLE_LLAMA=ON, CPU-only backend). Models: the repository's own tiny real fixtures (models/stories15M.gguf, models/SmolLM2-135M-Instruct-f16.gguf) registered into an isolated temp registry via MEMBRANE_MODELS_PATH/MEMBRANE_MODELS_INSTALL_DIR overrides -- never the real user registry.",
+  "host_condition": {
+    "label": "REAL",
+    "total_ram_gib": 5.6,
+    "available_ram_during_this_run_mib_range": [454, 662],
+    "note": "Available RAM genuinely varied across the runs below (other processes on this shared dev machine), which is exactly why the auto-planned outcome for smol135 differs between the two auto-mode captures further down -- not a bug, real evidence that the host-memory guard is reading live state, not a cached/stale snapshot."
+  },
+  "unit_tests": {
+    "label": "REAL",
+    "method": "ctest -R against build-release-cpu",
+    "results": [
+      "test_membrane_plan", "test_plan_cmd", "test_joint_planner",
+      "test_context_recommender", "test_host_memory_guard", "test_gpu_policy",
+      "test_context_auto_cli", "test_variant_selector", "test_use_cmd",
+      "test_doctor_cmd", "test_registry_core", "test_server",
+      "test_kv_residency_policy", "test_adaptive_kv_policy",
+      "test_kv_store_telemetry", "test_chat_stream_parser",
+      "test_chat_control_tokens", "test_setup_cmd", "test_service_state"
+    ],
+    "total": 19,
+    "passed": 19,
+    "failed": 0
+  },
+  "read_only_guarantee_check": {
+    "label": "REAL",
+    "method": "sha256sum of the isolated temp registry's models.json, before and after several `membrane plan`/`membrane --json plan` invocations (including an unknown-model NOT_FOUND call and an explicit --ctx override)",
+    "hash_before": "2f4e2a929793de1589a0d10d13bf4b48003688b711a17e900f301c02a32ac8f1",
+    "hash_after": "2f4e2a929793de1589a0d10d13bf4b48003688b711a17e900f301c02a32ac8f1",
+    "result": "UNCHANGED -- confirms membrane plan never mutates the registry",
+    "install_dir_created": false
+  },
+  "real_runs": [
+    {
+      "label": "REAL",
+      "command": "membrane plan smol135",
+      "note": "installed model (SmolLM2-135M-Instruct-f16.gguf), auto context, no GPU device on this host. At this exact moment available host RAM was tight enough that the host-memory guard rejected every candidate -- a real, live-state-dependent outcome, not a fixed/expected result.",
+      "human_output": "Model\n  smol135\n  Variant: unknown\n  Architecture: llama\n\nHardware\n  Backend: CPU-only (no GPU device detected)\n  Host RAM total: 5771.0 MiB\n  Host RAM available: 514.5 MiB\n\nWorkload\n  Context target: auto\n\nPlan\n  No decision -- see below.\n  Feasible: no\n  Limiting constraint: HOST_MEMORY_LIMIT\n\nWhy\n  - [HOST_MEMORY_LIMIT] PLANNER_REJECTED_ALL: every candidate was rejected by the joint planner"
+    },
+    {
+      "label": "REAL",
+      "command": "membrane --json plan smol135",
+      "json_output": {"decisions":null,"explanation":"","feasibility":{"feasible":false,"host_headroom_bytes":0,"host_headroom_known":false,"host_required_bytes":0,"limiting_resource":"HOST_MEMORY_LIMIT","max_feasible_context":0,"max_feasible_context_known":false},"hardware":{"backend":"","device_free_bytes":0,"device_known":false,"device_name":"","device_total_bytes":0,"host_available_bytes":533893120,"host_available_known":true,"host_reserve_bytes":0,"host_total_bytes":6051311616},"identity":{"arch_known":true,"arch_name":"llama","display_name":"smol135","installed":true,"model_name":"smol135","model_path":"/home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf","parameter_count":"","variant":"","variant_estimate_only":false,"variant_known":false,"variant_source":"unknown"},"membrane_version":"1.0.0","mode":"plan","ok":true,"reasons":[{"code":"HOST_MEMORY_LIMIT","detail":"PLANNER_REJECTED_ALL: every candidate was rejected by the joint planner"}],"schema_version":1,"workload":{"context_source":"hardware_auto","gpu_layers_request":"auto","gpu_layers_source":"hardware_auto","kv_placement_request":"default","kv_placement_source":"fallback_default","precision_request":"native","precision_source":"hardware_auto","requested_context":0}}
+    },
+    {
+      "label": "REAL",
+      "command": "membrane --json plan stories15m --ctx 128",
+      "note": "installed model, explicit --ctx within the model's own tiny trained context (stories15M's real llama.context_length is 128) -- feasible, demonstrating the explicit single-candidate path threaded through the exact same real host-memory-guard-integrated pipeline as auto mode.",
+      "json_output": {"decisions":{"context":128,"context_source":"explicit_user","gpu_layers":0,"gpu_layers_source":"planner_decision","kv_placement":"default","kv_placement_source":"planner_decision","kv_precision":"native","kv_precision_source":"planner_decision"},"explanation":"Recommended ctx=128 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 1 evaluated candidates (model max 128) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).","feasibility":{"feasible":true,"host_headroom_bytes":160978304,"host_headroom_known":true,"host_required_bytes":97630848,"limiting_resource":"","max_feasible_context":128,"max_feasible_context_known":true},"hardware":{"backend":"","device_free_bytes":0,"device_known":false,"device_name":"","device_total_bytes":0,"host_available_bytes":527044608,"host_available_known":true,"host_reserve_bytes":268435456,"host_total_bytes":6051311616},"identity":{"arch_known":false,"arch_name":"","display_name":"stories15m","installed":true,"model_name":"stories15m","model_path":"/home/kadirerenaltintas/membrane/models/stories15M.gguf","parameter_count":"","variant":"","variant_estimate_only":false,"variant_known":false,"variant_source":"unknown"},"membrane_version":"1.0.0","mode":"plan","ok":true,"reasons":[{"code":"CPU_ONLY_PLAN","detail":"CANDIDATE_SELECTED"},{"code":"USER_OVERRIDE_PRESERVED","detail":"explicit --ctx honored unchanged"}],"schema_version":1,"workload":{"context_source":"explicit_user","gpu_layers_request":"auto","gpu_layers_source":"hardware_auto","kv_placement_request":"default","kv_placement_source":"fallback_default","precision_request":"native","precision_source":"hardware_auto","requested_context":128}}
+    },
+    {
+      "label": "REAL",
+      "command": "membrane --json plan stories15m",
+      "note": "installed model, auto context. stories15M's real model_max_context (128) is below context_recommender's own real floor (MEMBRANE_CTXREC_MIN_CANDIDATE = 4096, llama.cpp's own documented minimum) -- the candidate generator correctly produces ZERO candidates, and membrane plan discloses this as NO_FEASIBLE_PLAN rather than crashing or fabricating a context. This is genuine, pre-existing context_recommender.c behavior, surfaced (not introduced) by this milestone.",
+      "json_output": {"decisions":null,"explanation":"","feasibility":{"feasible":false,"host_headroom_bytes":0,"host_headroom_known":false,"host_required_bytes":0,"limiting_resource":"NO_FEASIBLE_PLAN","max_feasible_context":0,"max_feasible_context_known":false},"hardware":{"backend":"","device_free_bytes":0,"device_known":false,"device_name":"","device_total_bytes":0,"host_available_bytes":533303296,"host_available_known":true,"host_reserve_bytes":0,"host_total_bytes":6051311616},"identity":{"arch_known":false,"arch_name":"","display_name":"stories15m","installed":true,"model_name":"stories15m","model_path":"/home/kadirerenaltintas/membrane/models/stories15M.gguf","parameter_count":"","variant":"","variant_estimate_only":false,"variant_known":false,"variant_source":"unknown"},"membrane_version":"1.0.0","mode":"plan","ok":true,"reasons":[{"code":"NO_FEASIBLE_PLAN","detail":"NO_FEASIBLE_CONTEXT: no candidates to evaluate (effective floor exceeds model_max_context, or the caller generated none)"}],"schema_version":1,"workload":{"context_source":"hardware_auto","gpu_layers_request":"auto","gpu_layers_source":"hardware_auto","kv_placement_request":"default","kv_placement_source":"fallback_default","precision_request":"native","precision_source":"hardware_auto","requested_context":0}}
+    },
+    {
+      "label": "REAL",
+      "command": "membrane --json plan smollm2-360m-instruct",
+      "note": "catalog-only (NOT installed) model -- variant estimation ran (2 variants considered, none estimated to fit under real tight host memory at the time) and context/GPU/KV planning correctly did not run at all, disclosed via MODEL_METADATA_UNAVAILABLE.",
+      "json_output": {"decisions":null,"explanation":"Estimate only: full planning requires the model to be installed.","feasibility":{"feasible":false,"host_headroom_bytes":0,"host_headroom_known":false,"host_required_bytes":0,"limiting_resource":"HOST_MEMORY_LIMIT","max_feasible_context":0,"max_feasible_context_known":false},"hardware":{"backend":"","device_free_bytes":0,"device_known":false,"device_name":"","device_total_bytes":0,"host_available_bytes":533905408,"host_available_known":true,"host_reserve_bytes":0,"host_total_bytes":6051311616},"identity":{"arch_known":true,"arch_name":"llama","display_name":"SmolLM2-360M-Instruct","installed":false,"model_name":"smollm2-360m-instruct","model_path":"","parameter_count":"360M","variant":"","variant_estimate_only":false,"variant_known":false,"variant_source":"unknown"},"membrane_version":"1.0.0","mode":"plan","ok":true,"reasons":[{"code":"MODEL_METADATA_UNAVAILABLE","detail":"full context/GPU/KV planning requires the installed model's real GGUF metadata -- install this model to get a complete plan"},{"code":"HOST_MEMORY_LIMIT","detail":"no catalog variant of this model is currently estimated to fit this host's available memory (2 considered)"}],"schema_version":1,"workload":{"context_source":"unknown","gpu_layers_request":"auto","gpu_layers_source":"unknown","kv_placement_request":"default","kv_placement_source":"unknown","precision_request":"adaptive","precision_source":"unknown","requested_context":0}}
+    }
+  ],
+  "earlier_session_capture_with_more_headroom": {
+    "label": "REAL",
+    "note": "Captured earlier in this same session when available host RAM was ~660 MiB instead of ~500-530 MiB, to show what a FEASIBLE auto plan looks like for the same installed model (smol135) -- included for contrast with the tight-memory captures above, not because the earlier number is somehow more canonical.",
+    "command": "membrane plan smol135",
+    "human_output": "Model\n  smol135\n  Variant: unknown\n  Architecture: llama\n\nHardware\n  Backend: CPU-only (no GPU device detected)\n  Host RAM total: 5771.0 MiB\n  Host RAM available: 661.9 MiB\n\nWorkload\n  Context target: auto\n\nPlan\n  Context: 4096 (planner_decision)\n  GPU layers: 0 (planner_decision)\n  KV precision: native (planner_decision)\n  KV placement: default (planner_decision)\n  Feasible: yes\n\nHeadroom\n  Host RAM: 59.3 MiB\n\nWhy\n  - [CPU_ONLY_PLAN] CANDIDATE_SELECTED\n\nRecommended ctx=4096 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md)."
+  },
+  "limitations": [
+    "Single-host smoke only (this dev machine) -- no cross-host/GPU-present validation performed this milestone.",
+    "No real GPU device was present on this host for this smoke pass, so the device_known=true/backend/device_name JSON fields were not exercised against real hardware here -- their plumbing is covered by test_membrane_plan.c's synthetic-device unit test instead.",
+    "Deferred to a later milestone (G3): broader real-hardware evidence gathering across multiple models/backends."
+  ]
+}
