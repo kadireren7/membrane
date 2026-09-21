@@ -38,6 +38,20 @@ same flow for a guided first-run (register a local `.gguf`, or a
 catalog name, and stand up the background service in one pass). See
 [`docs/model-lifecycle.md`](docs/model-lifecycle.md).
 
+## See the plan before you commit to it
+
+```bash
+membrane plan qwen2.5:7b
+```
+
+Read-only: shows the context/GPU-layers/KV-precision/KV-placement plan
+MEMBRANE's current planner would use for `MODEL` — installed or not
+(a catalog-only model gets a disclosed, estimate-only preview) — with
+structured reasons for every decision and `--ctx`/`--kv`/`--gpu-layers`/
+`--quant` overrides to check a specific configuration. Never installs,
+activates, or starts anything. `--json` for machine-readable output. See
+[`docs/planner-v2-foundation.md`](docs/planner-v2-foundation.md).
+
 ## Chat from your terminal
 
 ```bash
