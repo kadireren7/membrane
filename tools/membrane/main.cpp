@@ -15,6 +15,7 @@
 #include "setup_cmd.h"
 #include "use_cmd.h"
 #include "chat_cmd.h"
+#include "plan_cmd.h"
 #include "product_cli.h"
 
 using json = nlohmann::json;
@@ -56,6 +57,9 @@ static void	print_usage(FILE *out)
 	fprintf(out, "  membrane use MODEL                 select/activate "
 		"MODEL -- installs it first (with consent) if not already "
 		"installed\n");
+	fprintf(out, "  membrane plan MODEL                READ-ONLY: show "
+		"the hardware-aware plan MEMBRANE would use for MODEL (see "
+		"plan options)\n");
 	fprintf(out, "  membrane chat [MODEL]              interactive "
 		"terminal chat with the local server (see membrane chat "
 		"--help)\n");
@@ -110,6 +114,16 @@ static void	print_usage(FILE *out)
 		"install if MODEL is not installed yet\n");
 	fprintf(out, "  --yes / -y                           allow an "
 		"unattended download with no interactive prompt\n");
+	fprintf(out, "\n");
+	fprintf(out, "plan options (see docs/planner-v2-foundation.md):\n");
+	fprintf(out, "  --ctx auto|N                        context target "
+		"(default: auto)\n");
+	fprintf(out, "  --kv native|q8|q5|adaptive          KV precision "
+		"target (default: adaptive if a GPU is present, else native)\n");
+	fprintf(out, "  --gpu-layers all|auto|N             GPU layer target "
+		"(default: auto)\n");
+	fprintf(out, "  --quant QUANT / --variant QUANT     variant to plan "
+		"for (catalog-only models; ignored for an installed model)\n");
 	fprintf(out, "\n");
 	fprintf(out, "serve options:\n");
 	fprintf(out, "  --port N                           listen port "
@@ -199,6 +213,12 @@ int	main(int argc, char **argv)
 		std::vector<std::string>	use_args(args.begin() + 1, args.end());
 
 		return (membrane_use_cmd_dispatch(use_args, want_json));
+	}
+	if (args[0] == "plan")
+	{
+		std::vector<std::string>	plan_args(args.begin() + 1, args.end());
+
+		return (membrane_plan_cmd_dispatch(plan_args, want_json));
 	}
 	if (args[0] == "serve")
 	{

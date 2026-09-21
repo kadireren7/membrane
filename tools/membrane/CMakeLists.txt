@@ -350,6 +350,30 @@ target_include_directories(membrane_use_cmd PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
 
+# Milestone G1 (Planner v2 foundation): `membrane plan MODEL` -- a
+# READ-ONLY orchestrator over registry_core.h/model_catalog.h (identity),
+# variant_selector.h (catalog-only quant estimate), gpu_device.h/
+# runtime_session.h (one real hardware snapshot), and
+# membrane_context_recommender (the actual context/GPU-layers/KV-
+# precision/KV-placement decision, real ggml_row_size()-based KV bytes),
+# assembled into the common membrane_plan_t representation
+# (membrane_plan.h). See plan_cmd.h's own top comment for the read-only
+# contract.
+add_library(membrane_plan_cmd STATIC plan_cmd.cpp)
+set_target_properties(membrane_plan_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_plan_cmd PUBLIC membrane_sanitizers
+  membrane_registry_core membrane_model_catalog membrane_variant_selector
+  membrane_gpu_device membrane_runtime_session membrane_kv_store_telemetry
+  membrane_plan membrane_product_cli llama)
+target_include_directories(membrane_plan_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+target_include_directories(membrane_plan_cmd PRIVATE
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
 # Post-v1 product-polish, prompt 3: the pure, llama-free/httplib-free
 # SSE incremental parser `membrane chat` uses to turn the server's own
 # real streamed wire format into plain text -- its own tiny library so
@@ -394,6 +418,7 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_status_client membrane_server_config membrane_doctor_cmd
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
   membrane_variant_selector membrane_use_cmd membrane_chat_cmd
+  membrane_plan_cmd
   membrane_service_state membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -542,6 +567,26 @@ if(MEMBRANE_BUILD_TESTS)
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
   add_test(NAME test_use_cmd COMMAND test_use_cmd)
+
+  # Milestone G1 (Planner v2 foundation): unit/integration tests for
+  # `membrane plan` (test_plan_cmd.cpp's own top comment) -- driven
+  # in-process against the real repository fixture models/stories15M.gguf
+  # (GGUF-metadata-only reads, never a full model load), same isolated-
+  # temp-registry convention as test_use_cmd above. plan_cmd.cpp never
+  # calls membrane_model_cmd_dispatch(), so (unlike test_use_cmd/test_
+  # setup_cmd above) this test binary does not need model_cmd.cpp.
+  add_executable(test_plan_cmd test_plan_cmd.cpp)
+  set_target_properties(test_plan_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_plan_cmd PRIVATE membrane_plan_cmd
+    membrane_registry_core membrane_product_cli)
+  target_include_directories(test_plan_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+  target_compile_definitions(test_plan_cmd PRIVATE
+    MEMBRANE_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  add_test(NAME test_plan_cmd COMMAND test_plan_cmd)
 
   # Post-v1 product-polish, prompt 3: pure, no-network unit tests for
   # the SSE incremental parser `membrane chat` uses.

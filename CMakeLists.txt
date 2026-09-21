@@ -331,6 +331,18 @@ target_link_libraries(membrane_context_auto_cli PUBLIC
 target_include_directories(membrane_context_auto_cli PUBLIC
   tools/membrane-run)
 
+# Milestone G1 (Planner v2 foundation): the common, product-facing plan
+# representation -- a pure ADAPTER over the existing, unchanged
+# membrane_ctxrec_result_t/membrane_joint_plan_result_t (never a second
+# planner, see membrane_plan.h's own top comment). llama-free, no model/
+# device/host access, same testable-without-a-model/GPU pattern as
+# membrane_context_recommender above.
+add_library(membrane_plan STATIC
+  tools/membrane-run/membrane_plan.c)
+target_link_libraries(membrane_plan PUBLIC
+  membrane_context_recommender membrane_gpu_policy membrane_sanitizers)
+target_include_directories(membrane_plan PUBLIC tools/membrane-run)
+
 # Phase 21: the bounded apply-time fallback CONTROLLER -- llama-free,
 # same pattern as membrane_joint_planner above. Consumes (never
 # duplicates or regenerates) the ranked candidate array
@@ -895,6 +907,16 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_context_auto_cli PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_context_auto_cli COMMAND test_context_auto_cli)
+
+  # Milestone G1: the common plan representation's own tests -- llama-
+  # free, synthetic model/device facts only, same pattern as
+  # test_context_recommender above.
+  add_executable(test_membrane_plan
+    tools/membrane-run/test_membrane_plan.c)
+  target_link_libraries(test_membrane_plan PRIVATE membrane_plan)
+  target_include_directories(test_membrane_plan PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_membrane_plan COMMAND test_membrane_plan)
 
   # Phase 21: the bounded apply-time fallback controller's own tests --
   # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a
