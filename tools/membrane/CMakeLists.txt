@@ -366,7 +366,7 @@ set_target_properties(membrane_plan_cmd PROPERTIES
 target_link_libraries(membrane_plan_cmd PUBLIC membrane_sanitizers
   membrane_registry_core membrane_model_catalog membrane_variant_selector
   membrane_gpu_device membrane_runtime_session membrane_kv_store_telemetry
-  membrane_plan membrane_product_cli llama)
+  membrane_plan membrane_plan_v2_resolver membrane_product_cli llama)
 target_include_directories(membrane_plan_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_plan_cmd PRIVATE
@@ -580,9 +580,10 @@ if(MEMBRANE_BUILD_TESTS)
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON)
   target_link_libraries(test_plan_cmd PRIVATE membrane_plan_cmd
-    membrane_registry_core membrane_product_cli)
+    membrane_registry_core membrane_product_cli membrane_plan_v2_resolver)
   target_include_directories(test_plan_cmd PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
   target_compile_definitions(test_plan_cmd PRIVATE
     MEMBRANE_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

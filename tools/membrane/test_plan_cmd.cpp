@@ -10,6 +10,7 @@
 #include "plan_cmd.h"
 #include "registry_core.h"
 #include "product_cli.h"
+#include "plan_v2_resolver.h"
 #include "test_helpers.h"
 
 using json = nlohmann::json;
@@ -61,8 +62,9 @@ struct s_isolated_env
 	}
 };
 
-static void	register_entry(const std::string &registry_path,
-				const std::string &name, const std::string &path)
+static void	register_entry_as(const std::string &registry_path,
+				const std::string &name, const std::string &path,
+				const std::string &basename)
 {
 	membrane_registry_t			reg;
 	membrane_registry_error_t	err;
@@ -71,7 +73,7 @@ static void	register_entry(const std::string &registry_path,
 	membrane_registry_load(registry_path, &reg, &err);
 	entry.name = name;
 	entry.path = path;
-	entry.basename = "stories15M.gguf";
+	entry.basename = basename;
 	entry.arch_name = "";
 	entry.model_max_context = 0;
 	entry.file_size_bytes = 1;
@@ -81,6 +83,12 @@ static void	register_entry(const std::string &registry_path,
 	membrane_registry_save(registry_path, reg, &err);
 }
 
+static void	register_entry(const std::string &registry_path,
+				const std::string &name, const std::string &path)
+{
+	register_entry_as(registry_path, name, path, "stories15M.gguf");
+}
+
 static std::string	real_fixture_path(void)
 {
 	/* Same repo-root-relative fixture every other real-GGUF test in
@@ -88,6 +96,21 @@ static std::string	real_fixture_path(void)
 	 * context_recommender_dryrun.cpp). Tests run from the build
 	 * directory, so this resolves relative to the source tree. */
 	return (std::string(MEMBRANE_TEST_SOURCE_DIR) + "/models/stories15M.gguf");
+}
+
+/* Milestone G2: the repo's own real installed fixture that IS a known
+ * catalog family member -- smollm2-135m-instruct's real F16 variant
+ * (see tools/membrane/model_catalog.cpp's own catalog entry). Used to
+ * exercise the real cross-variant sibling-scaling join (Part 2 of the
+ * G2 task) end to end, not just with synthetic fixtures. The on-disk
+ * repo fixture is named with a lowercase "f16" -- registered here under
+ * the catalog's own exact-case filename ("...-F16.gguf") so
+ * find_installed_catalog_variant()'s real exact-match lookup succeeds,
+ * same real-world requirement plan_cmd.cpp's own top comment documents. */
+static std::string	real_smollm2_f16_fixture_path(void)
+{
+	return (std::string(MEMBRANE_TEST_SOURCE_DIR)
+			+ "/models/SmolLM2-135M-Instruct-f16.gguf");
 }
 
 static std::string	capture_stdout_of_plan_dispatch(
@@ -200,7 +223,8 @@ static void	test_installed_model_plan_json_shape(void)
 	TEST_ASSERT(!j.is_discarded(), "plan --json output is valid JSON");
 	TEST_ASSERT(rc == MEMBRANE_EXIT_SUCCESS, "a computed plan is always "
 		"exit-success, feasible or not");
-	TEST_ASSERT(j["schema_version"].get<int>() == 1, "schema_version == 1");
+	TEST_ASSERT(j["schema_version"].get<int>() == MEMBRANE_PLAN_V2_SCHEMA_VERSION,
+		"schema_version == 2 (Milestone G2's own schema bump)");
 	TEST_ASSERT(j["mode"] == "plan", "mode is 'plan'");
 	TEST_ASSERT(j["identity"]["installed"] == true,
 		"identity.installed reflects the real registry entry");
@@ -279,6 +303,105 @@ static void	test_unknown_model_returns_not_found(void)
 		"registered nor a catalog id/alias) is a clean CLI_ERROR");
 }
 
+/* ------------------------------------------------------------------ */
+/* Milestone G2: real cross-variant sibling join, end to end through   */
+/* the actual CLI dispatch (not just plan_v2_resolver's own synthetic  */
+/* fixtures) -- Part 16's own lightweight smoke, kept as a permanent   */
+/* regression test.                                                    */
+/* ------------------------------------------------------------------ */
+
+static void	test_real_multi_variant_join_json_schema(void)
+{
+	s_isolated_env	env;
+
+	register_entry_as(env.dir + "/models.json", "smollm2-135m-instruct",
+		real_smollm2_f16_fixture_path(), "SmolLM2-135M-Instruct-F16.gguf");
+
+	int			rc;
+	std::string	out = capture_stdout_of_plan_dispatch(
+			{"smollm2-135m-instruct"}, true, &rc);
+	json		j = json::parse(out, nullptr, false);
+
+	TEST_ASSERT(!j.is_discarded(), "valid JSON");
+	TEST_ASSERT(rc == MEMBRANE_EXIT_SUCCESS, "computed plan is exit-success");
+	TEST_ASSERT(j["schema_version"].get<int>() == MEMBRANE_PLAN_V2_SCHEMA_VERSION,
+		"schema_version == 2");
+	TEST_ASSERT(j.contains("policy_version") && j["policy_version"].is_string(),
+		"policy_version is present (Part 8's own deterministic policy)");
+	TEST_ASSERT(j.contains("variants_evaluated")
+		&& j["variants_evaluated"].is_array(),
+		"variants_evaluated is a structured array");
+	/* Real catalog family: Q4_K_M, Q5_K_M, Q8_0, F16 -- all 4 must be
+	 * evaluated through the real join (Part 2 of the G2 task), not just
+	 * the one installed variant. */
+	TEST_ASSERT(j["variants_evaluated"].size() == 4,
+		"all 4 real catalog variants were evaluated, not pre-filtered");
+
+	bool	found_installed_real = false;
+	bool	found_estimate_sibling = false;
+
+	for (const auto &v : j["variants_evaluated"])
+	{
+		if (v["variant"] == "F16" && v["estimate_only"] == false)
+			found_installed_real = true;
+		if (v["variant"] != "F16" && v["estimate_only"] == true
+			&& v["source"] == "catalog_metadata")
+			found_estimate_sibling = true;
+	}
+	TEST_ASSERT(found_installed_real, "the real installed F16 variant is "
+		"marked as a real (non-estimate) candidate");
+	TEST_ASSERT(found_estimate_sibling, "a sibling variant is marked as a "
+		"catalog_metadata-sourced estimate, never claimed exact");
+	TEST_ASSERT(j.contains("alternatives") && j["alternatives"].is_array(),
+		"alternatives is a bounded, structured array");
+	TEST_ASSERT(j.contains("selected_variant"), "selected_variant is present");
+}
+
+static void	test_explicit_quant_selects_exact_sibling(void)
+{
+	s_isolated_env	env;
+
+	register_entry_as(env.dir + "/models.json", "smollm2-135m-instruct",
+		real_smollm2_f16_fixture_path(), "SmolLM2-135M-Instruct-F16.gguf");
+
+	int			rc;
+	std::string	out = capture_stdout_of_plan_dispatch(
+			{"smollm2-135m-instruct", "--quant", "Q4_K_M"}, true, &rc);
+	json		j = json::parse(out, nullptr, false);
+
+	TEST_ASSERT(!j.is_discarded(), "valid JSON");
+	TEST_ASSERT(j["variants_evaluated"].size() == 1,
+		"an explicit --quant restricts evaluation to exactly that variant, "
+		"never silently considering others");
+	TEST_ASSERT(j["identity"]["variant"] == "Q4_K_M",
+		"the explicit variant is the one reflected in the top-level plan");
+	TEST_ASSERT(j["identity"]["variant_source"] == "explicit_user",
+		"provenance marks this variant as an explicit user override");
+}
+
+static void	test_explicit_huge_ctx_infeasible_across_all_variants(void)
+{
+	s_isolated_env	env;
+
+	register_entry_as(env.dir + "/models.json", "smollm2-135m-instruct",
+		real_smollm2_f16_fixture_path(), "SmolLM2-135M-Instruct-F16.gguf");
+
+	int			rc;
+	std::string	out = capture_stdout_of_plan_dispatch(
+			{"smollm2-135m-instruct", "--ctx", "999999999"}, true, &rc);
+	json		j = json::parse(out, nullptr, false);
+
+	TEST_ASSERT(!j.is_discarded(), "valid JSON");
+	TEST_ASSERT(j["feasible"] == false, "an impossible explicit ctx is "
+		"honestly reported infeasible, never silently reduced");
+	TEST_ASSERT(j["variants_evaluated"].size() == 4,
+		"every variant is still evaluated (and reported) even though none "
+		"is feasible");
+	for (const auto &v : j["variants_evaluated"])
+		TEST_ASSERT(v["feasible"] == false, "every variant is honestly "
+			"infeasible under the same impossible explicit constraint");
+}
+
 int	main(void)
 {
 	test_plan_never_creates_a_registry_file();
@@ -287,6 +410,9 @@ int	main(void)
 	test_explicit_ctx_preserved_end_to_end();
 	test_catalog_only_model_json_discloses_estimate();
 	test_unknown_model_returns_not_found();
+	test_real_multi_variant_join_json_schema();
+	test_explicit_quant_selects_exact_sibling();
+	test_explicit_huge_ctx_infeasible_across_all_variants();
 	printf("all plan_cmd tests passed\n");
 	return (0);
 }
