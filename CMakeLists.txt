@@ -343,6 +343,22 @@ target_link_libraries(membrane_plan PUBLIC
   membrane_context_recommender membrane_gpu_policy membrane_sanitizers)
 target_include_directories(membrane_plan PUBLIC tools/membrane-run)
 
+# Milestone G2 (Planner v2 joint variant/quant optimizer): the one
+# orchestration layer G1 deliberately left out -- runs membrane_plan's
+# own existing ctxrec/joint pipeline once per candidate model variant/
+# quant and selects among the results by a small, fixed, documented
+# policy (see plan_v2_resolver.h's own top comment). Never a second
+# planner, never reimplements membrane_plan/membrane_context_recommender/
+# membrane_joint_planner's own arithmetic -- llama-free, no model/
+# device/host access, same testable-without-a-model/GPU pattern as
+# every module above.
+add_library(membrane_plan_v2_resolver STATIC
+  tools/membrane-run/plan_v2_resolver.c)
+target_link_libraries(membrane_plan_v2_resolver PUBLIC
+  membrane_plan membrane_sanitizers)
+target_include_directories(membrane_plan_v2_resolver PUBLIC
+  tools/membrane-run)
+
 # Phase 21: the bounded apply-time fallback CONTROLLER -- llama-free,
 # same pattern as membrane_joint_planner above. Consumes (never
 # duplicates or regenerates) the ranked candidate array
@@ -917,6 +933,17 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_membrane_plan PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_membrane_plan COMMAND test_membrane_plan)
+
+  # Milestone G2: the joint variant/quant resolver's own tests --
+  # llama-free, synthetic multi-variant model/device facts only, same
+  # pattern as test_membrane_plan above.
+  add_executable(test_plan_v2_resolver
+    tools/membrane-run/test_plan_v2_resolver.c)
+  target_link_libraries(test_plan_v2_resolver PRIVATE
+    membrane_plan_v2_resolver)
+  target_include_directories(test_plan_v2_resolver PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_plan_v2_resolver COMMAND test_plan_v2_resolver)
 
   # Phase 21: the bounded apply-time fallback controller's own tests --
   # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a
