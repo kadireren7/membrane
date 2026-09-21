@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "milestone": "G2-planner-v2-joint-variant",
+  "base_commit": "d72aa369acc58e1290ffe972ecc4e60d667e4def",
+  "generated_at": "2026-09-21T10:46:57Z",
+  "note": "Real `membrane plan` smoke runs on the same genuinely memory-constrained dev host G1's own validation.json used (5.6 GiB RAM, real shared memory pressure throughout). No download, no generation, no heavyweight benchmark. Build: build-cpu-rc1 (CMAKE_BUILD_TYPE=Release, MEMBRANE_ENABLE_LLAMA=ON, CPU-only backend, libllama already built -- only the touched targets were rebuilt for this session). Models: the repository's own real fixture models/SmolLM2-135M-Instruct-f16.gguf, registered under the catalog's own exact-case filename (SmolLM2-135M-Instruct-F16.gguf) so the real cross-variant sibling join (Part 2 of the G2 task) activates -- and the never-installed smollm2-360m-instruct/does-not-exist-xyz catalog/unknown paths -- all registered into an isolated temp registry via XDG_DATA_HOME override, never the real user registry.",
+  "host_condition": {
+    "label": "REAL",
+    "total_ram_gib": 5.6,
+    "available_ram_during_this_run_mib_range": [555, 717],
+    "note": "Available RAM genuinely varied across these runs (other real processes on this shared dev machine) -- visibly changing which variant the joint pipeline selects between the very first manual check (F16 feasible at 717 MiB available) and the captured run1 below (F16 infeasible, Q8_0 selected instead, at 582 MiB available). This is real, live-state-dependent evidence that the per-variant joint pipeline reads live host memory every invocation, not a cached snapshot -- same disclosed behavior G1's own validation.json documented for the single-variant case."
+  },
+  "unit_tests": {
+    "label": "REAL",
+    "method": "ctest -R against build-cpu-rc1 (relevant subset: G1 planner modules + the new G2 resolver/CLI tests)",
+    "results": [
+      "test_gpu_policy",
+      "test_kv_residency_policy",
+      "test_adaptive_kv_policy",
+      "test_joint_planner",
+      "test_host_memory_guard",
+      "test_context_recommender",
+      "test_context_auto_cli",
+      "test_membrane_plan",
+      "test_plan_v2_resolver",
+      "test_registry_core",
+      "test_variant_selector",
+      "test_doctor_cmd",
+      "test_setup_cmd",
+      "test_use_cmd",
+      "test_plan_cmd",
+      "test_residency_planner",
+      "test_codec_f16_byteplane",
+      "test_codec_f16_xor_byteplane",
+      "test_codec_f16_highplane_huffman"
+    ],
+    "total": 19,
+    "passed": 19,
+    "failed": 0
+  },
+  "read_only_guarantee_check": {
+    "label": "REAL",
+    "method": "sha256sum of the isolated temp registry's models.json, before and after `membrane model add` plus 6 further `membrane plan`/`membrane plan --json` invocations (auto multi-variant, explicit --quant, explicit-infeasible --ctx, a never-installed catalog family, and an unknown-model NOT_FOUND call)",
+    "hash_before": "99733ae1d700f777cac34fe1fb4b6371df0a52d2de2a6e874d8683b314a86681",
+    "hash_after": "99733ae1d700f777cac34fe1fb4b6371df0a52d2de2a6e874d8683b314a86681",
+    "result": "UNCHANGED -- confirms `membrane plan` never mutates the registry even when it evaluates multiple candidate variants internally"
+  },
+  "real_runs": [
+    {
+      "label": "REAL",
+      "command": "membrane plan smollm2-135m-instruct",
+      "note": "Installed model is the real F16 GGUF file, registered under the catalog's own exact filename -- the real cross-variant join anchors Q8_0/Q5_K_M/Q4_K_M's scaled hparams to this real file's own real GGUF metadata. At this exact moment (582 MiB available), the real joint pipeline found F16 infeasible but Q8_0/Q5_K_M/Q4_K_M all feasible -- Q8_0 selected as the highest-quality FEASIBLE variant, never F16 (infeasible) and never silently downgraded further than necessary to Q5_K_M/Q4_K_M.",
+      "human_output": "Model\n  SmolLM2-135M-Instruct\n  (not installed -- catalog metadata only)\n  Architecture: llama\n\nCandidate variants evaluated\n  F16\n  Q8_0 (estimate only) [selected]\n  Q5_K_M (estimate only)\n  Q4_K_M (estimate only)\n\nHardware\n  Backend: CPU-only (no GPU device detected)\n  Host RAM total: 5771.0 MiB\n  Host RAM available: 582.1 MiB\n\nSelected\n  Variant: Q8_0 (estimate only)\n  Context: 8192 (planner_decision)\n  GPU layers: 0 (planner_decision)\n  KV precision: native (planner_decision)\n  KV placement: default (planner_decision)\n\nFeasible: yes\n\nAlternatives\n  Q5_K_M (estimate only)\n  Q4_K_M (estimate only)\n\nWhy\n  - F16: infeasible (HOST_MEMORY_LIMIT)\n  - Q8_0: feasible\n  - Q5_K_M: feasible\n  - Q4_K_M: feasible\n\nSelected variant's own reasons\n  - [MODEL_VARIANT_ESTIMATE_ONLY] variant fit estimated from catalog size_bytes, not a real GGUF measurement\n  - [CPU_ONLY_PLAN] CANDIDATE_SELECTED"
+    },
+    {
+      "label": "REAL",
+      "command": "membrane plan smollm2-135m-instruct --quant Q4_K_M --json",
+      "note": "Explicit override: only Q4_K_M is evaluated (variants_evaluated has exactly 1 entry, alternatives is empty) -- never silently considers F16/Q8_0/Q5_K_M even though they exist in the same family.",
+      "json_selected_variant": "Q4_K_M",
+      "json_variant_count": 1,
+      "json_feasible": true
+    },
+    {
+      "label": "REAL",
+      "command": "membrane plan smollm2-135m-instruct --ctx 999999999 --json",
+      "note": "An impossible explicit context: every one of the 4 real/scaled candidate variants is still evaluated and reported, all honestly infeasible -- never silently reduced to a smaller context.",
+      "json_feasible": false,
+      "json_per_variant_feasible": [
+        ["F16", false], ["Q8_0", false], ["Q5_K_M", false], ["Q4_K_M", false]
+      ]
+    },
+    {
+      "label": "REAL",
+      "command": "membrane plan smollm2-360m-instruct",
+      "note": "A catalog family with NO installed sibling anywhere -- no real hparams basis exists for any variant, so every variant falls back to the coarse, disclosed catalog-size-only host-memory check (Part 5's own 'otherwise mark unavailable'), never a fabricated context/GPU/KV decision.",
+      "human_output": "Model\n  SmolLM2-360M-Instruct\n  (not installed -- catalog metadata only)\n  Architecture: llama\n\nCandidate variants evaluated\n  F16 (estimate only)\n  Q4_K_M (estimate only) [selected]\n\nHardware\n  Backend: CPU-only (no GPU device detected)\n  Host RAM total: 5771.0 MiB\n  Host RAM available: 555.0 MiB\n\nSelected\n  Variant: Q4_K_M (estimate only)\n  No context/GPU/KV decision -- estimate only (real GGUF metadata is unavailable for this variant).\n\nFeasible: yes\n\nWhy\n  - F16: infeasible (HOST_MEMORY_LIMIT)\n  - Q4_K_M: feasible (estimate only, no context/GPU/KV decision)\n\nSelected variant's own reasons\n  - [MODEL_VARIANT_ESTIMATE_ONLY] variant fit estimated from catalog size_bytes, not a real GGUF measurement\n  - [MODEL_METADATA_UNAVAILABLE] full context/GPU/KV planning requires the installed model's real GGUF metadata -- install this model to get a complete plan"
+    },
+    {
+      "label": "REAL",
+      "command": "membrane plan does-not-exist-xyz",
+      "note": "Unknown name -- clean CLI_ERROR, unchanged from G1.",
+      "stderr": "membrane plan: 'does-not-exist-xyz' is not an installed model or a known catalog model -- try `membrane model search does-not-exist-xyz`"
+    }
+  ]
+}
