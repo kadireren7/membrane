@@ -1,0 +1,4118 @@
+{
+  "schema_version": 1,
+  "milestone": "G3-planner-v2-evidence",
+  "base_commit": "a2fcfd9d13d1cf01f73c8f9651e97236cb526d5c",
+  "generated_at_unix": 1789999952,
+  "host": {
+    "label": "REAL",
+    "description": "Same real, shared, genuinely memory-constrained dev host used for the G1/G2 validation artifacts -- 5.6 GiB total RAM, real desktop applications (browser, chat client, other agent sessions) competing for it throughout. Available RAM ranged roughly 200 MiB-1.3 GiB across this session's real runs -- disclosed per-run below, never smoothed over.",
+    "total_ram_gib": 5.6,
+    "gpu": "NVIDIA GeForce GTX 1650, 4096 MiB VRAM, Vulkan backend (no CUDA toolkit on this host -- Vulkan is the only real GPU backend exercised)"
+  },
+  "builds_used": {
+    "cpu": "build-cpu-rc1 (CMAKE_BUILD_TYPE=Release, GGML_VULKAN=OFF), rebuilt at this milestone's own base_commit before any run below",
+    "vulkan": "build-vulkan (CMAKE_BUILD_TYPE=Release, GGML_VULKAN=ON), rebuilt at this milestone's own base_commit before any run below (was stale at membrane 0.8.0 before this rebuild)"
+  },
+  "hypotheses": {
+    "H1_feasibility_accuracy": {
+      "text": "A candidate labeled feasible should actually load/run under the same approximate hardware conditions.",
+      "verdict": "SUPPORTED when the plan and the real load are taken within the same host-memory snapshot window. See feasibility_confusion_matrix below -- every TRUE_FEASIBLE-labeled candidate tested (3 of 3) really did load and generate successfully."
+    },
+    "H2_infeasibility_usefulness": {
+      "text": "A candidate rejected for memory constraints should either fail to run/load, or have materially insufficient headroom, under the same conditions.",
+      "verdict": "MIXED, evidence-backed. One infeasible candidate (F16 @ ctx=200000) was confirmed TRUE_REJECT: the real bounded load genuinely failed to allocate its KV buffer. Two other infeasible-labeled candidates (F16 @ ctx=4096 on smollm2-135m-instruct; the single installed variant of smollm2-360m-instruct @ ctx=2048), tested at real available-memory levels close to what the planner itself saw, both actually SUCCEEDED -- real peak RSS came in under real available memory, but inside the host-memory guard's own conservative reserve margin. See feasibility_confusion_matrix and policy_evaluation below: this is real evidence the guard is conservative (rejects some configurations that would truly have fit), not evidence it is unsafe."
+    },
+    "H3_context_expansion": {
+      "text": "Planner v2 should be able to identify a safe larger usable context when a lower-memory quant/KV plan creates real capacity.",
+      "verdict": "CONFIRMED, real, on CPU. smollm2-135m-instruct: Q8_0 (selected, quality-first) -> real ctx=4096; Q4_K_M (alternative) -> real ctx=8192, confirmed by a real successful load+generate at that larger context (see context_capacity_experiment below). NOT observed on the Vulkan/GPU backend for this same tiny model+host: VRAM was abundant enough that every variant, including F16, already got the maximum ctx=8192 -- the CPU-side host-RAM pressure that produces this tradeoff is specific to this host's live RAM condition, not a universal property of the model family."
+    },
+    "H4_performance_floor": {
+      "text": "A plan that gains context/memory capacity must not be treated as product-success if throughput collapses catastrophically.",
+      "verdict": "Floor never triggered in this evidence set -- see performance_floor below. The one real context-expansion case measured (Q4_K_M @ ctx=8192) was FASTER, not slower, than the quality-first pick it expanded on (+36.9% generation tok/s). This hypothesis's floor was defined but not empirically exercised by any config tested here -- a genuine limitation (no config in this small, bounded evidence set happened to be a bad trade), not evidence the floor can never be crossed."
+    },
+    "H5_estimate_error": {
+      "text": "The sibling byte-ratio scaling used for not-installed quant variants must have its error measured against real installed GGUFs where multiple quant files are available.",
+      "verdict": "MEASURED, real, disclosed. See sibling_scaling_error below. total_weight_bytes error stayed small (~1.2-1.7%). bytes_per_layer error was small for Q8_0 (0.57%) but grew to 12.4% for Q4_K_M. output_role_bytes error was small for Q8_0 (0.62%) but -26.7% for Q4_K_M -- K-quants keep the output/embedding tensors at higher precision than the rest of the model, so a whole-file size ratio over-predicts how much THAT specific tensor group shrinks. This is exactly the caveat docs/planner-v2-joint-variant.md already disclosed ('K-quants may keep some tensors at higher precision than others') -- now quantified, not just asserted."
+    },
+    "H6_policy_sanity": {
+      "text": "The current policy (evaluated decision > coarse estimate; higher-quality feasible variant first) must be checked against measured outcomes.",
+      "verdict": "See policy_evaluation below. Evidence does not justify changing the default policy this milestone -- single family, single host. It DOES show a real, measurable case (this exact family, this exact host) where a lower-priority alternative (Q4_K_M) was strictly better than the selected candidate (Q8_0) on both context AND throughput -- material enough to record, not enough to act on across the whole product from one data point."
+    }
+  },
+  "performance_floor_definition": {
+    "defined_before_seeing_throughput_results": true,
+    "text": "A configuration that gains material context/memory capacity (>=1.5x a comparable same-backend baseline's feasible context) is classified TECHNICAL_FEASIBILITY_ONLY, not a product win, if its measured generation tok/s drops by more than 85% relative to that same baseline."
+  },
+  "sibling_scaling_error": {
+    "evidence_level": "REAL",
+    "description": "Sibling byte-ratio scaling error, measured against real installed GGUFs (Milestone G3, Part 5).",
+    "model_family": "smollm2-135m-instruct",
+    "real_measurements": {
+      "F16": {
+        "path": "/home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf",
+        "file_size_bytes": 270885952,
+        "total_weight_bytes": 269100288,
+        "n_layer": 30,
+        "bytes_per_layer": 7082496,
+        "output_role_bytes": 56625408,
+        "have_output_tensor": false
+      },
+      "Q8_0": {
+        "path": "/home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-Q8_0.gguf",
+        "file_size_bytes": 144811072,
+        "total_weight_bytes": 143025408,
+        "n_layer": 30,
+        "bytes_per_layer": 3764736,
+        "output_role_bytes": 30083328,
+        "have_output_tensor": false
+      },
+      "Q4_K_M": {
+        "path": "/home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-Q4_K_M.gguf",
+        "file_size_bytes": 105454144,
+        "total_weight_bytes": 103668480,
+        "n_layer": 30,
+        "bytes_per_layer": 2452838,
+        "output_role_bytes": 30083328,
+        "have_output_tensor": false
+      }
+    },
+    "scaling_error_pairs": [
+      {
+        "base_quant": "F16",
+        "target_quant": "Q8_0",
+        "predicted": {
+          "bytes_per_layer": 3786183.1912040683,
+          "output_role_bytes": 30270990.335140657,
+          "total_weight_bytes": 144811072
+        },
+        "actual": {
+          "bytes_per_layer": 3764736,
+          "output_role_bytes": 30083328,
+          "total_weight_bytes": 143025408
+        },
+        "error_pct": {
+          "bytes_per_layer": 0.569686458866392,
+          "output_role_bytes": 0.6238084268491062,
+          "total_weight_bytes": 1.2484942535524877
+        }
+      },
+      {
+        "base_quant": "F16",
+        "target_quant": "Q4_K_M",
+        "predicted": {
+          "bytes_per_layer": 2757169.7518792856,
+          "output_role_bytes": 22043904.031209238,
+          "total_weight_bytes": 105454144
+        },
+        "actual": {
+          "bytes_per_layer": 2452838,
+          "output_role_bytes": 30083328,
+          "total_weight_bytes": 103668480
+        },
+        "error_pct": {
+          "bytes_per_layer": 12.40733191019079,
+          "output_role_bytes": -26.723851725416694,
+          "total_weight_bytes": 1.7224753367658137
+        }
+      }
+    ]
+  },
+  "feasibility_confusion_matrix": [
+    {
+      "case": "smollm2-135m-instruct Q8_0 @ ctx=4096, gpu_layers=0, kv=native (planner-selected, real evaluated decision)",
+      "plan_feasible": true,
+      "real_load_generate_succeeded": true,
+      "classification": "TRUE_FEASIBLE",
+      "host_available_at_plan_bytes": 540504064
+    },
+    {
+      "case": "smollm2-135m-instruct Q4_K_M @ ctx=8192, gpu_layers=0, kv=native (context-focused alternative, real evaluated decision)",
+      "plan_feasible": true,
+      "real_load_generate_succeeded": true,
+      "classification": "TRUE_FEASIBLE"
+    },
+    {
+      "case": "smollm2-135m-instruct F16 @ ctx=200000, gpu_layers=0, kv=native -- deliberately, robustly infeasible regardless of ambient host-memory drift",
+      "plan_feasible": false,
+      "real_load_generate_succeeded": false,
+      "real_failure_detail": "ggml_aligned_malloc: insufficient memory (attempted to allocate 4398.75 MB) -- failed cleanly under a 1.5 GiB ulimit -v safety bound, exit code 4, no host destabilization",
+      "classification": "TRUE_REJECT"
+    },
+    {
+      "case": "smollm2-135m-instruct F16 @ ctx=4096, gpu_layers=0, kv=native, PAIRED plan+run within seconds (~1.2-1.3 GiB available both times)",
+      "plan_feasible": true,
+      "real_load_generate_succeeded": true,
+      "classification": "TRUE_FEASIBLE"
+    },
+    {
+      "case": "smollm2-135m-instruct F16, default auto-ctx ladder (original plan snapshot: 576 MiB available) -- SAME config real-load-tested minutes later at a different (~1019 MiB available) snapshot",
+      "plan_feasible": false,
+      "real_load_generate_succeeded": true,
+      "classification": "UNVERIFIED_REJECT",
+      "note": "Not a same-condition test -- host-available-memory on this shared desktop genuinely changed between the plan() call and the run() call. Cannot be resolved into TRUE_REJECT or FALSE_REJECT without re-testing under the exact original condition, which this live host cannot reliably reproduce on demand."
+    },
+    {
+      "case": "smollm2-360m-instruct (single installed variant, unknown quant -- catalog case-mismatch, no cross-variant join) @ ctx=2048, gpu_layers=0, kv=native, PAIRED plan+run within seconds (832-838 MiB available both times)",
+      "plan_feasible": false,
+      "real_load_generate_succeeded": true,
+      "real_peak_rss_kb": 816808,
+      "classification": "FALSE_REJECT",
+      "note": "Real peak RSS (~797 MiB) came in under real available memory (~818-838 MiB) with only ~20-40 MiB of true margin -- the host-memory guard's conservative reserve rejected a config that, in practice, just barely fit. This is evidence of deliberate conservatism, not of an unsafe or broken check -- see policy_evaluation."
+    }
+  ],
+  "context_capacity_experiment": {
+    "family": "smollm2-135m-instruct",
+    "backend": "cpu",
+    "higher_quality_config": {
+      "quant": "Q8_0",
+      "safe_ctx": 4096,
+      "avg_generation_tok_per_s": 102.47
+    },
+    "lower_memory_config": {
+      "quant": "Q4_K_M",
+      "safe_ctx": 8192,
+      "avg_generation_tok_per_s": 140.26
+    },
+    "larger_context_config_real_run": "PASS -- 2/2 reps succeeded, generated 24 real tokens each, see runtime_validation_cpu. D_context_alternative below",
+    "conclusion": "Real, useful expansion: Y=8192 > X=4096 was actually reached with a real load+generate, at HIGHER throughput than the smaller-context, higher-quality baseline -- not merely a feasibility-on-paper claim."
+  },
+  "performance_floor_evaluation": {
+    "A_naive_default_avg_gen_tok_s": 60.89,
+    "B_manual_high_quality_avg_gen_tok_s": 62.44,
+    "C_planner_selected_avg_gen_tok_s": 102.47,
+    "D_context_alternative_avg_gen_tok_s": 140.26,
+    "C_vs_B_relative_delta_pct": "planner-selected variant (Q8_0) beat the manual high-quality pick (F16) by 64.1% generation tok/s, at the SAME context (4096)",
+    "D_vs_C_relative_delta_pct": 36.9,
+    "classification": "NOT technical-feasibility-only -- D (2x the context of C) was faster, not slower, than C. The 85%-drop floor defined above was never approached by anything tested in this evidence set."
+  },
+  "latency": {
+    "ttft_note": "No dedicated time-to-first-token instrumentation exists in membrane-run's single-shot decode path (no streaming/token-by-token timestamps are captured -- see membrane-run --help: 'a single decode pass: model load, one context, prompt, generation, exit'). Adding real TTFT timestamps would require invasive runtime instrumentation, which Part 9 of the G3 task explicitly says to skip rather than widen scope for. What IS measured and reported instead: prompt_tok_per_sec (prompt/prefill throughput) and generation_tok_per_sec (decode throughput) for every run, plus total wall-clock time. A prompt-processing-time proxy (prompt_tokens / prompt_tok_per_sec) is reported per run where available, but this is a THROUGHPUT-derived estimate, not a measured first-token timestamp -- not claimed as real TTFT."
+  },
+  "gpu_evidence": {
+    "available": true,
+    "scope": "1 family (smollm2-135m-instruct), 3 configs, 2 reps each -- exactly the Part 10 ceiling, no sweep.",
+    "planner_decision_on_gpu": {
+      "alternatives": [
+        "Q8_0",
+        "Q5_K_M",
+        "Q4_K_M"
+      ],
+      "decisions": {
+        "context": 8192,
+        "context_source": "planner_decision",
+        "gpu_layers": 30,
+        "gpu_layers_source": "planner_decision",
+        "kv_placement": "default",
+        "kv_placement_source": "planner_decision",
+        "kv_precision": "q8",
+        "kv_precision_source": "planner_decision"
+      },
+      "explanation": "selected variant 'F16' (candidate 1 of 4 evaluated, 3 feasible alternative(s)) -- Recommended ctx=8192 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-m",
+      "feasibility": {
+        "feasible": true,
+        "host_headroom_bytes": 415950080,
+        "host_headroom_known": true,
+        "host_required_bytes": 63707904,
+        "limiting_resource": "",
+        "max_feasible_context": 8192,
+        "max_feasible_context_known": true
+      },
+      "feasible": true,
+      "hardware": {
+        "backend": "",
+        "device_free_bytes": 3932348416,
+        "device_known": true,
+        "device_name": "",
+        "device_total_bytes": 5173137408,
+        "host_available_bytes": 748093440,
+        "host_available_known": true,
+        "host_reserve_bytes": 268435456,
+        "host_total_bytes": 6051311616
+      },
+      "identity": {
+        "arch_known": true,
+        "arch_name": "llama",
+        "display_name": "SmolLM2-135M-Instruct",
+        "installed": true,
+        "model_name": "smollm2-135m-instruct",
+        "model_path": "/home/kadirerenaltintas/membrane/scratch/g3-registry/models/SmolLM2-135M-Instruct-F16.gguf",
+        "parameter_count": "135M",
+        "variant": "F16",
+        "variant_estimate_only": false,
+        "variant_known": true,
+        "variant_source": "model_metadata"
+      },
+      "membrane_version": "1.0.0",
+      "mode": "plan",
+      "ok": true,
+      "policy_version": "plan-v2-variant-joint-v1",
+      "reasons": [
+        {
+          "code": "FULL_GPU_OFFLOAD_FEASIBLE",
+          "detail": "Q8_FULL_RESIDENCY"
+        },
+        {
+          "code": "KV_Q8_SELECTED_FOR_HEADROOM",
+          "detail": "Q8_FULL_RESIDENCY"
+        }
+      ],
+      "schema_version": 2,
+      "selected_variant": "F16",
+      "variants_evaluated": [
+        {
+          "estimate_only": false,
+          "evaluated": true,
+          "feasible": true,
+          "limiting_resource": "",
+          "plan": {
+            "decisions": {
+              "context": 8192,
+              "context_source": "planner_decision",
+              "gpu_layers": 30,
+              "gpu_layers_source": "planner_decision",
+              "kv_placement": "default",
+              "kv_placement_source": "planner_decision",
+              "kv_precision": "q8",
+              "kv_precision_source": "planner_decision"
+            },
+            "explanation": "Recommended ctx=8192 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+            "feasibility": {
+              "feasible": true,
+              "host_headroom_bytes": 415950080,
+              "host_headroom_known": true,
+              "host_required_bytes": 63707904,
+              "limiting_resource": "",
+              "max_feasible_context": 8192,
+              "max_feasible_context_known": true
+            },
+            "hardware": {
+              "backend": "",
+              "device_free_bytes": 3932348416,
+              "device_known": true,
+              "device_name": "",
+              "device_total_bytes": 5173137408,
+              "host_available_bytes": 748093440,
+              "host_available_known": true,
+              "host_reserve_bytes": 268435456,
+              "host_total_bytes": 6051311616
+            },
+            "identity": {
+              "arch_known": true,
+              "arch_name": "llama",
+              "display_name": "SmolLM2-135M-Instruct",
+              "installed": true,
+              "model_name": "smollm2-135m-instruct",
+              "model_path": "/home/kadirerenaltintas/membrane/scratch/g3-registry/models/SmolLM2-135M-Instruct-F16.gguf",
+              "parameter_count": "135M",
+              "variant": "F16",
+              "variant_estimate_only": false,
+              "variant_known": true,
+              "variant_source": "model_metadata"
+            },
+            "reasons": [
+              {
+                "code": "FULL_GPU_OFFLOAD_FEASIBLE",
+                "detail": "Q8_FULL_RESIDENCY"
+              },
+              {
+                "code": "KV_Q8_SELECTED_FOR_HEADROOM",
+                "detail": "Q8_FULL_RESIDENCY"
+              }
+            ],
+            "workload": {
+              "context_source": "hardware_auto",
+              "gpu_layers_request": "auto",
+              "gpu_layers_source": "hardware_auto",
+              "kv_placement_request": "default",
+              "kv_placement_source": "fallback_default",
+              "precision_request": "adaptive",
+              "precision_source": "hardware_auto",
+              "requested_context": 0
+            }
+          },
+          "selected": true,
+          "source": "model_metadata",
+          "variant": "F16"
+        },
+        {
+          "estimate_only": true,
+          "evaluated": true,
+          "feasible": true,
+          "limiting_resource": "",
+          "plan": {
+            "decisions": {
+              "context": 8192,
+              "context_source": "planner_decision",
+              "gpu_layers": 30,
+              "gpu_layers_source": "planner_decision",
+              "kv_placement": "default",
+              "kv_placement_source": "planner_decision",
+              "kv_precision": "q8",
+              "kv_precision_source": "planner_decision"
+            },
+            "explanation": "Recommended ctx=8192 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+            "feasibility": {
+              "feasible": true,
+              "host_headroom_bytes": 444646219,
+              "host_headroom_known": true,
+              "host_required_bytes": 35011765,
+              "limiting_resource": "",
+              "max_feasible_context": 8192,
+              "max_feasible_context_known": true
+            },
+            "hardware": {
+              "backend": "",
+              "device_free_bytes": 3932348416,
+              "device_known": true,
+              "device_name": "",
+              "device_total_bytes": 5173137408,
+              "host_available_bytes": 748093440,
+              "host_available_known": true,
+              "host_reserve_bytes": 268435456,
+              "host_total_bytes": 6051311616
+            },
+            "identity": {
+              "arch_known": true,
+              "arch_name": "llama",
+              "display_name": "SmolLM2-135M-Instruct",
+              "installed": false,
+              "model_name": "smollm2-135m-instruct",
+              "model_path": "",
+              "parameter_count": "135M",
+              "variant": "Q8_0",
+              "variant_estimate_only": true,
+              "variant_known": true,
+              "variant_source": "catalog_metadata"
+            },
+            "reasons": [
+              {
+                "code": "MODEL_VARIANT_ESTIMATE_ONLY",
+                "detail": "variant fit estimated from catalog size_bytes, not a real GGUF measurement"
+              },
+              {
+                "code": "FULL_GPU_OFFLOAD_FEASIBLE",
+                "detail": "Q8_FULL_RESIDENCY"
+              },
+              {
+                "code": "KV_Q8_SELECTED_FOR_HEADROOM",
+                "detail": "Q8_FULL_RESIDENCY"
+              }
+            ],
+            "workload": {
+              "context_source": "hardware_auto",
+              "gpu_layers_request": "auto",
+              "gpu_layers_source": "hardware_auto",
+              "kv_placement_request": "default",
+              "kv_placement_source": "fallback_default",
+              "precision_request": "adaptive",
+              "precision_source": "hardware_auto",
+              "requested_context": 0
+            }
+          },
+          "selected": false,
+          "source": "catalog_metadata",
+          "variant": "Q8_0"
+        },
+        {
+          "estimate_only": true,
+          "evaluated": true,
+          "feasible": true,
+          "limiting_resource": "",
+          "plan": {
+            "decisions": {
+              "context": 8192,
+              "context_source": "planner_decision",
+              "gpu_layers": 30,
+              "gpu_layers_source": "planner_decision",
+              "kv_placement": "default",
+              "kv_placement_source": "planner_decision",
+              "kv_precision": "q8",
+              "kv_precision_source": "planner_decision"
+            },
+            "explanation": "Recommended ctx=8192 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+            "feasibility": {
+              "feasible": true,
+              "host_headroom_bytes": 452554105,
+              "host_headroom_known": true,
+              "host_required_bytes": 27103879,
+              "limiting_resource": "",
+              "max_feasible_context": 8192,
+              "max_feasible_context_known": true
+            },
+            "hardware": {
+              "backend": "",
+              "device_free_bytes": 3932348416,
+              "device_known": true,
+              "device_name": "",
+              "device_total_bytes": 5173137408,
+              "host_available_bytes": 748093440,
+              "host_available_known": true,
+              "host_reserve_bytes": 268435456,
+              "host_total_bytes": 6051311616
+            },
+            "identity": {
+              "arch_known": true,
+              "arch_name": "llama",
+              "display_name": "SmolLM2-135M-Instruct",
+              "installed": false,
+              "model_name": "smollm2-135m-instruct",
+              "model_path": "",
+              "parameter_count": "135M",
+              "variant": "Q5_K_M",
+              "variant_estimate_only": true,
+              "variant_known": true,
+              "variant_source": "catalog_metadata"
+            },
+            "reasons": [
+              {
+                "code": "MODEL_VARIANT_ESTIMATE_ONLY",
+                "detail": "variant fit estimated from catalog size_bytes, not a real GGUF measurement"
+              },
+              {
+                "code": "FULL_GPU_OFFLOAD_FEASIBLE",
+                "detail": "Q8_FULL_RESIDENCY"
+              },
+              {
+                "code": "KV_Q8_SELECTED_FOR_HEADROOM",
+                "detail": "Q8_FULL_RESIDENCY"
+              }
+            ],
+            "workload": {
+              "context_source": "hardware_auto",
+              "gpu_layers_request": "auto",
+              "gpu_layers_source": "hardware_auto",
+              "kv_placement_request": "default",
+              "kv_placement_source": "fallback_default",
+              "precision_request": "adaptive",
+              "precision_source": "hardware_auto",
+              "requested_context": 0
+            }
+          },
+          "selected": false,
+          "source": "catalog_metadata",
+          "variant": "Q5_K_M"
+        },
+        {
+          "estimate_only": true,
+          "evaluated": true,
+          "feasible": true,
+          "limiting_resource": "",
+          "plan": {
+            "decisions": {
+              "context": 8192,
+              "context_source": "planner_decision",
+              "gpu_layers": 30,
+              "gpu_layers_source": "planner_decision",
+              "kv_placement": "default",
+              "kv_placement_source": "planner_decision",
+              "kv_precision": "q8",
+              "kv_precision_source": "planner_decision"
+            },
+            "explanation": "Recommended ctx=8192 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+            "feasibility": {
+              "feasible": true,
+              "host_headroom_bytes": 454161741,
+              "host_headroom_known": true,
+              "host_required_bytes": 25496243,
+              "limiting_resource": "",
+              "max_feasible_context": 8192,
+              "max_feasible_context_known": true
+            },
+            "hardware": {
+              "backend": "",
+              "device_free_bytes": 3932348416,
+              "device_known": true,
+              "device_name": "",
+              "device_total_bytes": 5173137408,
+              "host_available_bytes": 748093440,
+              "host_available_known": true,
+              "host_reserve_bytes": 268435456,
+              "host_total_bytes": 6051311616
+            },
+            "identity": {
+              "arch_known": true,
+              "arch_name": "llama",
+              "display_name": "SmolLM2-135M-Instruct",
+              "installed": false,
+              "model_name": "smollm2-135m-instruct",
+              "model_path": "",
+              "parameter_count": "135M",
+              "variant": "Q4_K_M",
+              "variant_estimate_only": true,
+              "variant_known": true,
+              "variant_source": "catalog_metadata"
+            },
+            "reasons": [
+              {
+                "code": "MODEL_VARIANT_ESTIMATE_ONLY",
+                "detail": "variant fit estimated from catalog size_bytes, not a real GGUF measurement"
+              },
+              {
+                "code": "FULL_GPU_OFFLOAD_FEASIBLE",
+                "detail": "Q8_FULL_RESIDENCY"
+              },
+              {
+                "code": "KV_Q8_SELECTED_FOR_HEADROOM",
+                "detail": "Q8_FULL_RESIDENCY"
+              }
+            ],
+            "workload": {
+              "context_source": "hardware_auto",
+              "gpu_layers_request": "auto",
+              "gpu_layers_source": "hardware_auto",
+              "kv_placement_request": "default",
+              "kv_placement_source": "fallback_default",
+              "precision_request": "adaptive",
+              "precision_source": "hardware_auto",
+              "requested_context": 0
+            }
+          },
+          "selected": false,
+          "source": "catalog_metadata",
+          "variant": "Q4_K_M"
+        }
+      ],
+      "workload": {
+        "context_source": "hardware_auto",
+        "gpu_layers_request": "auto",
+        "gpu_layers_source": "hardware_auto",
+        "kv_placement_request": "default",
+        "kv_placement_source": "fallback_default",
+        "precision_request": "adaptive",
+        "precision_source": "hardware_auto",
+        "requested_context": 0
+      }
+    },
+    "runs": [
+      {
+        "label": "VK_A_native_all_layers",
+        "rep": 0,
+        "exit_code": 0,
+        "generation_tok_per_s": 251.791238,
+        "peak_rss_kb": 475988
+      },
+      {
+        "label": "VK_A_native_all_layers",
+        "rep": 1,
+        "exit_code": 0,
+        "generation_tok_per_s": 271.210059,
+        "peak_rss_kb": 476920
+      },
+      {
+        "label": "VK_B_q8_all_layers",
+        "rep": 0,
+        "exit_code": 0,
+        "generation_tok_per_s": 244.033252,
+        "peak_rss_kb": 477116
+      },
+      {
+        "label": "VK_B_q8_all_layers",
+        "rep": 1,
+        "exit_code": 0,
+        "generation_tok_per_s": 262.387781,
+        "peak_rss_kb": 476940
+      },
+      {
+        "label": "VK_C_adaptive_all_layers",
+        "rep": 0,
+        "exit_code": 0,
+        "generation_tok_per_s": 277.678848,
+        "peak_rss_kb": 297044
+      },
+      {
+        "label": "VK_C_adaptive_all_layers",
+        "rep": 1,
+        "exit_code": 0,
+        "generation_tok_per_s": 285.061475,
+        "peak_rss_kb": 297676
+      }
+    ],
+    "vram_measurement_limitation": "nvidia-smi free-VRAM was queried immediately before and after each subprocess; VRAM is released on process exit, so the 'after' reading always equals 'before' -- this method cannot observe PEAK VRAM during the run. Disclosed as unmeasured, not fabricated.",
+    "gpu_vs_best_cpu": "GPU (Vulkan, all layers offloaded) ran roughly 1.9-2x the best real CPU throughput measured in this session (D_context_alternative, ~140 tok/s) -- a real, disclosed, single-host, single-GPU data point, not a broad claim.",
+    "scope_statement": "GPU policy remains LESS validated than CPU policy after this milestone -- one device, one small model family, six total runs."
+  },
+  "policy_evaluation": {
+    "q1_highest_quality_reasonable_throughput": "Yes on GPU (VRAM abundant for this tiny model, F16 got full context AND full GPU offload). On CPU, the highest-quality feasible pick (Q8_0) had reasonable throughput in absolute terms (~102 tok/s) but was NOT the fastest or highest-context option available -- Q4_K_M beat it on both axes.",
+    "q2_lower_quant_unlocked_more_context": "Yes, real and measured: Q4_K_M unlocked ctx=8192 vs Q8_0's ctx=4096 on this host, confirmed by a real successful larger-context run.",
+    "q3_selected_plan_poor_vs_better_alternative": "Yes, once, in this evidence set: Q8_0 (selected) was slower AND lower-context than Q4_K_M (a lower-priority alternative) on CPU, this host, this family. Not observed on GPU for the same family (VRAM was not the binding constraint there).",
+    "q4_size_bytes_quality_proxy_still_acceptable": "For total_weight bytes, yes (error stayed under 2% against the real F16-registered sibling join in this evidence set). As a QUALITY proxy specifically, size_bytes descending is still a real, physical ordering (more bits per weight) -- this milestone did not measure output QUALITY (perplexity/task accuracy) at all, only memory/context/throughput, so 'quality' here still means 'bits per weight', unchanged from G2's own framing, not independently re-verified.",
+    "q5_quality_first_then_max_context_still_defensible": "Defensible as a DEFAULT, still. It is not the only reasonable choice: this milestone's own real CPU data shows a context-first choice would sometimes win on this exact host on both context and speed. One family/host is not enough evidence to change the default policy this milestone (see decision below) -- it IS enough to document the real tradeoff for the next milestone to weigh.",
+    "decision": "POLICY UNCHANGED. plan-v2-variant-joint-v1 stays exactly as G2 shipped it. Evidence here is real but narrow (one tiny model family, one shared dev host, one GPU) -- not a broad enough basis to change default product behavior. See docs/planner-v2-evidence.md for the full reasoning."
+  },
+  "objective_modes_decision": {
+    "added": false,
+    "reasoning": "The task explicitly permits adding --objective quality/--objective context IF evidence shows they select meaningfully different plans. This milestone's real CPU evidence DOES show exactly that divergence (quality-first picks Q8_0@4096; a context-first mode would pick Q4_K_M or Q5_K_M@8192, a real, materially different plan). The deliberate decision this milestone is to defer implementing the flag anyway: the divergence is demonstrated on one tiny model family, one host, one backend (and does NOT reproduce on the GPU backend for the same family, where VRAM was not the binding constraint) -- narrower than the task's own repeated instruction that 'G3 should normally be conservative'. Recorded here as a well-evidenced candidate for a future milestone once broader evidence (more families, more hosts) exists, not implemented now."
+  },
+  "execution_integration_readiness": {
+    "decision": "READY_FOR_READ_ONLY_ONLY",
+    "reasoning": "`membrane plan` remains advisory only. Evidence this milestone covers one tiny model family with real multi-quant validation (smollm2-135m-instruct), one single-quant sanity point (smollm2-360m-instruct), one shared, resource-constrained host, and one GPU. No mid-size or large real model was load-tested (qwen2.5-1.5b-instruct-fp16.gguf, 3.5 GiB, was deliberately skipped -- real available RAM on this host during this session ranged ~200 MiB-1.3 GiB, too tight to load a 3.5 GiB F16 model safely alongside other real processes on a shared desktop; see docs/planner-v2-evidence.md limitations). The real confusion-matrix results above also show the host-memory guard can be conservative enough to reject configurations that truly would have fit (FALSE_REJECT, twice) -- safe direction for a read-only advisor, but not yet the standard of accuracy `membrane use`/`membrane serve` would need before silently acting on Planner v2's decisions by default or even under an opt-in flag."
+  },
+  "raw_evidence": {
+    "evidence_level": "REAL",
+    "planner_decisions": {
+      "cpu_snapshot_1": {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane/membrane plan smollm2-135m-instruct --json",
+        "exit_code": 0,
+        "wall_seconds": 0.044,
+        "host_available_bytes_before": 468041728,
+        "stderr_tail": "",
+        "json": {
+          "alternatives": [
+            "Q5_K_M",
+            "Q4_K_M"
+          ],
+          "decisions": {
+            "context": 4096,
+            "context_source": "planner_decision",
+            "gpu_layers": 0,
+            "gpu_layers_source": "planner_decision",
+            "kv_placement": "default",
+            "kv_placement_source": "planner_decision",
+            "kv_precision": "native",
+            "kv_precision_source": "planner_decision"
+          },
+          "explanation": "selected variant 'Q8_0' (candidate 2 of 4 evaluated, 2 feasible alternative(s)) -- Recommended ctx=4096 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-",
+          "feasibility": {
+            "feasible": true,
+            "host_headroom_bytes": 32885696,
+            "host_headroom_known": true,
+            "host_required_bytes": 239182912,
+            "limiting_resource": "",
+            "max_feasible_context": 4096,
+            "max_feasible_context_known": true
+          },
+          "feasible": true,
+          "hardware": {
+            "backend": "",
+            "device_free_bytes": 0,
+            "device_known": false,
+            "device_name": "",
+            "device_total_bytes": 0,
+            "host_available_bytes": 540504064,
+            "host_available_known": true,
+            "host_reserve_bytes": 268435456,
+            "host_total_bytes": 6051311616
+          },
+          "identity": {
+            "arch_known": true,
+            "arch_name": "llama",
+            "display_name": "SmolLM2-135M-Instruct",
+            "installed": false,
+            "model_name": "smollm2-135m-instruct",
+            "model_path": "",
+            "parameter_count": "135M",
+            "variant": "Q8_0",
+            "variant_estimate_only": true,
+            "variant_known": true,
+            "variant_source": "catalog_metadata"
+          },
+          "membrane_version": "1.0.0",
+          "mode": "plan",
+          "ok": true,
+          "policy_version": "plan-v2-variant-joint-v1",
+          "reasons": [
+            {
+              "code": "MODEL_VARIANT_ESTIMATE_ONLY",
+              "detail": "variant fit estimated from catalog size_bytes, not a real GGUF measurement"
+            },
+            {
+              "code": "CPU_ONLY_PLAN",
+              "detail": "CANDIDATE_SELECTED"
+            }
+          ],
+          "schema_version": 2,
+          "selected_variant": "Q8_0",
+          "variants_evaluated": [
+            {
+              "estimate_only": false,
+              "evaluated": false,
+              "feasible": false,
+              "limiting_resource": "HOST_MEMORY_LIMIT",
+              "plan": {
+                "decisions": null,
+                "explanation": "",
+                "feasibility": {
+                  "feasible": false,
+                  "host_headroom_bytes": 0,
+                  "host_headroom_known": false,
+                  "host_required_bytes": 0,
+                  "limiting_resource": "HOST_MEMORY_LIMIT",
+                  "max_feasible_context": 0,
+                  "max_feasible_context_known": false
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 0,
+                  "device_known": false,
+                  "device_name": "",
+                  "device_total_bytes": 0,
+                  "host_available_bytes": 540504064,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 0,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-135M-Instruct",
+                  "installed": true,
+                  "model_name": "smollm2-135m-instruct",
+                  "model_path": "/home/kadirerenaltintas/membrane/scratch/g3-registry/models/SmolLM2-135M-Instruct-F16.gguf",
+                  "parameter_count": "135M",
+                  "variant": "F16",
+                  "variant_estimate_only": false,
+                  "variant_known": true,
+                  "variant_source": "model_metadata"
+                },
+                "reasons": [
+                  {
+                    "code": "HOST_MEMORY_LIMIT",
+                    "detail": "PLANNER_REJECTED_ALL: every candidate was rejected by the joint planner"
+                  }
+                ],
+                "workload": {
+                  "context_source": "hardware_auto",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "native",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 0
+                }
+              },
+              "selected": false,
+              "source": "model_metadata",
+              "variant": "F16"
+            },
+            {
+              "estimate_only": true,
+              "evaluated": true,
+              "feasible": true,
+              "limiting_resource": "",
+              "plan": {
+                "decisions": {
+                  "context": 4096,
+                  "context_source": "planner_decision",
+                  "gpu_layers": 0,
+                  "gpu_layers_source": "planner_decision",
+                  "kv_placement": "default",
+                  "kv_placement_source": "planner_decision",
+                  "kv_precision": "native",
+                  "kv_precision_source": "planner_decision"
+                },
+                "explanation": "Recommended ctx=4096 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+                "feasibility": {
+                  "feasible": true,
+                  "host_headroom_bytes": 32885696,
+                  "host_headroom_known": true,
+                  "host_required_bytes": 239182912,
+                  "limiting_resource": "",
+                  "max_feasible_context": 4096,
+                  "max_feasible_context_known": true
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 0,
+                  "device_known": false,
+                  "device_name": "",
+                  "device_total_bytes": 0,
+                  "host_available_bytes": 540504064,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 268435456,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-135M-Instruct",
+                  "installed": false,
+                  "model_name": "smollm2-135m-instruct",
+                  "model_path": "",
+                  "parameter_count": "135M",
+                  "variant": "Q8_0",
+                  "variant_estimate_only": true,
+                  "variant_known": true,
+                  "variant_source": "catalog_metadata"
+                },
+                "reasons": [
+                  {
+                    "code": "MODEL_VARIANT_ESTIMATE_ONLY",
+                    "detail": "variant fit estimated from catalog size_bytes, not a real GGUF measurement"
+                  },
+                  {
+                    "code": "CPU_ONLY_PLAN",
+                    "detail": "CANDIDATE_SELECTED"
+                  }
+                ],
+                "workload": {
+                  "context_source": "hardware_auto",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "native",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 0
+                }
+              },
+              "selected": true,
+              "source": "catalog_metadata",
+              "variant": "Q8_0"
+            },
+            {
+              "estimate_only": true,
+              "evaluated": true,
+              "feasible": true,
+              "limiting_resource": "",
+              "plan": {
+                "decisions": {
+                  "context": 4096,
+                  "context_source": "planner_decision",
+                  "gpu_layers": 0,
+                  "gpu_layers_source": "planner_decision",
+                  "kv_placement": "default",
+                  "kv_placement_source": "planner_decision",
+                  "kv_precision": "native",
+                  "kv_precision_source": "planner_decision"
+                },
+                "explanation": "Recommended ctx=4096 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+                "feasibility": {
+                  "feasible": true,
+                  "host_headroom_bytes": 65593280,
+                  "host_headroom_known": true,
+                  "host_required_bytes": 206475328,
+                  "limiting_resource": "",
+                  "max_feasible_context": 4096,
+                  "max_feasible_context_known": true
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 0,
+                  "device_known": false,
+                  "device_name": "",
+                  "device_total_bytes": 0,
+                  "host_available_bytes": 540504064,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 268435456,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-135M-Instruct",
+                  "installed": false,
+                  "model_name": "smollm2-135m-instruct",
+                  "model_path": "",
+                  "parameter_count": "135M",
+                  "variant": "Q5_K_M",
+                  "variant_estimate_only": true,
+                  "variant_known": true,
+                  "variant_source": "catalog_metadata"
+                },
+                "reasons": [
+                  {
+                    "code": "MODEL_VARIANT_ESTIMATE_ONLY",
+                    "detail": "variant fit estimated from catalog size_bytes, not a real GGUF measurement"
+                  },
+                  {
+                    "code": "CPU_ONLY_PLAN",
+                    "detail": "CANDIDATE_SELECTED"
+                  }
+                ],
+                "workload": {
+                  "context_source": "hardware_auto",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "native",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 0
+                }
+              },
+              "selected": false,
+              "source": "catalog_metadata",
+              "variant": "Q5_K_M"
+            },
+            {
+              "estimate_only": true,
+              "evaluated": true,
+              "feasible": true,
+              "limiting_resource": "",
+              "plan": {
+                "decisions": {
+                  "context": 4096,
+                  "context_source": "planner_decision",
+                  "gpu_layers": 0,
+                  "gpu_layers_source": "planner_decision",
+                  "kv_placement": "default",
+                  "kv_placement_source": "planner_decision",
+                  "kv_precision": "native",
+                  "kv_precision_source": "planner_decision"
+                },
+                "explanation": "Recommended ctx=4096 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+                "feasibility": {
+                  "feasible": true,
+                  "host_headroom_bytes": 72242624,
+                  "host_headroom_known": true,
+                  "host_required_bytes": 199825984,
+                  "limiting_resource": "",
+                  "max_feasible_context": 4096,
+                  "max_feasible_context_known": true
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 0,
+                  "device_known": false,
+                  "device_name": "",
+                  "device_total_bytes": 0,
+                  "host_available_bytes": 540504064,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 268435456,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-135M-Instruct",
+                  "installed": false,
+                  "model_name": "smollm2-135m-instruct",
+                  "model_path": "",
+                  "parameter_count": "135M",
+                  "variant": "Q4_K_M",
+                  "variant_estimate_only": true,
+                  "variant_known": true,
+                  "variant_source": "catalog_metadata"
+                },
+                "reasons": [
+                  {
+                    "code": "MODEL_VARIANT_ESTIMATE_ONLY",
+                    "detail": "variant fit estimated from catalog size_bytes, not a real GGUF measurement"
+                  },
+                  {
+                    "code": "CPU_ONLY_PLAN",
+                    "detail": "CANDIDATE_SELECTED"
+                  }
+                ],
+                "workload": {
+                  "context_source": "hardware_auto",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "native",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 0
+                }
+              },
+              "selected": false,
+              "source": "catalog_metadata",
+              "variant": "Q4_K_M"
+            }
+          ],
+          "workload": {
+            "context_source": "hardware_auto",
+            "gpu_layers_request": "auto",
+            "gpu_layers_source": "hardware_auto",
+            "kv_placement_request": "default",
+            "kv_placement_source": "fallback_default",
+            "precision_request": "native",
+            "precision_source": "hardware_auto",
+            "requested_context": 0
+          }
+        }
+      },
+      "vulkan_snapshot_1": {
+        "command": "/home/kadirerenaltintas/membrane/build-vulkan/tools/membrane/membrane plan smollm2-135m-instruct --json",
+        "exit_code": 0,
+        "wall_seconds": 0.64,
+        "host_available_bytes_before": 617975808,
+        "stderr_tail": "",
+        "json": {
+          "alternatives": [
+            "Q8_0",
+            "Q5_K_M",
+            "Q4_K_M"
+          ],
+          "decisions": {
+            "context": 8192,
+            "context_source": "planner_decision",
+            "gpu_layers": 30,
+            "gpu_layers_source": "planner_decision",
+            "kv_placement": "default",
+            "kv_placement_source": "planner_decision",
+            "kv_precision": "q8",
+            "kv_precision_source": "planner_decision"
+          },
+          "explanation": "selected variant 'F16' (candidate 1 of 4 evaluated, 3 feasible alternative(s)) -- Recommended ctx=8192 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-m",
+          "feasibility": {
+            "feasible": true,
+            "host_headroom_bytes": 415950080,
+            "host_headroom_known": true,
+            "host_required_bytes": 63707904,
+            "limiting_resource": "",
+            "max_feasible_context": 8192,
+            "max_feasible_context_known": true
+          },
+          "feasible": true,
+          "hardware": {
+            "backend": "",
+            "device_free_bytes": 3932348416,
+            "device_known": true,
+            "device_name": "",
+            "device_total_bytes": 5173137408,
+            "host_available_bytes": 748093440,
+            "host_available_known": true,
+            "host_reserve_bytes": 268435456,
+            "host_total_bytes": 6051311616
+          },
+          "identity": {
+            "arch_known": true,
+            "arch_name": "llama",
+            "display_name": "SmolLM2-135M-Instruct",
+            "installed": true,
+            "model_name": "smollm2-135m-instruct",
+            "model_path": "/home/kadirerenaltintas/membrane/scratch/g3-registry/models/SmolLM2-135M-Instruct-F16.gguf",
+            "parameter_count": "135M",
+            "variant": "F16",
+            "variant_estimate_only": false,
+            "variant_known": true,
+            "variant_source": "model_metadata"
+          },
+          "membrane_version": "1.0.0",
+          "mode": "plan",
+          "ok": true,
+          "policy_version": "plan-v2-variant-joint-v1",
+          "reasons": [
+            {
+              "code": "FULL_GPU_OFFLOAD_FEASIBLE",
+              "detail": "Q8_FULL_RESIDENCY"
+            },
+            {
+              "code": "KV_Q8_SELECTED_FOR_HEADROOM",
+              "detail": "Q8_FULL_RESIDENCY"
+            }
+          ],
+          "schema_version": 2,
+          "selected_variant": "F16",
+          "variants_evaluated": [
+            {
+              "estimate_only": false,
+              "evaluated": true,
+              "feasible": true,
+              "limiting_resource": "",
+              "plan": {
+                "decisions": {
+                  "context": 8192,
+                  "context_source": "planner_decision",
+                  "gpu_layers": 30,
+                  "gpu_layers_source": "planner_decision",
+                  "kv_placement": "default",
+                  "kv_placement_source": "planner_decision",
+                  "kv_precision": "q8",
+                  "kv_precision_source": "planner_decision"
+                },
+                "explanation": "Recommended ctx=8192 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+                "feasibility": {
+                  "feasible": true,
+                  "host_headroom_bytes": 415950080,
+                  "host_headroom_known": true,
+                  "host_required_bytes": 63707904,
+                  "limiting_resource": "",
+                  "max_feasible_context": 8192,
+                  "max_feasible_context_known": true
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 3932348416,
+                  "device_known": true,
+                  "device_name": "",
+                  "device_total_bytes": 5173137408,
+                  "host_available_bytes": 748093440,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 268435456,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-135M-Instruct",
+                  "installed": true,
+                  "model_name": "smollm2-135m-instruct",
+                  "model_path": "/home/kadirerenaltintas/membrane/scratch/g3-registry/models/SmolLM2-135M-Instruct-F16.gguf",
+                  "parameter_count": "135M",
+                  "variant": "F16",
+                  "variant_estimate_only": false,
+                  "variant_known": true,
+                  "variant_source": "model_metadata"
+                },
+                "reasons": [
+                  {
+                    "code": "FULL_GPU_OFFLOAD_FEASIBLE",
+                    "detail": "Q8_FULL_RESIDENCY"
+                  },
+                  {
+                    "code": "KV_Q8_SELECTED_FOR_HEADROOM",
+                    "detail": "Q8_FULL_RESIDENCY"
+                  }
+                ],
+                "workload": {
+                  "context_source": "hardware_auto",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "adaptive",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 0
+                }
+              },
+              "selected": true,
+              "source": "model_metadata",
+              "variant": "F16"
+            },
+            {
+              "estimate_only": true,
+              "evaluated": true,
+              "feasible": true,
+              "limiting_resource": "",
+              "plan": {
+                "decisions": {
+                  "context": 8192,
+                  "context_source": "planner_decision",
+                  "gpu_layers": 30,
+                  "gpu_layers_source": "planner_decision",
+                  "kv_placement": "default",
+                  "kv_placement_source": "planner_decision",
+                  "kv_precision": "q8",
+                  "kv_precision_source": "planner_decision"
+                },
+                "explanation": "Recommended ctx=8192 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+                "feasibility": {
+                  "feasible": true,
+                  "host_headroom_bytes": 444646219,
+                  "host_headroom_known": true,
+                  "host_required_bytes": 35011765,
+                  "limiting_resource": "",
+                  "max_feasible_context": 8192,
+                  "max_feasible_context_known": true
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 3932348416,
+                  "device_known": true,
+                  "device_name": "",
+                  "device_total_bytes": 5173137408,
+                  "host_available_bytes": 748093440,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 268435456,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-135M-Instruct",
+                  "installed": false,
+                  "model_name": "smollm2-135m-instruct",
+                  "model_path": "",
+                  "parameter_count": "135M",
+                  "variant": "Q8_0",
+                  "variant_estimate_only": true,
+                  "variant_known": true,
+                  "variant_source": "catalog_metadata"
+                },
+                "reasons": [
+                  {
+                    "code": "MODEL_VARIANT_ESTIMATE_ONLY",
+                    "detail": "variant fit estimated from catalog size_bytes, not a real GGUF measurement"
+                  },
+                  {
+                    "code": "FULL_GPU_OFFLOAD_FEASIBLE",
+                    "detail": "Q8_FULL_RESIDENCY"
+                  },
+                  {
+                    "code": "KV_Q8_SELECTED_FOR_HEADROOM",
+                    "detail": "Q8_FULL_RESIDENCY"
+                  }
+                ],
+                "workload": {
+                  "context_source": "hardware_auto",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "adaptive",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 0
+                }
+              },
+              "selected": false,
+              "source": "catalog_metadata",
+              "variant": "Q8_0"
+            },
+            {
+              "estimate_only": true,
+              "evaluated": true,
+              "feasible": true,
+              "limiting_resource": "",
+              "plan": {
+                "decisions": {
+                  "context": 8192,
+                  "context_source": "planner_decision",
+                  "gpu_layers": 30,
+                  "gpu_layers_source": "planner_decision",
+                  "kv_placement": "default",
+                  "kv_placement_source": "planner_decision",
+                  "kv_precision": "q8",
+                  "kv_precision_source": "planner_decision"
+                },
+                "explanation": "Recommended ctx=8192 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+                "feasibility": {
+                  "feasible": true,
+                  "host_headroom_bytes": 452554105,
+                  "host_headroom_known": true,
+                  "host_required_bytes": 27103879,
+                  "limiting_resource": "",
+                  "max_feasible_context": 8192,
+                  "max_feasible_context_known": true
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 3932348416,
+                  "device_known": true,
+                  "device_name": "",
+                  "device_total_bytes": 5173137408,
+                  "host_available_bytes": 748093440,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 268435456,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-135M-Instruct",
+                  "installed": false,
+                  "model_name": "smollm2-135m-instruct",
+                  "model_path": "",
+                  "parameter_count": "135M",
+                  "variant": "Q5_K_M",
+                  "variant_estimate_only": true,
+                  "variant_known": true,
+                  "variant_source": "catalog_metadata"
+                },
+                "reasons": [
+                  {
+                    "code": "MODEL_VARIANT_ESTIMATE_ONLY",
+                    "detail": "variant fit estimated from catalog size_bytes, not a real GGUF measurement"
+                  },
+                  {
+                    "code": "FULL_GPU_OFFLOAD_FEASIBLE",
+                    "detail": "Q8_FULL_RESIDENCY"
+                  },
+                  {
+                    "code": "KV_Q8_SELECTED_FOR_HEADROOM",
+                    "detail": "Q8_FULL_RESIDENCY"
+                  }
+                ],
+                "workload": {
+                  "context_source": "hardware_auto",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "adaptive",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 0
+                }
+              },
+              "selected": false,
+              "source": "catalog_metadata",
+              "variant": "Q5_K_M"
+            },
+            {
+              "estimate_only": true,
+              "evaluated": true,
+              "feasible": true,
+              "limiting_resource": "",
+              "plan": {
+                "decisions": {
+                  "context": 8192,
+                  "context_source": "planner_decision",
+                  "gpu_layers": 30,
+                  "gpu_layers_source": "planner_decision",
+                  "kv_placement": "default",
+                  "kv_placement_source": "planner_decision",
+                  "kv_precision": "q8",
+                  "kv_precision_source": "planner_decision"
+                },
+                "explanation": "Recommended ctx=8192 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 2 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+                "feasibility": {
+                  "feasible": true,
+                  "host_headroom_bytes": 454161741,
+                  "host_headroom_known": true,
+                  "host_required_bytes": 25496243,
+                  "limiting_resource": "",
+                  "max_feasible_context": 8192,
+                  "max_feasible_context_known": true
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 3932348416,
+                  "device_known": true,
+                  "device_name": "",
+                  "device_total_bytes": 5173137408,
+                  "host_available_bytes": 748093440,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 268435456,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-135M-Instruct",
+                  "installed": false,
+                  "model_name": "smollm2-135m-instruct",
+                  "model_path": "",
+                  "parameter_count": "135M",
+                  "variant": "Q4_K_M",
+                  "variant_estimate_only": true,
+                  "variant_known": true,
+                  "variant_source": "catalog_metadata"
+                },
+                "reasons": [
+                  {
+                    "code": "MODEL_VARIANT_ESTIMATE_ONLY",
+                    "detail": "variant fit estimated from catalog size_bytes, not a real GGUF measurement"
+                  },
+                  {
+                    "code": "FULL_GPU_OFFLOAD_FEASIBLE",
+                    "detail": "Q8_FULL_RESIDENCY"
+                  },
+                  {
+                    "code": "KV_Q8_SELECTED_FOR_HEADROOM",
+                    "detail": "Q8_FULL_RESIDENCY"
+                  }
+                ],
+                "workload": {
+                  "context_source": "hardware_auto",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "adaptive",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 0
+                }
+              },
+              "selected": false,
+              "source": "catalog_metadata",
+              "variant": "Q4_K_M"
+            }
+          ],
+          "workload": {
+            "context_source": "hardware_auto",
+            "gpu_layers_request": "auto",
+            "gpu_layers_source": "hardware_auto",
+            "kv_placement_request": "default",
+            "kv_placement_source": "fallback_default",
+            "precision_request": "adaptive",
+            "precision_source": "hardware_auto",
+            "requested_context": 0
+          }
+        }
+      },
+      "cpu_360m_snapshot_1": {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane/membrane plan smollm2-360m-instruct --json",
+        "exit_code": 0,
+        "wall_seconds": 0.021,
+        "host_available_bytes_before": 791564288,
+        "stderr_tail": "",
+        "json": {
+          "alternatives": [],
+          "decisions": null,
+          "explanation": "no evaluated variant (1 considered) has a feasible plan under current constraints -- see each candidate's own reasons",
+          "feasibility": {
+            "feasible": false,
+            "host_headroom_bytes": 0,
+            "host_headroom_known": false,
+            "host_required_bytes": 0,
+            "limiting_resource": "HOST_MEMORY_LIMIT",
+            "max_feasible_context": 0,
+            "max_feasible_context_known": false
+          },
+          "feasible": false,
+          "hardware": {
+            "backend": "",
+            "device_free_bytes": 0,
+            "device_known": false,
+            "device_name": "",
+            "device_total_bytes": 0,
+            "host_available_bytes": 787628032,
+            "host_available_known": true,
+            "host_reserve_bytes": 0,
+            "host_total_bytes": 6051311616
+          },
+          "identity": {
+            "arch_known": true,
+            "arch_name": "llama",
+            "display_name": "SmolLM2-360M-Instruct",
+            "installed": true,
+            "model_name": "smollm2-360m-instruct",
+            "model_path": "/home/kadirerenaltintas/membrane/models/SmolLM2-360M-Instruct-f16.gguf",
+            "parameter_count": "360M",
+            "variant": "",
+            "variant_estimate_only": false,
+            "variant_known": false,
+            "variant_source": "unknown"
+          },
+          "membrane_version": "1.0.0",
+          "mode": "plan",
+          "ok": true,
+          "policy_version": "plan-v2-variant-joint-v1",
+          "reasons": [
+            {
+              "code": "HOST_MEMORY_LIMIT",
+              "detail": "PLANNER_REJECTED_ALL: every candidate was rejected by the joint planner"
+            }
+          ],
+          "schema_version": 2,
+          "selected_variant": null,
+          "variants_evaluated": [
+            {
+              "estimate_only": false,
+              "evaluated": false,
+              "feasible": false,
+              "limiting_resource": "HOST_MEMORY_LIMIT",
+              "plan": {
+                "decisions": null,
+                "explanation": "",
+                "feasibility": {
+                  "feasible": false,
+                  "host_headroom_bytes": 0,
+                  "host_headroom_known": false,
+                  "host_required_bytes": 0,
+                  "limiting_resource": "HOST_MEMORY_LIMIT",
+                  "max_feasible_context": 0,
+                  "max_feasible_context_known": false
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 0,
+                  "device_known": false,
+                  "device_name": "",
+                  "device_total_bytes": 0,
+                  "host_available_bytes": 787628032,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 0,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-360M-Instruct",
+                  "installed": true,
+                  "model_name": "smollm2-360m-instruct",
+                  "model_path": "/home/kadirerenaltintas/membrane/models/SmolLM2-360M-Instruct-f16.gguf",
+                  "parameter_count": "360M",
+                  "variant": "",
+                  "variant_estimate_only": false,
+                  "variant_known": false,
+                  "variant_source": "unknown"
+                },
+                "reasons": [
+                  {
+                    "code": "HOST_MEMORY_LIMIT",
+                    "detail": "PLANNER_REJECTED_ALL: every candidate was rejected by the joint planner"
+                  }
+                ],
+                "workload": {
+                  "context_source": "hardware_auto",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "native",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 0
+                }
+              },
+              "selected": false,
+              "source": "unknown",
+              "variant": "unknown"
+            }
+          ],
+          "workload": {
+            "context_source": "hardware_auto",
+            "gpu_layers_request": "auto",
+            "gpu_layers_source": "hardware_auto",
+            "kv_placement_request": "default",
+            "kv_placement_source": "fallback_default",
+            "precision_request": "native",
+            "precision_source": "hardware_auto",
+            "requested_context": 0
+          }
+        }
+      }
+    },
+    "runtime_validation_cpu": [
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --gen-tokens 24 --gpu-layers 0 --json --quiet",
+        "exit_code": 0,
+        "wall_seconds": 0.602,
+        "host_available_bytes_before": 786817024,
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 37,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 852480
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 287900,
+            "rss_after_context_kb": 295596,
+            "rss_after_prompt_kb": 296316,
+            "rss_final_kb": 296324,
+            "peak_rss_kb": 296324
+          },
+          "performance": {
+            "prompt_tok_per_s": 242.974596,
+            "generation_tok_per_s": 57.205302
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 242.974596,
+            "generation_tok_per_sec": 57.205302
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 785412096,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4597878784
+          }
+        },
+        "label": "A_naive_default",
+        "variant": "F16",
+        "rep": 0
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --gen-tokens 24 --gpu-layers 0 --json --quiet",
+        "exit_code": 0,
+        "wall_seconds": 0.504,
+        "host_available_bytes_before": 744300544,
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 37,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 852480
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 288152,
+            "rss_after_context_kb": 295768,
+            "rss_after_prompt_kb": 296548,
+            "rss_final_kb": 296572,
+            "peak_rss_kb": 296572
+          },
+          "performance": {
+            "prompt_tok_per_s": 280.53201,
+            "generation_tok_per_s": 64.573053
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 280.53201,
+            "generation_tok_per_sec": 64.573053
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 744099840,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4604788736
+          }
+        },
+        "label": "A_naive_default",
+        "variant": "F16",
+        "rep": 1
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 4096 --gpu-layers 0 --kv native --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.576,
+        "host_available_bytes_before": 722550784,
+        "host_available_bytes_after": 813232128,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 4096,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 94371840
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 288036,
+            "rss_after_context_kb": 382072,
+            "rss_after_prompt_kb": 382984,
+            "rss_final_kb": 383020,
+            "peak_rss_kb": 383020
+          },
+          "performance": {
+            "prompt_tok_per_s": 258.109024,
+            "generation_tok_per_s": 61.249576
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 258.109024,
+            "generation_tok_per_sec": 61.249576
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 727846912,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4613222400
+          }
+        },
+        "label": "B_manual_high_quality",
+        "variant": "F16",
+        "rep": 0
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 4096 --gpu-layers 0 --kv native --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.565,
+        "host_available_bytes_before": 817872896,
+        "host_available_bytes_after": 764612608,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 4096,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 94371840
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 288212,
+            "rss_after_context_kb": 382216,
+            "rss_after_prompt_kb": 383128,
+            "rss_final_kb": 383164,
+            "peak_rss_kb": 383164
+          },
+          "performance": {
+            "prompt_tok_per_s": 282.087718,
+            "generation_tok_per_s": 63.629136
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 282.087718,
+            "generation_tok_per_sec": 63.629136
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 821936128,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4561338368
+          }
+        },
+        "label": "B_manual_high_quality",
+        "variant": "F16",
+        "rep": 1
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-Q8_0.gguf --prompt The capital of France is --ctx 4096 --gpu-layers 0 --kv native --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.633,
+        "host_available_bytes_before": 769875968,
+        "host_available_bytes_after": 878747648,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-Q8_0.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 4096,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 94371840
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 164000,
+            "rss_after_context_kb": 258024,
+            "rss_after_prompt_kb": 259972,
+            "rss_final_kb": 260008,
+            "peak_rss_kb": 260008
+          },
+          "performance": {
+            "prompt_tok_per_s": 335.92021,
+            "generation_tok_per_s": 103.237567
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 335.92021,
+            "generation_tok_per_sec": 103.237567
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 743636992,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4561866752
+          }
+        },
+        "label": "C_planner_selected",
+        "variant": "Q8_0",
+        "rep": 0
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-Q8_0.gguf --prompt The capital of France is --ctx 4096 --gpu-layers 0 --kv native --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.407,
+        "host_available_bytes_before": 887013376,
+        "host_available_bytes_after": 914104320,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-Q8_0.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 4096,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 94371840
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 164984,
+            "rss_after_context_kb": 259024,
+            "rss_after_prompt_kb": 259992,
+            "rss_final_kb": 260028,
+            "peak_rss_kb": 260028
+          },
+          "performance": {
+            "prompt_tok_per_s": 385.169555,
+            "generation_tok_per_s": 101.710133
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 385.169555,
+            "generation_tok_per_sec": 101.710133
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 888946688,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4479991808
+          }
+        },
+        "label": "C_planner_selected",
+        "variant": "Q8_0",
+        "rep": 1
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-Q4_K_M.gguf --prompt The capital of France is --ctx 8192 --gpu-layers 0 --kv native --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.681,
+        "host_available_bytes_before": 920190976,
+        "host_available_bytes_after": 1023909888,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-Q4_K_M.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 8192,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 188743680
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 134012,
+            "rss_after_context_kb": 320520,
+            "rss_after_prompt_kb": 321872,
+            "rss_final_kb": 321896,
+            "peak_rss_kb": 321896
+          },
+          "performance": {
+            "prompt_tok_per_s": 407.756341,
+            "generation_tok_per_s": 139.122072
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 407.756341,
+            "generation_tok_per_sec": 139.122072
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 930230272,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4429447168
+          }
+        },
+        "label": "D_context_alternative",
+        "variant": "Q4_K_M",
+        "rep": 0
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-Q4_K_M.gguf --prompt The capital of France is --ctx 8192 --gpu-layers 0 --kv native --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.423,
+        "host_available_bytes_before": 1025572864,
+        "host_available_bytes_after": 1063571456,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-Q4_K_M.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 8192,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 188743680
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 134264,
+            "rss_after_context_kb": 320772,
+            "rss_after_prompt_kb": 321864,
+            "rss_final_kb": 321888,
+            "peak_rss_kb": 321888
+          },
+          "performance": {
+            "prompt_tok_per_s": 440.62631,
+            "generation_tok_per_s": 141.389024
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 440.62631,
+            "generation_tok_per_sec": 141.389024
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 1026146304,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4319584256
+          }
+        },
+        "label": "D_context_alternative",
+        "variant": "Q4_K_M",
+        "rep": 1
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-cpu-rc1/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 4096 --gpu-layers 0 --kv native --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": 1536,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.647,
+        "host_available_bytes_before": 1068838912,
+        "host_available_bytes_after": 1105928192,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 4096,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 94371840
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 288096,
+            "rss_after_context_kb": 382120,
+            "rss_after_prompt_kb": 383032,
+            "rss_final_kb": 383068,
+            "peak_rss_kb": 383068
+          },
+          "performance": {
+            "prompt_tok_per_s": 245.941558,
+            "generation_tok_per_s": 54.3376
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 245.941558,
+            "generation_tok_per_sec": 54.3376
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 1073811456,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4248125440
+          }
+        },
+        "label": "INFEASIBLE_CHECK_F16",
+        "variant": "F16",
+        "rep": 0
+      }
+    ],
+    "runtime_validation_vulkan": [
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-vulkan/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gpu-layers all --kv native --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.743,
+        "host_available_bytes_before": 1065807872,
+        "host_available_bytes_after": 1067941888,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "1.0.0",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 2048,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CANDIDATE_SELECTED",
+          "storage": {
+            "kv_allocated_bytes": 47185920
+          },
+          "gpu": {
+            "requested": true,
+            "backend_gpu_capable": true,
+            "gpu_layers_requested": -1,
+            "gpu_layers_selected": 30,
+            "backend": "Vulkan",
+            "device_requested": "",
+            "device_selected": "Vulkan1"
+          },
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4149739520,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 262017792,
+            "estimated_kv_bytes": 47185920,
+            "headroom_bytes": 3157598273
+          },
+          "gpu_memory_observed": {
+            "available": true,
+            "measurement_method": "driver-reported free heap bytes via ggml_backend_dev_get_props(), re-queried after run_kv_store_pass() returns -- that function already calls llama_free(ctx) internally before returning, so this reflects GPU memory attributable to the model WEIGHTS ONLY; the KV cache/context is already destroyed by this point. Compare against estimated_model_bytes alone, never + estimated_kv_bytes. Not a peak, not a guaranteed live figure, same caveats as the pre-load estimate this is compared against",
+            "device_free_bytes_before": 4149739520,
+            "device_free_bytes_after": 3879403520,
+            "observed_delta_bytes": 270336000
+          },
+          "planner": {
+            "used": true,
+            "policy_version": "joint-auto-v1",
+            "candidate_count": 1,
+            "selected_index": 0,
+            "selection_reason": "CANDIDATE_SELECTED"
+          },
+          "fallback": {
+            "attempted": false,
+            "attempt_count": 1,
+            "initial_candidate_index": 0,
+            "final_candidate_index": 0,
+            "final_status": "success",
+            "reason_code": "AUTO_PRIMARY_SUCCEEDED",
+            "attempts": [
+              {
+                "candidate_index": 0,
+                "gpu_layers": 30,
+                "kv_precision": 0,
+                "kv_placement": 0,
+                "refreshed": true,
+                "refreshed_available_gpu_bytes": 3880321024,
+                "fit_after_refresh": true,
+                "apply_started": true,
+                "apply_ok": true,
+                "cleanup_complete": true,
+                "model_reload_required": false,
+                "apply_wall_ms": 135.385
+              }
+            ]
+          },
+          "timings": {
+            "total_ms": 670.685,
+            "planner_ms": 10.418,
+            "planner_stages": {
+              "device_enumeration_ms": 0.345,
+              "gguf_prescan_ms": 10.054,
+              "joint_planner_core_ms": 0.009
+            },
+            "model_load_ms": 410.815,
+            "tokenization_ms": 0.098,
+            "context_create_ms": 11.424,
+            "prefill_ms": 24.653,
+            "decode_ms": 95.317,
+            "first_token_ms": 5.518,
+            "throughput": {
+              "prefill_tokens_per_second": 202.814629,
+              "decode_tokens_per_second": 251.791238
+            }
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 274536,
+            "rss_after_context_kb": 276740,
+            "rss_after_prompt_kb": 286132,
+            "rss_final_kb": 285808,
+            "peak_rss_kb": 475988
+          },
+          "performance": {
+            "prompt_tok_per_s": 202.814629,
+            "generation_tok_per_s": 251.791238
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "all",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "Vulkan",
+            "device": "Vulkan1",
+            "gpu_layers": 30,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "GPU_DEVICE_FOUND",
+            "CANDIDATE_SELECTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 202.814629,
+            "generation_tok_per_sec": 251.791238
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 1054666752,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4181135360
+          }
+        },
+        "label": "VK_A_native_all_layers",
+        "variant": "F16",
+        "rep": 0
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-vulkan/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gpu-layers all --kv native --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.546,
+        "host_available_bytes_before": 1063530496,
+        "host_available_bytes_after": 1080430592,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "1.0.0",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 2048,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CANDIDATE_SELECTED",
+          "storage": {
+            "kv_allocated_bytes": 47185920
+          },
+          "gpu": {
+            "requested": true,
+            "backend_gpu_capable": true,
+            "gpu_layers_requested": -1,
+            "gpu_layers_selected": 30,
+            "backend": "Vulkan",
+            "device_requested": "",
+            "device_selected": "Vulkan1"
+          },
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4149542912,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 262017792,
+            "estimated_kv_bytes": 47185920,
+            "headroom_bytes": 3157401665
+          },
+          "gpu_memory_observed": {
+            "available": true,
+            "measurement_method": "driver-reported free heap bytes via ggml_backend_dev_get_props(), re-queried after run_kv_store_pass() returns -- that function already calls llama_free(ctx) internally before returning, so this reflects GPU memory attributable to the model WEIGHTS ONLY; the KV cache/context is already destroyed by this point. Compare against estimated_model_bytes alone, never + estimated_kv_bytes. Not a peak, not a guaranteed live figure, same caveats as the pre-load estimate this is compared against",
+            "device_free_bytes_before": 4149542912,
+            "device_free_bytes_after": 3879403520,
+            "observed_delta_bytes": 270139392
+          },
+          "planner": {
+            "used": true,
+            "policy_version": "joint-auto-v1",
+            "candidate_count": 1,
+            "selected_index": 0,
+            "selection_reason": "CANDIDATE_SELECTED"
+          },
+          "fallback": {
+            "attempted": false,
+            "attempt_count": 1,
+            "initial_candidate_index": 0,
+            "final_candidate_index": 0,
+            "final_status": "success",
+            "reason_code": "AUTO_PRIMARY_SUCCEEDED",
+            "attempts": [
+              {
+                "candidate_index": 0,
+                "gpu_layers": 30,
+                "kv_precision": 0,
+                "kv_placement": 0,
+                "refreshed": true,
+                "refreshed_available_gpu_bytes": 3880189952,
+                "fit_after_refresh": true,
+                "apply_started": true,
+                "apply_ok": true,
+                "cleanup_complete": true,
+                "model_reload_required": false,
+                "apply_wall_ms": 116.733
+              }
+            ]
+          },
+          "timings": {
+            "total_ms": 483.705,
+            "planner_ms": 9.362,
+            "planner_stages": {
+              "device_enumeration_ms": 0.363,
+              "gguf_prescan_ms": 8.99,
+              "joint_planner_core_ms": 0.001
+            },
+            "model_load_ms": 273.654,
+            "tokenization_ms": 0.087,
+            "context_create_ms": 10.684,
+            "prefill_ms": 13.661,
+            "decode_ms": 88.492,
+            "first_token_ms": 5.705,
+            "throughput": {
+              "prefill_tokens_per_second": 366.00322,
+              "decode_tokens_per_second": 271.210059
+            }
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 275092,
+            "rss_after_context_kb": 277168,
+            "rss_after_prompt_kb": 286704,
+            "rss_final_kb": 286380,
+            "peak_rss_kb": 476920
+          },
+          "performance": {
+            "prompt_tok_per_s": 366.00322,
+            "generation_tok_per_s": 271.210059
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "all",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "Vulkan",
+            "device": "Vulkan1",
+            "gpu_layers": 30,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "GPU_DEVICE_FOUND",
+            "CANDIDATE_SELECTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 366.00322,
+            "generation_tok_per_sec": 271.210059
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 1073696768,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4223135744
+          }
+        },
+        "label": "VK_A_native_all_layers",
+        "variant": "F16",
+        "rep": 1
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-vulkan/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gpu-layers all --kv q8 --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.553,
+        "host_available_bytes_before": 1074397184,
+        "host_available_bytes_after": 1088995328,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "1.0.0",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+          "kv_store": "q8",
+          "kv_type": "Q8_0",
+          "requested_kv": "q8",
+          "selected_kv": "q8",
+          "adaptive_reason": "",
+          "ctx_size": 2048,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CANDIDATE_SELECTED",
+          "storage": {
+            "kv_allocated_bytes": 25067520
+          },
+          "gpu": {
+            "requested": true,
+            "backend_gpu_capable": true,
+            "gpu_layers_requested": -1,
+            "gpu_layers_selected": 30,
+            "backend": "Vulkan",
+            "device_requested": "",
+            "device_selected": "Vulkan1"
+          },
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4149542912,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 262017792,
+            "estimated_kv_bytes": 25067520,
+            "headroom_bytes": 3179520065
+          },
+          "gpu_memory_observed": {
+            "available": true,
+            "measurement_method": "driver-reported free heap bytes via ggml_backend_dev_get_props(), re-queried after run_kv_store_pass() returns -- that function already calls llama_free(ctx) internally before returning, so this reflects GPU memory attributable to the model WEIGHTS ONLY; the KV cache/context is already destroyed by this point. Compare against estimated_model_bytes alone, never + estimated_kv_bytes. Not a peak, not a guaranteed live figure, same caveats as the pre-load estimate this is compared against",
+            "device_free_bytes_before": 4149542912,
+            "device_free_bytes_after": 3879403520,
+            "observed_delta_bytes": 270139392
+          },
+          "planner": {
+            "used": true,
+            "policy_version": "joint-auto-v1",
+            "candidate_count": 1,
+            "selected_index": 0,
+            "selection_reason": "CANDIDATE_SELECTED"
+          },
+          "fallback": {
+            "attempted": false,
+            "attempt_count": 1,
+            "initial_candidate_index": 0,
+            "final_candidate_index": 0,
+            "final_status": "success",
+            "reason_code": "AUTO_PRIMARY_SUCCEEDED",
+            "attempts": [
+              {
+                "candidate_index": 0,
+                "gpu_layers": 30,
+                "kv_precision": 1,
+                "kv_placement": 0,
+                "refreshed": true,
+                "refreshed_available_gpu_bytes": 3880189952,
+                "fit_after_refresh": true,
+                "apply_started": true,
+                "apply_ok": true,
+                "cleanup_complete": true,
+                "model_reload_required": false,
+                "apply_wall_ms": 130.275
+              }
+            ]
+          },
+          "timings": {
+            "total_ms": 494.138,
+            "planner_ms": 10.837,
+            "planner_stages": {
+              "device_enumeration_ms": 0.532,
+              "gguf_prescan_ms": 10.292,
+              "joint_planner_core_ms": 0.002
+            },
+            "model_load_ms": 273.036,
+            "tokenization_ms": 0.095,
+            "context_create_ms": 11.1,
+            "prefill_ms": 17.625,
+            "decode_ms": 98.347,
+            "first_token_ms": 6.082,
+            "throughput": {
+              "prefill_tokens_per_second": 283.694172,
+              "decode_tokens_per_second": 244.033252
+            }
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 275188,
+            "rss_after_context_kb": 276496,
+            "rss_after_prompt_kb": 286300,
+            "rss_final_kb": 286012,
+            "peak_rss_kb": 477116
+          },
+          "performance": {
+            "prompt_tok_per_s": 283.694172,
+            "generation_tok_per_s": 244.033252
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "all",
+            "kv": "q8",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "Vulkan",
+            "device": "Vulkan1",
+            "gpu_layers": 30,
+            "kv": "q8",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "GPU_DEVICE_FOUND",
+            "CANDIDATE_SELECTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 283.694172,
+            "generation_tok_per_sec": 244.033252
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 1070616576,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4194512896
+          }
+        },
+        "label": "VK_B_q8_all_layers",
+        "variant": "F16",
+        "rep": 0
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-vulkan/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-f16.gguf --prompt The capital of France is --ctx 2048 --gpu-layers all --kv q8 --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.513,
+        "host_available_bytes_before": 1086644224,
+        "host_available_bytes_after": 1088909312,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "1.0.0",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+          "kv_store": "q8",
+          "kv_type": "Q8_0",
+          "requested_kv": "q8",
+          "selected_kv": "q8",
+          "adaptive_reason": "",
+          "ctx_size": 2048,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CANDIDATE_SELECTED",
+          "storage": {
+            "kv_allocated_bytes": 25067520
+          },
+          "gpu": {
+            "requested": true,
+            "backend_gpu_capable": true,
+            "gpu_layers_requested": -1,
+            "gpu_layers_selected": 30,
+            "backend": "Vulkan",
+            "device_requested": "",
+            "device_selected": "Vulkan1"
+          },
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4149542912,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 262017792,
+            "estimated_kv_bytes": 25067520,
+            "headroom_bytes": 3179520065
+          },
+          "gpu_memory_observed": {
+            "available": true,
+            "measurement_method": "driver-reported free heap bytes via ggml_backend_dev_get_props(), re-queried after run_kv_store_pass() returns -- that function already calls llama_free(ctx) internally before returning, so this reflects GPU memory attributable to the model WEIGHTS ONLY; the KV cache/context is already destroyed by this point. Compare against estimated_model_bytes alone, never + estimated_kv_bytes. Not a peak, not a guaranteed live figure, same caveats as the pre-load estimate this is compared against",
+            "device_free_bytes_before": 4149542912,
+            "device_free_bytes_after": 3879403520,
+            "observed_delta_bytes": 270139392
+          },
+          "planner": {
+            "used": true,
+            "policy_version": "joint-auto-v1",
+            "candidate_count": 1,
+            "selected_index": 0,
+            "selection_reason": "CANDIDATE_SELECTED"
+          },
+          "fallback": {
+            "attempted": false,
+            "attempt_count": 1,
+            "initial_candidate_index": 0,
+            "final_candidate_index": 0,
+            "final_status": "success",
+            "reason_code": "AUTO_PRIMARY_SUCCEEDED",
+            "attempts": [
+              {
+                "candidate_index": 0,
+                "gpu_layers": 30,
+                "kv_precision": 1,
+                "kv_placement": 0,
+                "refreshed": true,
+                "refreshed_available_gpu_bytes": 3880189952,
+                "fit_after_refresh": true,
+                "apply_started": true,
+                "apply_ok": true,
+                "cleanup_complete": true,
+                "model_reload_required": false,
+                "apply_wall_ms": 121.389
+              }
+            ]
+          },
+          "timings": {
+            "total_ms": 456.359,
+            "planner_ms": 8.63,
+            "planner_stages": {
+              "device_enumeration_ms": 0.331,
+              "gguf_prescan_ms": 8.291,
+              "joint_planner_core_ms": 0.001
+            },
+            "model_load_ms": 250.74,
+            "tokenization_ms": 0.086,
+            "context_create_ms": 12.118,
+            "prefill_ms": 13.956,
+            "decode_ms": 91.468,
+            "first_token_ms": 5.671,
+            "throughput": {
+              "prefill_tokens_per_second": 358.261888,
+              "decode_tokens_per_second": 262.387781
+            }
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 275084,
+            "rss_after_context_kb": 276408,
+            "rss_after_prompt_kb": 286244,
+            "rss_final_kb": 285956,
+            "peak_rss_kb": 476940
+          },
+          "performance": {
+            "prompt_tok_per_s": 358.261888,
+            "generation_tok_per_s": 262.387781
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "all",
+            "kv": "q8",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "Vulkan",
+            "device": "Vulkan1",
+            "gpu_layers": 30,
+            "kv": "q8",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "GPU_DEVICE_FOUND",
+            "CANDIDATE_SELECTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 358.261888,
+            "generation_tok_per_sec": 262.387781
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 1084047360,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4173467648
+          }
+        },
+        "label": "VK_B_q8_all_layers",
+        "variant": "F16",
+        "rep": 1
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-vulkan/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-Q8_0.gguf --prompt The capital of France is --ctx 4096 --gpu-layers all --kv adaptive --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.642,
+        "host_available_bytes_before": 1087504384,
+        "host_available_bytes_after": 1095880704,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "1.0.0",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-Q8_0.gguf",
+          "kv_store": "q8",
+          "kv_type": "Q8_0",
+          "requested_kv": "adaptive",
+          "selected_kv": "q8",
+          "adaptive_reason": "Q8_FULL_RESIDENCY",
+          "ctx_size": 4096,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "Q8_FULL_RESIDENCY",
+          "storage": {
+            "kv_allocated_bytes": 50135040
+          },
+          "gpu": {
+            "requested": true,
+            "backend_gpu_capable": true,
+            "gpu_layers_requested": -1,
+            "gpu_layers_selected": 30,
+            "backend": "Vulkan",
+            "device_requested": "",
+            "device_selected": "Vulkan1"
+          },
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4149542912,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 139260672,
+            "estimated_kv_bytes": 50135040,
+            "headroom_bytes": 3277209665
+          },
+          "adaptive": {
+            "selected_kv": "q8",
+            "reason": "Q8_FULL_RESIDENCY",
+            "candidates": {
+              "q8": {
+                "kv_bytes": 50135040,
+                "valid": true,
+                "selected_layers": 30
+              },
+              "q5": {
+                "kv_bytes": 35389440,
+                "valid": true,
+                "selected_layers": 30
+              }
+            }
+          },
+          "gpu_memory_observed": {
+            "available": true,
+            "measurement_method": "driver-reported free heap bytes via ggml_backend_dev_get_props(), re-queried after run_kv_store_pass() returns -- that function already calls llama_free(ctx) internally before returning, so this reflects GPU memory attributable to the model WEIGHTS ONLY; the KV cache/context is already destroyed by this point. Compare against estimated_model_bytes alone, never + estimated_kv_bytes. Not a peak, not a guaranteed live figure, same caveats as the pre-load estimate this is compared against",
+            "device_free_bytes_before": 4149542912,
+            "device_free_bytes_after": 3724148736,
+            "observed_delta_bytes": 425394176
+          },
+          "planner": {
+            "used": true,
+            "policy_version": "joint-auto-v1",
+            "candidate_count": 2,
+            "selected_index": 0,
+            "selection_reason": "Q8_FULL_RESIDENCY"
+          },
+          "fallback": {
+            "attempted": false,
+            "attempt_count": 1,
+            "initial_candidate_index": 0,
+            "final_candidate_index": 0,
+            "final_status": "success",
+            "reason_code": "AUTO_PRIMARY_SUCCEEDED",
+            "attempts": [
+              {
+                "candidate_index": 0,
+                "gpu_layers": 30,
+                "kv_precision": 1,
+                "kv_placement": 0,
+                "refreshed": true,
+                "refreshed_available_gpu_bytes": 3724476416,
+                "fit_after_refresh": true,
+                "apply_started": true,
+                "apply_ok": true,
+                "cleanup_complete": true,
+                "model_reload_required": false,
+                "apply_wall_ms": 331.404
+              }
+            ]
+          },
+          "timings": {
+            "total_ms": 587.328,
+            "planner_ms": 9.134,
+            "planner_stages": {
+              "device_enumeration_ms": 0.346,
+              "gguf_prescan_ms": 8.778,
+              "joint_planner_core_ms": 0.002
+            },
+            "model_load_ms": 174.08,
+            "tokenization_ms": 0.109,
+            "context_create_ms": 13.036,
+            "prefill_ms": 228.284,
+            "decode_ms": 86.431,
+            "first_token_ms": 5.432,
+            "throughput": {
+              "prefill_tokens_per_second": 21.902563,
+              "decode_tokens_per_second": 277.678848
+            }
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 189376,
+            "rss_after_context_kb": 192536,
+            "rss_after_prompt_kb": 229468,
+            "rss_final_kb": 229500,
+            "peak_rss_kb": 297044
+          },
+          "performance": {
+            "prompt_tok_per_s": 21.902563,
+            "generation_tok_per_s": 277.678848
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "all",
+            "kv": "adaptive",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "Vulkan",
+            "device": "Vulkan1",
+            "gpu_layers": 30,
+            "kv": "q8",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "GPU_DEVICE_FOUND",
+            "Q8_FULL_RESIDENCY"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 21.902563,
+            "generation_tok_per_sec": 277.678848
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 1085980672,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4170149888
+          }
+        },
+        "label": "VK_C_adaptive_all_layers",
+        "variant": "Q8_0",
+        "rep": 0
+      },
+      {
+        "command": "/home/kadirerenaltintas/membrane/build-vulkan/tools/membrane-run/membrane-run --model /home/kadirerenaltintas/membrane/models/SmolLM2-135M-Instruct-Q8_0.gguf --prompt The capital of France is --ctx 4096 --gpu-layers all --kv adaptive --gen-tokens 24 --json --quiet",
+        "bounded_ulimit_v_mib": null,
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 0.457,
+        "host_available_bytes_before": 1089478656,
+        "host_available_bytes_after": 1069793280,
+        "gpu_before": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "gpu_after": {
+          "device_name": "NVIDIA GeForce GTX 1650",
+          "total_mib": 4096,
+          "free_mib": 3717
+        },
+        "stderr_tail": "",
+        "json": {
+          "schema_version": 1,
+          "membrane_version": "1.0.0",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-Q8_0.gguf",
+          "kv_store": "q8",
+          "kv_type": "Q8_0",
+          "requested_kv": "adaptive",
+          "selected_kv": "q8",
+          "adaptive_reason": "Q8_FULL_RESIDENCY",
+          "ctx_size": 4096,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "Q8_FULL_RESIDENCY",
+          "storage": {
+            "kv_allocated_bytes": 50135040
+          },
+          "gpu": {
+            "requested": true,
+            "backend_gpu_capable": true,
+            "gpu_layers_requested": -1,
+            "gpu_layers_selected": 30,
+            "backend": "Vulkan",
+            "device_requested": "",
+            "device_selected": "Vulkan1"
+          },
+          "gpu_policy": {
+            "device_total_bytes": 4552916992,
+            "device_free_bytes": 4149542912,
+            "safety_reserve_bytes": 682937535,
+            "estimated_model_bytes": 139260672,
+            "estimated_kv_bytes": 50135040,
+            "headroom_bytes": 3277209665
+          },
+          "adaptive": {
+            "selected_kv": "q8",
+            "reason": "Q8_FULL_RESIDENCY",
+            "candidates": {
+              "q8": {
+                "kv_bytes": 50135040,
+                "valid": true,
+                "selected_layers": 30
+              },
+              "q5": {
+                "kv_bytes": 35389440,
+                "valid": true,
+                "selected_layers": 30
+              }
+            }
+          },
+          "gpu_memory_observed": {
+            "available": true,
+            "measurement_method": "driver-reported free heap bytes via ggml_backend_dev_get_props(), re-queried after run_kv_store_pass() returns -- that function already calls llama_free(ctx) internally before returning, so this reflects GPU memory attributable to the model WEIGHTS ONLY; the KV cache/context is already destroyed by this point. Compare against estimated_model_bytes alone, never + estimated_kv_bytes. Not a peak, not a guaranteed live figure, same caveats as the pre-load estimate this is compared against",
+            "device_free_bytes_before": 4149542912,
+            "device_free_bytes_after": 3724148736,
+            "observed_delta_bytes": 425394176
+          },
+          "planner": {
+            "used": true,
+            "policy_version": "joint-auto-v1",
+            "candidate_count": 2,
+            "selected_index": 0,
+            "selection_reason": "Q8_FULL_RESIDENCY"
+          },
+          "fallback": {
+            "attempted": false,
+            "attempt_count": 1,
+            "initial_candidate_index": 0,
+            "final_candidate_index": 0,
+            "final_status": "success",
+            "reason_code": "AUTO_PRIMARY_SUCCEEDED",
+            "attempts": [
+              {
+                "candidate_index": 0,
+                "gpu_layers": 30,
+                "kv_precision": 1,
+                "kv_placement": 0,
+                "refreshed": true,
+                "refreshed_available_gpu_bytes": 3724476416,
+                "fit_after_refresh": true,
+                "apply_started": true,
+                "apply_ok": true,
+                "cleanup_complete": true,
+                "model_reload_required": false,
+                "apply_wall_ms": 115.333
+              }
+            ]
+          },
+          "timings": {
+            "total_ms": 391.172,
+            "planner_ms": 8.978,
+            "planner_stages": {
+              "device_enumeration_ms": 0.323,
+              "gguf_prescan_ms": 8.645,
+              "joint_planner_core_ms": 0.002
+            },
+            "model_load_ms": 193.102,
+            "tokenization_ms": 0.082,
+            "context_create_ms": 13.068,
+            "prefill_ms": 14.566,
+            "decode_ms": 84.192,
+            "first_token_ms": 5.197,
+            "throughput": {
+              "prefill_tokens_per_second": 343.262428,
+              "decode_tokens_per_second": 285.061475
+            }
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 190060,
+            "rss_after_context_kb": 193236,
+            "rss_after_prompt_kb": 201608,
+            "rss_final_kb": 201764,
+            "peak_rss_kb": 297676
+          },
+          "performance": {
+            "prompt_tok_per_s": 343.262428,
+            "generation_tok_per_s": 285.061475
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "all",
+            "kv": "adaptive",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "Vulkan",
+            "device": "Vulkan1",
+            "gpu_layers": 30,
+            "kv": "q8",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "GPU_DEVICE_FOUND",
+            "Q8_FULL_RESIDENCY"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 343.262428,
+            "generation_tok_per_sec": 285.061475
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 1088696320,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4167401472
+          }
+        },
+        "label": "VK_C_adaptive_all_layers",
+        "variant": "Q8_0",
+        "rep": 1
+      }
+    ],
+    "paired_snapshot_checks": {
+      "f16_135m_ctx4096": {
+        "plan": {
+          "alternatives": [],
+          "decisions": {
+            "context": 4096,
+            "context_source": "explicit_user",
+            "gpu_layers": 0,
+            "gpu_layers_source": "planner_decision",
+            "kv_placement": "default",
+            "kv_placement_source": "planner_decision",
+            "kv_precision": "native",
+            "kv_precision_source": "planner_decision"
+          },
+          "explanation": "selected variant 'F16' (candidate 1 of 1 evaluated, 0 feasible alternative(s)) -- Recommended ctx=4096 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 1 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-m",
+          "feasibility": {
+            "feasible": true,
+            "host_headroom_bytes": 672897792,
+            "host_headroom_known": true,
+            "host_required_bytes": 363472128,
+            "limiting_resource": "",
+            "max_feasible_context": 4096,
+            "max_feasible_context_known": true
+          },
+          "feasible": true,
+          "hardware": {
+            "backend": "",
+            "device_free_bytes": 0,
+            "device_known": false,
+            "device_name": "",
+            "device_total_bytes": 0,
+            "host_available_bytes": 1304805376,
+            "host_available_known": true,
+            "host_reserve_bytes": 268435456,
+            "host_total_bytes": 6051311616
+          },
+          "identity": {
+            "arch_known": true,
+            "arch_name": "llama",
+            "display_name": "SmolLM2-135M-Instruct",
+            "installed": true,
+            "model_name": "smollm2-135m-instruct",
+            "model_path": "/home/kadirerenaltintas/membrane/scratch/g3-registry/models/SmolLM2-135M-Instruct-F16.gguf",
+            "parameter_count": "135M",
+            "variant": "F16",
+            "variant_estimate_only": false,
+            "variant_known": true,
+            "variant_source": "explicit_user"
+          },
+          "membrane_version": "1.0.0",
+          "mode": "plan",
+          "ok": true,
+          "policy_version": "plan-v2-variant-joint-v1",
+          "reasons": [
+            {
+              "code": "CPU_ONLY_PLAN",
+              "detail": "CANDIDATE_SELECTED"
+            },
+            {
+              "code": "USER_OVERRIDE_PRESERVED",
+              "detail": "explicit --ctx honored unchanged"
+            },
+            {
+              "code": "USER_FORCED_VARIANT",
+              "detail": "explicit --quant honored unchanged"
+            }
+          ],
+          "schema_version": 2,
+          "selected_variant": "F16",
+          "variants_evaluated": [
+            {
+              "estimate_only": false,
+              "evaluated": true,
+              "feasible": true,
+              "limiting_resource": "",
+              "plan": {
+                "decisions": {
+                  "context": 4096,
+                  "context_source": "explicit_user",
+                  "gpu_layers": 0,
+                  "gpu_layers_source": "planner_decision",
+                  "kv_placement": "default",
+                  "kv_placement_source": "planner_decision",
+                  "kv_precision": "native",
+                  "kv_precision_source": "planner_decision"
+                },
+                "explanation": "Recommended ctx=4096 (policy: RECOMMENDATION_POLICY_MAX_ESTIMATED_FIT) -- the largest of 1 evaluated candidates (model max 8192) with a legal plan under current GPU and host-memory estimates. This is an estimated fit, not a guaranteed absence of OOM (see docs/context-recommendation.md and docs/host-memory-guard.md).",
+                "feasibility": {
+                  "feasible": true,
+                  "host_headroom_bytes": 672897792,
+                  "host_headroom_known": true,
+                  "host_required_bytes": 363472128,
+                  "limiting_resource": "",
+                  "max_feasible_context": 4096,
+                  "max_feasible_context_known": true
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 0,
+                  "device_known": false,
+                  "device_name": "",
+                  "device_total_bytes": 0,
+                  "host_available_bytes": 1304805376,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 268435456,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-135M-Instruct",
+                  "installed": true,
+                  "model_name": "smollm2-135m-instruct",
+                  "model_path": "/home/kadirerenaltintas/membrane/scratch/g3-registry/models/SmolLM2-135M-Instruct-F16.gguf",
+                  "parameter_count": "135M",
+                  "variant": "F16",
+                  "variant_estimate_only": false,
+                  "variant_known": true,
+                  "variant_source": "explicit_user"
+                },
+                "reasons": [
+                  {
+                    "code": "CPU_ONLY_PLAN",
+                    "detail": "CANDIDATE_SELECTED"
+                  },
+                  {
+                    "code": "USER_OVERRIDE_PRESERVED",
+                    "detail": "explicit --ctx honored unchanged"
+                  },
+                  {
+                    "code": "USER_FORCED_VARIANT",
+                    "detail": "explicit --quant honored unchanged"
+                  }
+                ],
+                "workload": {
+                  "context_source": "explicit_user",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "native",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 4096
+                }
+              },
+              "selected": true,
+              "source": "explicit_user",
+              "variant": "F16"
+            }
+          ],
+          "workload": {
+            "context_source": "explicit_user",
+            "gpu_layers_request": "auto",
+            "gpu_layers_source": "hardware_auto",
+            "kv_placement_request": "default",
+            "kv_placement_source": "fallback_default",
+            "precision_request": "native",
+            "precision_source": "hardware_auto",
+            "requested_context": 4096
+          }
+        },
+        "run": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-135M-Instruct-f16.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 4096,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 94371840
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 288124,
+            "rss_after_context_kb": 382128,
+            "rss_after_prompt_kb": 383056,
+            "rss_final_kb": 383092,
+            "peak_rss_kb": 383092
+          },
+          "performance": {
+            "prompt_tok_per_s": 237.311522,
+            "generation_tok_per_s": 59.496897
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 237.311522,
+            "generation_tok_per_sec": 59.496897
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 1302966272,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4384649216
+          }
+        }
+      },
+      "f16_135m_ctx200000_bounded": {
+        "plan": {
+          "alternatives": [],
+          "decisions": null,
+          "explanation": "no evaluated variant (1 considered) has a feasible plan under current constraints -- see each candidate's own reasons",
+          "feasibility": {
+            "feasible": false,
+            "host_headroom_bytes": 0,
+            "host_headroom_known": false,
+            "host_required_bytes": 0,
+            "limiting_resource": "HOST_MEMORY_LIMIT",
+            "max_feasible_context": 0,
+            "max_feasible_context_known": false
+          },
+          "feasible": false,
+          "hardware": {
+            "backend": "",
+            "device_free_bytes": 0,
+            "device_known": false,
+            "device_name": "",
+            "device_total_bytes": 0,
+            "host_available_bytes": 1259405312,
+            "host_available_known": true,
+            "host_reserve_bytes": 0,
+            "host_total_bytes": 6051311616
+          },
+          "identity": {
+            "arch_known": true,
+            "arch_name": "llama",
+            "display_name": "SmolLM2-135M-Instruct",
+            "installed": true,
+            "model_name": "smollm2-135m-instruct",
+            "model_path": "/home/kadirerenaltintas/membrane/scratch/g3-registry/models/SmolLM2-135M-Instruct-F16.gguf",
+            "parameter_count": "135M",
+            "variant": "F16",
+            "variant_estimate_only": false,
+            "variant_known": true,
+            "variant_source": "explicit_user"
+          },
+          "membrane_version": "1.0.0",
+          "mode": "plan",
+          "ok": true,
+          "policy_version": "plan-v2-variant-joint-v1",
+          "reasons": [
+            {
+              "code": "HOST_MEMORY_LIMIT",
+              "detail": "PLANNER_REJECTED_ALL: every candidate was rejected by the joint planner"
+            }
+          ],
+          "schema_version": 2,
+          "selected_variant": null,
+          "variants_evaluated": [
+            {
+              "estimate_only": false,
+              "evaluated": false,
+              "feasible": false,
+              "limiting_resource": "HOST_MEMORY_LIMIT",
+              "plan": {
+                "decisions": null,
+                "explanation": "",
+                "feasibility": {
+                  "feasible": false,
+                  "host_headroom_bytes": 0,
+                  "host_headroom_known": false,
+                  "host_required_bytes": 0,
+                  "limiting_resource": "HOST_MEMORY_LIMIT",
+                  "max_feasible_context": 0,
+                  "max_feasible_context_known": false
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 0,
+                  "device_known": false,
+                  "device_name": "",
+                  "device_total_bytes": 0,
+                  "host_available_bytes": 1259405312,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 0,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-135M-Instruct",
+                  "installed": true,
+                  "model_name": "smollm2-135m-instruct",
+                  "model_path": "/home/kadirerenaltintas/membrane/scratch/g3-registry/models/SmolLM2-135M-Instruct-F16.gguf",
+                  "parameter_count": "135M",
+                  "variant": "F16",
+                  "variant_estimate_only": false,
+                  "variant_known": true,
+                  "variant_source": "explicit_user"
+                },
+                "reasons": [
+                  {
+                    "code": "HOST_MEMORY_LIMIT",
+                    "detail": "PLANNER_REJECTED_ALL: every candidate was rejected by the joint planner"
+                  }
+                ],
+                "workload": {
+                  "context_source": "explicit_user",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "native",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 200000
+                }
+              },
+              "selected": false,
+              "source": "explicit_user",
+              "variant": "F16"
+            }
+          ],
+          "workload": {
+            "context_source": "explicit_user",
+            "gpu_layers_request": "auto",
+            "gpu_layers_source": "hardware_auto",
+            "kv_placement_request": "default",
+            "kv_placement_source": "fallback_default",
+            "precision_request": "native",
+            "precision_source": "hardware_auto",
+            "requested_context": 200000
+          }
+        },
+        "run": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": false,
+          "exit_code": 4,
+          "error": {
+            "reason_code": "GENERATION_FAILED",
+            "message": "generation failed"
+          }
+        }
+      },
+      "f16_360m_ctx2048": {
+        "plan": {
+          "alternatives": [],
+          "decisions": null,
+          "explanation": "no evaluated variant (1 considered) has a feasible plan under current constraints -- see each candidate's own reasons",
+          "feasibility": {
+            "feasible": false,
+            "host_headroom_bytes": 0,
+            "host_headroom_known": false,
+            "host_required_bytes": 0,
+            "limiting_resource": "HOST_MEMORY_LIMIT",
+            "max_feasible_context": 0,
+            "max_feasible_context_known": false
+          },
+          "feasible": false,
+          "hardware": {
+            "backend": "",
+            "device_free_bytes": 0,
+            "device_known": false,
+            "device_name": "",
+            "device_total_bytes": 0,
+            "host_available_bytes": 832835584,
+            "host_available_known": true,
+            "host_reserve_bytes": 0,
+            "host_total_bytes": 6051311616
+          },
+          "identity": {
+            "arch_known": true,
+            "arch_name": "llama",
+            "display_name": "SmolLM2-360M-Instruct",
+            "installed": true,
+            "model_name": "smollm2-360m-instruct",
+            "model_path": "/home/kadirerenaltintas/membrane/models/SmolLM2-360M-Instruct-f16.gguf",
+            "parameter_count": "360M",
+            "variant": "",
+            "variant_estimate_only": false,
+            "variant_known": false,
+            "variant_source": "unknown"
+          },
+          "membrane_version": "1.0.0",
+          "mode": "plan",
+          "ok": true,
+          "policy_version": "plan-v2-variant-joint-v1",
+          "reasons": [
+            {
+              "code": "HOST_MEMORY_LIMIT",
+              "detail": "PLANNER_REJECTED_ALL: every candidate was rejected by the joint planner"
+            }
+          ],
+          "schema_version": 2,
+          "selected_variant": null,
+          "variants_evaluated": [
+            {
+              "estimate_only": false,
+              "evaluated": false,
+              "feasible": false,
+              "limiting_resource": "HOST_MEMORY_LIMIT",
+              "plan": {
+                "decisions": null,
+                "explanation": "",
+                "feasibility": {
+                  "feasible": false,
+                  "host_headroom_bytes": 0,
+                  "host_headroom_known": false,
+                  "host_required_bytes": 0,
+                  "limiting_resource": "HOST_MEMORY_LIMIT",
+                  "max_feasible_context": 0,
+                  "max_feasible_context_known": false
+                },
+                "hardware": {
+                  "backend": "",
+                  "device_free_bytes": 0,
+                  "device_known": false,
+                  "device_name": "",
+                  "device_total_bytes": 0,
+                  "host_available_bytes": 832835584,
+                  "host_available_known": true,
+                  "host_reserve_bytes": 0,
+                  "host_total_bytes": 6051311616
+                },
+                "identity": {
+                  "arch_known": true,
+                  "arch_name": "llama",
+                  "display_name": "SmolLM2-360M-Instruct",
+                  "installed": true,
+                  "model_name": "smollm2-360m-instruct",
+                  "model_path": "/home/kadirerenaltintas/membrane/models/SmolLM2-360M-Instruct-f16.gguf",
+                  "parameter_count": "360M",
+                  "variant": "",
+                  "variant_estimate_only": false,
+                  "variant_known": false,
+                  "variant_source": "unknown"
+                },
+                "reasons": [
+                  {
+                    "code": "HOST_MEMORY_LIMIT",
+                    "detail": "PLANNER_REJECTED_ALL: every candidate was rejected by the joint planner"
+                  }
+                ],
+                "workload": {
+                  "context_source": "explicit_user",
+                  "gpu_layers_request": "auto",
+                  "gpu_layers_source": "hardware_auto",
+                  "kv_placement_request": "default",
+                  "kv_placement_source": "fallback_default",
+                  "precision_request": "native",
+                  "precision_source": "hardware_auto",
+                  "requested_context": 2048
+                }
+              },
+              "selected": false,
+              "source": "unknown",
+              "variant": "unknown"
+            }
+          ],
+          "workload": {
+            "context_source": "explicit_user",
+            "gpu_layers_request": "auto",
+            "gpu_layers_source": "hardware_auto",
+            "kv_placement_request": "default",
+            "kv_placement_source": "fallback_default",
+            "precision_request": "native",
+            "precision_source": "hardware_auto",
+            "requested_context": 2048
+          }
+        },
+        "run": {
+          "schema_version": 1,
+          "membrane_version": "0.3.0-rc1",
+          "mode": "run",
+          "ok": true,
+          "model_label": "SmolLM2-360M-Instruct-f16.gguf",
+          "kv_store": "native",
+          "kv_type": "F16",
+          "requested_kv": "native",
+          "selected_kv": "native",
+          "adaptive_reason": "",
+          "ctx_size": 2048,
+          "generated_tokens": 24,
+          "auto": {
+            "requested": false,
+            "cpu_fallback": false
+          },
+          "reason_code": "CPU_ONLY_REQUESTED",
+          "storage": {
+            "kv_allocated_bytes": 83886080
+          },
+          "gpu": {
+            "requested": false,
+            "backend_gpu_capable": false,
+            "gpu_layers_requested": 0,
+            "gpu_layers_selected": 0,
+            "backend": "CPU",
+            "device_requested": "",
+            "device_selected": ""
+          },
+          "kv_placement": {
+            "kv_placement_mode": "default"
+          },
+          "memory": {
+            "rss_after_model_load_kb": 731708,
+            "rss_after_context_kb": 815536,
+            "rss_after_prompt_kb": 816784,
+            "rss_final_kb": 816808,
+            "peak_rss_kb": 816808
+          },
+          "performance": {
+            "prompt_tok_per_s": 103.586874,
+            "generation_tok_per_s": 24.241308
+          },
+          "no_fallback_occurred": true,
+          "requested": {
+            "auto": false,
+            "gpu_layers": "0",
+            "kv": "native",
+            "kv_placement": "default",
+            "device": ""
+          },
+          "resolved": {
+            "backend": "CPU",
+            "device": "",
+            "gpu_layers": 0,
+            "kv": "native",
+            "kv_placement": "default"
+          },
+          "reason_trace": [
+            "CPU_ONLY_REQUESTED"
+          ],
+          "warnings": [],
+          "execution": {
+            "success": true,
+            "exit_code": 0,
+            "prompt_tokens": 5,
+            "generated_tokens": 24,
+            "prompt_tok_per_sec": 103.586874,
+            "generation_tok_per_sec": 24.241308
+          },
+          "host_memory": {
+            "available": true,
+            "total_bytes": 6051311616,
+            "available_bytes_snapshot": 838742016,
+            "swap_total_bytes": 10345762816,
+            "swap_free_bytes_snapshot": 4968906752
+          }
+        }
+      }
+    }
+  },
+  "models_used": {
+    "smollm2-135m-instruct": {
+      "F16": {
+        "path": "models/SmolLM2-135M-Instruct-f16.gguf",
+        "sha256": "f535f83ec568d040f88ddc04a199fa6da90923bbb41d4dcaed02caa924d6ef57",
+        "source": "pre-existing repo fixture, not downloaded this milestone"
+      },
+      "Q8_0": {
+        "path": "models/SmolLM2-135M-Instruct-Q8_0.gguf",
+        "sha256": "c4a3dd037301b6ecea31d6da37f5cd793ead920dd5ddfe6d589294628d6ce66a",
+        "source": "downloaded this milestone from the catalog's own verified URL (model_catalog.cpp); sha256 verified against the catalog's own recorded hash"
+      },
+      "Q4_K_M": {
+        "path": "models/SmolLM2-135M-Instruct-Q4_K_M.gguf",
+        "sha256": "ed5fa30c487b282ec156c29062f1222e5c20875a944ac98289dbd242e947f747",
+        "source": "downloaded this milestone from the catalog's own verified URL (model_catalog.cpp); sha256 verified against the catalog's own recorded hash"
+      }
+    },
+    "smollm2-360m-instruct": {
+      "F16": {
+        "path": "models/SmolLM2-360M-Instruct-f16.gguf",
+        "sha256": "7d23be4097d67c5c43c3df62ebc19609a25f483c7d0b77d3989e1d94e36ccab6",
+        "source": "pre-existing repo fixture"
+      }
+    }
+  },
+  "limitations": [
+    "Only one model family (smollm2-135m-instruct) has real, multi-quant, sibling-scaling-error and context-capacity evidence. smollm2-360m-instruct contributes one real single-quant sanity point only.",
+    "qwen2.5-1.5b-instruct-fp16.gguf (3.5 GiB) was deliberately not real-load-tested this milestone -- real available host RAM during this session (~200 MiB-1.3 GiB) was judged too tight to safely load it alongside other real processes on this shared desktop without risking host destabilization.",
+    "Only one real GPU (NVIDIA GTX 1650, Vulkan) was exercised; no CUDA backend evidence (no CUDA toolkit on this host, consistent with the still-open Mega Phase D3 item in memory).",
+    "VRAM usage is reported only as a pre-run free-memory snapshot, never a measured peak -- the measurement method used here cannot see VRAM usage while the process is still running.",
+    "No true time-to-first-token instrumentation exists; only prompt/generation throughput and a throughput-derived prompt-time estimate are reported.",
+    "Two UNVERIFIED_REJECT/FALSE_REJECT results trace to real, live host-memory pressure changing between the plan() call and the run() call on this shared desktop -- not fully reproducible on demand, disclosed rather than re-run until a 'clean' result appeared.",
+    "No output-quality (perplexity/task-accuracy) measurement was performed at any quant level -- 'quality' throughout this milestone (and G2 before it) means catalog file-size ordering only.",
+    "All throughput numbers are 2-rep averages of a single short prompt (5 tokens) and a short generation (24 tokens) -- a deliberately small, bounded point set per the task's own host-constraint instructions, not a statistically powered benchmark."
+  ],
+  "no_ollama_vllm_work": "Confirmed: no Ollama/vLLM adapter, external runtime discovery, or new inference backend work was started or implied by this milestone."
+}

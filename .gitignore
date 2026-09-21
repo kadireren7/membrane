@@ -9,6 +9,12 @@ build-*/
 # location is demo-output/ at the repo root.
 demo-output/
 
+# scripts/planner-v2-evidence/run_evidence_harness.py's own working
+# area (isolated XDG_DATA_HOME registry, raw pre-curation JSON dumps).
+# The curated, committed artifact is results/planner-v2-evidence/
+# validation.json -- this directory is regenerated, never committed.
+scratch/
+
 # Locally-extracted dev tools (iverilog/yosys/nextpnr, obtained via
 # `apt-get download` + `dpkg-deb -x` since this environment has no root
 # access to install them system-wide -- see docs/phase5-fpga-streaming.md
