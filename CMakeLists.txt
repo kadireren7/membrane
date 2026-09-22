@@ -359,6 +359,22 @@ target_link_libraries(membrane_plan_v2_resolver PUBLIC
 target_include_directories(membrane_plan_v2_resolver PUBLIC
   tools/membrane-run)
 
+# Milestone H1 (runtime abstraction foundation): runtime identity +
+# capability model + read-only plan/capability negotiation (see
+# runtime_capabilities.h's own top comment). Only depends on membrane_
+# plan for membrane_plan_t's own type definition (header-only -- this
+# module never calls membrane_plan_assemble() or any planner function,
+# so it does not need to link membrane_plan/membrane_context_
+# recommender/membrane_gpu_policy at all), llama-free, no model/device/
+# service access, same testable-without-a-model/GPU pattern as every
+# module above.
+add_library(membrane_runtime_capabilities STATIC
+  tools/membrane-run/runtime_capabilities.c)
+target_link_libraries(membrane_runtime_capabilities PUBLIC
+  membrane_sanitizers)
+target_include_directories(membrane_runtime_capabilities PUBLIC
+  tools/membrane-run)
+
 # Phase 21: the bounded apply-time fallback CONTROLLER -- llama-free,
 # same pattern as membrane_joint_planner above. Consumes (never
 # duplicates or regenerates) the ranked candidate array
@@ -944,6 +960,17 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_plan_v2_resolver PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_plan_v2_resolver COMMAND test_plan_v2_resolver)
+
+  # Milestone H1: the runtime identity/capability/negotiation module's
+  # own tests -- llama-free, synthetic capability/plan fixtures only,
+  # same pattern as test_membrane_plan/test_plan_v2_resolver above.
+  add_executable(test_runtime_capabilities
+    tools/membrane-run/test_runtime_capabilities.c)
+  target_link_libraries(test_runtime_capabilities PRIVATE
+    membrane_runtime_capabilities)
+  target_include_directories(test_runtime_capabilities PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_runtime_capabilities COMMAND test_runtime_capabilities)
 
   # Phase 21: the bounded apply-time fallback controller's own tests --
   # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a
