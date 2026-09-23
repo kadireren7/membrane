@@ -61,4 +61,8 @@ bool	membrane_runtime_model_inspect_json(const std::string &runtime_id,
 			const std::string &model, nlohmann::json *out,
 			membrane_runtime_error_t *err);
 
+/* H3: the one mapping from a MEMBRANE_RUNTIME_ERR_* code to a stable
+ * product_cli.h exit code, shared with `membrane plan --runtime`. */
+int		membrane_runtime_error_exit_code(const membrane_runtime_error_t &err);
+
 #endif

@@ -359,14 +359,19 @@ target_include_directories(membrane_use_cmd PRIVATE
 # assembled into the common membrane_plan_t representation
 # (membrane_plan.h). See plan_cmd.h's own top comment for the read-only
 # contract.
-add_library(membrane_plan_cmd STATIC plan_cmd.cpp)
+# Milestone H3: runtime_plan_cmd.cpp adds `membrane plan MODEL --runtime
+# ID` (read-only runtime applicability assessment) on top of the
+# unchanged Planner v2 path.
+add_library(membrane_plan_cmd STATIC plan_cmd.cpp runtime_plan_cmd.cpp)
 set_target_properties(membrane_plan_cmd PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_plan_cmd PUBLIC membrane_sanitizers
   membrane_registry_core membrane_model_catalog membrane_variant_selector
   membrane_gpu_device membrane_runtime_session membrane_kv_store_telemetry
-  membrane_plan membrane_plan_v2_resolver membrane_product_cli llama)
+  membrane_plan membrane_plan_v2_resolver membrane_product_cli
+  membrane_runtime_plan_assessment membrane_runtime_adapters
+  membrane_runtime_cmd llama)
 target_include_directories(membrane_plan_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_plan_cmd PRIVATE
@@ -659,6 +664,27 @@ if(MEMBRANE_BUILD_TESTS)
     ${CMAKE_SOURCE_DIR}/tools/membrane-run
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
   add_test(NAME test_runtime_ollama COMMAND test_runtime_ollama)
+
+  # Milestone H3: runtime-aware plan assessment -- pure classification
+  # tests against the real native/Ollama capability matrices, plus
+  # `membrane plan --runtime` end to end (real SmolLM2 GGUF fixture for
+  # the native path, GGUF metadata only; in-process mock server for
+  # Ollama, which is never really contacted).
+  add_executable(test_runtime_plan test_runtime_plan.cpp)
+  set_target_properties(test_runtime_plan PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_runtime_plan PRIVATE membrane_plan_cmd
+    membrane_runtime_plan_assessment membrane_runtime_adapters
+    membrane_registry_core membrane_product_cli membrane_cpp_httplib)
+  target_include_directories(test_runtime_plan PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  target_compile_definitions(test_runtime_plan PRIVATE
+    MEMBRANE_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  add_test(NAME test_runtime_plan COMMAND test_runtime_plan)
 
   # Post-v1 product-polish, prompt 3: pure, no-network unit tests for
   # the SSE incremental parser `membrane chat` uses.

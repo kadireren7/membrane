@@ -377,7 +377,11 @@ and `models ollama` exits 4 with `RUNTIME_UNAVAILABLE`.
   local canonicalization beyond whitespace/control rejection and the
   cloud-suffix refusal.
 
-**Deferred to H3:** capability-aware planning. That means mapping or
+**H3 (done, read-only):** `membrane plan MODEL --runtime ollama` -- see
+[runtime-plan-assessment.md](runtime-plan-assessment.md). It reuses only the
+calls above (no new route) and is always `capability_only`.
+
+**Originally deferred to H3:** capability-aware planning. That means mapping or
 comparing Ollama inventory against MEMBRANE's registry, building
 `membrane_plan_t` for an Ollama model, running negotiation against the
 Ollama matrix, and any recommendation. Any control (per-request

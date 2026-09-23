@@ -18,6 +18,8 @@
 #include "membrane_plan.h"
 #include "plan_v2_resolver.h"
 #include "product_cli.h"
+#include "runtime_adapter.h"
+#include "runtime_plan_cmd.h"
 
 using json = nlohmann::json;
 
@@ -61,6 +63,7 @@ struct s_plan_opts
 	int32_t		gpu_layers_request = MEMBRANE_JOINT_GPU_LAYERS_REQUEST_AUTO;
 	bool		want_quant = false;
 	std::string	quant;
+	std::string	runtime;	/* Milestone H3: --runtime ID ("" = none) */
 };
 
 static bool	parse_plan_opts(const std::vector<std::string> &args,
@@ -141,6 +144,11 @@ static bool	parse_plan_opts(const std::vector<std::string> &args,
 			o->quant = args[++i];
 			continue ;
 		}
+		if (a == "--runtime" && i + 1 < args.size())
+		{
+			o->runtime = args[++i];
+			continue ;
+		}
 		if (o->name.empty() && a.size() > 0 && a[0] != '-')
 		{
 			o->name = a;
@@ -153,7 +161,7 @@ static bool	parse_plan_opts(const std::vector<std::string> &args,
 	{
 		*err = "usage: membrane plan MODEL [--ctx auto|N] [--kv "
 			"native|q8|q5|adaptive] [--gpu-layers all|auto|N] "
-			"[--quant QUANT]";
+			"[--quant QUANT] [--runtime RUNTIME_ID]";
 		return (false);
 	}
 	return (true);
@@ -664,7 +672,7 @@ static json	plan_json_object(const membrane_plan_t &plan)
 	return (j);
 }
 
-static void	render_json_v2(const membrane_plan_v2_result_t &res)
+static json	plan_v2_json(const membrane_plan_v2_result_t &res)
 {
 	json	j;
 
@@ -716,7 +724,40 @@ static void	render_json_v2(const membrane_plan_v2_result_t &res)
 	j["alternatives"] = alts;
 	j["feasible"] = res.feasible != 0;
 	j["explanation"] = res.explanation;
-	printf("%s\n", j.dump().c_str());
+	return (j);
+}
+
+static void	render_json_v2(const membrane_plan_v2_result_t &res)
+{
+	printf("%s\n", plan_v2_json(res).dump().c_str());
+}
+
+static void	render_human_v2(const membrane_plan_v2_result_t &res);
+
+/* Milestone H3: without --runtime, exactly the pre-H3 output. With
+ * --runtime membrane-native, the SAME Planner v2 result is classified
+ * against the native runtime's capabilities (runtime_plan_cmd.h) and
+ * embedded verbatim as "planner_plan" -- nothing is re-planned. */
+static int	render_plan_result(const membrane_plan_v2_result_t &res,
+				const s_plan_opts &opts, bool want_json)
+{
+	if (opts.runtime.empty())
+	{
+		if (want_json)
+			render_json_v2(res);
+		else
+			render_human_v2(res);
+		return (MEMBRANE_EXIT_SUCCESS);
+	}
+	if (res.candidate_count == 0)
+	{
+		print_err(want_json, "NO_PLAN", "Planner v2 evaluated no candidate "
+			"variant, so there is nothing to assess");
+		return (MEMBRANE_EXIT_MODEL_ERROR);
+	}
+	return (membrane_runtime_plan_native(res.has_selected
+			? res.candidates[res.selected_index] : res.candidates[0],
+		plan_v2_json(res), want_json));
 }
 
 static void	render_human_v2(const membrane_plan_v2_result_t &res)
@@ -948,11 +989,7 @@ static int	plan_installed_model_v2(const std::string &name,
 	build_v2_request(specs, opts, gpu_index >= 0, meminfo, device_free_bytes,
 		device_total_bytes, &req);
 	membrane_plan_v2_resolve(&req, &res);
-	if (want_json)
-		render_json_v2(res);
-	else
-		render_human_v2(res);
-	return (MEMBRANE_EXIT_SUCCESS);
+	return (render_plan_result(res, opts, want_json));
 }
 
 static int	plan_catalog_only_model_v2(const membrane_catalog_family_t &fam,
@@ -1021,11 +1058,40 @@ static int	plan_catalog_only_model_v2(const membrane_catalog_family_t &fam,
 
 	build_v2_request(specs, opts, false, meminfo, 0, 0, &req);
 	membrane_plan_v2_resolve(&req, &res);
-	if (want_json)
-		render_json_v2(res);
-	else
-		render_human_v2(res);
-	return (MEMBRANE_EXIT_SUCCESS);
+	return (render_plan_result(res, opts, want_json));
+}
+
+/* Milestone H3: an external runtime's model is identified ONLY by the
+ * runtime's own id -- no registry/catalog lookup happens (their
+ * identities are never merged), and no Planner v2 plan is built (its
+ * memory math needs real GGUF hparams the runtime API does not expose),
+ * so this is always a capability-only assessment. */
+static int	plan_external_runtime(const s_plan_opts &opts, bool want_json)
+{
+	const membrane_runtime_adapter_t	*a
+			= membrane_runtime_registry_find(opts.runtime);
+	membrane_runtime_plan_request_t	req;
+
+	if (a == NULL)
+	{
+		print_err(want_json, "CLI_ERROR", opts.runtime == MEMBRANE_RUNTIME_ID_VLLM
+			? "runtime '" + opts.runtime + "' is a reserved identifier for a "
+				"future external-runtime adapter; no adapter is implemented "
+				"in this build"
+			: "unknown runtime '" + opts.runtime + "' -- see `membrane "
+				"runtime list`");
+		return (MEMBRANE_EXIT_CLI_ERROR);
+	}
+	req.context_known = opts.want_ctx && !opts.ctx_auto;
+	req.context = opts.ctx_value;
+	req.gpu_layers_known = opts.want_gpu_layers
+		&& opts.gpu_layers_request != MEMBRANE_JOINT_GPU_LAYERS_REQUEST_AUTO;
+	req.gpu_layers = opts.gpu_layers_request;
+	req.kv_precision_known = opts.want_kv
+		&& opts.precision_request != MEMBRANE_JOINT_PRECISION_REQUEST_AUTO;
+	req.kv_precision = opts.precision_request;
+	req.quant = opts.want_quant ? opts.quant : std::string();
+	return (membrane_runtime_plan_external(*a, opts.name, req, want_json));
 }
 
 int	membrane_plan_cmd_dispatch(const std::vector<std::string> &args,
@@ -1039,6 +1105,8 @@ int	membrane_plan_cmd_dispatch(const std::vector<std::string> &args,
 		print_err(want_json, "CLI_ERROR", err);
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
+	if (!opts.runtime.empty() && opts.runtime != MEMBRANE_RUNTIME_ID_NATIVE)
+		return (plan_external_runtime(opts, want_json));
 
 	std::string					registry_path = membrane_registry_resolve_path();
 	membrane_registry_t			reg;
