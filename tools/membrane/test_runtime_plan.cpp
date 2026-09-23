@@ -266,6 +266,14 @@ static void	test_capability_only_with_requests(void)
 	TEST_ASSERT(has_reason(a, MEMBRANE_ASSESS_REASON_CONTEXT_EXCEEDS_MODEL_MAX)
 		&& has_reason(a, MEMBRANE_ASSESS_REASON_REQUESTED_QUANT_DIFFERS),
 		"requests beyond the model's reported facts are flagged");
+	in.requested_quant = "q4_k_m";
+	membrane_runtime_recommend_plan(&in, &a);
+	TEST_ASSERT(!has_reason(a, MEMBRANE_ASSESS_REASON_REQUESTED_QUANT_DIFFERS),
+		"a quant equal to the tag's up to case is not flagged");
+	in.requested_quant = "Q4_K";
+	membrane_runtime_recommend_plan(&in, &a);
+	TEST_ASSERT(has_reason(a, MEMBRANE_ASSESS_REASON_REQUESTED_QUANT_DIFFERS),
+		"a prefix of the tag's quant is still a different quant");
 }
 
 static void	test_unavailable_and_unknown(void)

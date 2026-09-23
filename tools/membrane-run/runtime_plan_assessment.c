@@ -1,6 +1,6 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
-#include <strings.h>
 
 #include "kv_residency_policy.h"
 #include "runtime_plan_assessment.h"
@@ -99,6 +99,20 @@ static void	copy_str(char *dst, size_t dst_size, const char *src)
 		len = dst_size - 1;
 	memcpy(dst, src, len);
 	dst[len] = '\0';
+}
+
+/* Portable ASCII case-insensitive equality -- <strings.h>'s strcasecmp()
+ * does not exist on MSVC (windows-support-smoke builds this file). */
+static int	ascii_iequal(const char *a, const char *b)
+{
+	while (*a != '\0' && *b != '\0')
+	{
+		if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
+			return (0);
+		a++;
+		b++;
+	}
+	return (*a == *b);
 }
 
 static void	push_reason(membrane_runtime_plan_assessment_t *out,
@@ -267,7 +281,7 @@ static void	fill_from_request(const membrane_runtime_recommend_input_t *in,
 		set_value(r, in->requested_quant,
 			MEMBRANE_ASSESS_VALUE_EXPLICIT_REQUEST, MEMBRANE_PLAN_SOURCE_UNKNOWN);
 		if (has_model_quant
-			&& strcasecmp(in->requested_quant, in->model_quantization) != 0)
+			&& !ascii_iequal(in->requested_quant, in->model_quantization))
 		{
 			snprintf(detail, sizeof(detail), "requested quant %s, but this "
 				"runtime model is %s; a different quant is a different "
