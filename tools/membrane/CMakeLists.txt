@@ -381,12 +381,30 @@ target_include_directories(membrane_plan_cmd PRIVATE
 # in the root CMakeLists.txt). No registry/config/service dependency
 # at all -- see runtime_cmd.h's own top comment on the read-only
 # guarantee this command makes.
+# Milestone H2: the static runtime adapter table (runtime_adapter.h) and
+# the first external adapter, Ollama -- READ-ONLY (runtime_ollama.h's own
+# top comment: an enforced 3-call allowlist, no inference, no mutation).
+# Reuses the already-vendored cpp-httplib + nlohmann/json; no new
+# dependency. Kept out of membrane_runtime_capabilities so the generic,
+# pure capability module stays HTTP-free.
+add_library(membrane_runtime_adapters STATIC runtime_registry.cpp
+  runtime_ollama.cpp)
+set_target_properties(membrane_runtime_adapters PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_runtime_adapters PUBLIC membrane_sanitizers
+  membrane_runtime_capabilities membrane_cpp_httplib)
+target_include_directories(membrane_runtime_adapters PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
 add_library(membrane_runtime_cmd STATIC runtime_cmd.cpp)
 set_target_properties(membrane_runtime_cmd PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_runtime_cmd PUBLIC membrane_sanitizers
-  membrane_runtime_capabilities membrane_product_cli)
+  membrane_runtime_capabilities membrane_runtime_adapters
+  membrane_product_cli)
 target_include_directories(membrane_runtime_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_runtime_cmd PRIVATE
@@ -623,6 +641,24 @@ if(MEMBRANE_BUILD_TESTS)
     ${CMAKE_SOURCE_DIR}/tools/membrane-run
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
   add_test(NAME test_runtime_cmd COMMAND test_runtime_cmd)
+
+  # Milestone H2: the read-only Ollama adapter's own tests -- a real
+  # in-process httplib::Server on an ephemeral loopback port serves
+  # deterministic Ollama-shaped fixtures, so no Ollama install is needed
+  # (and a real Ollama on this host is never contacted: every test pins
+  # MEMBRANE_OLLAMA_ENDPOINT to the mock or to a closed port).
+  add_executable(test_runtime_ollama test_runtime_ollama.cpp)
+  set_target_properties(test_runtime_ollama PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_runtime_ollama PRIVATE membrane_runtime_cmd
+    membrane_runtime_adapters membrane_runtime_capabilities
+    membrane_product_cli membrane_cpp_httplib)
+  target_include_directories(test_runtime_ollama PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+  add_test(NAME test_runtime_ollama COMMAND test_runtime_ollama)
 
   # Post-v1 product-polish, prompt 3: pure, no-network unit tests for
   # the SSE incremental parser `membrane chat` uses.

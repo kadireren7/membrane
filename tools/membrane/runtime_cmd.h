@@ -6,6 +6,8 @@
 
 # include <nlohmann/json.hpp>
 
+# include "runtime_adapter.h"
+
 /*
  * Milestone H1 (runtime abstraction foundation): `membrane runtime
  * list|inspect` -- a READ-ONLY introspection surface over runtime_
@@ -35,12 +37,28 @@ int	membrane_runtime_cmd_dispatch(const std::vector<std::string> &args,
 nlohmann::json	membrane_runtime_list_json(void);
 
 /* Returns true and fills *out iff runtime_id is a real, describable
- * runtime (H1: only "membrane-native"); false otherwise, with
+ * runtime (membrane-native, or -- H2 -- ollama, whose descriptor comes
+ * from one live, bounded probe); false otherwise, with
  * *err_message set to a human-readable reason (distinguishing a
  * genuinely unknown id from a reserved-but-unimplemented one -- see
  * runtime_capabilities.h's own MEMBRANE_RUNTIME_ID_OLLAMA/_VLLM top
  * comment). */
 bool	membrane_runtime_inspect_json(const std::string &runtime_id,
 			nlohmann::json *out, std::string *err_message);
+
+/*
+ * Milestone H2: `membrane runtime models ID` and `membrane runtime model
+ * inspect ID MODEL` -- an EXTERNAL runtime's own model inventory/
+ * metadata, read through its adapter (runtime_adapter.h). Never merged
+ * into, compared with, or written to MEMBRANE's own model registry.
+ * Returns false with err->code set to a runtime_adapter.h
+ * MEMBRANE_RUNTIME_ERR_* code, or "CLI_ERROR" for an unknown/reserved id
+ * or a runtime with no external inventory (membrane-native).
+ */
+bool	membrane_runtime_models_json(const std::string &runtime_id,
+			nlohmann::json *out, membrane_runtime_error_t *err);
+bool	membrane_runtime_model_inspect_json(const std::string &runtime_id,
+			const std::string &model, nlohmann::json *out,
+			membrane_runtime_error_t *err);
 
 #endif

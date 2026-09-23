@@ -58,6 +58,19 @@ const char	*membrane_runtime_availability_name(
 	return ("unknown");
 }
 
+const char	*membrane_runtime_health_name(membrane_runtime_health_t h)
+{
+	if (h == MEMBRANE_RUNTIME_HEALTH_UNREACHABLE)
+		return ("unreachable");
+	if (h == MEMBRANE_RUNTIME_HEALTH_HEALTHY)
+		return ("healthy");
+	if (h == MEMBRANE_RUNTIME_HEALTH_INCOMPATIBLE)
+		return ("incompatible");
+	if (h == MEMBRANE_RUNTIME_HEALTH_UNKNOWN)
+		return ("unknown");
+	return ("not_probed");
+}
+
 const char	*membrane_negotiation_result_name(
 				membrane_negotiation_result_t r)
 {

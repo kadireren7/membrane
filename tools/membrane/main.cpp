@@ -65,6 +65,11 @@ static void	print_usage(FILE *out)
 		"the inference runtimes this build can describe\n");
 	fprintf(out, "  membrane runtime inspect ID        READ-ONLY: show "
 		"one runtime's identity and capability matrix\n");
+	fprintf(out, "  membrane runtime models ID         READ-ONLY: list "
+		"an external runtime's own models (e.g. ollama)\n");
+	fprintf(out, "  membrane runtime model inspect ID MODEL\n"
+		"                                     READ-ONLY: show one "
+		"external-runtime model's metadata\n");
 	fprintf(out, "  membrane chat [MODEL]              interactive "
 		"terminal chat with the local server (see membrane chat "
 		"--help)\n");
