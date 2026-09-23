@@ -374,6 +374,25 @@ target_include_directories(membrane_plan_cmd PRIVATE
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
 
+# Milestone H1 (runtime abstraction foundation): `membrane runtime
+# list|inspect` -- a thin CLI wrapper over runtime_capabilities.h's own
+# static, llama-free runtime table (tools/membrane-run/runtime_
+# capabilities.h/.c, the membrane_runtime_capabilities library defined
+# in the root CMakeLists.txt). No registry/config/service dependency
+# at all -- see runtime_cmd.h's own top comment on the read-only
+# guarantee this command makes.
+add_library(membrane_runtime_cmd STATIC runtime_cmd.cpp)
+set_target_properties(membrane_runtime_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_runtime_cmd PUBLIC membrane_sanitizers
+  membrane_runtime_capabilities membrane_product_cli)
+target_include_directories(membrane_runtime_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+target_include_directories(membrane_runtime_cmd PRIVATE
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
 # Post-v1 product-polish, prompt 3: the pure, llama-free/httplib-free
 # SSE incremental parser `membrane chat` uses to turn the server's own
 # real streamed wire format into plain text -- its own tiny library so
@@ -418,7 +437,7 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_status_client membrane_server_config membrane_doctor_cmd
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
   membrane_variant_selector membrane_use_cmd membrane_chat_cmd
-  membrane_plan_cmd
+  membrane_plan_cmd membrane_runtime_cmd
   membrane_service_state membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -588,6 +607,22 @@ if(MEMBRANE_BUILD_TESTS)
   target_compile_definitions(test_plan_cmd PRIVATE
     MEMBRANE_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   add_test(NAME test_plan_cmd COMMAND test_plan_cmd)
+
+  # Milestone H1: unit tests for `membrane runtime list|inspect`
+  # (test_runtime_cmd.cpp's own top comment) -- driven in-process, no
+  # registry/config/service isolation needed at all (unlike test_plan_
+  # cmd/test_doctor_cmd above): runtime_cmd.cpp touches none of them.
+  add_executable(test_runtime_cmd test_runtime_cmd.cpp)
+  set_target_properties(test_runtime_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_runtime_cmd PRIVATE membrane_runtime_cmd
+    membrane_runtime_capabilities membrane_product_cli)
+  target_include_directories(test_runtime_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+  add_test(NAME test_runtime_cmd COMMAND test_runtime_cmd)
 
   # Post-v1 product-polish, prompt 3: pure, no-network unit tests for
   # the SSE incremental parser `membrane chat` uses.

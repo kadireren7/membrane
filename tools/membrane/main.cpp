@@ -16,6 +16,7 @@
 #include "use_cmd.h"
 #include "chat_cmd.h"
 #include "plan_cmd.h"
+#include "runtime_cmd.h"
 #include "product_cli.h"
 
 using json = nlohmann::json;
@@ -60,6 +61,10 @@ static void	print_usage(FILE *out)
 	fprintf(out, "  membrane plan MODEL                READ-ONLY: show "
 		"the hardware-aware plan MEMBRANE would use for MODEL (see "
 		"plan options)\n");
+	fprintf(out, "  membrane runtime list              READ-ONLY: list "
+		"the inference runtimes this build can describe\n");
+	fprintf(out, "  membrane runtime inspect ID        READ-ONLY: show "
+		"one runtime's identity and capability matrix\n");
 	fprintf(out, "  membrane chat [MODEL]              interactive "
 		"terminal chat with the local server (see membrane chat "
 		"--help)\n");
@@ -219,6 +224,13 @@ int	main(int argc, char **argv)
 		std::vector<std::string>	plan_args(args.begin() + 1, args.end());
 
 		return (membrane_plan_cmd_dispatch(plan_args, want_json));
+	}
+	if (args[0] == "runtime")
+	{
+		std::vector<std::string>	runtime_args(args.begin() + 1,
+				args.end());
+
+		return (membrane_runtime_cmd_dispatch(runtime_args, want_json));
 	}
 	if (args[0] == "serve")
 	{
