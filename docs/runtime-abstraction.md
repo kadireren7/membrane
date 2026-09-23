@@ -5,6 +5,11 @@
 > H2 does NOT send inference requests and does NOT change Ollama state.
 > Sections below that describe `ollama` as "reserved only" describe H1;
 > the H2 notes inline say what changed.
+>
+> **Milestone H3 update:** negotiation is now surfaced as a read-only,
+> runtime-aware assessment -- `membrane plan MODEL --runtime ID` -- see
+> [runtime-plan-assessment.md](runtime-plan-assessment.md). H3 does not
+> apply planner decisions.
 
 ## 1. Why this exists
 
@@ -331,7 +336,8 @@ empty afterward.
 - No dynamic/plugin loading of runtimes (a fixed, static table today).
 - No live health-probe daemon. H2 makes only one bounded, on-demand probe
   per command.
-- No `--plan MODEL` CLI option for negotiation (library-level only).
+- ~~No CLI for negotiation.~~ **H3:** `membrane plan MODEL --runtime ID`
+  (read-only assessment; see runtime-plan-assessment.md).
 - No wiring of negotiation results into `membrane use`/`membrane
   serve`'s actual execution path -- this stays purely advisory.
 - No change to Planner v2's own math, plan representation, or

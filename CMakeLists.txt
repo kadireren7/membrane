@@ -375,6 +375,20 @@ target_link_libraries(membrane_runtime_capabilities PUBLIC
 target_include_directories(membrane_runtime_capabilities PUBLIC
   tools/membrane-run)
 
+# Milestone H3 (runtime-aware plan assessment): classifies -- never
+# applies -- a Planner v2 plan or an explicit request against one
+# runtime's capability matrix (runtime_plan_assessment.h's own top
+# comment). Pure/llama-free; reads membrane_plan_t only as a type, like
+# membrane_runtime_capabilities above. kv_residency_policy only for its
+# existing placement-mode display name.
+add_library(membrane_runtime_plan_assessment STATIC
+  tools/membrane-run/runtime_plan_assessment.c)
+target_link_libraries(membrane_runtime_plan_assessment PUBLIC
+  membrane_runtime_capabilities membrane_kv_residency_policy
+  membrane_sanitizers)
+target_include_directories(membrane_runtime_plan_assessment PUBLIC
+  tools/membrane-run)
+
 # Phase 21: the bounded apply-time fallback CONTROLLER -- llama-free,
 # same pattern as membrane_joint_planner above. Consumes (never
 # duplicates or regenerates) the ranked candidate array

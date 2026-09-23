@@ -134,6 +134,10 @@ static void	print_usage(FILE *out)
 		"(default: auto)\n");
 	fprintf(out, "  --quant QUANT / --variant QUANT     variant to plan "
 		"for (catalog-only models; ignored for an installed model)\n");
+	fprintf(out, "  --runtime ID                        READ-ONLY: assess "
+		"which planned/requested settings runtime ID\n"
+		"                                     can control (membrane-native, "
+		"ollama); applies nothing\n");
 	fprintf(out, "\n");
 	fprintf(out, "serve options:\n");
 	fprintf(out, "  --port N                           listen port "

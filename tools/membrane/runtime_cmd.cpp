@@ -538,7 +538,7 @@ static void	print_model_inspect_human(const json &j)
 	}
 }
 
-static int	exit_code_for(const membrane_runtime_error_t &err)
+int	membrane_runtime_error_exit_code(const membrane_runtime_error_t &err)
 {
 	if (err.code == MEMBRANE_RUNTIME_ERR_MODEL_NOT_FOUND
 		|| err.code == MEMBRANE_RUNTIME_ERR_CLOUD_REFUSED)
@@ -565,7 +565,7 @@ static int	dispatch_models(const std::vector<std::string> &args,
 	if (!membrane_runtime_models_json(args[1], &j, &err))
 	{
 		print_err_code(want_json, err.code, err.message);
-		return (exit_code_for(err));
+		return (membrane_runtime_error_exit_code(err));
 	}
 	if (want_json)
 		printf("%s\n", j.dump().c_str());
@@ -588,7 +588,7 @@ static int	dispatch_model(const std::vector<std::string> &args,
 	if (!membrane_runtime_model_inspect_json(args[2], args[3], &j, &err))
 	{
 		print_err_code(want_json, err.code, err.message);
-		return (exit_code_for(err));
+		return (membrane_runtime_error_exit_code(err));
 	}
 	if (want_json)
 		printf("%s\n", j.dump().c_str());
