@@ -115,10 +115,19 @@ static void	test_list_json_contains_native(void)
 		"list JSON carries the runtime schema version");
 	TEST_ASSERT(j["membrane_version"].get<std::string>() == MEMBRANE_VERSION,
 		"list JSON carries MEMBRANE_VERSION");
-	TEST_ASSERT(j["runtimes"].is_array() && j["runtimes"].size() == 1,
-		"exactly one runtime is listed in H1");
+	/* H2: membrane-native first, then the Ollama adapter (unreachable
+	 * here -- main() pins MEMBRANE_OLLAMA_ENDPOINT to a closed port). */
+	TEST_ASSERT(j["runtimes"].is_array() && j["runtimes"].size() == 2,
+		"membrane-native + ollama are listed");
+	TEST_ASSERT(j["runtimes"][1]["id"] == MEMBRANE_RUNTIME_ID_OLLAMA,
+		"the second listed runtime is the ollama adapter");
+	TEST_ASSERT(j["runtimes"][1]["status"] == "unavailable",
+		"an unreachable ollama is listed as unavailable, not omitted");
 	TEST_ASSERT(j["runtimes"][0]["id"] == MEMBRANE_RUNTIME_ID_NATIVE,
-		"the one listed runtime is membrane-native");
+		"the first listed runtime is membrane-native");
+	TEST_ASSERT(j["runtimes"][0]["health"] == "not_probed"
+		&& j["runtimes"][0]["version_provenance"] == "unknown",
+		"membrane-native is embedded: never probed, no version claimed");
 	TEST_ASSERT(j["runtimes"][0]["type"] == "native",
 		"membrane-native's JSON type is 'native'");
 	TEST_ASSERT(j["runtimes"][0]["status"] == "available",
@@ -234,10 +243,11 @@ static void	test_inspect_reserved_runtime_distinguishes_from_unknown(void)
 {
 	json		j;
 	std::string	err;
-	bool		ok = membrane_runtime_inspect_json(MEMBRANE_RUNTIME_ID_OLLAMA,
+	bool		ok = membrane_runtime_inspect_json(MEMBRANE_RUNTIME_ID_VLLM,
 			&j, &err);
 
-	TEST_ASSERT(!ok, "the reserved 'ollama' id has no adapter in H1");
+	TEST_ASSERT(!ok, "the reserved 'vllm' id has no adapter (H2 adds "
+		"only ollama)");
 	TEST_ASSERT(err.find("reserved") != std::string::npos
 		&& err.find("adapter") != std::string::npos,
 		"the error text distinguishes 'reserved, no adapter yet' from a "
@@ -331,6 +341,9 @@ static void	test_dispatch_creates_no_files(void)
 
 int	main(void)
 {
+	/* Deterministic regardless of whether a real Ollama runs on this
+	 * host: nothing listens on 127.0.0.1:1. */
+	setenv("MEMBRANE_OLLAMA_ENDPOINT", "http://127.0.0.1:1", 1);
 	test_list_json_contains_native();
 	test_list_json_deterministic();
 	test_dispatch_list_matches_library_json();

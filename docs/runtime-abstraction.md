@@ -1,5 +1,11 @@
 # Runtime abstraction foundation (Milestone H1)
 
+> **Milestone H2 update:** a first external-runtime adapter now exists --
+> **Ollama, read-only** -- documented in [runtime-ollama.md](runtime-ollama.md).
+> H2 does NOT send inference requests and does NOT change Ollama state.
+> Sections below that describe `ollama` as "reserved only" describe H1;
+> the H2 notes inline say what changed.
+
 ## 1. Why this exists
 
 MEMBRANE has, until now, been a single thing: a local inference runtime
@@ -58,12 +64,22 @@ loopback-HTTP client of `membrane serve` (a MEMBRANE-internal
 client/server split, not evidence the engine is external -- see
 `runtime_capabilities.h`'s own top comment).
 
-Two string identifiers are reserved, but not implemented, for a future
-external-runtime adapter: `ollama` and `vllm`. `membrane runtime list`
-does not show them (H1's default: "only show runtimes the program can
-genuinely describe"), and `membrane runtime inspect ollama` fails with
-a message that distinguishes "reserved, no adapter yet" from a
-genuinely unknown id.
+Two string identifiers were reserved in H1 for a future external-runtime
+adapter: `ollama` and `vllm`. **H2:** `ollama` now has a real, read-only
+adapter and is listed (see [runtime-ollama.md](runtime-ollama.md)).
+`vllm` is still reserved only: `membrane runtime list` does not show it,
+and `membrane runtime inspect vllm` fails with a message that
+distinguishes "reserved, no adapter yet" from a genuinely unknown id.
+
+**H2 adapter boundary.** `runtime_capabilities.h/.c` stays pure (no I/O)
+and still describes only the built-in native runtime.
+`tools/membrane/runtime_adapter.h` adds a fixed, statically-linked
+table (`runtime_registry.cpp`): `membrane-native` (backed by the pure
+module above) and `ollama` (`runtime_ollama.h/.cpp`, the only file that
+speaks Ollama's HTTP API). Each row is plain function pointers:
+`describe` (may make one bounded probe), `list_models` and
+`inspect_model` (NULL for membrane-native, whose models are MEMBRANE's
+own registry). No plugin loading, no dynamic discovery.
 
 ## 4. Capability model
 
@@ -125,6 +141,12 @@ running binary (no `#ifdef`/build-flag check, no call into
 `api_probe`, and `version_probe` exist as an agreed vocabulary for a
 future adapter's own provenance, not because H1 produces them.
 
+**H2:** the descriptor also carries `version_provenance`. The Ollama
+adapter's capability matrix is `static_contract` (derived from Ollama's
+documented API, not probed), while its version is `api_probe` (read
+live from `GET /api/version`). membrane-native's `version_provenance`
+is `unknown`, since it reports no version.
+
 ## 5. Availability vs. running state
 
 Four distinct questions exist and must not be conflated:
@@ -150,6 +172,15 @@ unchanged commands that answer "is the background HTTP service
 actually up right now." `membrane runtime inspect` never starts,
 stops, or queries either. (3) and (4), and any live health-probe
 daemon, are explicitly out of scope for H1 (see &sect;8).
+
+**H2:** the descriptor gains a separate `health` field answering (3)
+for external runtimes after one bounded probe: `unreachable`,
+`healthy`, `incompatible`, or `unknown` (malformed answer).
+membrane-native always reports `not_probed`: it is embedded, so there is
+no separate process to probe. For Ollama, "adapter exists" never means
+"Ollama is running": an unreachable daemon is listed as a known runtime
+whose status is `unavailable`. Still no health-probe daemon, retry
+loop, or monitoring.
 
 ## 6. Negotiation
 
@@ -185,9 +216,10 @@ surface, per the H1 task's own "prefer keeping H1 small" guidance.
 ## 7. `membrane runtime list` / `membrane runtime inspect`
 
 ```
-$ membrane runtime list
+$ membrane runtime list          # H2: Ollama adapter present, daemon down
 ID                 TYPE       STATUS       VERSION
 membrane-native    native     available    -
+ollama             external   unavailable  -
 
 $ membrane runtime inspect membrane-native
 Runtime
@@ -229,8 +261,15 @@ worst-of-4 summary over `ram_usage`/`vram_usage`/`kv_cache_usage`/
 `loaded_model_memory`, kept so the output stays scannable); `--json`
 always itemizes all four separately, never summarized.
 
-Both commands accept `--json` and never require a model to be loaded,
-a service to be running, or any network access.
+Both commands accept `--json` and never require a model to be loaded or
+a service to be running. **H2:** they now make one bounded loopback HTTP
+probe of the Ollama adapter's endpoint (`GET /api/version`); for
+membrane-native they still make no network access at all. H2 also adds
+`membrane runtime models ID` and `membrane runtime model inspect ID
+MODEL`, which work only for external runtimes (see runtime-ollama.md).
+`membrane runtime inspect membrane-native` prints exactly what it did
+in H1. Health, Endpoint, Version, and Reason lines appear only when
+they carry information.
 
 ## 8. JSON schema
 
@@ -249,7 +288,9 @@ runtime list --json`:
       "execution_mode": "embedded_native",
       "status": "available",
       "unavailable_reason": null,
+      "health": "not_probed",
       "version": null,
+      "version_provenance": "unknown",
       "endpoint": null,
       "capability_provenance": "static_contract",
       "capabilities": { "...": "23 capability-name -> state string fields" }
@@ -257,6 +298,10 @@ runtime list --json`:
   ]
 }
 ```
+
+`health` and `version_provenance` were added in H2. They are additive, so
+`schema_version` stays 1. `unavailable_reason` is now also filled when
+`status` is `unknown` (a malformed probe answer).
 
 `membrane runtime inspect ID --json` is the same shape, with a single
 `"runtime"` object in place of `"runtimes"`. Both are produced by
@@ -279,11 +324,13 @@ empty afterward.
 
 ## 10. What is NOT implemented yet
 
-- **No Ollama adapter.** `ollama` is a reserved string id only.
+- ~~No Ollama adapter.~~ **H2:** read-only Ollama adapter (no inference,
+  no control); see runtime-ollama.md.
 - **No vLLM adapter.** `vllm` is a reserved string id only.
 - **No LM Studio, or any other external runtime.**
 - No dynamic/plugin loading of runtimes (a fixed, static table today).
-- No live health-probe daemon, no per-request live health checks.
+- No live health-probe daemon. H2 makes only one bounded, on-demand probe
+  per command.
 - No `--plan MODEL` CLI option for negotiation (library-level only).
 - No wiring of negotiation results into `membrane use`/`membrane
   serve`'s actual execution path -- this stays purely advisory.

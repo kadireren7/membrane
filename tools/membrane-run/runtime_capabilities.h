@@ -30,14 +30,17 @@ extern "C" {
  * plain data + pure functions, with zero coupling to whether a GPU is
  * present or `membrane serve` is running.
  *
- * H1 implements exactly ONE real runtime: MEMBRANE_RUNTIME_ID_NATIVE.
- * MEMBRANE_RUNTIME_ID_OLLAMA/_VLLM below are RESERVED string constants
- * only -- membrane_runtime_discover()/membrane_runtime_describe() do
- * not know about them as real, describable runtimes; they exist so a
- * future adapter has an agreed-upon id to claim, and so this module's
- * own "unknown vs. reserved-but-not-implemented" error path (see
- * runtime_cmd.cpp) can give a more honest message than a flat "unknown
- * runtime". No adapter for either exists in this build.
+ * This module describes only the BUILT-IN, statically-known runtime:
+ * MEMBRANE_RUNTIME_ID_NATIVE. membrane_runtime_discover()/membrane_
+ * runtime_describe() below never do I/O and therefore never describe an
+ * external runtime, whose availability can only be known by probing it.
+ *
+ * Milestone H2: MEMBRANE_RUNTIME_ID_OLLAMA now has a real, read-only
+ * adapter -- tools/membrane/runtime_ollama.h (all HTTP lives there, never
+ * here), composed with this module's native descriptor by the static
+ * table in tools/membrane/runtime_adapter.h (runtime_registry.cpp).
+ * MEMBRANE_RUNTIME_ID_VLLM is still a RESERVED string
+ * constant only; no vLLM adapter exists in this build.
  */
 
 # define MEMBRANE_RUNTIME_SCHEMA_VERSION	1
@@ -49,8 +52,9 @@ extern "C" {
 # define MEMBRANE_RUNTIME_REASON_MAX	160
 
 # define MEMBRANE_RUNTIME_ID_NATIVE	"membrane-native"
-/* Reserved only -- see this header's own top comment. Not implemented. */
+/* H2: read-only adapter in tools/membrane/runtime_ollama.h. */
 # define MEMBRANE_RUNTIME_ID_OLLAMA	"ollama"
+/* Reserved only -- see this header's own top comment. Not implemented. */
 # define MEMBRANE_RUNTIME_ID_VLLM		"vllm"
 
 /*
@@ -159,6 +163,30 @@ const char	*membrane_runtime_availability_name(
 				membrane_runtime_availability_t a);
 
 /*
+ * Milestone H2: the result of the most recent live probe of a runtime,
+ * kept SEPARATE from availability (H1's "exists / available / healthy"
+ * distinction). NOT_PROBED is the zero value and is what membrane-native
+ * always reports: it is embedded in this binary, there is no separate
+ * process to probe. An external adapter reports exactly one of the other
+ * four after one bounded probe:
+ *   UNREACHABLE  -- no HTTP response at all (refused, timeout, DNS)
+ *   HEALTHY      -- the runtime's own version API answered as documented
+ *   INCOMPATIBLE -- something answered, but not with the documented API
+ *                   (e.g. a non-2xx status on the version endpoint)
+ *   UNKNOWN      -- a 2xx answer whose body was malformed/unparseable
+ */
+typedef enum e_membrane_runtime_health
+{
+	MEMBRANE_RUNTIME_HEALTH_NOT_PROBED = 0,
+	MEMBRANE_RUNTIME_HEALTH_UNREACHABLE,
+	MEMBRANE_RUNTIME_HEALTH_HEALTHY,
+	MEMBRANE_RUNTIME_HEALTH_INCOMPATIBLE,
+	MEMBRANE_RUNTIME_HEALTH_UNKNOWN
+}	membrane_runtime_health_t;
+
+const char	*membrane_runtime_health_name(membrane_runtime_health_t h);
+
+/*
  * Part 3: the full capability surface, grouped exactly as the H1 task
  * groups it. Every field is a membrane_capability_state_t, never a
  * bare bool -- see that type's own top comment. Grouped by comment,
@@ -215,10 +243,15 @@ typedef struct s_membrane_runtime_descriptor
 	membrane_runtime_execution_mode_t		execution_mode;
 	membrane_runtime_availability_t		availability;
 	char	unavailable_reason[MEMBRANE_RUNTIME_REASON_MAX];	/* empty
-								 * unless availability is UNAVAILABLE */
+								 * when AVAILABLE; H2: also set for an
+								 * UNKNOWN (malformed-probe) result */
+
+	membrane_runtime_health_t				health;		/* H2 */
 
 	int		version_known;
 	char	version[MEMBRANE_RUNTIME_VERSION_MAX];
+	membrane_capability_provenance_t		version_provenance;	/* H2:
+								 * UNKNOWN unless version_known */
 	int		endpoint_known;			/* 0 for an in-process/embedded
 								 * runtime -- there is no separate
 								 * address to reach it at */
@@ -230,14 +263,15 @@ typedef struct s_membrane_runtime_descriptor
 
 /*
  * Part 6: the smallest useful discovery interface -- no dynamic
- * plugin loading, no registration macros, no factory. H1's own
- * implementation is a fixed, static table of exactly one entry.
+ * plugin loading, no registration macros, no factory. A fixed, static
+ * table of exactly one entry: the BUILT-IN runtime(s) only, no I/O.
+ * External runtimes (H2: Ollama) are added on top of this by tools/
+ * membrane/runtime_adapter.h's table, which is what `membrane runtime`
+ * uses.
  *
  * Writes up to max_out descriptors into out, returns the number
- * written (H1: always 0 or 1, never more than the real count of
- * runtimes this build can genuinely describe -- see this header's own
- * top comment on MEMBRANE_RUNTIME_ID_OLLAMA/_VLLM). Deterministic:
- * repeated calls in the same process always produce the same result.
+ * written (always 0 or 1). Deterministic: repeated calls in the same
+ * process always produce the same result.
  */
 size_t	membrane_runtime_discover(membrane_runtime_descriptor_t *out,
 			size_t max_out);
