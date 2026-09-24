@@ -450,6 +450,27 @@ target_include_directories(membrane_chat_cmd PUBLIC
 target_include_directories(membrane_chat_cmd PRIVATE
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
 
+# Milestone I1 (observation foundation): `membrane observe` -- the
+# membrane-native observation provider (observe_cmd.h's own top comment:
+# READ-ONLY, reuses the existing host/GPU/service/config/status/registry/
+# GGUF probes and Planner v2 via membrane_plan_cmd) over the pure
+# membrane_observation snapshot model.
+add_library(membrane_observe_cmd STATIC observe_cmd.cpp)
+set_target_properties(membrane_observe_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_observe_cmd PUBLIC membrane_sanitizers
+  membrane_observation membrane_plan_cmd membrane_registry_core
+  membrane_server_config membrane_status_client membrane_service_state
+  membrane_gpu_device membrane_runtime_session membrane_runtime_capabilities
+  membrane_kv_residency_policy membrane_product_cli llama)
+target_include_directories(membrane_observe_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+target_include_directories(membrane_observe_cmd PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
 add_executable(membrane main.cpp model_cmd.cpp)
 set_target_properties(membrane PROPERTIES
   CXX_STANDARD 17
@@ -460,7 +481,7 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_status_client membrane_server_config membrane_doctor_cmd
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
   membrane_variant_selector membrane_use_cmd membrane_chat_cmd
-  membrane_plan_cmd membrane_runtime_cmd
+  membrane_plan_cmd membrane_runtime_cmd membrane_observe_cmd
   membrane_service_state membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -685,6 +706,26 @@ if(MEMBRANE_BUILD_TESTS)
   target_compile_definitions(test_runtime_plan PRIVATE
     MEMBRANE_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   add_test(NAME test_runtime_plan COMMAND test_runtime_plan)
+
+  # Milestone I1: `membrane observe` -- pure snapshot assembly from
+  # synthetic inputs, plus the real read-only provider end to end in an
+  # isolated env (registry/config/service probe overridden; the server
+  # endpoint points at a closed loopback port or an in-process mock).
+  add_executable(test_observe_cmd test_observe_cmd.cpp)
+  set_target_properties(test_observe_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_observe_cmd PRIVATE membrane_observe_cmd
+    membrane_registry_core membrane_server_config membrane_product_cli
+    membrane_cpp_httplib)
+  target_include_directories(test_observe_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  target_compile_definitions(test_observe_cmd PRIVATE
+    MEMBRANE_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  add_test(NAME test_observe_cmd COMMAND test_observe_cmd)
 
   # Post-v1 product-polish, prompt 3: pure, no-network unit tests for
   # the SSE incremental parser `membrane chat` uses.

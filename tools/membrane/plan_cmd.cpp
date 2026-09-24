@@ -876,19 +876,28 @@ static void	render_human_v2(const membrane_plan_v2_result_t &res)
 /* Dispatch                                                             */
 /* ------------------------------------------------------------------ */
 
-static int	plan_installed_model_v2(const std::string &name,
+/* Milestone I1: the installed-model Planner v2 resolution, split from its
+ * rendering (plan_installed_model_v2() below) so membrane_plan_resolve_
+ * installed_v2() can hand the SAME result to `membrane observe` in-
+ * process. Pure code motion: identical inputs, identical resolver call;
+ * on failure rc, err_code and err_message carry exactly what used to be
+ * printed/returned inline. */
+static bool	resolve_installed_model_v2(const std::string &name,
 				const membrane_registry_entry_t &entry,
-				const s_plan_opts &opts, bool want_json)
+				const s_plan_opts &opts, membrane_plan_v2_result_t *res,
+				int *rc, std::string *err_code, std::string *err_message)
 {
 	membrane_gpu_model_estimate_t	m;
 
 	if (!membrane_gpu_estimate_model(entry.path.c_str(), &m))
 	{
-		print_err(want_json, "MODEL_FILE_UNREADABLE", "'" + entry.path
+		*err_code = "MODEL_FILE_UNREADABLE";
+		*err_message = "'" + entry.path
 			+ "' (registered as '" + name + "') could not be read as a "
 			"GGUF file -- it may have moved or been corrupted since it "
-			"was registered");
-		return (MEMBRANE_EXIT_MODEL_ERROR);
+			"was registered";
+		*rc = MEMBRANE_EXIT_MODEL_ERROR;
+		return (false);
 	}
 
 	membrane_host_meminfo_t		meminfo;
@@ -974,22 +983,79 @@ static int	plan_installed_model_v2(const std::string &name,
 	{
 		if (!filter_explicit_quant(&specs, opts.quant))
 		{
-			print_err(want_json, "NOT_FOUND", "'" + opts.quant + "' is not "
+			*err_code = "NOT_FOUND";
+			*err_message = "'" + opts.quant + "' is not "
 				"a known variant of the installed model '" + name + "' (or "
 				"its catalog family) -- see `membrane model info " + name
-				+ "`");
-			return (MEMBRANE_EXIT_CLI_ERROR);
+				+ "`";
+			*rc = MEMBRANE_EXIT_CLI_ERROR;
+			return (false);
 		}
 	}
 	sort_by_quality(&specs);
 
 	membrane_plan_v2_request_t	req;
-	membrane_plan_v2_result_t	res;
 
 	build_v2_request(specs, opts, gpu_index >= 0, meminfo, device_free_bytes,
 		device_total_bytes, &req);
-	membrane_plan_v2_resolve(&req, &res);
+	membrane_plan_v2_resolve(&req, res);
+	*rc = MEMBRANE_EXIT_SUCCESS;
+	return (true);
+}
+
+static int	plan_installed_model_v2(const std::string &name,
+				const membrane_registry_entry_t &entry,
+				const s_plan_opts &opts, bool want_json)
+{
+	membrane_plan_v2_result_t	res;
+	int							rc;
+	std::string					err_code;
+	std::string					err_message;
+
+	if (!resolve_installed_model_v2(name, entry, opts, &res, &rc, &err_code,
+			&err_message))
+	{
+		print_err(want_json, err_code, err_message);
+		return (rc);
+	}
 	return (render_plan_result(res, opts, want_json));
+}
+
+bool	membrane_plan_resolve_installed_v2(const std::string &name,
+			membrane_plan_v2_result_t *out, std::string *err_code,
+			std::string *err_message)
+{
+	std::string					registry_path = membrane_registry_resolve_path();
+	membrane_registry_t			reg;
+	membrane_registry_error_t	reg_err;
+	s_plan_opts					opts;
+	int							rc;
+
+	if (registry_path.empty())
+	{
+		*err_code = "IO_ERROR";
+		*err_message = "neither XDG_DATA_HOME nor HOME is set";
+		return (false);
+	}
+	if (!membrane_registry_load(registry_path, &reg, &reg_err))
+	{
+		*err_code = reg_err.code;
+		*err_message = reg_err.message;
+		return (false);
+	}
+
+	const membrane_registry_entry_t	*entry
+			= membrane_registry_find(reg, name);
+
+	if (entry == NULL)
+	{
+		*err_code = "NOT_FOUND";
+		*err_message = "'" + name + "' is not a registered model";
+		return (false);
+	}
+	opts.name = name;
+	return (resolve_installed_model_v2(name, *entry, opts, out, &rc, err_code,
+			err_message));
 }
 
 static int	plan_catalog_only_model_v2(const membrane_catalog_family_t &fam,
