@@ -375,6 +375,15 @@ target_link_libraries(membrane_runtime_capabilities PUBLIC
 target_include_directories(membrane_runtime_capabilities PUBLIC
   tools/membrane-run)
 
+# Milestone I1 (observation foundation): the backend-neutral, point-in-
+# time observation snapshot + provenance model (observation.h's own top
+# comment). Pure/llama-free, no I/O -- the native provider that probes
+# the host is tools/membrane/observe_cmd.cpp.
+add_library(membrane_observation STATIC
+  tools/membrane-run/observation.c)
+target_link_libraries(membrane_observation PUBLIC membrane_sanitizers)
+target_include_directories(membrane_observation PUBLIC tools/membrane-run)
+
 # Milestone H3 (runtime-aware plan assessment): classifies -- never
 # applies -- a Planner v2 plan or an explicit request against one
 # runtime's capability matrix (runtime_plan_assessment.h's own top
@@ -985,6 +994,15 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_runtime_capabilities PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_runtime_capabilities COMMAND test_runtime_capabilities)
+
+  # Milestone I1: the observation model's own tests -- llama-free,
+  # synthetic values only, same pattern as test_runtime_capabilities.
+  add_executable(test_observation
+    tools/membrane-run/test_observation.c)
+  target_link_libraries(test_observation PRIVATE membrane_observation)
+  target_include_directories(test_observation PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_observation COMMAND test_observation)
 
   # Phase 21: the bounded apply-time fallback controller's own tests --
   # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a

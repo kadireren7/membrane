@@ -16,6 +16,7 @@
 #include "use_cmd.h"
 #include "chat_cmd.h"
 #include "plan_cmd.h"
+#include "observe_cmd.h"
 #include "runtime_cmd.h"
 #include "product_cli.h"
 
@@ -70,6 +71,9 @@ static void	print_usage(FILE *out)
 	fprintf(out, "  membrane runtime model inspect ID MODEL\n"
 		"                                     READ-ONLY: show one "
 		"external-runtime model's metadata\n");
+	fprintf(out, "  membrane observe                   READ-ONLY: "
+		"point-in-time facts (RAM, GPU, model, context, KV, service), "
+		"each labeled measured/estimated/...\n");
 	fprintf(out, "  membrane chat [MODEL]              interactive "
 		"terminal chat with the local server (see membrane chat "
 		"--help)\n");
@@ -240,6 +244,13 @@ int	main(int argc, char **argv)
 				args.end());
 
 		return (membrane_runtime_cmd_dispatch(runtime_args, want_json));
+	}
+	if (args[0] == "observe")
+	{
+		std::vector<std::string>	observe_args(args.begin() + 1,
+				args.end());
+
+		return (membrane_observe_cmd_dispatch(observe_args, want_json));
 	}
 	if (args[0] == "serve")
 	{
