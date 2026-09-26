@@ -450,17 +450,60 @@ target_include_directories(membrane_chat_cmd PUBLIC
 target_include_directories(membrane_chat_cmd PRIVATE
   ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
 
+# Milestone I2: the runtime-agnostic half of the observation provider --
+# host/GPU mapping and snapshot rendering (observe_shared.h's own top
+# comment) -- pulled out of observe_cmd.cpp so BOTH the native provider
+# (membrane_observe_cmd, below) and the Ollama provider
+# (membrane_observe_ollama, below) can depend on it without depending on
+# each other (avoids the circular dependency a shared function inside
+# either provider's own library would create).
+add_library(membrane_observe_shared STATIC observe_shared.cpp)
+set_target_properties(membrane_observe_shared PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_observe_shared PUBLIC membrane_sanitizers
+  membrane_observation membrane_gpu_device membrane_runtime_session llama)
+target_include_directories(membrane_observe_shared PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+target_include_directories(membrane_observe_shared PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
+# Milestone I2: `membrane observe --runtime ollama` -- the Ollama
+# observation provider (observe_ollama.h's own top comment: READ-ONLY,
+# GET /api/version + GET /api/ps only, via membrane_runtime_adapters'
+# existing Ollama adapter) over the SAME membrane_observe_shared mapping/
+# rendering and membrane_observation snapshot model the native provider
+# uses -- no second telemetry model.
+add_library(membrane_observe_ollama STATIC observe_ollama.cpp)
+set_target_properties(membrane_observe_ollama PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_observe_ollama PUBLIC membrane_sanitizers
+  membrane_observe_shared membrane_runtime_adapters membrane_gpu_device
+  membrane_runtime_session membrane_runtime_capabilities llama)
+target_include_directories(membrane_observe_ollama PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+target_include_directories(membrane_observe_ollama PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
 # Milestone I1 (observation foundation): `membrane observe` -- the
 # membrane-native observation provider (observe_cmd.h's own top comment:
 # READ-ONLY, reuses the existing host/GPU/service/config/status/registry/
 # GGUF probes and Planner v2 via membrane_plan_cmd) over the pure
-# membrane_observation snapshot model.
+# membrane_observation snapshot model. Milestone I2: also dispatches
+# `--runtime ollama` to membrane_observe_ollama (observe_cmd.h's dispatch
+# doc comment).
 add_library(membrane_observe_cmd STATIC observe_cmd.cpp)
 set_target_properties(membrane_observe_cmd PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_observe_cmd PUBLIC membrane_sanitizers
-  membrane_observation membrane_plan_cmd membrane_registry_core
+  membrane_observation membrane_observe_shared membrane_observe_ollama
+  membrane_plan_cmd membrane_registry_core
   membrane_server_config membrane_status_client membrane_service_state
   membrane_gpu_device membrane_runtime_session membrane_runtime_capabilities
   membrane_kv_residency_policy membrane_product_cli llama)
@@ -726,6 +769,23 @@ if(MEMBRANE_BUILD_TESTS)
   target_compile_definitions(test_observe_cmd PRIVATE
     MEMBRANE_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   add_test(NAME test_observe_cmd COMMAND test_observe_cmd)
+
+  # Milestone I2: `membrane observe --runtime ollama` -- same in-process
+  # mock-httplib-server pattern as test_runtime_ollama.cpp (a real Ollama
+  # daemon is never contacted), plus route-trap coverage proving only
+  # GET /api/version + GET /api/ps are ever requested.
+  add_executable(test_observe_ollama test_observe_ollama.cpp)
+  set_target_properties(test_observe_ollama PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_observe_ollama PRIVATE membrane_observe_cmd
+    membrane_runtime_adapters membrane_product_cli membrane_cpp_httplib)
+  target_include_directories(test_observe_ollama PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_observe_ollama COMMAND test_observe_ollama)
 
   # Post-v1 product-polish, prompt 3: pure, no-network unit tests for
   # the SSE incremental parser `membrane chat` uses.

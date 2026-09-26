@@ -853,8 +853,9 @@ static void	test_allowlist(void)
 {
 	TEST_ASSERT(membrane_ollama_request_allowed("GET", "/api/version")
 		&& membrane_ollama_request_allowed("GET", "/api/tags")
-		&& membrane_ollama_request_allowed("POST", "/api/show"),
-		"the 3 read-only calls are allowed");
+		&& membrane_ollama_request_allowed("POST", "/api/show")
+		&& membrane_ollama_request_allowed("GET", "/api/ps"),
+		"the 3 H2 read-only calls plus I2's GET /api/ps are allowed");
 	for (const char *p : {"/api/generate", "/api/chat", "/api/pull",
 			"/api/push", "/api/create", "/api/copy", "/api/embed",
 			"/api/blobs/sha256:x", "/v1/chat/completions", "/api/me",
@@ -862,10 +863,10 @@ static void	test_allowlist(void)
 		TEST_ASSERT(!membrane_ollama_request_allowed("POST", p),
 			"mutating/inference/cloud POSTs are refused");
 	TEST_ASSERT(!membrane_ollama_request_allowed("DELETE", "/api/delete")
-		&& !membrane_ollama_request_allowed("GET", "/api/ps")
+		&& !membrane_ollama_request_allowed("POST", "/api/ps")
 		&& !membrane_ollama_request_allowed("GET", "/api/show")
 		&& !membrane_ollama_request_allowed("POST", "/api/tags"),
-		"exact method+path match only");
+		"exact method+path match only -- POST /api/ps is still refused");
 }
 
 /* ---------------------------------------------------------------- */

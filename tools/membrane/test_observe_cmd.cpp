@@ -22,6 +22,7 @@
 #include "plan_cmd.h"
 #include "plan_v2_resolver.h"
 #include "registry_core.h"
+#include "runtime_ollama.h"
 #include "server_config.h"
 #include "product_cli.h"
 #include "test_helpers.h"
@@ -913,11 +914,25 @@ static void	test_cli_errors(void)
 	doc = json::parse(capture_dispatch({"--bogus"}, true, &rc));
 	TEST_ASSERT(rc == MEMBRANE_EXIT_CLI_ERROR && doc["ok"] == false,
 		"unknown option");
+	/* Milestone I2: ollama is no longer refused as "not implemented" --
+	 * it is a full second observation provider now (its own tests live in
+	 * test_observe_ollama.cpp). Pin a closed port here so this
+	 * native-focused test file stays host-independent and never makes a
+	 * real network call to the default Ollama port. */
+	setenv(MEMBRANE_OLLAMA_ENDPOINT_ENV,
+		("http://127.0.0.1:" + std::to_string(closed_port())).c_str(), 1);
 	doc = json::parse(capture_dispatch({"--runtime", "ollama"}, true, &rc));
+	TEST_ASSERT(rc == MEMBRANE_EXIT_RUNTIME_ERROR
+		&& doc["status"] == "unavailable",
+		"ollama is a real runtime now (I2) -- an unreachable daemon is a "
+		"RUNTIME_ERROR, never a CLI_ERROR");
+	unsetenv(MEMBRANE_OLLAMA_ENDPOINT_ENV);
+	doc = json::parse(capture_dispatch({"--runtime", MEMBRANE_RUNTIME_ID_VLLM},
+		true, &rc));
 	TEST_ASSERT(rc == MEMBRANE_EXIT_CLI_ERROR
 		&& doc["error"]["message"].get<std::string>().find(
 			"not implemented") != std::string::npos,
-		"ollama observation is refused in I1 (no /api/ps call)");
+		"vllm observation is still refused -- I2 only implemented ollama");
 	doc = json::parse(capture_dispatch({"--runtime", "nope"}, true, &rc));
 	TEST_ASSERT(rc == MEMBRANE_EXIT_CLI_ERROR
 		&& doc["error"]["message"].get<std::string>().find(

@@ -10,6 +10,7 @@
 #include "product_cli.h"
 #include "status_client.h"
 #include "kv_residency_policy.h"
+#include "observe_ollama.h"
 
 using json = nlohmann::json;
 
@@ -220,105 +221,9 @@ static const char	*kv_precision_label(int p)
 	return (NULL);
 }
 
-static void	build_host(const membrane_observe_inputs_t &in,
-				membrane_observation_snapshot_t *s)
-{
-	const char	*src = in.meminfo_source.c_str();
-
-	if (!in.meminfo_probed || !in.meminfo.ok)
-	{
-		const char	*why = in.meminfo_probed ? "probe_failed" : "not_probed";
-
-		membrane_obs_u64_unknown(&s->ram_total_bytes, why);
-		membrane_obs_u64_unknown(&s->ram_available_bytes, why);
-		membrane_obs_u64_unknown(&s->swap_total_bytes, why);
-		membrane_obs_u64_unknown(&s->swap_free_bytes, why);
-	}
-	else
-	{
-		membrane_obs_u64_set(&s->ram_total_bytes, in.meminfo.total_bytes,
-			MEMBRANE_OBS_PROV_MEASURED, src);
-		membrane_obs_u64_set(&s->ram_available_bytes,
-			in.meminfo.available_bytes, MEMBRANE_OBS_PROV_MEASURED, src);
-		if (in.swap_supported)
-		{
-			membrane_obs_u64_set(&s->swap_total_bytes,
-				in.meminfo.swap_total_bytes, MEMBRANE_OBS_PROV_MEASURED, src);
-			membrane_obs_u64_set(&s->swap_free_bytes,
-				in.meminfo.swap_free_bytes, MEMBRANE_OBS_PROV_MEASURED, src);
-		}
-		else
-		{
-			membrane_obs_u64_unknown(&s->swap_total_bytes,
-				"not_probed_on_platform");
-			membrane_obs_u64_unknown(&s->swap_free_bytes,
-				"not_probed_on_platform");
-		}
-	}
-	/* There is no RSS probe in this codebase, and `membrane observe`'s
-	 * own RSS would say nothing about the serving process. */
-	membrane_obs_u64_unknown(&s->process_rss_bytes, "not_instrumented");
-}
-
-static void	build_gpu(const membrane_observe_inputs_t &in,
-				membrane_observation_snapshot_t *s)
-{
-	const char	*src = "ggml_backend_dev";
-	int			gpu_index = -1;
-	uint64_t	n_gpu = 0;
-
-	if (!in.gpu_enumerated)
-	{
-		membrane_obs_u64_unknown(&s->gpu_device_count, "not_probed");
-		membrane_obs_str_unknown(&s->gpu_backend, "not_probed");
-		membrane_obs_str_unknown(&s->gpu_device_name, "not_probed");
-		membrane_obs_str_unknown(&s->gpu_device_description, "not_probed");
-		membrane_obs_u64_unknown(&s->vram_total_bytes, "not_probed");
-		membrane_obs_u64_unknown(&s->vram_free_bytes, "not_probed");
-		return ;
-	}
-	for (size_t i = 0; i < in.devices.size(); ++i)
-		if (in.devices[i].type == MEMBRANE_DEV_TYPE_GPU
-			|| in.devices[i].type == MEMBRANE_DEV_TYPE_IGPU)
-		{
-			if (gpu_index < 0)
-				gpu_index = (int)i;
-			n_gpu++;
-		}
-	membrane_obs_u64_set(&s->gpu_device_count, n_gpu,
-		MEMBRANE_OBS_PROV_MEASURED, src);
-	if (gpu_index < 0)
-	{
-		membrane_obs_str_unknown(&s->gpu_backend, "no_gpu_device");
-		membrane_obs_str_unknown(&s->gpu_device_name, "no_gpu_device");
-		membrane_obs_str_unknown(&s->gpu_device_description,
-			"no_gpu_device");
-		membrane_obs_u64_unknown(&s->vram_total_bytes, "no_gpu_device");
-		membrane_obs_u64_unknown(&s->vram_free_bytes, "no_gpu_device");
-		return ;
-	}
-
-	const membrane_gpu_device_info_t	&d = in.devices[(size_t)gpu_index];
-
-	membrane_obs_str_set(&s->gpu_backend, d.backend,
-		MEMBRANE_OBS_PROV_MEASURED, src);
-	membrane_obs_str_set(&s->gpu_device_name, d.name,
-		MEMBRANE_OBS_PROV_MEASURED, src);
-	membrane_obs_str_set(&s->gpu_device_description, d.description,
-		MEMBRANE_OBS_PROV_MEASURED, src);
-	/* A backend that cannot query memory reports 0/0 -- that is "not
-	 * reported", never "a 0-byte GPU". */
-	if (d.memory_total == 0)
-	{
-		membrane_obs_u64_unknown(&s->vram_total_bytes, "not_reported_by_backend");
-		membrane_obs_u64_unknown(&s->vram_free_bytes, "not_reported_by_backend");
-		return ;
-	}
-	membrane_obs_u64_set(&s->vram_total_bytes, d.memory_total,
-		MEMBRANE_OBS_PROV_MEASURED, "ggml_backend_dev_memory");
-	membrane_obs_u64_set(&s->vram_free_bytes, d.memory_free,
-		MEMBRANE_OBS_PROV_MEASURED, "ggml_backend_dev_memory");
-}
+/* membrane_observe_build_host_fields()/_gpu_fields() (observe_shared.h)
+ * replace this file's old build_host()/build_gpu() -- Milestone I2 made
+ * them runtime-agnostic so the Ollama provider could reuse them too. */
 
 static std::string	json_str(const json &j, const char *key)
 {
@@ -387,6 +292,18 @@ static void	build_resident(const json &m, membrane_obs_resident_model_t *r)
 	else
 		membrane_obs_u64_unknown(&r->estimated_kv_bytes,
 			"not_reported_by_runtime");
+	/* Milestone I2 fields: GET /v1/status has no Ollama-shaped digest,
+	 * size_vram, expiry or per-model active-context concept. */
+	membrane_obs_str_unknown(&r->digest, "not_applicable_native_runtime");
+	membrane_obs_str_unknown(&r->family, "not_applicable_native_runtime");
+	membrane_obs_str_unknown(&r->quant, "not_applicable_native_runtime");
+	membrane_obs_u64_unknown(&r->reported_size_bytes,
+		"not_applicable_native_runtime");
+	membrane_obs_u64_unknown(&r->reported_gpu_bytes,
+		"not_applicable_native_runtime");
+	membrane_obs_u64_unknown(&r->reported_context,
+		"not_applicable_native_runtime");
+	membrane_obs_str_unknown(&r->expires_at, "not_applicable_native_runtime");
 }
 
 static void	build_service(const membrane_observe_inputs_t &in,
@@ -601,243 +518,13 @@ void	membrane_observe_build_snapshot(const std::string &runtime_id,
 		membrane_obs_snapshot_finalize(s);
 		return ;
 	}
-	build_host(in, s);
-	build_gpu(in, s);
+	membrane_observe_build_host_fields(in.meminfo_probed, in.meminfo,
+		in.swap_supported, in.meminfo_source, s);
+	membrane_observe_build_gpu_fields(in.gpu_enumerated, in.devices, s);
 	build_service(in, s);
 	build_model(in, s);
 	build_context_kv(in, s);
 	membrane_obs_snapshot_finalize(s);
-}
-
-/* ------------------------------------------------------------------ */
-/* Rendering                                                           */
-/* ------------------------------------------------------------------ */
-
-static json	field_json(const membrane_obs_field_ref_t &r)
-{
-	json	j;
-
-	if (!membrane_obs_field_known(&r))
-		j["value"] = nullptr;
-	else if (r.kind == MEMBRANE_OBS_KIND_U64)
-		j["value"] = ((const membrane_obs_u64_t *)r.field)->value;
-	else if (r.kind == MEMBRANE_OBS_KIND_BOOL)
-		j["value"] = ((const membrane_obs_bool_t *)r.field)->value != 0;
-	else
-		j["value"] = std::string(((const membrane_obs_str_t *)r.field)->value);
-	j["known"] = membrane_obs_field_known(&r) != 0;
-	j["provenance"] = membrane_obs_provenance_name(
-			membrane_obs_field_provenance(&r));
-	j["source"] = membrane_obs_field_source(&r);
-	return (j);
-}
-
-static json	u64_json(const membrane_obs_u64_t &f)
-{
-	membrane_obs_field_ref_t	r = {"", MEMBRANE_OBS_KIND_U64, &f};
-
-	return (field_json(r));
-}
-
-static json	str_json(const membrane_obs_str_t &f)
-{
-	membrane_obs_field_ref_t	r = {"", MEMBRANE_OBS_KIND_STR, &f};
-
-	return (field_json(r));
-}
-
-json	membrane_observe_snapshot_json(const membrane_observation_snapshot_t &s)
-{
-	membrane_obs_field_ref_t	refs[MEMBRANE_OBS_MAX_FIELDS];
-	size_t						n = membrane_obs_snapshot_fields(&s, refs,
-			MEMBRANE_OBS_MAX_FIELDS);
-	json						j;
-	json						unknown = json::array();
-	json						sources = json::object();
-	size_t						known = 0;
-
-	j["schema_version"] = s.schema_version;
-	j["membrane_version"] = MEMBRANE_VERSION;
-	j["mode"] = "observe";
-	j["ok"] = s.status != MEMBRANE_OBS_STATUS_UNAVAILABLE;
-	j["status"] = membrane_obs_status_name(s.status);
-	j["timestamp"] = {
-		{"utc", s.timestamp_utc},
-		{"unix_ms", s.timestamp_unix_ms},
-		{"clock", "wall_clock_at_collection_start"},
-		{"collection_duration_ms", s.collection_duration_ms},
-	};
-	j["runtime"] = {{"id", s.runtime_id},
-		{"observable", s.runtime_observable != 0}};
-	/* Fixed section order (deterministic structure even when a section
-	 * has no known field). */
-	for (const char *sec : {"host_memory", "gpu", "model", "context", "kv",
-			"service", "headroom"})
-		j[sec] = json::object();
-	for (size_t i = 0; i < n && i < MEMBRANE_OBS_MAX_FIELDS; ++i)
-	{
-		std::string	path = refs[i].path;
-		size_t		dot = path.find('.');
-		std::string	sec = path.substr(0, dot);
-		std::string	key = path.substr(dot + 1);
-
-		j[sec][key] = field_json(refs[i]);
-		if (membrane_obs_field_known(&refs[i]))
-		{
-			known++;
-			sources[membrane_obs_field_source(&refs[i])].push_back(path);
-		}
-		else
-			unknown.push_back(path);
-	}
-
-	json	resident = json::array();
-
-	for (size_t i = 0; i < s.resident_model_len; ++i)
-	{
-		const membrane_obs_resident_model_t	&r = s.resident_models[i];
-		membrane_obs_field_ref_t	b = {"", MEMBRANE_OBS_KIND_U64,
-			&r.gpu_layers};
-
-		resident.push_back({
-			{"name", str_json(r.name)},
-			{"state", str_json(r.state)},
-			{"backend", str_json(r.backend)},
-			{"gpu_layers", field_json(b)},
-			{"kv_precision", str_json(r.kv_precision)},
-			{"estimated_model_bytes", u64_json(r.estimated_model_bytes)},
-			{"estimated_kv_bytes", u64_json(r.estimated_kv_bytes)},
-		});
-	}
-	j["model"]["resident_models"] = resident;
-	j["fields"] = {{"known", known}, {"total", n},
-		{"unknown", unknown}};
-	j["sources"] = sources;
-	return (j);
-}
-
-static std::string	fmt_bytes(uint64_t b)
-{
-	char	buf[64];
-
-	if (b >= (1ull << 30))
-		snprintf(buf, sizeof(buf), "%.2f GiB", (double)b / (double)(1ull << 30));
-	else
-		snprintf(buf, sizeof(buf), "%.1f MiB", (double)b / (double)(1ull << 20));
-	return (buf);
-}
-
-static void	line_u64(const char *label, const membrane_obs_u64_t &f,
-				bool bytes)
-{
-	if (!f.known)
-	{
-		printf("  %-22s unknown (%s)\n", label, f.source);
-		return ;
-	}
-	std::string	v = bytes ? fmt_bytes(f.value)
-		: std::to_string((unsigned long long)f.value);
-
-	printf("  %-22s %-14s [%s]\n", label, v.c_str(),
-		membrane_obs_provenance_name(f.provenance));
-}
-
-static void	line_str(const char *label, const membrane_obs_str_t &f)
-{
-	if (!f.known)
-	{
-		printf("  %-22s unknown (%s)\n", label, f.source);
-		return ;
-	}
-	printf("  %-22s %-14s [%s]\n", label, f.value,
-		membrane_obs_provenance_name(f.provenance));
-}
-
-static void	line_bool(const char *label, const membrane_obs_bool_t &f)
-{
-	if (!f.known)
-	{
-		printf("  %-22s unknown (%s)\n", label, f.source);
-		return ;
-	}
-	printf("  %-22s %-14s [%s]\n", label, f.value ? "yes" : "no",
-		membrane_obs_provenance_name(f.provenance));
-}
-
-void	membrane_observe_print_human(const membrane_observation_snapshot_t &s)
-{
-	size_t	known;
-	size_t	total;
-
-	membrane_obs_snapshot_count(&s, &known, &total);
-	printf("Observation\n");
-	printf("  %-22s %s\n", "Runtime:", s.runtime_id);
-	printf("  %-22s %s (%zu/%zu fields known)\n", "Status:",
-		membrane_obs_status_name(s.status), known, total);
-	printf("  %-22s %s\n", "Timestamp:", s.timestamp_utc);
-	if (!s.runtime_observable)
-		return ;
-
-	printf("\nHost memory\n");
-	line_u64("Total:", s.ram_total_bytes, true);
-	line_u64("Available:", s.ram_available_bytes, true);
-	line_u64("Used:", s.ram_used_bytes, true);
-	line_u64("Swap total:", s.swap_total_bytes, true);
-	line_u64("Swap free:", s.swap_free_bytes, true);
-	line_u64("Server RSS:", s.process_rss_bytes, true);
-
-	printf("\nGPU (first GPU/iGPU enumerated -- the device `membrane plan` "
-		"uses)\n");
-	line_u64("GPU devices:", s.gpu_device_count, false);
-	line_str("Device:", s.gpu_device_description);
-	line_str("Device id:", s.gpu_device_name);
-	line_str("Backend:", s.gpu_backend);
-	line_u64("VRAM total:", s.vram_total_bytes, true);
-	line_u64("VRAM free:", s.vram_free_bytes, true);
-	line_u64("VRAM used (device):", s.vram_used_bytes, true);
-
-	printf("\nModel\n");
-	line_str("Configured:", s.configured_model);
-	line_bool("Registered:", s.configured_model_registered);
-	line_str("Arch:", s.model_arch);
-	line_str("Quant:", s.model_quant);
-	line_u64("File size:", s.model_file_size_bytes, true);
-	line_u64("Resident models:", s.resident_model_count, false);
-	for (size_t i = 0; i < s.resident_model_len; ++i)
-	{
-		const membrane_obs_resident_model_t	&r = s.resident_models[i];
-
-		printf("    - %s: backend %s, kv %s", r.name.known ? r.name.value
-			: "?", r.backend.known ? r.backend.value : "?",
-			r.kv_precision.known ? r.kv_precision.value : "?");
-		if (r.estimated_kv_bytes.known)
-			printf(", est. KV %s", fmt_bytes(r.estimated_kv_bytes.value)
-				.c_str());
-		printf(" [runtime_reported; bytes estimated]\n");
-	}
-
-	printf("\nContext\n");
-	line_u64("Active:", s.context_active, false);
-	line_u64("Planned:", s.context_planned, false);
-	line_u64("Model max:", s.context_model_max, false);
-
-	printf("\nKV\n");
-	line_str("Planned precision:", s.kv_planned_precision);
-	line_str("Planned placement:", s.kv_planned_placement);
-	line_u64("Estimated footprint:", s.kv_estimated_bytes, true);
-	line_u64("Measured usage:", s.kv_measured_bytes, true);
-
-	printf("\nService\n");
-	line_str("Manager:", s.service_manager);
-	line_bool("Installed:", s.service_installed);
-	line_bool("Active:", s.service_active);
-	line_str("Endpoint:", s.server_endpoint);
-	line_bool("Reachable:", s.server_reachable);
-	line_str("Server version:", s.server_version);
-
-	printf("\nHeadroom (raw, no reserve subtracted)\n");
-	line_u64("RAM:", s.ram_headroom_bytes, true);
-	line_u64("VRAM:", s.vram_headroom_bytes, true);
 }
 
 /* ------------------------------------------------------------------ */
@@ -876,27 +563,39 @@ int	membrane_observe_cmd_dispatch(const std::vector<std::string> &args,
 			"[--json]");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
-	if (runtime_id != MEMBRANE_RUNTIME_ID_NATIVE)
+	std::unique_ptr<membrane_observation_snapshot_t>	s(
+			new membrane_observation_snapshot_t());
+
+	if (runtime_id == MEMBRANE_RUNTIME_ID_NATIVE)
+	{
+		membrane_observe_inputs_t	in;
+
+		membrane_observe_collect_inputs(runtime_id, &in);
+		membrane_observe_build_snapshot(runtime_id, in, s.get());
+	}
+	else if (runtime_id == MEMBRANE_RUNTIME_ID_OLLAMA)
+	{
+		/* Milestone I2 (docs/runtime-ollama.md, docs/observability.md):
+		 * the only other runtime `membrane observe` can observe. */
+		membrane_observe_ollama_inputs_t	in;
+
+		membrane_observe_ollama_collect_inputs(&in);
+		membrane_observe_ollama_build_snapshot(in, s.get());
+	}
+	else
 	{
 		membrane_runtime_descriptor_t	d;
 		bool	known = membrane_runtime_describe(runtime_id.c_str(), &d)
-			|| runtime_id == MEMBRANE_RUNTIME_ID_OLLAMA
 			|| runtime_id == MEMBRANE_RUNTIME_ID_VLLM;
 
 		print_err(want_json, "CLI_ERROR", known
 			? "observation of runtime '" + runtime_id + "' is not "
-				"implemented yet -- only membrane-native can be observed"
+				"implemented yet -- only membrane-native and ollama can be "
+				"observed"
 			: "unknown runtime '" + runtime_id + "' -- see `membrane "
 				"runtime list`");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
-
-	membrane_observe_inputs_t		in;
-	std::unique_ptr<membrane_observation_snapshot_t>	s(
-			new membrane_observation_snapshot_t());
-
-	membrane_observe_collect_inputs(runtime_id, &in);
-	membrane_observe_build_snapshot(runtime_id, in, s.get());
 	if (want_json)
 		printf("%s\n", membrane_observe_snapshot_json(*s).dump().c_str());
 	else

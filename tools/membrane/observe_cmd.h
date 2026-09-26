@@ -8,6 +8,7 @@
 # include <nlohmann/json.hpp>
 
 # include "observation.h"
+# include "observe_shared.h"
 # include "gpu_device.h"
 # include "runtime_capabilities.h"
 # include "registry_core.h"
@@ -104,17 +105,15 @@ void	membrane_observe_build_snapshot(const std::string &runtime_id,
 			const membrane_observe_inputs_t &in,
 			membrane_observation_snapshot_t *out);
 
-/* The stable JSON document (schema_version MEMBRANE_OBSERVATION_SCHEMA_
- * VERSION): every telemetry field is {value, known, provenance, source},
- * value null when unknown. */
-nlohmann::json	membrane_observe_snapshot_json(
-					const membrane_observation_snapshot_t &s);
-
-void	membrane_observe_print_human(const membrane_observation_snapshot_t &s);
+/* membrane_observe_snapshot_json() / _print_human() now live in
+ * observe_shared.h (included above) -- Milestone I2 made them
+ * runtime-agnostic so the Ollama provider could reuse them too. */
 
 /* `membrane observe [--runtime ID]`. Exit 0 for complete/partial,
  * MEMBRANE_EXIT_RUNTIME_ERROR for unavailable, CLI_ERROR for a bad
- * option / unknown or not-yet-observable runtime id. */
+ * option / unknown or not-yet-observable runtime id. Milestone I2:
+ * `--runtime ollama` is now implemented (docs/runtime-ollama.md); any
+ * other non-native id is still a CLI error. */
 int		membrane_observe_cmd_dispatch(const std::vector<std::string> &args,
 			bool want_json);
 
