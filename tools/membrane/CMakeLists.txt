@@ -514,6 +514,26 @@ target_include_directories(membrane_observe_cmd PUBLIC
 target_include_directories(membrane_observe_cmd PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
 
+# Milestone I3 (memory intelligence): `membrane advise` -- the CLI for
+# the pure membrane_memory_intelligence_assemble() (tools/membrane-run/
+# memory_intelligence.h). READ-ONLY: reuses membrane_observe_cmd/
+# membrane_observe_ollama's own existing collection functions (advise_
+# cmd.h's own top comment) -- no new probe, no new Ollama route.
+add_library(membrane_advise_cmd STATIC advise_cmd.cpp)
+set_target_properties(membrane_advise_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_advise_cmd PUBLIC membrane_sanitizers
+  membrane_memory_intelligence membrane_observation membrane_observe_cmd
+  membrane_observe_ollama membrane_runtime_capabilities membrane_product_cli
+  llama)
+target_include_directories(membrane_advise_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+target_include_directories(membrane_advise_cmd PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
 add_executable(membrane main.cpp model_cmd.cpp)
 set_target_properties(membrane PROPERTIES
   CXX_STANDARD 17
@@ -525,6 +545,7 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
   membrane_variant_selector membrane_use_cmd membrane_chat_cmd
   membrane_plan_cmd membrane_runtime_cmd membrane_observe_cmd
+  membrane_advise_cmd
   membrane_service_state membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -786,6 +807,25 @@ if(MEMBRANE_BUILD_TESTS)
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
   add_test(NAME test_observe_ollama COMMAND test_observe_ollama)
+
+  # Milestone I3: `membrane advise` -- CLI-level routing/shape/
+  # determinism/read-only tests. The pure assembly logic is already
+  # covered, host-independent, by tools/membrane-run/test_memory_
+  # intelligence.c; this only proves the CLI wiring, same isolated-env/
+  # in-process-mock-server pattern as test_observe_cmd/test_observe_
+  # ollama above (never a real service, never a real Ollama daemon).
+  add_executable(test_advise_cmd test_advise_cmd.cpp)
+  set_target_properties(test_advise_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_advise_cmd PRIVATE membrane_advise_cmd
+    membrane_runtime_adapters membrane_product_cli membrane_cpp_httplib)
+  target_include_directories(test_advise_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_advise_cmd COMMAND test_advise_cmd)
 
   # Post-v1 product-polish, prompt 3: pure, no-network unit tests for
   # the SSE incremental parser `membrane chat` uses.
