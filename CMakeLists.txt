@@ -384,6 +384,21 @@ add_library(membrane_observation STATIC
 target_link_libraries(membrane_observation PUBLIC membrane_sanitizers)
 target_include_directories(membrane_observation PUBLIC tools/membrane-run)
 
+# Milestone I3 (memory intelligence): the last of Milestone I's three
+# layers -- reads an already-built membrane_observation_snapshot_t
+# (membrane_observation above) and an already-described membrane_
+# runtime_capabilities_t (membrane_runtime_capabilities above) and
+# produces findings[]/recommendations[] (memory_intelligence.h's own top
+# comment). Pure/llama-free, no I/O, no second planner, no capability
+# negotiation of its own -- same testable-without-a-host pattern as
+# every module above.
+add_library(membrane_memory_intelligence STATIC
+  tools/membrane-run/memory_intelligence.c)
+target_link_libraries(membrane_memory_intelligence PUBLIC
+  membrane_observation membrane_runtime_capabilities membrane_sanitizers)
+target_include_directories(membrane_memory_intelligence PUBLIC
+  tools/membrane-run)
+
 # Milestone H3 (runtime-aware plan assessment): classifies -- never
 # applies -- a Planner v2 plan or an explicit request against one
 # runtime's capability matrix (runtime_plan_assessment.h's own top
@@ -1003,6 +1018,17 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_observation PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_observation COMMAND test_observation)
+
+  # Milestone I3: the memory-intelligence assembler's own tests --
+  # llama-free, synthetic snapshot/capability fixtures only, same pattern
+  # as test_observation/test_runtime_capabilities above.
+  add_executable(test_memory_intelligence
+    tools/membrane-run/test_memory_intelligence.c)
+  target_link_libraries(test_memory_intelligence PRIVATE
+    membrane_memory_intelligence)
+  target_include_directories(test_memory_intelligence PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_memory_intelligence COMMAND test_memory_intelligence)
 
   # Phase 21: the bounded apply-time fallback controller's own tests --
   # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a

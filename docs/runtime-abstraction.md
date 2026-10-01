@@ -14,6 +14,12 @@
 > **Milestone I1 update:** the native runtime can now be *observed*
 > read-only -- `membrane observe` -- see [observability.md](observability.md).
 > Only membrane-native is observable in I1; no Ollama observation route.
+>
+> **Milestone I3 update:** this capability matrix is now also read by a
+> read-only, capability-aware recommendation layer -- `membrane advise` --
+> see [memory-intelligence.md](memory-intelligence.md). I3 never
+> negotiates a plan itself; it reads the SAME `membrane_runtime_
+> capabilities_t` H1 defines here.
 
 ## 1. Why this exists
 

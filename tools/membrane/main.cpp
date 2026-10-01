@@ -17,6 +17,7 @@
 #include "chat_cmd.h"
 #include "plan_cmd.h"
 #include "observe_cmd.h"
+#include "advise_cmd.h"
 #include "runtime_cmd.h"
 #include "product_cli.h"
 
@@ -74,6 +75,10 @@ static void	print_usage(FILE *out)
 	fprintf(out, "  membrane observe                   READ-ONLY: "
 		"point-in-time facts (RAM, GPU, model, context, KV, service), "
 		"each labeled measured/estimated/...\n");
+	fprintf(out, "  membrane advise                    READ-ONLY: "
+		"explainable memory-pressure findings + capability-aware "
+		"recommendations -- never applies anything (see advise "
+		"options)\n");
 	fprintf(out, "  membrane chat [MODEL]              interactive "
 		"terminal chat with the local server (see membrane chat "
 		"--help)\n");
@@ -142,6 +147,10 @@ static void	print_usage(FILE *out)
 		"which planned/requested settings runtime ID\n"
 		"                                     can control (membrane-native, "
 		"ollama); applies nothing\n");
+	fprintf(out, "\n");
+	fprintf(out, "advise options (see docs/memory-intelligence.md):\n");
+	fprintf(out, "  --runtime ID                        runtime to assess "
+		"(membrane-native, ollama) -- default membrane-native\n");
 	fprintf(out, "\n");
 	fprintf(out, "serve options:\n");
 	fprintf(out, "  --port N                           listen port "
@@ -251,6 +260,13 @@ int	main(int argc, char **argv)
 				args.end());
 
 		return (membrane_observe_cmd_dispatch(observe_args, want_json));
+	}
+	if (args[0] == "advise")
+	{
+		std::vector<std::string>	advise_args(args.begin() + 1,
+				args.end());
+
+		return (membrane_advise_cmd_dispatch(advise_args, want_json));
 	}
 	if (args[0] == "serve")
 	{

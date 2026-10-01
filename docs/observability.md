@@ -1,12 +1,16 @@
 # Observation layer (Milestone I1 + I2)
 
+> **Milestone I3 update:** recommendations now exist, as a SEPARATE
+> command -- `membrane advise` -- see
+> [memory-intelligence.md](memory-intelligence.md). `membrane observe`
+> itself is unchanged by I3: still facts only, no recommendations.
+
 > **`membrane observe` only reports facts.** It makes no recommendations and
 > classifies nothing as "pressure". It keeps no history. It does not start,
 > stop, load, activate, download or reconfigure anything. As of Milestone I2
 > it can also observe Ollama (`--runtime ollama`), still read-only and still
 > with no recommendations -- **Ollama observation does not change Ollama's
-> runtime state**, and cross-runtime comparison/recommendation is deferred to
-> Milestone I3.
+> runtime state**.
 
 Milestone I asks one question: *what is happening on this machine right now?*
 I1 adds three things:
@@ -430,10 +434,12 @@ asserts no registry/config/service file is ever created.
 
 ## 9. Not implemented yet
 
-- **Recommendations are not implemented.** There are no
-  MEMORY_PRESSURE / HEADROOM_LOW / CONTEXT_NEAR_LIMIT classifications, no
-  downgrade or runtime-switch suggestions, and no policy-adjusted headroom.
-  These belong to I3.
+- **`membrane observe` itself still makes no recommendations** -- by
+  design, not because the capability is missing: Milestone I3 added
+  MEMORY_PRESSURE / HEADROOM_LOW / CONTEXT_NEAR_LIMIT-style
+  classifications, downgrade/runtime-capability-aware suggestions and
+  policy-adjusted headroom as a SEPARATE, advisory-only command --
+  `membrane advise`, see [memory-intelligence.md](memory-intelligence.md).
 - **Historical telemetry is not implemented.** Nothing is stored between
   invocations.
 - Server-process RSS is not implemented. There is no RSS probe in the
