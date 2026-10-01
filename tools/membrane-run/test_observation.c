@@ -122,6 +122,28 @@ static void	test_init_all_unknown(void)
 	TEST_ASSERT(known == 0 && total == n, "count agrees with the table");
 }
 
+/* Milestone I2: membrane_obs_resident_model_t grew 7 fields (schema
+ * version 1 -> 2). Resident models are not part of the field table
+ * (observation.h's own comment on why), so this checks their zero-init
+ * state directly instead of via membrane_obs_snapshot_fields(). */
+static void	test_resident_model_i2_fields_start_unknown(void)
+{
+	membrane_observation_snapshot_t	s;
+
+	memset(&s, 0xAB, sizeof(s));
+	membrane_obs_snapshot_init(&s, "ollama");
+	TEST_ASSERT(s.schema_version == 2, "I2 bumped schema_version to 2");
+	TEST_ASSERT(!s.resident_models[0].digest.known
+		&& !s.resident_models[0].family.known
+		&& !s.resident_models[0].quant.known
+		&& !s.resident_models[0].reported_size_bytes.known
+		&& !s.resident_models[0].reported_gpu_bytes.known
+		&& !s.resident_models[0].reported_context.known
+		&& !s.resident_models[0].expires_at.known,
+		"the new I2 resident-model fields start unknown, same as every "
+		"other field membrane_obs_snapshot_init() zeroes");
+}
+
 static void	test_field_table_paths_unique(void)
 {
 	membrane_observation_snapshot_t	s;
@@ -297,6 +319,7 @@ int	main(void)
 	test_provenance_names();
 	test_setter_invariants();
 	test_init_all_unknown();
+	test_resident_model_i2_fields_start_unknown();
 	test_field_table_paths_unique();
 	test_derived_fields();
 	test_estimate_is_never_promoted();

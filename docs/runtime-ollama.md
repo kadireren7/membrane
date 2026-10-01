@@ -1,14 +1,19 @@
-# Ollama runtime adapter (Milestone H2, read-only)
+# Ollama runtime adapter (Milestone H2 + I2, read-only)
 
-> **H2 does NOT send inference requests and does NOT change Ollama state.**
+> **Neither H2 nor I2 sends inference requests or changes Ollama state.**
 > The adapter discovers a local Ollama daemon, reads its version, lists its
-> models, and reads one model's metadata. It never installs, starts or stops
-> Ollama. It never pulls, deletes, creates, copies, loads or unloads models,
-> never changes configuration or model parameters, and never applies a
-> Planner v2 decision.
+> models, reads one model's metadata, and (I2) lists its currently loaded
+> models. It never installs, starts or stops Ollama. It never pulls,
+> deletes, creates, copies, loads or unloads models, never changes
+> configuration or model parameters, and never applies a Planner v2
+> decision.
 
 This builds on the runtime abstraction from Milestone H1
-([runtime-abstraction.md](runtime-abstraction.md)).
+([runtime-abstraction.md](runtime-abstraction.md)). Milestone I2 added
+`GET /api/ps` to the allowlist so `membrane observe --runtime ollama`
+(see [observability.md](observability.md)) can report loaded-model facts;
+H2's own commands (`membrane runtime list|inspect|models|model inspect`)
+still never call it.
 
 ## 1. Ollama API surface used
 
@@ -23,14 +28,18 @@ and `internal/modelref/modelref.go`.
 | `GET /api/version` | discovery + health + version | `version` (string) |
 | `GET /api/tags` | model inventory | `models[].name`, `.model`, `.size`, `.digest`, `.modified_at`, `.remote_host`, `.capabilities[]`, `.details.{format,family,families,parameter_size,quantization_level,context_length}` |
 | `POST /api/show` with body `{"model": NAME}` | model metadata | `details.*` (as above), `model_info["general.architecture"]`, `model_info["general.parameter_count"]`, `model_info["<arch>.context_length"]`, `capabilities[]`, `parameters`, `modified_at`, `remote_host`; plus only whether `template`, `system` and `license` are present |
+| `GET /api/ps` (**Milestone I2**) | loaded/resident models | `models[].name`, `.model`, `.size`, `.digest`, `.details.{family,quantization_level}`, `.expires_at`, `.size_vram`, `.context_length` -- see [observability.md](observability.md) for the mapping onto MEMBRANE's observation snapshot |
 
 Nothing else is called. `/api/show` is a POST only because Ollama defines
 it that way. For a local model it reads the local manifest and changes
 nothing (`ShowHandler` → `GetModelInfo`). `verbose` is never sent, so the
-large tokenizer arrays are not returned.
+large tokenizer arrays are not returned. `/api/ps` needs no request body;
+per v0.34.3's `PsHandler` (`server/routes.go`) it always answers `200`
+with `"models": []` when nothing is loaded -- a healthy, empty daemon is
+success, never an error.
 
 **Enforced allowlist.** `membrane_ollama_request_allowed()`
-(`tools/membrane/runtime_ollama.h`) accepts exactly the three
+(`tools/membrane/runtime_ollama.h`) accepts exactly the four
 method+path pairs above. The adapter's single HTTP helper checks it
 before opening a socket. Everything else Ollama serves is unreachable
 from this module, including:
@@ -38,7 +47,7 @@ from this module, including:
 - inference: `/api/generate`, `/api/chat`, `/api/embed`, `/api/embeddings`, and every `/v1/*` route
 - mutation: `/api/pull`, `/api/push`, `/api/create`, `/api/copy`, `/api/delete`, `/api/blobs/*`
 - cloud and account: `/api/me`, `/api/signout`, `/api/experimental/*`
-- observation not needed in H2: `/api/ps`, `/api/status`
+- any other observation route: `/api/status` (undocumented/unused)
 
 **Documented facts this adapter relies on:**
 
@@ -285,9 +294,9 @@ adapter *could* use, not something H2 calls.
 | chat_completions | supported | `/api/chat`, `/v1/chat/completions` (**never called in H2**) |
 | streaming | supported | NDJSON / SSE (**never called in H2**) |
 | cancellation | unknown | no documented cancel endpoint or semantics |
-| current_model | supported | `GET /api/ps` (not called in H2) |
+| current_model | supported | `GET /api/ps` (called by Milestone I2's `membrane observe --runtime ollama`) |
 | active_context | supported | `/api/ps` `context_length` per loaded model |
-| ram_usage | partial | `/api/ps` `size` per loaded model; no host-wide view |
+| ram_usage | partial | `/api/ps` `size` per loaded model; no host-wide view (I2 fills the host-wide view itself, from MEMBRANE's own probe, never from Ollama) |
 | vram_usage | partial | `/api/ps` `size_vram` per loaded model; no per-device breakdown |
 | loaded_model_memory | partial | `/api/ps` `size` (scheduler's figure) |
 | kv_cache_usage | unsupported | not exposed |
@@ -331,6 +340,10 @@ H2's (see section 11).
   config or service file is written.
 - **Planner v2 is untouched:** no `membrane_plan_t` mapping and no
   negotiation against Ollama.
+- **I2:** `test_observe_ollama.cpp` proves the same way, for
+  `membrane observe --runtime ollama` -- its own mock traps every
+  mutating/inference/inventory-metadata route and asserts the command
+  only ever reaches `GET /api/version` and `GET /api/ps`.
 
 ## 10. Tests and real smoke
 
@@ -362,7 +375,7 @@ not install one. Against that host, `membrane runtime list` shows
 `ollama external unavailable`, `inspect ollama` shows the Reason block,
 and `models ollama` exits 4 with `RUNTIME_UNAVAILABLE`.
 
-## 11. Limitations and what is deferred to H3
+## 11. Limitations and what is deferred to H3 / I2 / I3
 
 **Limitations:**
 
@@ -370,20 +383,30 @@ and `models ollama` exits 4 with `RUNTIME_UNAVAILABLE`.
   not version-gated, and it is not probed per daemon.
 - There is no minimum-version check. "Incompatible" means only that
   `/api/version` returned a non-2xx status.
-- `/api/ps` (loaded models, VRAM) is not read, even though it is
-  read-only. H2 was scoped to discovery, inventory and metadata.
 - Only plain `http://` endpoints are supported: no TLS and no auth.
 - The model name passed to `model inspect` is sent as given. There is no
   local canonicalization beyond whitespace/control rejection and the
   cloud-suffix refusal.
+- `/api/ps` reports no per-layer GPU-offload count and no KV-cache
+  precision (`OLLAMA_KV_CACHE_TYPE` is server-start env, never returned by
+  any documented API call) and no GPU/CPU processor split as a field (the
+  `ollama ps` CLI computes that itself from `size`/`size_vram`; MEMBRANE
+  does not reproduce that arithmetic -- see observability.md).
 
 **H3 (done, read-only):** `membrane plan MODEL --runtime ollama` -- see
 [runtime-plan-assessment.md](runtime-plan-assessment.md). It reuses only the
 calls above (no new route) and is always `capability_only`.
 
-**Originally deferred to H3:** capability-aware planning. That means mapping or
-comparing Ollama inventory against MEMBRANE's registry, building
-`membrane_plan_t` for an Ollama model, running negotiation against the
-Ollama matrix, and any recommendation. Any control (per-request
-`num_ctx`/`num_gpu`, load/unload) or inference call remains out of scope
-until explicitly requested.
+**I2 (done, read-only):** `membrane observe --runtime ollama` -- see
+[observability.md](observability.md). It adds `GET /api/ps` to the
+allowlist and maps loaded-model facts onto MEMBRANE's own
+provenance-labeled observation snapshot. It does not compare providers,
+recommend anything, or touch Planner v2.
+
+**Deferred to I3:** cross-runtime comparison and recommendation (e.g.
+"Ollama uses more VRAM than native", downgrade/runtime-switch advice).
+**Deferred, unscoped:** capability-aware planning that maps or compares
+Ollama inventory against MEMBRANE's registry, builds `membrane_plan_t` for
+an Ollama model, or runs negotiation against the Ollama matrix. Any
+control (per-request `num_ctx`/`num_gpu`, load/unload) or inference call
+remains out of scope until explicitly requested.

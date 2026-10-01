@@ -39,7 +39,18 @@ extern "C" {
  * actually probes the host lives in tools/membrane/observe_cmd.cpp.
  */
 
-# define MEMBRANE_OBSERVATION_SCHEMA_VERSION	1
+/*
+ * Schema history:
+ *   1 (I1): the original native-only snapshot.
+ *   2 (I2): membrane_obs_resident_model_t grew 7 fields (digest, family,
+ *      quant, reported_size_bytes, reported_gpu_bytes, reported_context,
+ *      expires_at) so an external runtime's own per-model facts (Ollama's
+ *      GET /api/ps) fit the SAME resident-model shape as the native
+ *      server's resident models, instead of a second telemetry model.
+ *      Every existing v1 JSON key keeps its old meaning; v2 only adds keys
+ *      inside each resident_models[] entry.
+ */
+# define MEMBRANE_OBSERVATION_SCHEMA_VERSION	2
 
 typedef enum e_membrane_obs_provenance
 {
@@ -128,10 +139,29 @@ typedef enum e_membrane_obs_status
 
 const char	*membrane_obs_status_name(membrane_obs_status_t s);
 
-/* One model the running native server reports as resident. Every field is
- * as reported by GET /v1/status: identity/backend/precision are
- * RUNTIME_REPORTED, the byte figures are the server's own load-time
- * ESTIMATES (runtime_session.cpp gs.estimated_*), never measured usage. */
+/* One model a runtime reports as resident -- shared by EVERY runtime's
+ * observation provider (Part 6 of I2: one shape, not a second telemetry
+ * model per runtime). Native (GET /v1/status) and Ollama (GET /api/ps)
+ * fill disjoint subsets of these fields; whatever a given runtime does not
+ * report stays unknown with an honest reason, never inferred or guessed
+ * from a sibling field:
+ *
+ *   native-only    backend, gpu_layers, kv_precision,
+ *                  estimated_model_bytes/estimated_kv_bytes (the server's
+ *                  own load-time ESTIMATES, runtime_session.cpp
+ *                  gs.estimated_*)
+ *   ollama-only    digest, family, quant, reported_size_bytes,
+ *                  reported_gpu_bytes, reported_context, expires_at (I2:
+ *                  the scheduler's own RUNTIME_REPORTED figures --
+ *                  reported_size_bytes/reported_gpu_bytes are NEVER
+ *                  ESTIMATED, because Ollama does not report them as
+ *                  estimates)
+ *   shared         name, state
+ *
+ * reported_gpu_bytes is Ollama's size_vram for THIS model only -- a
+ * model-specific fact, never to be confused with the snapshot's
+ * device-wide gpu.vram_* fields (Part 8 of I2: MEMBRANE's own device
+ * probe, measured, independent of any runtime). */
 # define MEMBRANE_OBS_MAX_RESIDENT	8
 
 typedef struct s_membrane_obs_resident_model
@@ -143,6 +173,14 @@ typedef struct s_membrane_obs_resident_model
 	membrane_obs_str_t	kv_precision;
 	membrane_obs_u64_t	estimated_model_bytes;
 	membrane_obs_u64_t	estimated_kv_bytes;
+	/* Milestone I2 (Ollama GET /api/ps -- docs/runtime-ollama.md). */
+	membrane_obs_str_t	digest;
+	membrane_obs_str_t	family;
+	membrane_obs_str_t	quant;
+	membrane_obs_u64_t	reported_size_bytes;
+	membrane_obs_u64_t	reported_gpu_bytes;
+	membrane_obs_u64_t	reported_context;
+	membrane_obs_str_t	expires_at;
 }	membrane_obs_resident_model_t;
 
 typedef struct s_membrane_observation_snapshot

@@ -19,6 +19,8 @@
  *   POST /api/show      <- {"model": NAME}              (metadata; a POST
  *                          only because Ollama defines it that way -- it
  *                          reads the local manifest, it changes nothing)
+ *   GET  /api/ps        -> {"models": [ ... ]}          (Milestone I2:
+ *                          loaded/resident models -- see observe_ollama.h)
  * membrane_ollama_request_allowed() is the enforced allowlist: the one
  * internal HTTP helper refuses any other method/path before a socket is
  * opened. In particular /api/generate, /api/chat, /api/embed(dings),
@@ -26,7 +28,7 @@
  * the OpenAI-compatible /v1 routes, and every cloud/account route are
  * unreachable from this module.
  *
- * H2 does NOT send inference requests and does NOT change Ollama state.
+ * Neither H2 nor I2 sends inference requests or changes Ollama state.
  */
 
 # define MEMBRANE_OLLAMA_ENDPOINT_ENV		"MEMBRANE_OLLAMA_ENDPOINT"
@@ -56,7 +58,7 @@ membrane_ollama_endpoint_t	membrane_ollama_resolve_endpoint(void);
 /* Pure: the static capability contract (see runtime_ollama.cpp). */
 void	membrane_ollama_capabilities(membrane_runtime_capabilities_t *out);
 
-/* Pure: true iff method+path is one of the 3 read-only calls above. */
+/* Pure: true iff method+path is one of the 4 read-only calls above. */
 bool	membrane_ollama_request_allowed(const std::string &method,
 			const std::string &path);
 
@@ -74,6 +76,57 @@ bool	membrane_ollama_parse_tags(const std::string &body,
 bool	membrane_ollama_parse_show(const std::string &model,
 			const std::string &body, membrane_external_model_detail_t *out,
 			std::string *err);
+
+/*
+ * Milestone I2: one entry of GET /api/ps -- a model the Ollama SCHEDULER
+ * currently reports loaded/resident, exactly as ollama/ollama v0.34.3's
+ * ProcessModelResponse (api/types.go) shapes it. Deliberately a distinct,
+ * Ollama-specific raw type: it is not merged into membrane_external_model_t
+ * (that is /api/tags and /api/show's inventory/metadata shape -- an
+ * installed model, not necessarily a loaded one). The one place that maps
+ * THIS shape onto MEMBRANE's own provenance-labeled observation snapshot
+ * is tools/membrane/observe_ollama.cpp -- never a second copy of that
+ * mapping.
+ *
+ * Every field is exactly what the scheduler reported for that process,
+ * never an estimate: size/size_vram are the scheduler's own bytes
+ * accounting, not a load-time guess the way the native server's
+ * estimated_model_bytes is.
+ */
+typedef struct s_membrane_ollama_process_model
+{
+	std::string	name;				/* display name, e.g. "qwen2.5:7b" */
+	std::string	model;				/* the runtime id to send back --
+							 * usually identical to name */
+	std::string	digest;
+	std::string	family;				/* details.family, "" = unknown */
+	std::string	quant;				/* details.quantization_level */
+	bool		size_known;
+	uint64_t	size_bytes;			/* total resident size */
+	bool		size_vram_known;
+	uint64_t	size_vram_bytes;	/* THIS model's own GPU allocation --
+							 * never device-wide VRAM (Part 8) */
+	bool		context_length_known;
+	uint64_t	context_length;		/* THIS model's loaded/active
+							 * context, per the scheduler -- never the
+							 * model's trained maximum */
+	std::string	expires_at;			/* RFC 3339, verbatim; "" = unknown */
+}	membrane_ollama_process_model_t;
+
+/* Pure parser over a raw /api/ps response body (exposed for fixture
+ * tests). Accepts {"models": []} (zero loaded models -- NOT an error, see
+ * docs/observability.md Part 14). Rejects a top level that is not
+ * {"models": [...]} or any entry that is not an object with a name; one
+ * malformed OPTIONAL field inside an otherwise-valid entry degrades that
+ * field to unknown rather than failing the whole parse. */
+bool	membrane_ollama_parse_ps(const std::string &body,
+			std::vector<membrane_ollama_process_model_t> *out,
+			std::string *err);
+
+/* Live, bounded, read-only probe: GET /api/ps. */
+bool	membrane_ollama_list_running(
+			std::vector<membrane_ollama_process_model_t> *out,
+			membrane_runtime_error_t *err);
 
 /* Live, bounded, read-only probes (runtime_adapter.h signatures). */
 void	membrane_ollama_describe(membrane_runtime_descriptor_t *out);

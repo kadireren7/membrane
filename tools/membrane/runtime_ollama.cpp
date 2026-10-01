@@ -19,6 +19,9 @@ using json = nlohmann::json;
 #define OLLAMA_VERSION_MAX_BYTES	(64u * 1024u)
 #define OLLAMA_TAGS_MAX_BYTES		(16u * 1024u * 1024u)
 #define OLLAMA_SHOW_MAX_BYTES		(8u * 1024u * 1024u)
+/* Milestone I2: /api/ps lists only currently-loaded models -- normally far
+ * fewer than /api/tags' full inventory -- so it shares /api/tags' cap. */
+#define OLLAMA_PS_MAX_BYTES			(16u * 1024u * 1024u)
 #define OLLAMA_MODEL_NAME_MAX		256
 #define OLLAMA_PARAMETERS_MAX		1024
 #define OLLAMA_ERROR_TEXT_MAX		200
@@ -234,10 +237,12 @@ void	membrane_ollama_capabilities(membrane_runtime_capabilities_t *c)
 	c->cancellation = MEMBRANE_CAPABILITY_UNKNOWN;
 
 	/* OBSERVABILITY. GET /api/ps lists loaded models with context_length,
-	 * size and size_vram (not called by H2). RAM/VRAM/loaded-model memory:
-	 * PARTIAL -- per-loaded-model totals from Ollama's scheduler, no
-	 * host/device-wide view and no per-device breakdown. KV-cache usage:
-	 * not exposed anywhere. */
+	 * size and size_vram (called by Milestone I2's `membrane observe
+	 * --runtime ollama`, never by H2's own commands). RAM/VRAM/loaded-model
+	 * memory: PARTIAL -- per-loaded-model totals from Ollama's scheduler,
+	 * no host/device-wide view and no per-device breakdown (I2 fills the
+	 * device-wide view itself, from MEMBRANE's own probe, never from
+	 * Ollama). KV-cache usage: not exposed anywhere. */
 	c->current_model = MEMBRANE_CAPABILITY_SUPPORTED;
 	c->active_context = MEMBRANE_CAPABILITY_SUPPORTED;
 	c->ram_usage = MEMBRANE_CAPABILITY_PARTIAL;
@@ -255,7 +260,8 @@ bool	membrane_ollama_request_allowed(const std::string &method,
 			const std::string &path)
 {
 	if (method == "GET")
-		return (path == "/api/version" || path == "/api/tags");
+		return (path == "/api/version" || path == "/api/tags"
+			|| path == "/api/ps");
 	if (method == "POST")
 		return (path == "/api/show");
 	return (false);
@@ -477,6 +483,98 @@ bool	membrane_ollama_parse_show(const std::string &model,
 	d.has_system = !str_field(j, "system").empty();
 	d.has_license = !str_field(j, "license").empty();
 	*out = d;
+	return (true);
+}
+
+/*
+ * Milestone I2. Shape audited against ollama/ollama v0.34.3's
+ * ProcessModelResponse (api/types.go) and PsHandler (server/routes.go):
+ * name, model, size, digest, details{family,quantization_level,...},
+ * expires_at (RFC 3339), size_vram, context_length -- all at the top
+ * level of each entry, none nested under model_info (model_info is an
+ * /api/show-only field; /api/ps never returns it, so no parameter_count
+ * or architecture is available here, and none is inferred).
+ *
+ * "context_length" here is the CURRENTLY LOADED context for that running
+ * instance (v.contextLength, set when the scheduler loads the model),
+ * never the model's trained maximum -- that maximum only ever comes from
+ * /api/tags or /api/show's details.context_length /
+ * model_info["<arch>.context_length"], which this parser does not touch.
+ */
+bool	membrane_ollama_parse_ps(const std::string &body,
+			std::vector<membrane_ollama_process_model_t> *out,
+			std::string *err)
+{
+	json									j = json::parse(body, nullptr,
+			false);
+	std::vector<membrane_ollama_process_model_t>	models;
+	size_t									i;
+
+	if (j.is_discarded())
+	{
+		*err = "response is not valid JSON";
+		return (false);
+	}
+	if (!j.is_object() || !j.contains("models") || !j["models"].is_array())
+	{
+		*err = "response has no \"models\" array";
+		return (false);
+	}
+	i = 0;
+	for (const auto &o : j["models"])
+	{
+		membrane_ollama_process_model_t	m;
+		const json							empty = json::object();
+		const json							&d = (o.contains("details")
+				&& o["details"].is_object()) ? o["details"] : empty;
+		uint64_t							n;
+
+		if (!o.is_object())
+		{
+			*err = "models[" + std::to_string(i) + "] is not an object";
+			return (false);
+		}
+		m.name = str_field(o, "name");
+		m.model = str_field(o, "model");
+		if (m.model.empty())
+			m.model = m.name;
+		if (m.name.empty())
+			m.name = m.model;
+		if (m.name.empty())
+		{
+			*err = "models[" + std::to_string(i) + "] has no name";
+			return (false);
+		}
+		m.digest = str_field(o, "digest");
+		m.family = str_field(d, "family");
+		m.quant = str_field(d, "quantization_level");
+		m.size_known = uint_field(o, "size", &n);
+		m.size_bytes = m.size_known ? n : 0;
+		/* Ollama omits size_vram entirely when it is 0 rather than send
+		 * an explicit 0 (upstream issue #4840): an ABSENT key is a
+		 * documented, known 0 bytes VRAM, never "unknown". A PRESENT key
+		 * of the wrong JSON type is a genuine malformed-optional-field
+		 * case and stays unknown (Part 16) -- the two are not the same
+		 * thing, so they are told apart here rather than both folded
+		 * into uint_field()'s single true/false. */
+		if (!o.contains("size_vram"))
+		{
+			m.size_vram_known = true;
+			m.size_vram_bytes = 0;
+		}
+		else
+		{
+			m.size_vram_known = uint_field(o, "size_vram", &n);
+			m.size_vram_bytes = m.size_vram_known ? n : 0;
+		}
+		m.context_length_known = uint_field(o, "context_length", &n)
+			&& n > 0;
+		m.context_length = m.context_length_known ? n : 0;
+		m.expires_at = str_field(o, "expires_at");
+		models.push_back(m);
+		i++;
+	}
+	*out = models;
 	return (true);
 }
 
@@ -776,6 +874,40 @@ bool	membrane_ollama_inspect_model(const std::string &model,
 	{
 		set_err(err, MEMBRANE_RUNTIME_ERR_MALFORMED,
 			"Ollama returned malformed model metadata: " + perr);
+		return (false);
+	}
+	return (true);
+}
+
+/*
+ * Milestone I2. GET /api/ps needs no request body and, per v0.34.3's
+ * PsHandler, always answers 200 with "models": [] when nothing is
+ * loaded -- an empty, healthy daemon is success, never
+ * MEMBRANE_RUNTIME_ERR_*. Same bounded/no-retry/no-redirect contract as
+ * every other call in this file (see ollama_http()'s own comment).
+ */
+bool	membrane_ollama_list_running(
+			std::vector<membrane_ollama_process_model_t> *out,
+			membrane_runtime_error_t *err)
+{
+	membrane_ollama_endpoint_t	ep = membrane_ollama_resolve_endpoint();
+	ollama_http_result_t		r;
+	std::string					perr;
+
+	if (!ep.ok)
+	{
+		set_err(err, MEMBRANE_RUNTIME_ERR_INVALID_ENDPOINT,
+			std::string(MEMBRANE_OLLAMA_ENDPOINT_ENV) + " is invalid: "
+			+ ep.error);
+		return (false);
+	}
+	r = ollama_http(ep, "GET", "/api/ps", "", OLLAMA_PS_MAX_BYTES, 5);
+	if (!classify_http(ep, r, "GET /api/ps", err))
+		return (false);
+	if (!membrane_ollama_parse_ps(r.body, out, &perr))
+	{
+		set_err(err, MEMBRANE_RUNTIME_ERR_MALFORMED,
+			"Ollama returned a malformed process list: " + perr);
 		return (false);
 	}
 	return (true);
