@@ -32,4 +32,21 @@
 int	membrane_plan_cmd_dispatch(const std::vector<std::string> &args,
 			bool want_json);
 
+/*
+ * Milestone I1: the exact Planner v2 resolution `membrane plan NAME` (no
+ * flags) performs for an already-REGISTERED model, returned in-process
+ * instead of rendered -- so `membrane observe` can report Planner v2's
+ * own estimates (always as ESTIMATED, see observation.h) without a
+ * second planner. Same read-only contract as the command: registry
+ * load only, GGUF metadata read, one host/device snapshot. Registry-only
+ * on purpose (no catalog fallback): observation is about what is on this
+ * machine. Returns false with a stable err_code (IO_ERROR, NOT_FOUND,
+ * MODEL_FILE_UNREADABLE, or a registry_core.h code) otherwise.
+ */
+struct s_membrane_plan_v2_result;
+
+bool	membrane_plan_resolve_installed_v2(const std::string &name,
+			struct s_membrane_plan_v2_result *out, std::string *err_code,
+			std::string *err_message);
+
 #endif

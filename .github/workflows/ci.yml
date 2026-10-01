@@ -733,7 +733,7 @@ jobs:
         run: |
           cmake --build build-cpu-install -j2 --target membrane-run \
             membrane test_runtime_session test_registry_core test_server \
-            test_setup_cmd
+            test_setup_cmd test_observe_cmd
 
       # Mega Phase A, PR A1: this is the ONLY CI coverage test_runtime_
       # session gets (same pre-existing gap fallback-controller-tests
@@ -763,7 +763,7 @@ jobs:
       - name: Test runtime-session core, model registry, HTTP server, and setup
         run: |
           ctest --test-dir build-cpu-install --output-on-failure \
-            -R '^test_runtime_session$|^test_registry_core$|^test_server$|^test_setup_cmd$'
+            -R '^test_runtime_session$|^test_registry_core$|^test_server$|^test_setup_cmd$|^test_observe_cmd$'
 
       - name: CPU install to temp prefix
         run: |
@@ -811,6 +811,16 @@ jobs:
             exit 1
           fi
           rm -f /tmp/ci-membrane-models.json
+          # Milestone I1: `membrane observe` from the installed tree, in an
+          # isolated env -- read-only (no registry/config file created), a
+          # successful partial snapshot, RAM measured, unknowns null.
+          MEMBRANE_MODELS_PATH=/tmp/ci-observe-models.json \
+          MEMBRANE_SERVER_CONFIG_PATH=/tmp/ci-observe-server.json \
+            /tmp/membrane-install-cpu/bin/membrane observe --json \
+            > /tmp/ci-observe.json
+          python3 -c "import json; d = json.load(open('/tmp/ci-observe.json')); assert d['status'] == 'partial', d['status']; assert d['host_memory']['total_bytes']['provenance'] == 'measured'; assert d['kv']['measured_bytes']['value'] is None"
+          test ! -e /tmp/ci-observe-models.json
+          test ! -e /tmp/ci-observe-server.json
 
       # Mega Phase A, PR A3: the installed `membrane serve` binary really
       # starts, listens, answers /health, and stops cleanly on SIGTERM --

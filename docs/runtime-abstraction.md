@@ -10,6 +10,10 @@
 > runtime-aware assessment -- `membrane plan MODEL --runtime ID` -- see
 > [runtime-plan-assessment.md](runtime-plan-assessment.md). H3 does not
 > apply planner decisions.
+>
+> **Milestone I1 update:** the native runtime can now be *observed*
+> read-only -- `membrane observe` -- see [observability.md](observability.md).
+> Only membrane-native is observable in I1; no Ollama observation route.
 
 ## 1. Why this exists
 

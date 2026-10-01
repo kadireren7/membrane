@@ -52,6 +52,21 @@ structured reasons for every decision and `--ctx`/`--kv`/`--gpu-layers`/
 activates, or starts anything. `--json` for machine-readable output. See
 [`docs/planner-v2-foundation.md`](docs/planner-v2-foundation.md).
 
+## See what is happening right now
+
+```bash
+membrane observe            # --json for machine-readable output
+```
+
+Read-only, point-in-time facts about this machine and the native
+runtime: host RAM/swap, GPU/VRAM, the configured and resident models,
+planned context and KV. Every figure is labeled with where it came from
+(`measured`, `runtime_reported`, `estimated`, `static_metadata`,
+`configured`) and anything MEMBRANE cannot actually know is shown as
+`unknown`, never as 0 -- e.g. Planner v2's KV estimate is never presented
+as live KV usage. No recommendations, no history, no service/model
+changes. See [`docs/observability.md`](docs/observability.md).
+
 ## Chat from your terminal
 
 ```bash
