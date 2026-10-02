@@ -121,6 +121,72 @@ static void	test_zero_step_count_rejected(void)
 	unlink(g_path);
 }
 
+/* Overwrites a slab of stack with `v` and returns, so the writer called
+ * next builds its own (uninitialized) header buffer on top of a known
+ * pattern. This only makes the defect observable -- the assertions
+ * below are the real contract, and both hold unconditionally once the
+ * reserved tail is zeroed, so neither can go flaky. */
+__attribute__((noinline)) static void	dirty_stack(unsigned char v)
+{
+	volatile unsigned char	slab[16384];
+
+	memset((void *)slab, v, sizeof(slab));
+	(void)slab[0];
+}
+
+static void	write_sample_trace(unsigned char stack_fill, uint8_t *out)
+{
+	membrane_kvtrace_header_t	h;
+	uint32_t					steps[4];
+	FILE						*f;
+	size_t						i;
+
+	sample_header(&h, 4);
+	i = 0;
+	while (i < 4)
+	{
+		steps[i] = (uint32_t)(1000 + i);
+		i++;
+	}
+	f = fopen(g_path, "wb");
+	TEST_ASSERT(f != NULL, "open trace for write");
+	/* Called here, after fopen(), so the pattern lands at the same call
+	 * depth the writer's own frame will occupy. */
+	dirty_stack(stack_fill);
+	TEST_ASSERT(membrane_kvtrace_write(f, &h, steps) == MEMBRANE_OK,
+		"trace write succeeds");
+	fclose(f);
+	f = fopen(g_path, "rb");
+	TEST_ASSERT(f != NULL, "reopen trace to inspect raw header");
+	TEST_ASSERT(fread(out, 1, MEMBRANE_KVTRACE_HEADER_SIZE, f)
+		== MEMBRANE_KVTRACE_HEADER_SIZE, "read raw header back");
+	fclose(f);
+}
+
+/* Serialized fields cover [0, 108) of the 128-byte header. The reserved
+ * tail must be zero, and identical input must produce an identical
+ * header regardless of what happened to be on the stack beforehand. */
+static void	test_reserved_header_bytes_are_canonical(void)
+{
+	uint8_t	first[MEMBRANE_KVTRACE_HEADER_SIZE];
+	uint8_t	second[MEMBRANE_KVTRACE_HEADER_SIZE];
+	size_t	i;
+
+	write_sample_trace(0xAA, first);
+	write_sample_trace(0x55, second);
+	i = 108;
+	while (i < MEMBRANE_KVTRACE_HEADER_SIZE)
+	{
+		TEST_ASSERT(first[i] == 0 && second[i] == 0,
+			"reserved header bytes [108, 128) are zero");
+		i++;
+	}
+	TEST_ASSERT(memcmp(first, second, MEMBRANE_KVTRACE_HEADER_SIZE) == 0,
+		"identical input produces a byte-identical header");
+	unlink(g_path);
+	printf("PASS test_reserved_header_bytes_are_canonical\n");
+}
+
 int	main(void)
 {
 	int	fd;
@@ -131,6 +197,7 @@ int	main(void)
 	test_roundtrip();
 	test_corrupt_payload_rejected();
 	test_zero_step_count_rejected();
+	test_reserved_header_bytes_are_canonical();
 	unlink(g_path);
 	return (0);
 }
