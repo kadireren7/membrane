@@ -6,9 +6,21 @@
 #include <unistd.h>
 
 #include "membrane/attntrace2.h"
+#include "membrane/block.h"
 #include "test_helpers.h"
 
 static char	g_path[] = "/tmp/membrane-attntrace2-XXXXXX";
+
+/* Local little-endian writer -- attntrace2.c's own put_le32() is static
+ * to that translation unit, and this is the only place a test needs to
+ * rewrite a header field by hand. */
+static void	put_le32_test(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+	p[2] = (uint8_t)(v >> 16);
+	p[3] = (uint8_t)(v >> 24);
+}
 
 static void	sample_header(membrane_attntrace2_header_t *h,
 				uint32_t step_count, uint32_t n_layer, uint32_t n_head,
@@ -215,6 +227,67 @@ static void	test_oversized_block_id_rejected(void)
 	printf("PASS test_oversized_block_id_rejected\n");
 }
 
+/* Regression guard for the uncompressed-path read of a file whose
+ * stored_payload_size understates the payload the rest of the header
+ * describes. The header CRC is recomputed after the edit, so the file
+ * is well-formed in every way the reader already checked -- only
+ * stored_payload_size disagrees with step_count/n_layer/n_head/top_k.
+ *
+ * Before the stored_payload_size check in membrane_attntrace2_read_
+ * entries(), this read n * 3 bytes out of an allocation sized by the
+ * understated field instead: a real heap-buffer-overflow, which the
+ * ASan leg of the build (CONTRIBUTING.md's own requirement for new
+ * C code) reports at membrane_block_checksum(). A non-sanitized build
+ * usually still returns CORRUPT_DATA here -- the over-read garbage
+ * rarely matches the payload checksum -- so ASan is what makes this
+ * case fail loudly rather than by luck. */
+static void	test_stored_size_mismatch_rejected(void)
+{
+	membrane_attntrace2_header_t	h;
+	membrane_attntrace2_header_t	back;
+	membrane_attntrace_entry_t		entries[8];
+	membrane_attntrace_entry_t		readback[8];
+	uint8_t							hbuf[MEMBRANE_ATTNTRACE2_HEADER_SIZE];
+	FILE							*f;
+
+	sample_header(&h, 1, 1, 1, 8);
+	fill_entries(entries, 8);
+	f = fopen(g_path, "wb");
+	TEST_ASSERT(f != NULL, "open trace for write");
+	TEST_ASSERT(membrane_attntrace2_write(f, &h, entries, 0) == MEMBRANE_OK,
+		"trace write succeeds");
+	fclose(f);
+
+	f = fopen(g_path, "r+b");
+	TEST_ASSERT(f != NULL, "reopen trace to understate stored_payload_size");
+	TEST_ASSERT(fread(hbuf, 1, sizeof(hbuf), f) == sizeof(hbuf),
+		"read header back");
+	/* stored_payload_size lives at offset 116; the header's own CRC
+	 * covers bytes [0, 124) and is stored at 124. */
+	hbuf[116] = 3;
+	hbuf[117] = 0;
+	hbuf[118] = 0;
+	hbuf[119] = 0;
+	put_le32_test(hbuf + 124, membrane_block_checksum(hbuf, 124));
+	TEST_ASSERT(fseek(f, 0, SEEK_SET) == 0, "seek to header");
+	TEST_ASSERT(fwrite(hbuf, 1, sizeof(hbuf), f) == sizeof(hbuf),
+		"rewrite header with a valid CRC");
+	fclose(f);
+
+	f = fopen(g_path, "rb");
+	TEST_ASSERT(f != NULL, "reopen trace for read");
+	TEST_ASSERT(membrane_attntrace2_read_header(f, &back) == MEMBRANE_OK,
+		"header still validates (only stored_payload_size disagrees)");
+	TEST_ASSERT(back.stored_payload_size == 3,
+		"the understated field really did survive into the header");
+	TEST_ASSERT(membrane_attntrace2_read_entries(f, &back, readback)
+		== MEMBRANE_ERR_CORRUPT_DATA,
+		"understated stored_payload_size rejected, never read past it");
+	fclose(f);
+	unlink(g_path);
+	printf("PASS test_stored_size_mismatch_rejected\n");
+}
+
 int	main(void)
 {
 	int	fd;
@@ -227,6 +300,7 @@ int	main(void)
 	test_compression_actually_shrinks_real_shaped_data();
 	test_corrupt_payload_rejected();
 	test_oversized_block_id_rejected();
+	test_stored_size_mismatch_rejected();
 	unlink(g_path);
 	return (0);
 }
