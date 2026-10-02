@@ -3,8 +3,8 @@
 (results/background-service/validation.json, extended across PRs B1-B4,
 matching results/runtime-service/validation.json's own precedent from
 Mega Phase A): schema and REAL/SYNTHETIC/SOURCE_ANALYSIS labeling,
-docs/service.md exists with its required sections, no premature
-v0.4/v1.0 release claim, stable release still says v0.3.0, the llama.cpp
+docs/service.md exists with its required sections, release references remain
+consistent with the live version, the llama.cpp
 patch set is unchanged, and a handful of direct source-level regression
 guards:
 
@@ -173,22 +173,28 @@ def _c4c():
 		else "all present, no stale claim")
 
 
-@check("no premature v0.4/v1.0 release claim anywhere in this PR's own "
-	"new/changed docs")
+@check("release references in the evolving service docs do not exceed the "
+	"live MEMBRANE_VERSION")
 def _c5():
+	version_text = PRODUCT_CLI_H_PATH.read_text()
+	version_match = re.search(
+		r'#\s*define\s+MEMBRANE_VERSION\s+"(\d+)\.(\d+)\.(\d+)"',
+		version_text)
+	if version_match is None:
+		return False, "MEMBRANE_VERSION not found"
+	live_version = tuple(int(part) for part in version_match.groups())
 	bad = []
-	pattern = re.compile(
-		r"\bv0\.4\.\d+\b|\bv0\.4-release\b|\bv1\.0\.\d+\b|"
-		r"\bv0\.4\s+(is|has been)\s+released\b", re.IGNORECASE)
+	pattern = re.compile(r"\bv(\d+)\.(\d+)\.(\d+)\b", re.IGNORECASE)
 	for path in (SERVICE_DOC_PATH, SERVER_DOC_PATH, REGISTRY_DOC_PATH):
 		text = path.read_text()
 		for m in pattern.finditer(text):
-			bad.append(f"{path.name}: {m.group(0)!r}")
-	return len(bad) == 0, "; ".join(bad) if bad else "no premature release claim"
+			if tuple(int(part) for part in m.groups()) > live_version:
+				bad.append(f"{path.name}: {m.group(0)!r}")
+	return len(bad) == 0, ("; ".join(bad) if bad
+		else f"all release references <= v{'.'.join(version_match.groups())}")
 
 
-@check("live MEMBRANE_VERSION is v0.4.0 (bumped by Mega Phase C's own "
-	"PR C4, well after Mega Phase B's own sub-PRs)")
+@check("live MEMBRANE_VERSION is v1.0.0")
 def _c6():
 	text = PRODUCT_CLI_H_PATH.read_text()
 	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', text)
