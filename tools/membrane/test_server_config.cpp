@@ -172,6 +172,65 @@ static void	test_load_unsupported_schema_version_fails_closed(void)
 	rmdir_recursive(dir);
 }
 
+/* Milestone J: the optional overrides block. */
+static void	test_overrides_round_trip_and_validation(void)
+{
+	std::string	dir = make_temp_dir();
+	std::string	path = dir + "/server.json";
+
+	membrane_server_config_t		cfg = membrane_server_config_defaults();
+	membrane_server_config_error_t	err;
+
+	TEST_ASSERT(membrane_server_overrides_empty(cfg.overrides),
+		"defaults carry no overrides (pre-J behavior)");
+	TEST_ASSERT(membrane_server_config_save(path, cfg, &err), "save plain");
+	{
+		FILE	*f = fopen(path.c_str(), "r");
+		char	buf[512] = {0};
+
+		TEST_ASSERT(f != NULL && fread(buf, 1, sizeof(buf) - 1, f) > 0,
+			"read back");
+		fclose(f);
+		TEST_ASSERT(strstr(buf, "overrides") == NULL, "an empty overrides "
+			"block is not written (file shape unchanged)");
+	}
+	cfg.overrides.has_context = true;
+	cfg.overrides.context = 4096;
+	cfg.overrides.has_kv_precision = true;
+	cfg.overrides.kv_precision = "q8";
+	cfg.overrides.has_kv_placement = true;
+	cfg.overrides.kv_placement = "cpu";
+	cfg.overrides.has_gpu_layers = true;
+	cfg.overrides.gpu_layers = -1;
+	TEST_ASSERT(membrane_server_config_save(path, cfg, &err), "save overrides");
+
+	membrane_server_config_t	back;
+
+	TEST_ASSERT(membrane_server_config_load(path, &back, &err), "load");
+	TEST_ASSERT(membrane_server_overrides_equal(cfg.overrides, back.overrides),
+		"overrides round-trip");
+	cfg.overrides.kv_precision = "q9";
+	TEST_ASSERT(!membrane_server_config_save(path, cfg, &err)
+		&& err.code == "INVALID_OVERRIDES", "invalid overrides are not saved");
+	for (const char *bad : {
+			"{\"schema_version\":1,\"overrides\":{\"context\":\"big\"}}",
+			"{\"schema_version\":1,\"overrides\":{\"context\":4}}",
+			"{\"schema_version\":1,\"overrides\":{\"kv_precision\":\"q9\"}}",
+			"{\"schema_version\":1,\"overrides\":{\"surprise\":1}}",
+			"{\"schema_version\":1,\"overrides\":[1]}",
+			"{\"schema_version\":1,\"overrides\":{\"gpu_layers\":\"most\"}}"})
+	{
+		FILE	*f = fopen(path.c_str(), "w");
+
+		fputs(bad, f);
+		fclose(f);
+		TEST_ASSERT(!membrane_server_config_load(path, &back, &err)
+			&& err.code == "INVALID_OVERRIDES",
+			"an invalid overrides block fails the whole load (fail closed)");
+	}
+	rmdir_recursive(dir);
+}
+
 static void	test_resolve_path_env_override(void)
 {
 	const char	*old_override = getenv("MEMBRANE_SERVER_CONFIG_PATH");
@@ -214,6 +273,7 @@ int	main(void)
 	test_load_malformed_json_fails_closed();
 	test_load_missing_schema_version_fails_closed();
 	test_load_unsupported_schema_version_fails_closed();
+	test_overrides_round_trip_and_validation();
 	test_resolve_path_env_override();
 	printf("test_server_config: all tests passed\n");
 	return (0);

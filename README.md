@@ -67,6 +67,24 @@ planned context and KV. Every figure is labeled with where it came from
 as live KV usage. No recommendations, no history, no service/model
 changes. See [`docs/observability.md`](docs/observability.md).
 
+## From advice to action (explicit, never automatic)
+
+```
+plan  ->  observe  ->  advise  ->  apply
+```
+
+```bash
+membrane advise              # read-only recommendations
+membrane apply               # DRY RUN: which recommendations could be applied, and why not the rest
+membrane apply --context 4096 --yes     # apply an explicit setting (checked by Planner v2 first)
+```
+
+`membrane apply` changes nothing unless you pass `--yes` (or confirm on a
+terminal). It only creates an action when a runtime has a real control
+primitive and a target value is explicit, re-checks live state right before
+changing anything, rolls back what it can on failure, and keeps a local audit
+log. See [`docs/active-control.md`](docs/active-control.md).
+
 ## Chat from your terminal
 
 ```bash

@@ -63,6 +63,10 @@ struct s_plan_opts
 	int32_t		gpu_layers_request = MEMBRANE_JOINT_GPU_LAYERS_REQUEST_AUTO;
 	bool		want_quant = false;
 	std::string	quant;
+	bool		want_kv_placement = false;	/* Milestone J: set only by
+									 * membrane_plan_check_overrides();
+									 * `membrane plan` has no flag */
+	int			kv_placement_mode = MEMBRANE_JOINT_PLACEMENT_DEFAULT;
 	std::string	runtime;	/* Milestone H3: --runtime ID ("" = none) */
 };
 
@@ -348,6 +352,11 @@ static void	fill_ctxrec_for_spec(const s_variant_spec &spec,
 
 	memset(meta, 0, sizeof(*meta));
 	meta->kv_placement_source = MEMBRANE_PLAN_SOURCE_FALLBACK_DEFAULT;
+	if (opts.want_kv_placement)
+	{
+		req->kv_placement_mode = opts.kv_placement_mode;
+		meta->kv_placement_source = MEMBRANE_PLAN_SOURCE_EXPLICIT_USER;
+	}
 
 	if (opts.want_kv)
 	{
@@ -1212,4 +1221,98 @@ int	membrane_plan_cmd_dispatch(const std::vector<std::string> &args,
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
 	return (plan_catalog_only_model_v2(*fam, opts, want_json));
+}
+
+/*
+ * Milestone J: validate explicit `membrane apply` overrides against
+ * Planner v2 BEFORE anything is persisted. Same resolver, same hardware
+ * snapshot, same read-only contract as membrane_plan_resolve_installed_v2()
+ * -- the overrides only enter as the explicit constraints `membrane plan
+ * --ctx/--kv/--gpu-layers` already accept (KV placement through the
+ * resolver's existing kv_placement_mode field).
+ */
+bool	membrane_plan_check_overrides(const std::string &name,
+			const membrane_plan_override_request_t &ov,
+			membrane_plan_override_check_t *out)
+{
+	std::string					registry_path = membrane_registry_resolve_path();
+	membrane_registry_t			reg;
+	membrane_registry_error_t	reg_err;
+	s_plan_opts					opts;
+	membrane_plan_v2_result_t	*res = new membrane_plan_v2_result_t();
+	int							rc;
+	std::string					err_code;
+	std::string					err_message;
+
+	*out = membrane_plan_override_check_t();
+	if (registry_path.empty() || !membrane_registry_load(registry_path, &reg,
+			&reg_err))
+	{
+		out->detail = "model registry unavailable";
+		delete res;
+		return (false);
+	}
+	const membrane_registry_entry_t	*entry = membrane_registry_find(reg, name);
+
+	if (entry == NULL)
+	{
+		out->detail = "'" + name + "' is not a registered model";
+		delete res;
+		return (false);
+	}
+	opts.name = name;
+	if (ov.has_ctx)
+	{
+		opts.want_ctx = true;
+		opts.ctx_auto = false;
+		opts.ctx_value = ov.ctx;
+	}
+	if (ov.has_kv)
+	{
+		opts.want_kv = true;
+		opts.precision_request = ov.kv_precision == "q8" ? MEMBRANE_JOINT_KV_Q8
+			: ov.kv_precision == "q5" ? MEMBRANE_JOINT_KV_Q5
+			: MEMBRANE_JOINT_KV_NATIVE;
+	}
+	if (ov.has_gpu)
+	{
+		opts.want_gpu_layers = true;
+		opts.gpu_layers_request = ov.gpu_layers == -1
+			? MEMBRANE_JOINT_GPU_LAYERS_REQUEST_ALL
+			: ov.gpu_layers == -2 ? MEMBRANE_JOINT_GPU_LAYERS_REQUEST_AUTO
+			: ov.gpu_layers;
+	}
+	if (ov.has_placement)
+	{
+		opts.want_kv_placement = true;
+		opts.kv_placement_mode = ov.placement == "cpu"
+			? MEMBRANE_JOINT_PLACEMENT_CPU : ov.placement == "gpu"
+			? MEMBRANE_JOINT_PLACEMENT_GPU : ov.placement == "auto"
+			? MEMBRANE_JOINT_PLACEMENT_AUTO : MEMBRANE_JOINT_PLACEMENT_DEFAULT;
+	}
+	if (!resolve_installed_model_v2(name, *entry, opts, res, &rc, &err_code,
+			&err_message))
+	{
+		out->detail = err_message;
+		delete res;
+		return (false);
+	}
+	out->checked = true;
+	out->feasible = res->has_selected && res->feasible;
+	if (res->has_selected)
+	{
+		const membrane_plan_t	&p = res->candidates[res->selected_index];
+
+		out->detail = out->feasible
+			? std::string("Planner v2: feasible") : std::string("Planner v2: ")
+				+ (p.feasibility.limiting_resource[0]
+					? p.feasibility.limiting_resource : "not feasible");
+		if (!out->feasible && p.explanation[0])
+			out->detail += std::string(" (") + p.explanation + ")";
+	}
+	else
+		out->detail = std::string("Planner v2: no feasible plan -- ")
+			+ res->explanation;
+	delete res;
+	return (true);
 }

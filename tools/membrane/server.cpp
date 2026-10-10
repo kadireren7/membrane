@@ -33,6 +33,7 @@
 #include "residency_planner.h"
 #include "chat_finish_reason.h"
 #include "fs_util.h"
+#include "server_config.h"
 
 #include <sys/stat.h>
 
@@ -423,6 +424,75 @@ static bool	apply_chat_template(const std::string &tmpl,
  * (no other flags) would produce, so the resolved plan is provably the
  * exact same one the CLI's own --auto would pick for this model/prompt.
  */
+/*
+ * Milestone J: the explicit overrides `membrane apply` persists to
+ * server.json (server_config.h's membrane_server_overrides_t). Re-read by
+ * mtime (same cheap poll-on-use pattern as the registry) so an applied
+ * override reaches the next model load / next request without a server
+ * restart. A config that fails to load (or whose overrides are invalid)
+ * yields NO overrides -- i.e. the pre-J automatic behavior -- never a
+ * partially honored block.
+ */
+static membrane_server_overrides_t	current_overrides(void)
+{
+	static std::mutex					mtx;
+	static int64_t						cached_mtime = -1;
+	static membrane_server_overrides_t	cached;
+	std::string							path
+			= membrane_server_config_resolve_path();
+	struct stat							sb;
+	int64_t								mtime = -2;
+	std::lock_guard<std::mutex>			lock(mtx);
+
+	if (!path.empty() && stat(path.c_str(), &sb) == 0)
+		mtime = membrane_stat_mtime_ns(sb);
+	if (mtime == cached_mtime)
+		return (cached);
+	cached_mtime = mtime;
+	cached = membrane_server_overrides_t();
+	if (mtime != -2)
+	{
+		membrane_server_config_t		cfg;
+		membrane_server_config_error_t	err;
+
+		if (membrane_server_config_load(path, &cfg, &err))
+			cached = cfg.overrides;
+	}
+	return (cached);
+}
+
+static void	apply_overrides(membrane_run_opts_t *o,
+				const membrane_server_overrides_t &ov)
+{
+	if (ov.has_kv_precision)
+	{
+		o->want_kv_mode = 1;
+		o->kv_mode = ov.kv_precision == "q8" ? MEMBRANE_KV_STORE_Q8
+			: ov.kv_precision == "q5" ? MEMBRANE_KV_STORE_Q5
+			: MEMBRANE_KV_STORE_NATIVE;
+	}
+	if (ov.has_kv_placement)
+	{
+		o->want_kv_placement = 1;
+		o->kv_placement = ov.kv_placement == "cpu" ? MEMBRANE_KV_PLACEMENT_CPU
+			: ov.kv_placement == "gpu" ? MEMBRANE_KV_PLACEMENT_GPU
+			: ov.kv_placement == "auto" ? MEMBRANE_KV_PLACEMENT_AUTO
+			: MEMBRANE_KV_PLACEMENT_DEFAULT;
+	}
+	if (ov.has_gpu_layers)
+	{
+		o->want_gpu_layers = 1;
+		o->gpu_layers = ov.gpu_layers;
+	}
+}
+
+static uint64_t	override_context_or_zero(void)
+{
+	membrane_server_overrides_t	ov = current_overrides();
+
+	return (ov.has_context ? ov.context : 0);
+}
+
 static void	fill_auto_opts(membrane_run_opts_t *o, const char *model_path,
 				int gen_tokens)
 {
@@ -435,6 +505,7 @@ static void	fill_auto_opts(membrane_run_opts_t *o, const char *model_path,
 	o->auto_mode = 1;
 	o->gen_tokens = gen_tokens;
 	o->quiet = 1;
+	apply_overrides(o, current_overrides());
 }
 
 static int	membrane_kv_precision_name_to_json(int mode,
@@ -511,18 +582,30 @@ static bool	try_load_one(membrane_runtime_t *rt, s_model_slot *slot,
 
 	membrane_host_meminfo_t		host;
 	membrane_ctxauto_outcome_t	ctxauto;
+	membrane_server_overrides_t	ov = current_overrides();
 
-	membrane_read_host_meminfo(&host);
-	if (!membrane_resolve_ctx_auto(o, first_prompt, host, &ctxauto)
-		|| !ctxauto.rec.ok)
+	if (ov.has_context)
 	{
-		*err_code = "NO_FEASIBLE_CONTEXT";
-		*err_message = "no context/hardware plan could be resolved for "
-			"this model on this host";
-		*http_status = 503;
-		return (false);
+		/* Milestone J: an explicit, applied context override replaces
+		 * the automatic recommendation (it was validated against
+		 * Planner v2 when `membrane apply` wrote it). */
+		o.ctx_mode = MEMBRANE_RUN_CTX_EXPLICIT;
+		o.ctx = (uint32_t)ov.context;
 	}
-	o.ctx = (uint32_t)ctxauto.rec.recommended_context;
+	else
+	{
+		membrane_read_host_meminfo(&host);
+		if (!membrane_resolve_ctx_auto(o, first_prompt, host, &ctxauto)
+			|| !ctxauto.rec.ok)
+		{
+			*err_code = "NO_FEASIBLE_CONTEXT";
+			*err_message = "no context/hardware plan could be resolved for "
+				"this model on this host";
+			*http_status = 503;
+			return (false);
+		}
+		o.ctx = (uint32_t)ctxauto.rec.recommended_context;
+	}
 
 	membrane_model_session_t	session;
 	membrane_run_error_t		open_err;
@@ -1005,6 +1088,105 @@ static void	handle_pin_model(s_membrane_server_model_state *st, bool pin,
 	j["ok"] = true;
 	j["model"] = model_name;
 	j["pinned"] = pin;
+	res.set_content(j.dump(), "application/json");
+}
+
+/*
+ * Milestone J (J9): `membrane apply`'s explicit unload of ONE resident
+ * model -- loopback-only, MEMBRANE-specific, same admin namespace as
+ * activate/pin/unpin. Reuses the slot machinery (membrane_model_close() +
+ * the same state/claim bookkeeping acquire_model_slot() performs on an
+ * eviction); no parallel lifecycle logic. Fail-closed refusals, never a
+ * wait: a PINNED model (409 MODEL_PINNED) or one with a generation in
+ * flight (409 MODEL_BUSY) is left untouched -- the caller reruns once
+ * the state changes. slot->mtx is held for the whole check-and-close, and
+ * decode_inflight is only ever incremented under that same mutex, so no
+ * generation can start between the check and the close.
+ */
+static void	handle_unload_model(s_membrane_server_model_state *st,
+				const httplib::Request &req, httplib::Response &res)
+{
+	json	body;
+
+	try
+	{
+		body = json::parse(req.body);
+	}
+	catch (const json::parse_error &)
+	{
+		send_json_error(res, 400, "INVALID_REQUEST", "request body is not "
+			"valid JSON");
+		return ;
+	}
+	if (!body.is_object() || !body.contains("model")
+		|| !body["model"].is_string() || body["model"].get<std::string>()
+			.empty())
+	{
+		send_json_error(res, 400, "INVALID_REQUEST", "request must be a "
+			"JSON object with a non-empty string \"model\"");
+		return ;
+	}
+	std::string		model_name = body["model"];
+	s_model_slot	*target = NULL;
+
+	{
+		std::lock_guard<std::mutex>	rlock(st->residency_mtx);
+
+		for (auto &s : st->slots)
+		{
+			if (s.claimed_name == model_name)
+			{
+				target = &s;
+				break ;
+			}
+		}
+	}
+	if (target == NULL)
+	{
+		send_json_error(res, 409, "MODEL_NOT_RESIDENT", "'" + model_name
+			+ "' is not currently resident (see `membrane status`)");
+		return ;
+	}
+	std::lock_guard<std::mutex>	slock(target->mtx);
+
+	if (!target->model_loaded || target->loaded_name != model_name)
+	{
+		send_json_error(res, 409, "MODEL_NOT_RESIDENT", "'" + model_name
+			+ "' is not currently resident (see `membrane status`)");
+		return ;
+	}
+	if (target->pinned)
+	{
+		send_json_error(res, 409, "MODEL_PINNED", "'" + model_name
+			+ "' is pinned -- unpin it first; MEMBRANE never unloads a "
+			"pinned model silently");
+		return ;
+	}
+	if (target->decode_inflight.load(std::memory_order_acquire) > 0)
+	{
+		send_json_error(res, 409, "MODEL_BUSY", "'" + model_name
+			+ "' has a generation in progress -- not unloaded");
+		return ;
+	}
+	target->model_state.store(MEMBRANE_MODEL_STATE_UNLOADING,
+		std::memory_order_relaxed);
+	membrane_model_close(&target->session);
+	target->model_loaded = false;
+	target->loaded_name.clear();
+	target->cached_chat_template.clear();
+	target->model_state.store(MEMBRANE_MODEL_STATE_EMPTY,
+		std::memory_order_relaxed);
+	{
+		std::lock_guard<std::mutex>	rlock(st->residency_mtx);
+
+		if (target->claimed_name == model_name)
+			target->claimed_name.clear();
+	}
+	json	j;
+
+	j["ok"] = true;
+	j["model"] = model_name;
+	j["unloaded"] = true;
 	res.set_content(j.dump(), "application/json");
 }
 
@@ -1507,7 +1689,7 @@ static void	stream_worker_fn(std::shared_ptr<s_stream_request_state> state)
 		wctx.stop_sequences = &state->stop_sequences;
 	gen_req.o = &state->req_o;
 	gen_req.prompt_text = state->prompt_text;
-	gen_req.ctx_size = 0;
+	gen_req.ctx_size = (uint32_t)override_context_or_zero();
 	gen_req.token_cb = stream_token_cb;
 	gen_req.token_cb_ud = &wctx;
 	gen_req.cancel_flag = &state->gen_cancel_flag;
@@ -2109,7 +2291,8 @@ static void	handle_chat_completions(s_membrane_server_model_state *st,
 
 	gen_req.o = &req_o;
 	gen_req.prompt_text = prompt_text;
-	gen_req.ctx_size = 0;	/* auto-size to THIS request's own prompt,
+	gen_req.ctx_size = (uint32_t)override_context_or_zero();
+							/* auto-size (0) to THIS request's own prompt,
 							 * bounded by whatever gpu_layers/KV precision
 							 * were already fixed at load time -- Section
 							 * 5 of the task: "persistent model, new
@@ -2385,6 +2568,9 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	svr.Post("/membrane/v1/models/unpin", [&](const httplib::Request &rq,
 			httplib::Response &rs)
 		{ handle_pin_model(&state, false, rq, rs); });
+	svr.Post("/membrane/v1/models/unload", [&](const httplib::Request &rq,
+			httplib::Response &rs)
+		{ handle_unload_model(&state, rq, rs); });
 	svr.Get("/membrane/v1/capabilities", [&](const httplib::Request &rq,
 			httplib::Response &rs) { handle_capabilities(&state, rq, rs); });
 

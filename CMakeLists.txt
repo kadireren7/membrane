@@ -399,6 +399,17 @@ target_link_libraries(membrane_memory_intelligence PUBLIC
 target_include_directories(membrane_memory_intelligence PUBLIC
   tools/membrane-run)
 
+# Milestone J (active control): the common action model, the pure
+# recommendation-to-action compiler, stale-plan check and the
+# transaction/rollback engine behind `membrane apply` (action.h's own top
+# comment). Pure/llama-free; the engine only talks to caller-supplied
+# executor callbacks, so it is tested with a mock runtime.
+add_library(membrane_action STATIC tools/membrane-run/action.c)
+target_link_libraries(membrane_action PUBLIC
+  membrane_memory_intelligence membrane_runtime_capabilities
+  membrane_sanitizers)
+target_include_directories(membrane_action PUBLIC tools/membrane-run)
+
 # Milestone H3 (runtime-aware plan assessment): classifies -- never
 # applies -- a Planner v2 plan or an explicit request against one
 # runtime's capability matrix (runtime_plan_assessment.h's own top
@@ -1029,6 +1040,14 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_memory_intelligence PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_memory_intelligence COMMAND test_memory_intelligence)
+
+  # Milestone J: the action model / compiler / transaction engine tests --
+  # llama-free, mock executor only.
+  add_executable(test_action tools/membrane-run/test_action.c)
+  target_link_libraries(test_action PRIVATE membrane_action)
+  target_include_directories(test_action PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_action COMMAND test_action)
 
   # Phase 21: the bounded apply-time fallback controller's own tests --
   # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a

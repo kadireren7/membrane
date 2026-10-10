@@ -169,7 +169,8 @@ set_target_properties(membrane_server PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_server PUBLIC membrane_registry_core
   membrane_runtime_session membrane_cpp_httplib membrane_product_cli
-  membrane_utf8_stream membrane_chat_finish_reason llama)
+  membrane_utf8_stream membrane_chat_finish_reason membrane_server_config
+  llama)
 target_include_directories(membrane_server PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_server PRIVATE
@@ -534,6 +535,27 @@ target_include_directories(membrane_advise_cmd PUBLIC
 target_include_directories(membrane_advise_cmd PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
 
+# Milestone J (active control): `membrane apply` -- the one mutating step
+# of plan -> observe -> advise -> apply. Reuses advise's collection and the
+# pure action compiler/engine (tools/membrane-run/action.h); talks only to
+# MEMBRANE's own loopback admin routes, server.json, and (for ollama) the
+# single allowlisted unload request. See docs/active-control.md.
+add_library(membrane_apply_cmd STATIC apply_cmd.cpp)
+set_target_properties(membrane_apply_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_apply_cmd PUBLIC membrane_sanitizers
+  membrane_action membrane_advise_cmd membrane_plan_cmd
+  membrane_runtime_adapters membrane_status_client membrane_server_config
+  membrane_cli_shared membrane_observation membrane_runtime_capabilities
+  membrane_product_cli llama)
+target_include_directories(membrane_apply_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+target_include_directories(membrane_apply_cmd PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
 add_executable(membrane main.cpp model_cmd.cpp)
 set_target_properties(membrane PROPERTIES
   CXX_STANDARD 17
@@ -545,7 +567,7 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
   membrane_variant_selector membrane_use_cmd membrane_chat_cmd
   membrane_plan_cmd membrane_runtime_cmd membrane_observe_cmd
-  membrane_advise_cmd
+  membrane_advise_cmd membrane_apply_cmd
   membrane_service_state membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -826,6 +848,23 @@ if(MEMBRANE_BUILD_TESTS)
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
   add_test(NAME test_advise_cmd COMMAND test_advise_cmd)
+
+  # Milestone J: `membrane apply` -- dry-run/consent/stale/rollback/audit
+  # behavior against in-process mock native and Ollama servers (no real
+  # service, no model, no inference; intelligence and the Planner v2 check
+  # are injected).
+  add_executable(test_apply_cmd test_apply_cmd.cpp)
+  set_target_properties(test_apply_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_apply_cmd PRIVATE membrane_apply_cmd
+    membrane_runtime_adapters membrane_product_cli membrane_cpp_httplib)
+  target_include_directories(test_apply_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_apply_cmd COMMAND test_apply_cmd)
 
   # Post-v1 product-polish, prompt 3: pure, no-network unit tests for
   # the SSE incremental parser `membrane chat` uses.

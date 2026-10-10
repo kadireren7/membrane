@@ -867,6 +867,32 @@ static void	test_allowlist(void)
 		&& !membrane_ollama_request_allowed("GET", "/api/show")
 		&& !membrane_ollama_request_allowed("POST", "/api/tags"),
 		"exact method+path match only -- POST /api/ps is still refused");
+
+	/* Milestone J: the body-aware allowlist admits POST /api/generate
+	 * ONLY as the documented keep_alive=0 unload shape. */
+	std::string	unload = membrane_ollama_make_unload_body("m:1");
+
+	TEST_ASSERT(membrane_ollama_is_unload_body(unload)
+		&& membrane_ollama_request_allowed("POST", "/api/generate", unload),
+		"the exact unload body is allowed");
+	TEST_ASSERT(!membrane_ollama_request_allowed("POST", "/api/generate"),
+		"the 2-argument (body-less) form still refuses /api/generate");
+	for (const char *b : {
+			"{\"model\":\"m\",\"keep_alive\":0,\"prompt\":\"hi\"}",
+			"{\"model\":\"m\",\"prompt\":\"hi\"}",
+			"{\"model\":\"m\",\"keep_alive\":-1}",
+			"{\"model\":\"m\",\"keep_alive\":300}",
+			"{\"model\":\"m\",\"keep_alive\":\"0\"}",
+			"{\"model\":\"m\",\"keep_alive\":0,\"stream\":true}",
+			"{\"keep_alive\":0}", "{\"model\":\"\",\"keep_alive\":0}",
+			"{\"model\":5,\"keep_alive\":0}", "[]", "not json", ""})
+		TEST_ASSERT(!membrane_ollama_request_allowed("POST", "/api/generate",
+			b), "any other /api/generate body (prompt, keep_alive != 0, "
+			"extra keys, malformed) is refused");
+	TEST_ASSERT(!membrane_ollama_request_allowed("POST", "/api/chat", unload)
+		&& !membrane_ollama_request_allowed("GET", "/api/generate", unload)
+		&& !membrane_ollama_request_allowed("POST", "/api/pull", unload),
+		"the unload body does not open any other route or method");
 }
 
 /* ---------------------------------------------------------------- */

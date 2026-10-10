@@ -1,6 +1,7 @@
 #ifndef MEMBRANE_PLAN_CMD_H
 # define MEMBRANE_PLAN_CMD_H
 
+# include <cstdint>
 # include <vector>
 # include <string>
 
@@ -48,5 +49,35 @@ struct s_membrane_plan_v2_result;
 bool	membrane_plan_resolve_installed_v2(const std::string &name,
 			struct s_membrane_plan_v2_result *out, std::string *err_code,
 			std::string *err_message);
+
+/*
+ * Milestone J: check explicit `membrane apply` overrides against Planner
+ * v2 (the same resolver, read-only). Returns false if the check could not
+ * be run at all (out->checked stays false => apply refuses the SET_*
+ * request, fail closed); otherwise out->feasible is Planner v2's verdict
+ * and out->detail a short human reason.
+ */
+typedef struct s_membrane_plan_override_request
+{
+	bool		has_ctx = false;
+	uint64_t	ctx = 0;
+	bool		has_kv = false;
+	std::string	kv_precision;		/* native|q8|q5 */
+	bool		has_placement = false;
+	std::string	placement;			/* default|cpu|gpu|auto */
+	bool		has_gpu = false;
+	int32_t		gpu_layers = -2;	/* -1 all, -2 auto, N */
+}	membrane_plan_override_request_t;
+
+typedef struct s_membrane_plan_override_check
+{
+	bool		checked = false;
+	bool		feasible = false;
+	std::string	detail;
+}	membrane_plan_override_check_t;
+
+bool	membrane_plan_check_overrides(const std::string &name,
+			const membrane_plan_override_request_t &ov,
+			membrane_plan_override_check_t *out);
 
 #endif

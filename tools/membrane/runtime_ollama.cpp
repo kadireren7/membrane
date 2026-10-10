@@ -267,6 +267,38 @@ bool	membrane_ollama_request_allowed(const std::string &method,
 	return (false);
 }
 
+bool	membrane_ollama_request_allowed(const std::string &method,
+			const std::string &path, const std::string &body)
+{
+	if (method == "POST" && path == "/api/generate")
+		return (membrane_ollama_is_unload_body(body));
+	return (membrane_ollama_request_allowed(method, path));
+}
+
+std::string	membrane_ollama_make_unload_body(const std::string &model)
+{
+	json	j;
+
+	j["model"] = model;
+	j["keep_alive"] = 0;
+	return (j.dump());
+}
+
+bool	membrane_ollama_is_unload_body(const std::string &body)
+{
+	json	j = json::parse(body, nullptr, false);
+
+	if (j.is_discarded() || !j.is_object() || j.size() != 2)
+		return (false);
+	if (!j.contains("model") || !j["model"].is_string()
+		|| j["model"].get<std::string>().empty())
+		return (false);
+	if (!j.contains("keep_alive") || !j["keep_alive"].is_number_integer()
+		|| j["keep_alive"].get<long long>() != 0)
+		return (false);
+	return (true);
+}
+
 bool	membrane_ollama_is_cloud_model_ref(const std::string &name)
 {
 	std::string	raw = trim(name);
@@ -608,7 +640,7 @@ static ollama_http_result_t	ollama_http(const membrane_ollama_endpoint_t &ep,
 
 	r.kind = OLLAMA_HTTP_REFUSED;
 	r.status = 0;
-	if (!ep.ok || !membrane_ollama_request_allowed(method, path))
+	if (!ep.ok || !membrane_ollama_request_allowed(method, path, req_body))
 		return (r);
 
 	httplib::Client			cli(ep.host, ep.port);
@@ -911,4 +943,55 @@ bool	membrane_ollama_list_running(
 		return (false);
 	}
 	return (true);
+}
+
+/*
+ * Milestone J. The one mutating Ollama call (see runtime_ollama.h). Bounded,
+ * single attempt, loopback only. Whether the model is actually gone is
+ * verified by the caller via GET /api/ps; Ollama's own scheduler decides
+ * what happens to an in-flight request (undocumented upstream, hence
+ * `membrane apply` never auto-selects an Ollama unload candidate).
+ */
+bool	membrane_ollama_unload_model(const std::string &model,
+			membrane_runtime_error_t *err)
+{
+	membrane_ollama_endpoint_t	ep = membrane_ollama_resolve_endpoint();
+	ollama_http_result_t		r;
+
+	if (!valid_model_name(model))
+	{
+		set_err(err, MEMBRANE_RUNTIME_ERR_INVALID_MODEL,
+			"invalid Ollama model name");
+		return (false);
+	}
+	if (membrane_ollama_is_cloud_model_ref(model))
+	{
+		set_err(err, MEMBRANE_RUNTIME_ERR_CLOUD_REFUSED,
+			"refusing to touch '" + model + "': cloud model reference");
+		return (false);
+	}
+	if (!ep.ok)
+	{
+		set_err(err, MEMBRANE_RUNTIME_ERR_INVALID_ENDPOINT,
+			std::string(MEMBRANE_OLLAMA_ENDPOINT_ENV) + " is invalid: "
+			+ ep.error);
+		return (false);
+	}
+	if (!ep.loopback)
+	{
+		set_err(err, MEMBRANE_RUNTIME_ERR_INVALID_ENDPOINT,
+			"refusing to change state on a non-loopback Ollama endpoint ("
+			+ ep.url + "): active control is local-only");
+		return (false);
+	}
+	r = ollama_http(ep, "POST", "/api/generate",
+			membrane_ollama_make_unload_body(model), OLLAMA_SHOW_MAX_BYTES,
+			15);
+	if (r.kind == OLLAMA_HTTP_RESPONSE && r.status == 404)
+	{
+		set_err(err, MEMBRANE_RUNTIME_ERR_MODEL_NOT_FOUND,
+			"Ollama has no local model '" + model + "'");
+		return (false);
+	}
+	return (classify_http(ep, r, "POST /api/generate (unload)", err));
 }

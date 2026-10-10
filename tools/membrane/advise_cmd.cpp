@@ -173,19 +173,42 @@ static void	print_err(bool want_json, const std::string &code,
 		fprintf(stderr, "membrane advise: %s\n", message.c_str());
 }
 
-static int	dispatch_for_snapshot(const membrane_observation_snapshot_t &snap,
-				const membrane_runtime_capabilities_t &caps, bool want_json)
+bool	membrane_advise_collect(const std::string &runtime_id,
+			membrane_observation_snapshot_t *snap,
+			membrane_runtime_capabilities_t *caps,
+			membrane_memory_intelligence_t *intel, std::string *err)
 {
-	membrane_memory_intelligence_t	result;
+	if (runtime_id == MEMBRANE_RUNTIME_ID_NATIVE)
+	{
+		membrane_observe_inputs_t	in;
 
-	membrane_memory_intelligence_assemble(&snap, &caps, &result);
-	if (want_json)
-		printf("%s\n", membrane_advise_result_json(snap, result).dump()
-			.c_str());
+		membrane_observe_collect_inputs(runtime_id, &in);
+		membrane_observe_build_snapshot(runtime_id, in, snap);
+		*caps = in.runtime.capabilities;
+	}
+	else if (runtime_id == MEMBRANE_RUNTIME_ID_OLLAMA)
+	{
+		membrane_observe_ollama_inputs_t	in;
+
+		membrane_observe_ollama_collect_inputs(&in);
+		membrane_observe_ollama_build_snapshot(in, snap);
+		*caps = in.runtime.capabilities;
+	}
 	else
-		print_human(result);
-	return (snap.status == MEMBRANE_OBS_STATUS_UNAVAILABLE
-		? MEMBRANE_EXIT_RUNTIME_ERROR : MEMBRANE_EXIT_SUCCESS);
+	{
+		membrane_runtime_descriptor_t	d;
+		bool	known = membrane_runtime_describe(runtime_id.c_str(), &d)
+			|| runtime_id == MEMBRANE_RUNTIME_ID_VLLM;
+
+		*err = known
+			? "advice for runtime '" + runtime_id + "' is not implemented "
+				"yet -- only membrane-native and ollama are supported"
+			: "unknown runtime '" + runtime_id + "' -- see `membrane "
+				"runtime list`";
+		return (false);
+	}
+	membrane_memory_intelligence_assemble(snap, caps, intel);
+	return (true);
 }
 
 int	membrane_advise_cmd_dispatch(const std::vector<std::string> &args,
@@ -205,36 +228,24 @@ int	membrane_advise_cmd_dispatch(const std::vector<std::string> &args,
 			"[--json]");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
-	if (runtime_id == MEMBRANE_RUNTIME_ID_NATIVE)
+	std::unique_ptr<membrane_observation_snapshot_t>	s(
+			new membrane_observation_snapshot_t());
+	std::unique_ptr<membrane_memory_intelligence_t>	intel(
+			new membrane_memory_intelligence_t());
+	membrane_runtime_capabilities_t					caps;
+	std::string										err;
+
+	if (!membrane_advise_collect(runtime_id, s.get(), &caps, intel.get(),
+			&err))
 	{
-		membrane_observe_inputs_t				in;
-		std::unique_ptr<membrane_observation_snapshot_t>	s(
-				new membrane_observation_snapshot_t());
-
-		membrane_observe_collect_inputs(runtime_id, &in);
-		membrane_observe_build_snapshot(runtime_id, in, s.get());
-		return (dispatch_for_snapshot(*s, in.runtime.capabilities,
-				want_json));
+		print_err(want_json, "CLI_ERROR", err);
+		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
-	if (runtime_id == MEMBRANE_RUNTIME_ID_OLLAMA)
-	{
-		membrane_observe_ollama_inputs_t		in;
-		std::unique_ptr<membrane_observation_snapshot_t>	s(
-				new membrane_observation_snapshot_t());
-
-		membrane_observe_ollama_collect_inputs(&in);
-		membrane_observe_ollama_build_snapshot(in, s.get());
-		return (dispatch_for_snapshot(*s, in.runtime.capabilities,
-				want_json));
-	}
-	membrane_runtime_descriptor_t	d;
-	bool	known = membrane_runtime_describe(runtime_id.c_str(), &d)
-		|| runtime_id == MEMBRANE_RUNTIME_ID_VLLM;
-
-	print_err(want_json, "CLI_ERROR", known
-		? "advice for runtime '" + runtime_id + "' is not implemented yet "
-			"-- only membrane-native and ollama are supported"
-		: "unknown runtime '" + runtime_id + "' -- see `membrane runtime "
-			"list`");
-	return (MEMBRANE_EXIT_CLI_ERROR);
+	if (want_json)
+		printf("%s\n", membrane_advise_result_json(*s, *intel).dump()
+			.c_str());
+	else
+		print_human(*intel);
+	return (s->status == MEMBRANE_OBS_STATUS_UNAVAILABLE
+		? MEMBRANE_EXIT_RUNTIME_ERROR : MEMBRANE_EXIT_SUCCESS);
 }

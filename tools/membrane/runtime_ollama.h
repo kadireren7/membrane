@@ -29,6 +29,17 @@
  * unreachable from this module.
  *
  * Neither H2 nor I2 sends inference requests or changes Ollama state.
+ *
+ * Milestone J adds exactly ONE state-changing call, used only by the
+ * explicit `membrane apply --runtime ollama --unload NAME`:
+ *   POST /api/generate  <- {"model": NAME, "keep_alive": 0}
+ * i.e. upstream's documented "unload a model" request (docs/faq.mdx at
+ * v0.34.3: curl .../api/generate -d '{"model": "llama3.2",
+ * "keep_alive": 0}'). It carries NO prompt, so it is not inference. The
+ * allowlist admits POST /api/generate only when the request body is
+ * byte-for-byte that shape (membrane_ollama_is_unload_body()); any other
+ * /api/generate request -- in particular any with a prompt -- is refused
+ * before a socket is opened. See docs/active-control.md.
  */
 
 # define MEMBRANE_OLLAMA_ENDPOINT_ENV		"MEMBRANE_OLLAMA_ENDPOINT"
@@ -61,6 +72,15 @@ void	membrane_ollama_capabilities(membrane_runtime_capabilities_t *out);
 /* Pure: true iff method+path is one of the 4 read-only calls above. */
 bool	membrane_ollama_request_allowed(const std::string &method,
 			const std::string &path);
+
+/* Milestone J: body-aware allowlist. Same as the two-argument form for
+ * every read-only call; additionally admits POST /api/generate iff the
+ * body is exactly the unload shape below. */
+bool	membrane_ollama_request_allowed(const std::string &method,
+			const std::string &path, const std::string &body);
+/* Pure. {"model": NAME, "keep_alive": 0} and nothing else. */
+std::string	membrane_ollama_make_unload_body(const std::string &model);
+bool	membrane_ollama_is_unload_body(const std::string &body);
 
 /* Pure: mirrors Ollama's own internal/modelref parseSourceSuffix() --
  * true for "NAME:cloud" and "NAME:TAG-cloud" (case-insensitive), which
@@ -126,6 +146,13 @@ bool	membrane_ollama_parse_ps(const std::string &body,
 /* Live, bounded, read-only probe: GET /api/ps. */
 bool	membrane_ollama_list_running(
 			std::vector<membrane_ollama_process_model_t> *out,
+			membrane_runtime_error_t *err);
+
+/* Milestone J: unload ONE model via the documented keep_alive=0 request
+ * (see the top comment). Refuses a non-loopback endpoint, a cloud model
+ * reference and an invalid name before any request. Success means Ollama
+ * answered 2xx; the CALLER verifies the effect with GET /api/ps. */
+bool	membrane_ollama_unload_model(const std::string &model,
 			membrane_runtime_error_t *err);
 
 /* Live, bounded, read-only probes (runtime_adapter.h signatures). */

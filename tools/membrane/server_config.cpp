@@ -26,6 +26,109 @@ std::string	membrane_server_config_resolve_path(void)
 	return ("");
 }
 
+bool	membrane_server_overrides_empty(const membrane_server_overrides_t &o)
+{
+	return (!o.has_context && !o.has_kv_precision && !o.has_kv_placement
+		&& !o.has_gpu_layers);
+}
+
+bool	membrane_server_overrides_equal(const membrane_server_overrides_t &a,
+			const membrane_server_overrides_t &b)
+{
+	return (a.has_context == b.has_context
+		&& (!a.has_context || a.context == b.context)
+		&& a.has_kv_precision == b.has_kv_precision
+		&& (!a.has_kv_precision || a.kv_precision == b.kv_precision)
+		&& a.has_kv_placement == b.has_kv_placement
+		&& (!a.has_kv_placement || a.kv_placement == b.kv_placement)
+		&& a.has_gpu_layers == b.has_gpu_layers
+		&& (!a.has_gpu_layers || a.gpu_layers == b.gpu_layers));
+}
+
+std::string	membrane_server_overrides_validate(
+				const membrane_server_overrides_t &o)
+{
+	if (o.has_context && (o.context < 16 || o.context > (1u << 24)))
+		return ("overrides.context must be between 16 and 16777216");
+	if (o.has_kv_precision && o.kv_precision != "native"
+		&& o.kv_precision != "q8" && o.kv_precision != "q5")
+		return ("overrides.kv_precision must be native|q8|q5");
+	if (o.has_kv_placement && o.kv_placement != "default"
+		&& o.kv_placement != "cpu" && o.kv_placement != "gpu"
+		&& o.kv_placement != "auto")
+		return ("overrides.kv_placement must be default|cpu|gpu|auto");
+	if (o.has_gpu_layers && o.gpu_layers < -2)
+		return ("overrides.gpu_layers must be all, auto or N >= 0");
+	return ("");
+}
+
+static json	overrides_to_json(const membrane_server_overrides_t &o)
+{
+	json	j = json::object();
+
+	if (o.has_context)
+		j["context"] = o.context;
+	if (o.has_kv_precision)
+		j["kv_precision"] = o.kv_precision;
+	if (o.has_kv_placement)
+		j["kv_placement"] = o.kv_placement;
+	if (o.has_gpu_layers)
+	{
+		if (o.gpu_layers == -1)
+			j["gpu_layers"] = "all";
+		else if (o.gpu_layers == -2)
+			j["gpu_layers"] = "auto";
+		else
+			j["gpu_layers"] = o.gpu_layers;
+	}
+	return (j);
+}
+
+/* Returns "" on success, else why the block is invalid (fail closed). */
+static std::string	overrides_from_json(const json &j,
+						membrane_server_overrides_t *o)
+{
+	*o = membrane_server_overrides_t();
+	if (!j.is_object())
+		return ("overrides must be an object");
+	for (auto it = j.begin(); it != j.end(); ++it)
+	{
+		const std::string	&k = it.key();
+		const json			&v = it.value();
+
+		if (k == "context" && v.is_number_unsigned())
+		{
+			o->has_context = true;
+			o->context = v.get<uint64_t>();
+		}
+		else if (k == "kv_precision" && v.is_string())
+		{
+			o->has_kv_precision = true;
+			o->kv_precision = v.get<std::string>();
+		}
+		else if (k == "kv_placement" && v.is_string())
+		{
+			o->has_kv_placement = true;
+			o->kv_placement = v.get<std::string>();
+		}
+		else if (k == "gpu_layers" && v.is_string()
+			&& (v == "all" || v == "auto"))
+		{
+			o->has_gpu_layers = true;
+			o->gpu_layers = (v == "all") ? -1 : -2;
+		}
+		else if (k == "gpu_layers" && v.is_number_unsigned()
+			&& v.get<uint64_t>() < 100000)
+		{
+			o->has_gpu_layers = true;
+			o->gpu_layers = (int32_t)v.get<uint64_t>();
+		}
+		else
+			return ("overrides." + k + " is unknown or has a bad type");
+	}
+	return (membrane_server_overrides_validate(*o));
+}
+
 membrane_server_config_t	membrane_server_config_defaults(void)
 {
 	membrane_server_config_t	cfg;
@@ -102,6 +205,19 @@ bool	membrane_server_config_load(const std::string &path,
 	out->port = root.value("port", 8642);
 	out->default_model = root.value("default_model", std::string(""));
 	out->log_level = root.value("log_level", std::string("info"));
+	if (root.contains("overrides"))
+	{
+		std::string	why = overrides_from_json(root["overrides"],
+				&out->overrides);
+
+		if (!why.empty())
+		{
+			err->set = true;
+			err->code = "INVALID_OVERRIDES";
+			err->message = std::string("'") + path + "': " + why;
+			return (false);
+		}
+	}
 	return (true);
 }
 
@@ -116,6 +232,20 @@ bool	membrane_server_config_save(const std::string &path,
 	root["port"] = cfg.port;
 	root["default_model"] = cfg.default_model;
 	root["log_level"] = cfg.log_level;
+	if (!membrane_server_overrides_empty(cfg.overrides))
+	{
+		std::string	why = membrane_server_overrides_validate(cfg.overrides);
+
+		if (!why.empty())
+		{
+			*err = membrane_server_config_error_t();
+			err->set = true;
+			err->code = "INVALID_OVERRIDES";
+			err->message = why;
+			return (false);
+		}
+		root["overrides"] = overrides_to_json(cfg.overrides);
+	}
 
 	membrane_fs_error_t	fs_err;
 

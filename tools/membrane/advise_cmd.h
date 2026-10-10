@@ -25,6 +25,22 @@
  * model, changes context/GPU-layers/KV settings, or performs inference.
  */
 
+/*
+ * Milestone J: the same collect -> assemble pipeline `membrane advise`
+ * runs, exposed so `membrane apply` reuses it instead of duplicating it.
+ * READ-ONLY, exactly as the command. Returns false (with *err) only for a
+ * runtime id advice is not implemented for; an unobservable runtime still
+ * returns true with snap->status == UNAVAILABLE.
+ */
+struct s_membrane_observation_snapshot;
+struct s_membrane_memory_intelligence;
+struct s_membrane_runtime_capabilities;
+
+bool	membrane_advise_collect(const std::string &runtime_id,
+			struct s_membrane_observation_snapshot *snap,
+			struct s_membrane_runtime_capabilities *caps,
+			struct s_membrane_memory_intelligence *intel, std::string *err);
+
 int	membrane_advise_cmd_dispatch(const std::vector<std::string> &args,
 			bool want_json);
 

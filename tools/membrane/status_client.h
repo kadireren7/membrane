@@ -99,4 +99,20 @@ bool	membrane_set_model_pin(const std::string &bind, int port,
 			const std::string &model_name, bool pin,
 			membrane_pin_result_t *out);
 
+/*
+ * Milestone J: client of POST /membrane/v1/models/unload. Same transport-
+ * vs-application split as membrane_set_model_pin(): false = transport
+ * failure only; a refusal (MODEL_PINNED / MODEL_BUSY / MODEL_NOT_RESIDENT)
+ * comes back as true with out->ok == false.
+ */
+typedef struct s_membrane_unload_result
+{
+	bool		ok;
+	std::string	error_code;
+	std::string	error_message;
+}	membrane_unload_result_t;
+
+bool	membrane_unload_model(const std::string &bind, int port,
+			const std::string &model_name, membrane_unload_result_t *out);
+
 #endif

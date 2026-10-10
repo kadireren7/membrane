@@ -224,6 +224,32 @@ static void	test_pin_unpin_not_resident_returns_409(void)
 		"error code is MODEL_NOT_RESIDENT for unpin");
 }
 
+/* Milestone J: the new unload route obeys the same loopback-only admin
+ * contract -- not resident => 409, bad shape => 400. (The pinned / busy
+ * refusals need a loaded model and are exercised by the mock-based
+ * test_apply_cmd and the lightweight real smoke in docs/active-control.md.) */
+static void	test_unload_not_resident_and_bad_shape(void)
+{
+	httplib::Client	cli("127.0.0.1", TEST_PORT);
+	json				req = {{"model", "nonexistent-model"}};
+	auto				res = cli.Post("/membrane/v1/models/unload", req.dump(),
+			"application/json");
+
+	TEST_ASSERT(res != nullptr && res->status == 409,
+		"unloading a non-resident model returns 409");
+	TEST_ASSERT(json::parse(res->body)["error"]["code"]
+		== "MODEL_NOT_RESIDENT", "error code is MODEL_NOT_RESIDENT");
+	res = cli.Post("/membrane/v1/models/unload", "not json",
+			"application/json");
+	TEST_ASSERT(res != nullptr && res->status == 400, "bad JSON => 400");
+	res = cli.Post("/membrane/v1/models/unload", "{\"model\":\"\"}",
+			"application/json");
+	TEST_ASSERT(res != nullptr && res->status == 400, "empty model => 400");
+	res = cli.Get("/membrane/v1/models/unload");
+	TEST_ASSERT(res != nullptr && res->status == 404,
+		"unload is POST-only (no GET route)");
+}
+
 static void	test_pin_invalid_request_shape(void)
 {
 	httplib::Client	cli("127.0.0.1", TEST_PORT);
@@ -781,6 +807,7 @@ int	main(void)
 	test_auth_header_is_tolerated();
 	test_concurrent_requests_are_thread_safe();
 	test_pin_unpin_not_resident_returns_409();
+	test_unload_not_resident_and_bad_shape();
 	test_pin_invalid_request_shape();
 	test_second_instance_same_port_fails_to_bind(dir);
 	/* Mutates the shared registry permanently for the rest of this

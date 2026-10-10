@@ -172,3 +172,43 @@ bool	membrane_set_model_pin(const std::string &bind, int port,
 	}
 	return (true);
 }
+
+bool	membrane_unload_model(const std::string &bind, int port,
+			const std::string &model_name, membrane_unload_result_t *out)
+{
+	httplib::Client	cli(bind, port);
+
+	cli.set_connection_timeout(0, 500000);
+	cli.set_read_timeout(15, 0);
+
+	json	body;
+
+	body["model"] = model_name;
+	auto	res = cli.Post("/membrane/v1/models/unload", body.dump(),
+			"application/json");
+
+	if (!res)
+		return (false);
+	json	parsed;
+
+	try
+	{
+		parsed = json::parse(res->body);
+	}
+	catch (const json::parse_error &)
+	{
+		return (false);
+	}
+	out->ok = parsed.value("ok", false);
+	if (parsed.contains("error") && parsed["error"].is_object())
+	{
+		out->error_code = parsed["error"].value("code", std::string());
+		out->error_message = parsed["error"].value("message", std::string());
+	}
+	else
+	{
+		out->error_code.clear();
+		out->error_message.clear();
+	}
+	return (true);
+}

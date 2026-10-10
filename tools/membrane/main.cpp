@@ -18,6 +18,7 @@
 #include "plan_cmd.h"
 #include "observe_cmd.h"
 #include "advise_cmd.h"
+#include "apply_cmd.h"
 #include "runtime_cmd.h"
 #include "product_cli.h"
 
@@ -79,6 +80,9 @@ static void	print_usage(FILE *out)
 		"explainable memory-pressure findings + capability-aware "
 		"recommendations -- never applies anything (see advise "
 		"options)\n");
+	fprintf(out, "  membrane apply                     MUTATING, dry-run by "
+		"default: shows what advice could be applied; --yes applies it "
+		"(see apply options)\n");
 	fprintf(out, "  membrane chat [MODEL]              interactive "
 		"terminal chat with the local server (see membrane chat "
 		"--help)\n");
@@ -147,6 +151,22 @@ static void	print_usage(FILE *out)
 		"which planned/requested settings runtime ID\n"
 		"                                     can control (membrane-native, "
 		"ollama); applies nothing\n");
+	fprintf(out, "\n");
+	fprintf(out, "apply options (see docs/active-control.md):\n");
+	fprintf(out, "  (default)                           DRY RUN -- nothing "
+		"is changed\n");
+	fprintf(out, "  --yes / -y                          actually apply "
+		"(required when not on a TTY)\n");
+	fprintf(out, "  --runtime ID                        membrane-native "
+		"(default) or ollama\n");
+	fprintf(out, "  --context N|auto, --kv native|q8|q5|auto, --kv-placement "
+		"default|cpu|gpu|auto, --gpu-layers all|auto|N\n");
+	fprintf(out, "                                      explicit setting "
+		"requests, validated by Planner v2 first\n");
+	fprintf(out, "  --unload M, --activate M, --pin M, --unpin M, --reload "
+		"[--model M]\n");
+	fprintf(out, "                                      explicit model "
+		"residency actions\n");
 	fprintf(out, "\n");
 	fprintf(out, "advise options (see docs/memory-intelligence.md):\n");
 	fprintf(out, "  --runtime ID                        runtime to assess "
@@ -267,6 +287,12 @@ int	main(int argc, char **argv)
 				args.end());
 
 		return (membrane_advise_cmd_dispatch(advise_args, want_json));
+	}
+	if (args[0] == "apply")
+	{
+		std::vector<std::string>	apply_args(args.begin() + 1, args.end());
+
+		return (membrane_apply_cmd_dispatch(apply_args, want_json));
 	}
 	if (args[0] == "serve")
 	{
