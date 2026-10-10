@@ -194,11 +194,11 @@ def _c5():
 		else f"all release references <= v{'.'.join(version_match.groups())}")
 
 
-@check("live MEMBRANE_VERSION is v1.0.0")
+@check("live MEMBRANE_VERSION is v1.1.0")
 def _c6():
 	text = PRODUCT_CLI_H_PATH.read_text()
 	m = re.search(r'#\s*define\s+MEMBRANE_VERSION\s+"([^"]+)"', text)
-	ok = m is not None and m.group(1) == "1.0.0"
+	ok = m is not None and m.group(1) == "1.1.0"
 	return ok, f"MEMBRANE_VERSION={m.group(1) if m else '(not found)'}"
 
 

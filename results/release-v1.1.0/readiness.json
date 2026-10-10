@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "version": "1.1.0",
+  "label": "REAL",
+  "summary": "v1.1.0: plan -> observe -> advise -> apply -> adapt, runtime orchestration (native/Ollama/vLLM), and a product-grade CLI. Additive over v1.0.0.",
+  "semver_rationale": "Minor: no frozen contract (API v1, CLI contract, --json shapes) is broken; new subcommands/flags/fields and two optional server.json blocks are additive; human-readable wording is explicitly not frozen.",
+  "milestones": {
+    "J_active_control": {
+      "state": "VALIDATED_CI",
+      "evidence": "PR #90 squash-merged (009bd0b); unit suites test_action/test_apply_cmd; CI all green"
+    },
+    "K_adaptive_runtime": {
+      "state": "VALIDATED_CI",
+      "evidence": "PR #91 squash-merged (b818809); test_adaptive/test_adaptive_controller/test_adaptive_cmd; controller under TSan; CI all green. Pressure behavior validated by a deterministic synthetic timeline only (SYNTHETIC)"
+    },
+    "L_orchestration": {
+      "state": "VALIDATED_CI",
+      "evidence": "PR #92 squash-merged (1af7cb4); test_orchestrator/test_orchestrate_cmd/test_runtime_vllm; CI all green"
+    },
+    "productization": {
+      "state": "VALIDATED_CI",
+      "evidence": "PR #93; test_model_match/test_model_resolve/test_models_cmd/test_dashboard_cmd/test_ui plus updated observe/advise/plan/doctor/use suites"
+    }
+  },
+  "platform_matrix": {
+    "linux_cpu": {
+      "state": "VALIDATED_CI"
+    },
+    "linux_vulkan": {
+      "state": "VALIDATED_REAL",
+      "note": "maintainer's development host, unchanged scope from v1.0.0"
+    },
+    "linux_cuda": {
+      "state": "COMPILE_VALIDATED_CI",
+      "note": "cuda-backend-build-smoke compiles on every PR; real-device evidence is from earlier releases and was not repeated for this release"
+    },
+    "windows_cpu": {
+      "state": "VALIDATED_CI"
+    },
+    "windows_gpu": {
+      "state": "NOT_VALIDATED"
+    },
+    "macos_metal": {
+      "state": "VALIDATED_CI",
+      "note": "paravirtualized device"
+    }
+  },
+  "runtime_matrix": {
+    "membrane_native": {
+      "state": "VALIDATED_CI",
+      "note": "full control surface via apply; real-host smoke on the development machine (CPU)"
+    },
+    "ollama": {
+      "state": "PARTIAL",
+      "note": "tested against an in-process mock following the audited v0.34.3 API shapes; no live Ollama daemon was run; only action is an explicit keep_alive=0 unload"
+    },
+    "vllm": {
+      "state": "PARTIAL",
+      "note": "read-only; tested against an in-process mock following the audited v0.31.0 shapes; no live vLLM server was run; no control capability exists"
+    }
+  },
+  "client_matrix": {
+    "openai_python_sdk": {
+      "state": "VALIDATED_REAL",
+      "note": "openai 3.28.0 harness (scripts/client-compat) passed against a real membrane serve + SmolLM2-360M on the release candidate tree"
+    },
+    "openai_node_sdk": {
+      "state": "VALIDATED_REAL",
+      "note": "openai npm harness passed against the same server"
+    },
+    "openwebui": {
+      "state": "NOT_VALIDATED"
+    }
+  },
+  "package_matrix": {
+    "official_linux_amd64_deb": {
+      "state": "VALIDATED_CI",
+      "note": "membrane_1.1.0_amd64.deb (Vulkan-enabled, CPU fallback) + membrane-cpu; built by scripts/build-release.sh from the tagged commit"
+    },
+    "windows_package": {
+      "state": "NOT_SHIPPED"
+    },
+    "macos_package": {
+      "state": "NOT_SHIPPED"
+    },
+    "real_upgrade_test": {
+      "label": "REAL",
+      "result": "A copy of a real v1.0.0 registry and server.json were left byte-IDENTICAL after 13 read-only v1.1.0 commands (dashboard, models, plan, observe, advise, apply dry run, adaptive status, run --explain, doctor, status, model list); no audit log was created. Done with the build-tree binary, not a container."
+    }
+  },
+  "security": {
+    "cors_headers": "none (verified: no Access-Control-* header on /v1/models)",
+    "auth": "none; loopback-only is the boundary (unchanged)",
+    "mutation_surfaces": "loopback admin routes reached through membrane apply, which is dry-run by default"
+  },
+  "known_limitations": [
+    "Adaptive pressure handling is validated by a deterministic synthetic timeline, not by inducing real memory pressure on hardware",
+    "Ollama and vLLM were tested against mock servers following audited API shapes; no live daemon was run",
+    "No multi-GPU execution and no distributed orchestration: topology and device visibility only",
+    "Settings other than context (KV precision/placement, GPU layers) take effect at the next model load; the controller never reloads a model on its own",
+    "The full local ctest was not run on the 5.6 GiB development host; CI ran the full suite",
+    "New catalog families are metadata-only (never run by MEMBRANE) except where labeled otherwise",
+    "No official Windows or macOS package; independent multi-host validation remains limited",
+    "No tool calling, no /v1/embeddings, no response_format beyond text",
+    "CXL/FPGA remain research-only"
+  ]
+}

@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.1.0] — 2026-10-11 — plan -> observe -> advise -> apply -> adapt
+
+Additive over v1.0.0 (API v1, `--json` shapes and existing registries/configs
+unchanged). Release notes: [docs/release-v1.1.0.md](docs/release-v1.1.0.md);
+upgrade: [docs/upgrade-v1.0-to-v1.1.md](docs/upgrade-v1.0-to-v1.1.md).
+
+- **Active control** (Milestone J, PR #90): `membrane apply`, dry-run by
+  default; pure action compiler, stale-plan protection, rollback, audit log;
+  `server.json` `overrides`; loopback `POST /membrane/v1/models/unload`;
+  Ollama `keep_alive=0` unload only.
+- **Adaptive runtime** (Milestone K, PR #91): `membrane adaptive`, off by
+  default; hysteresis, cooldown, rate limit, anti-thrashing, manual-override
+  adoption; one controller thread in `membrane serve`; `GET
+  /membrane/v1/adaptive`.
+- **Orchestration** (Milestone L, PR #92): `membrane run MODEL`; read-only
+  vLLM adapter (audited against v0.31.0); hardware topology keeping every GPU.
+- **Product polish** (PR #93): status screen, `membrane models`, picker,
+  suggest-and-confirm name matching, concise default output (`--verbose`,
+  `--json`), color/symbols (`NO_COLOR`, `--no-color`), a diagnosing `doctor`
+  (stale-binary detection, missing GPU library, Vulkan vs CUDA), 9-family
+  catalog with evidence labels, quickstart / CLI reference / troubleshooting /
+  security model docs. Fixes: blank `Backend:`/`Device:` in `plan`, `use`
+  printing `Backend: ?`.
+
 All notable changes to MEMBRANE, grouped by research phase. Dates are
 commit dates; commit hashes are short and stable. This project does not
 yet follow semantic versioning strictly (pre-1.0, research prototype) --

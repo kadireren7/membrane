@@ -427,19 +427,19 @@ live in
 **[kadireren7/membrane-research](https://github.com/kadireren7/membrane-research)**,
 with SHA256-verified provenance back to this repository.
 
-**Release status**: latest stable tag `v1.0.0` (supersedes `v0.8.0`,
-now historical). This release is a stability/hardening milestone, not
-a features-stopped one: bounded concurrent decode, bounded multi-model
-residency (up to 2 resident models, LRU eviction, pinning), a frozen
-API v1 contract (`docs/api-v1-stability.md`) and CLI contract
-(`docs/cli-stability-contract.md`), real Windows/macOS host-memory-
-aware `--ctx auto`, and a real, tested v0.8→v1.0 upgrade path with zero
-registry/config disruption — see
-[docs/release-v1.0.0.md](docs/release-v1.0.0.md) for the full release
-notes and [docs/upgrade-v0.8-to-v1.0.md](docs/upgrade-v0.8-to-v1.0.md)
-if you're upgrading from v0.8.0. See "Known limitations" above for what
-this release does not claim. CPU-only default behavior (no flags, or
-`--gpu-layers 0`) is unchanged by any of this.
+**Release status**: latest stable tag `v1.1.0` (supersedes `v1.0.0`, now
+historical). v1.1.0 adds the control side of MEMBRANE on top of v1.0.0's
+runtime: `observe` / `advise` / `apply` (dry run by default) / opt-in
+`adaptive`, runtime orchestration across the native runtime, Ollama and vLLM
+(`membrane run`), and a product-grade CLI (status screen, `models`, picker,
+suggest-and-confirm name matching, concise output, a diagnosing `doctor`).
+Everything is additive: the OpenAI-compatible API v1, the `--json` shapes and
+existing registries/configs are unchanged
+([docs/release-v1.1.0.md](docs/release-v1.1.0.md),
+[docs/upgrade-v1.0-to-v1.1.md](docs/upgrade-v1.0-to-v1.1.md)). See "Known
+limitations" above for what it does not claim -- notably that adaptive
+pressure handling is validated by a synthetic timeline, that Ollama/vLLM were
+tested against mock servers, and that there is no multi-GPU execution.
 
 ## AI-assisted development
 

@@ -3,18 +3,22 @@ message: >-
   If you use MEMBRANE in academic or technical work, please cite this
   software using the metadata in this file.
 title: >-
-  MEMBRANE: A Local Model Runtime and Product Layer for llama.cpp
+  MEMBRANE: Hardware-Aware Memory Intelligence and Control for Local LLM Inference
 type: software
 authors:
   - family-names: Altıntaş
     given-names: Kadir Eren
 repository-code: "https://github.com/kadireren7/membrane"
-version: "1.0.0"
-date-released: "2026-09-10"
+version: "1.1.0"
+date-released: "2026-10-11"
 license: Apache-2.0
 abstract: >-
-  MEMBRANE is an open-source product/runtime layer built on top of
-  llama.cpp: a built-in model catalog with real HTTPS download and
+  MEMBRANE is an open-source memory-intelligence and control layer for
+  local LLM inference, built on top of llama.cpp: it observes memory,
+  explains what it means, and -- only on explicit request or opt-in
+  policy -- applies bounded, reversible changes (plan, observe, advise,
+  apply, adapt), and can choose among local runtimes (its own, Ollama,
+  vLLM). It also provides a built-in model catalog with real HTTPS download and
   checksum verification, hardware-aware variant selection, memory-aware
   KV-cache precision/residency planning (an --auto joint planner with
   bounded apply-time fallback), a persistent local background service
@@ -41,7 +45,7 @@ abstract: >-
   (`membrane doctor` for diagnostics); independent multi-host validation
   beyond the maintainer's own development hardware and GitHub-hosted CI
   remains limited as of this release. This citation targets the latest
-  stable release, v1.0.0; the repository's main branch may contain
+  stable release, v1.1.0; the repository's main branch may contain
   development changes beyond it. Archived experiments, negative
   results, and benchmark/FPGA/CXL simulation provenance live in the
   companion repository kadireren7/membrane-research.
