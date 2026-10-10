@@ -19,6 +19,8 @@
 #include "observe_cmd.h"
 #include "advise_cmd.h"
 #include "adaptive_cmd.h"
+#include "ui.h"
+#include "orchestrate_cmd.h"
 #include "apply_cmd.h"
 #include "runtime_cmd.h"
 #include "product_cli.h"
@@ -87,6 +89,8 @@ static void	print_usage(FILE *out)
 	fprintf(out, "  membrane adaptive status|enable|disable\n"
 		"                                     OPT-IN bounded runtime "
 		"adaptation (off by default; see adaptive options)\n");
+	fprintf(out, "  membrane run MODEL                 choose the runtime that "
+		"fits MODEL on this machine, say why, then use it (see run options)\n");
 	fprintf(out, "  membrane chat [MODEL]              interactive "
 		"terminal chat with the local server (see membrane chat "
 		"--help)\n");
@@ -172,6 +176,14 @@ static void	print_usage(FILE *out)
 	fprintf(out, "                                      explicit model "
 		"residency actions\n");
 	fprintf(out, "\n");
+	fprintf(out, "run options (see docs/orchestration.md):\n");
+	fprintf(out, "  --runtime auto|membrane-native|ollama|vllm   default auto: "
+		"consider every runtime\n");
+	fprintf(out, "  --intent general|interactive|memory_saving|long_context  "
+		"default general\n");
+	fprintf(out, "  --explain                           choose and explain; "
+		"change nothing\n");
+	fprintf(out, "\n");
 	fprintf(out, "adaptive options (see docs/adaptive-runtime.md):\n");
 	fprintf(out, "  status                              live controller "
 		"state (or the saved policy if the service is stopped)\n");
@@ -204,7 +216,9 @@ static void	print_usage(FILE *out)
 	fprintf(out, "\n");
 	fprintf(out, "Options:\n");
 	fprintf(out, "  --json                             machine-readable "
-		"JSON output\n");
+		"JSON output (never colored)\n");
+	fprintf(out, "  --no-color                         plain output (also "
+		"honored: NO_COLOR; color is only used on a terminal)\n");
 	fprintf(out, "  --help                             show this help\n");
 	fprintf(out, "  --version                          show version\n");
 	fprintf(out, "\n");
@@ -241,6 +255,12 @@ int	main(int argc, char **argv)
 			chat_args.push_back(argv[k]);
 		return (membrane_chat_cmd_dispatch(chat_args, false));
 	}
+	bool						no_color = false;
+
+	for (int k = 1; k < argc; ++k)
+		if (std::string(argv[k]) == "--no-color")
+			no_color = true;
+	membrane_ui_configure(no_color);
 	i = 1;
 	while (i < argc)
 	{
@@ -248,6 +268,8 @@ int	main(int argc, char **argv)
 
 		if (a == "--json")
 			want_json = true;
+		else if (a == "--no-color")
+			;			/* consumed above, before any output is styled */
 		else if (a == "--help" || a == "-h")
 			return (print_usage(stdout), MEMBRANE_EXIT_SUCCESS);
 		else if (a == "--version")
@@ -301,6 +323,12 @@ int	main(int argc, char **argv)
 				args.end());
 
 		return (membrane_advise_cmd_dispatch(advise_args, want_json));
+	}
+	if (args[0] == "run")
+	{
+		std::vector<std::string>	run_args(args.begin() + 1, args.end());
+
+		return (membrane_run_cmd_dispatch(run_args, want_json));
 	}
 	if (args[0] == "adaptive")
 	{

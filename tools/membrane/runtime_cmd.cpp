@@ -32,7 +32,9 @@ static void	print_err(bool want_json, const std::string &message)
 
 static bool	is_reserved_unimplemented(const std::string &runtime_id)
 {
-	return (runtime_id == MEMBRANE_RUNTIME_ID_VLLM);
+	(void)runtime_id;		/* Milestone L: vLLM now has a read-only adapter;
+							 * no id is reserved-only any more */
+	return (false);
 }
 
 /* The one place "unknown id" vs. "reserved but no adapter implemented"

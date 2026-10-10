@@ -82,9 +82,11 @@ client/server split, not evidence the engine is external -- see
 Two string identifiers were reserved in H1 for a future external-runtime
 adapter: `ollama` and `vllm`. **H2:** `ollama` now has a real, read-only
 adapter and is listed (see [runtime-ollama.md](runtime-ollama.md)).
-`vllm` is still reserved only: `membrane runtime list` does not show it,
-and `membrane runtime inspect vllm` fails with a message that
-distinguishes "reserved, no adapter yet" from a genuinely unknown id.
+**Milestone L:** `vllm` now has a real **read-only** adapter too
+(`runtime_vllm.h`, audited against vLLM v0.31.0): `membrane runtime
+list|inspect|models vllm` work, every control capability is `unsupported`
+(vLLM fixes model/context/KV/memory at launch), and it is a candidate for
+runtime orchestration. See [runtime-vllm.md](runtime-vllm.md).
 
 **H2 adapter boundary.** `runtime_capabilities.h/.c` stays pure (no I/O)
 and still describes only the built-in native runtime.
@@ -341,7 +343,7 @@ empty afterward.
 
 - ~~No Ollama adapter.~~ **H2:** read-only Ollama adapter (no inference,
   no control); see runtime-ollama.md.
-- **No vLLM adapter.** `vllm` is a reserved string id only.
+- ~~No vLLM adapter.~~ **Milestone L:** read-only vLLM adapter, no control; see runtime-vllm.md.
 - **No LM Studio, or any other external runtime.**
 - No dynamic/plugin loading of runtimes (a fixed, static table today).
 - No live health-probe daemon. H2 makes only one bounded, on-demand probe

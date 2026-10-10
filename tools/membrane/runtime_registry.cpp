@@ -1,5 +1,6 @@
 #include "runtime_adapter.h"
 #include "runtime_ollama.h"
+#include "runtime_vllm.h"
 
 /* See runtime_adapter.h's own top comment for the full contract. */
 
@@ -34,10 +35,42 @@ static void	native_describe(membrane_runtime_descriptor_t *out)
 	membrane_runtime_describe(MEMBRANE_RUNTIME_ID_NATIVE, out);
 }
 
+/* Milestone L: loaded-model lists, per adapter (see runtime_adapter.h). */
+static bool	ollama_resident(std::vector<std::string> *out,
+				membrane_runtime_error_t *err)
+{
+	std::vector<membrane_ollama_process_model_t>	ps;
+
+	out->clear();
+	if (!membrane_ollama_list_running(&ps, err))
+		return (false);
+	for (const auto &m : ps)
+		out->push_back(m.model.empty() ? m.name : m.model);
+	return (true);
+}
+
+/* vLLM serves exactly the model(s) it was started with: all are loaded. */
+static bool	vllm_resident(std::vector<std::string> *out,
+				membrane_runtime_error_t *err)
+{
+	std::vector<membrane_external_model_t>	models;
+
+	out->clear();
+	if (!membrane_vllm_list_models(&models, err))
+		return (false);
+	for (const auto &m : models)
+		out->push_back(m.runtime_model_id);
+	return (true);
+}
+
 static const membrane_runtime_adapter_t	g_adapters[] = {
-	{MEMBRANE_RUNTIME_ID_NATIVE, native_describe, NULL, NULL},
+	{MEMBRANE_RUNTIME_ID_NATIVE, native_describe, NULL, NULL, NULL},
 	{MEMBRANE_RUNTIME_ID_OLLAMA, membrane_ollama_describe,
-		membrane_ollama_list_models, membrane_ollama_inspect_model},
+		membrane_ollama_list_models, membrane_ollama_inspect_model,
+		ollama_resident},
+	{MEMBRANE_RUNTIME_ID_VLLM, membrane_vllm_describe,
+		membrane_vllm_list_models, membrane_vllm_inspect_model,
+		vllm_resident},
 };
 
 size_t	membrane_runtime_registry_count(void)

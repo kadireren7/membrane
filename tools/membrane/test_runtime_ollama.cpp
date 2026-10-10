@@ -429,10 +429,10 @@ static void	test_list_shows_version_when_reachable(void)
 	TEST_ASSERT(contains(out, "ollama") && contains(out, "external")
 		&& contains(out, "0.34.3"), "list shows ollama external + version");
 	j = membrane_runtime_list_json();
-	TEST_ASSERT(j["runtimes"].size() == 2, "exactly native + ollama");
+	TEST_ASSERT(j["runtimes"].size() == 3, "native + ollama + vllm (Milestone L)");
 	TEST_ASSERT(j["runtimes"][1]["status"] == "available", "ollama available");
-	for (const auto &r : j["runtimes"])
-		TEST_ASSERT(r["id"] != MEMBRANE_RUNTIME_ID_VLLM, "vllm is not listed");
+	TEST_ASSERT(j["runtimes"][2]["id"] == MEMBRANE_RUNTIME_ID_VLLM,
+		"vllm is listed now that it has a read-only adapter");
 }
 
 /* ---------------------------------------------------------------- */
@@ -922,15 +922,19 @@ static void	test_native_unchanged(void)
 	TEST_ASSERT(rc == MEMBRANE_EXIT_CLI_ERROR
 		&& contains(out, "membrane model list"), "native models are "
 		"MEMBRANE's own registry, not a runtime inventory");
+	setenv("MEMBRANE_VLLM_ENDPOINT", "http://127.0.0.1:1", 1);
 	out = run_cli({"models", MEMBRANE_RUNTIME_ID_VLLM}, true, &rc);
-	TEST_ASSERT(rc == MEMBRANE_EXIT_CLI_ERROR && contains(out, "reserved"),
-		"vllm is still reserved-only");
+	unsetenv("MEMBRANE_VLLM_ENDPOINT");
+	TEST_ASSERT(rc != MEMBRANE_EXIT_SUCCESS && contains(out, "not reachable")
+		&& !contains(out, "reserved"), "Milestone L: vllm is a real "
+		"adapter now (unreachable here), no longer reserved-only");
 	run_cli({"model", "show", "ollama", "x"}, true, &rc);
 	TEST_ASSERT(rc == MEMBRANE_EXIT_CLI_ERROR, "unknown model verb");
 }
 
 int	main(void)
 {
+	setenv("MEMBRANE_VLLM_ENDPOINT", "http://127.0.0.1:1", 1);
 	start_mock_server();
 	test_allowlist();
 	test_endpoint_parsing();

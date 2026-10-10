@@ -111,6 +111,12 @@ typedef struct s_membrane_runtime_adapter
 	bool		(*inspect_model)(const std::string &model,
 					membrane_external_model_detail_t *out,
 					membrane_runtime_error_t *err);
+	/* Milestone L: the runtime-ids of the models it reports as LOADED right
+	 * now (Ollama: GET /api/ps; vLLM: everything it serves is loaded).
+	 * NULL when the adapter cannot say (native: MEMBRANE's own service
+	 * answers that, see orchestrate_cmd.cpp). */
+	bool		(*resident_models)(std::vector<std::string> *out,
+					membrane_runtime_error_t *err);
 }	membrane_runtime_adapter_t;
 
 /* The fixed table, in display order: membrane-native first, then

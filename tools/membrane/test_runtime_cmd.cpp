@@ -117,8 +117,11 @@ static void	test_list_json_contains_native(void)
 		"list JSON carries MEMBRANE_VERSION");
 	/* H2: membrane-native first, then the Ollama adapter (unreachable
 	 * here -- main() pins MEMBRANE_OLLAMA_ENDPOINT to a closed port). */
-	TEST_ASSERT(j["runtimes"].is_array() && j["runtimes"].size() == 2,
-		"membrane-native + ollama are listed");
+	TEST_ASSERT(j["runtimes"].is_array() && j["runtimes"].size() == 3,
+		"membrane-native + ollama + vllm are listed (Milestone L)");
+	TEST_ASSERT(j["runtimes"][2]["id"] == MEMBRANE_RUNTIME_ID_VLLM
+		&& j["runtimes"][2]["status"] == "unavailable",
+		"the third listed runtime is the (unreachable) vllm adapter");
 	TEST_ASSERT(j["runtimes"][1]["id"] == MEMBRANE_RUNTIME_ID_OLLAMA,
 		"the second listed runtime is the ollama adapter");
 	TEST_ASSERT(j["runtimes"][1]["status"] == "unavailable",
@@ -239,22 +242,25 @@ static void	test_inspect_unknown_runtime_fails_clearly(void)
 		"the error message says 'unknown runtime'");
 }
 
-static void	test_inspect_reserved_runtime_distinguishes_from_unknown(void)
+static void	test_inspect_vllm_is_a_real_readonly_adapter(void)
 {
 	json		j;
 	std::string	err;
+
+	/* Milestone L: vllm is no longer reserved-only. With nothing listening
+	 * it is a KNOWN runtime whose availability is unavailable, exactly like
+	 * an unreachable Ollama -- never "unknown runtime", never "reserved". */
+	setenv("MEMBRANE_VLLM_ENDPOINT", "http://127.0.0.1:1", 1);
 	bool		ok = membrane_runtime_inspect_json(MEMBRANE_RUNTIME_ID_VLLM,
 			&j, &err);
 
-	TEST_ASSERT(!ok, "the reserved 'vllm' id has no adapter (H2 adds "
-		"only ollama)");
-	TEST_ASSERT(err.find("reserved") != std::string::npos
-		&& err.find("adapter") != std::string::npos,
-		"the error text distinguishes 'reserved, no adapter yet' from a "
-		"plain unknown id");
-	TEST_ASSERT(err.find("unknown runtime") == std::string::npos,
-		"a reserved id is never reported with the generic 'unknown "
-		"runtime' wording");
+	unsetenv("MEMBRANE_VLLM_ENDPOINT");
+	TEST_ASSERT(ok, "vllm is describable (read-only adapter)");
+	TEST_ASSERT(j["runtime"]["id"] == "vllm"
+		&& j["runtime"]["status"] == "unavailable"
+		&& j["runtime"]["capabilities"]["context_control"] == "unsupported"
+		&& j["runtime"]["capabilities"]["kv_precision_control"]
+			== "unsupported", "unavailable, and no control capability");
 }
 
 static void	test_dispatch_inspect_unknown_id_is_cli_error(void)
@@ -344,13 +350,14 @@ int	main(void)
 	/* Deterministic regardless of whether a real Ollama runs on this
 	 * host: nothing listens on 127.0.0.1:1. */
 	setenv("MEMBRANE_OLLAMA_ENDPOINT", "http://127.0.0.1:1", 1);
+	setenv("MEMBRANE_VLLM_ENDPOINT", "http://127.0.0.1:1", 1);
 	test_list_json_contains_native();
 	test_list_json_deterministic();
 	test_dispatch_list_matches_library_json();
 	test_dispatch_list_human_exit_success();
 	test_inspect_json_native_fields();
 	test_inspect_unknown_runtime_fails_clearly();
-	test_inspect_reserved_runtime_distinguishes_from_unknown();
+	test_inspect_vllm_is_a_real_readonly_adapter();
 	test_dispatch_inspect_unknown_id_is_cli_error();
 	test_dispatch_inspect_human_shows_capabilities();
 	test_dispatch_no_args_and_unknown_subcommand();

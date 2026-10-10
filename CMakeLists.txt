@@ -418,6 +418,14 @@ target_link_libraries(membrane_adaptive PUBLIC membrane_action
   membrane_memory_intelligence membrane_observation membrane_sanitizers)
 target_include_directories(membrane_adaptive PUBLIC tools/membrane-run)
 
+# Milestone L: runtime orchestration -- the pure, deterministic "which
+# runtime should serve this model, and why" decision (orchestrator.h's own
+# top comment). Llama-free, no I/O.
+add_library(membrane_orchestrator STATIC tools/membrane-run/orchestrator.c)
+target_link_libraries(membrane_orchestrator PUBLIC
+  membrane_runtime_capabilities membrane_sanitizers)
+target_include_directories(membrane_orchestrator PUBLIC tools/membrane-run)
+
 # Milestone H3 (runtime-aware plan assessment): classifies -- never
 # applies -- a Planner v2 plan or an explicit request against one
 # runtime's capability matrix (runtime_plan_assessment.h's own top
@@ -1064,6 +1072,14 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_adaptive PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_adaptive COMMAND test_adaptive)
+
+  # Milestone L: orchestration decision tests -- synthetic runtime x
+  # hardware matrices, no host, no network.
+  add_executable(test_orchestrator tools/membrane-run/test_orchestrator.c)
+  target_link_libraries(test_orchestrator PRIVATE membrane_orchestrator)
+  target_include_directories(test_orchestrator PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_orchestrator COMMAND test_orchestrator)
 
   # Phase 21: the bounded apply-time fallback controller's own tests --
   # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a

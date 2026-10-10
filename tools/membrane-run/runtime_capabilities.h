@@ -39,8 +39,9 @@ extern "C" {
  * adapter -- tools/membrane/runtime_ollama.h (all HTTP lives there, never
  * here), composed with this module's native descriptor by the static
  * table in tools/membrane/runtime_adapter.h (runtime_registry.cpp).
- * MEMBRANE_RUNTIME_ID_VLLM is still a RESERVED string
- * constant only; no vLLM adapter exists in this build.
+ * Milestone L: MEMBRANE_RUNTIME_ID_VLLM now has a READ-ONLY adapter
+ * (tools/membrane/runtime_vllm.h, audited against vLLM v0.31.0): inspect /
+ * advise / orchestrate only, every control capability UNSUPPORTED.
  */
 
 # define MEMBRANE_RUNTIME_SCHEMA_VERSION	1
@@ -54,7 +55,7 @@ extern "C" {
 # define MEMBRANE_RUNTIME_ID_NATIVE	"membrane-native"
 /* H2: read-only adapter in tools/membrane/runtime_ollama.h. */
 # define MEMBRANE_RUNTIME_ID_OLLAMA	"ollama"
-/* Reserved only -- see this header's own top comment. Not implemented. */
+/* Milestone L: read-only adapter in tools/membrane/runtime_vllm.h. */
 # define MEMBRANE_RUNTIME_ID_VLLM		"vllm"
 
 /*

@@ -411,7 +411,7 @@ target_include_directories(membrane_plan_cmd PRIVATE
 # dependency. Kept out of membrane_runtime_capabilities so the generic,
 # pure capability module stays HTTP-free.
 add_library(membrane_runtime_adapters STATIC runtime_registry.cpp
-  runtime_ollama.cpp)
+  runtime_ollama.cpp runtime_vllm.cpp)
 set_target_properties(membrane_runtime_adapters PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
@@ -573,6 +573,33 @@ target_include_directories(membrane_apply_cmd PUBLIC
 target_include_directories(membrane_apply_cmd PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
 
+# Milestone L: `membrane run MODEL` -- gathers per-runtime facts through the
+# adapter table and asks the pure orchestrator which runtime fits, and why.
+add_library(membrane_orchestrate_cmd STATIC orchestrate_cmd.cpp)
+set_target_properties(membrane_orchestrate_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_orchestrate_cmd PUBLIC membrane_sanitizers
+  membrane_orchestrator membrane_plan_cmd membrane_runtime_adapters
+  membrane_use_cmd membrane_status_client membrane_cli_shared membrane_ui
+  membrane_gpu_device membrane_runtime_session membrane_registry_core
+  membrane_server_config membrane_product_cli llama)
+target_include_directories(membrane_orchestrate_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+target_include_directories(membrane_orchestrate_cmd PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
+# Final productization: the one place human-output styling (color, symbols,
+# NO_COLOR / --no-color / TTY detection) is decided -- see ui.h.
+add_library(membrane_ui STATIC ui.cpp)
+set_target_properties(membrane_ui PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_ui PUBLIC membrane_sanitizers)
+target_include_directories(membrane_ui PUBLIC ${CMAKE_SOURCE_DIR}/tools/membrane)
+
 # Milestone K: `membrane adaptive status|enable|disable`.
 add_library(membrane_adaptive_cmd STATIC adaptive_cmd.cpp)
 set_target_properties(membrane_adaptive_cmd PROPERTIES
@@ -597,7 +624,8 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
   membrane_variant_selector membrane_use_cmd membrane_chat_cmd
   membrane_plan_cmd membrane_runtime_cmd membrane_observe_cmd
-  membrane_advise_cmd membrane_apply_cmd membrane_adaptive_cmd
+  membrane_advise_cmd membrane_apply_cmd membrane_adaptive_cmd membrane_ui
+  membrane_orchestrate_cmd
   membrane_service_state membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -878,6 +906,50 @@ if(MEMBRANE_BUILD_TESTS)
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
   add_test(NAME test_advise_cmd COMMAND test_advise_cmd)
+
+  add_executable(test_ui test_ui.cpp)
+  set_target_properties(test_ui PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_ui PRIVATE membrane_ui)
+  target_include_directories(test_ui PRIVATE ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_ui COMMAND test_ui)
+
+  # (orchestrate_cmd -> use_cmd -> membrane_model_cmd_dispatch(), which is
+  # compiled directly into the test binary, same shape as test_use_cmd)
+  add_executable(test_orchestrate_cmd test_orchestrate_cmd.cpp model_cmd.cpp)
+  set_target_properties(test_orchestrate_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_orchestrate_cmd PRIVATE membrane_orchestrate_cmd
+    membrane_runtime_adapters membrane_product_cli membrane_cpp_httplib
+    membrane_server membrane_registry_core membrane_server_config
+    membrane_gpu_device membrane_runtime_core membrane_runtime_session
+    membrane_model_catalog membrane_download_manager
+    membrane_variant_selector membrane_status_client membrane_doctor_cmd
+    membrane_cli_shared llama)
+  target_include_directories(test_orchestrate_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tools/membrane-llama-runtime)
+  target_include_directories(test_orchestrate_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_orchestrate_cmd COMMAND test_orchestrate_cmd)
+
+  # Milestone L: the read-only vLLM adapter -- parsers, allowlist, capability
+  # contract and an in-process mock server with trap routes.
+  add_executable(test_runtime_vllm test_runtime_vllm.cpp)
+  set_target_properties(test_runtime_vllm PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_runtime_vllm PRIVATE membrane_runtime_adapters
+    membrane_product_cli membrane_cpp_httplib)
+  target_include_directories(test_runtime_vllm PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+  add_test(NAME test_runtime_vllm COMMAND test_runtime_vllm)
 
   # Milestone K: the adaptive controller tick (fake clock, fake
   # observations, fake executor) and the `membrane adaptive` CLI.
