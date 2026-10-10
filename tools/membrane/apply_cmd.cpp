@@ -6,8 +6,10 @@
 #include <cstring>
 #include <memory>
 #include <thread>
-#include <unistd.h>
 #include <sys/stat.h>
+#ifndef _WIN32
+# include <unistd.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -718,7 +720,9 @@ static bool	write_audit(const std::string &path, const json &record)
 
 	if (f == NULL)
 		return (false);
+#ifndef _WIN32
 	chmod(path.c_str(), 0600);
+#endif
 	std::string	line = record.dump() + "\n";
 	bool		ok = fwrite(line.data(), 1, line.size(), f) == line.size();
 
