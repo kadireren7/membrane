@@ -18,6 +18,7 @@
 #include "plan_cmd.h"
 #include "observe_cmd.h"
 #include "advise_cmd.h"
+#include "adaptive_cmd.h"
 #include "apply_cmd.h"
 #include "runtime_cmd.h"
 #include "product_cli.h"
@@ -83,6 +84,9 @@ static void	print_usage(FILE *out)
 	fprintf(out, "  membrane apply                     MUTATING, dry-run by "
 		"default: shows what advice could be applied; --yes applies it "
 		"(see apply options)\n");
+	fprintf(out, "  membrane adaptive status|enable|disable\n"
+		"                                     OPT-IN bounded runtime "
+		"adaptation (off by default; see adaptive options)\n");
 	fprintf(out, "  membrane chat [MODEL]              interactive "
 		"terminal chat with the local server (see membrane chat "
 		"--help)\n");
@@ -167,6 +171,16 @@ static void	print_usage(FILE *out)
 		"[--model M]\n");
 	fprintf(out, "                                      explicit model "
 		"residency actions\n");
+	fprintf(out, "\n");
+	fprintf(out, "adaptive options (see docs/adaptive-runtime.md):\n");
+	fprintf(out, "  status                              live controller "
+		"state (or the saved policy if the service is stopped)\n");
+	fprintf(out, "  enable [--mode observe|recommend|apply]  default "
+		"recommend (never changes anything); apply needs --yes or a TTY "
+		"confirmation\n");
+	fprintf(out, "         [--runtime ID] [--allow context,kv_precision,"
+		"kv_placement,gpu_layers,unload] [--interval S] [--cooldown S]\n");
+	fprintf(out, "  disable                             turn it off\n");
 	fprintf(out, "\n");
 	fprintf(out, "advise options (see docs/memory-intelligence.md):\n");
 	fprintf(out, "  --runtime ID                        runtime to assess "
@@ -287,6 +301,12 @@ int	main(int argc, char **argv)
 				args.end());
 
 		return (membrane_advise_cmd_dispatch(advise_args, want_json));
+	}
+	if (args[0] == "adaptive")
+	{
+		std::vector<std::string>	adaptive_args(args.begin() + 1, args.end());
+
+		return (membrane_adaptive_cmd_dispatch(adaptive_args, want_json));
 	}
 	if (args[0] == "apply")
 	{

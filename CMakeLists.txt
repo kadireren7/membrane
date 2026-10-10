@@ -410,6 +410,14 @@ target_link_libraries(membrane_action PUBLIC
   membrane_sanitizers)
 target_include_directories(membrane_action PUBLIC tools/membrane-run)
 
+# Milestone K (adaptive runtime): the pure policy / bounded-history /
+# hysteresis / cooldown / anti-thrashing / decision layer (adaptive.h's own
+# top comment). No clock, no I/O, no threads: every function takes now_ms.
+add_library(membrane_adaptive STATIC tools/membrane-run/adaptive.c)
+target_link_libraries(membrane_adaptive PUBLIC membrane_action
+  membrane_memory_intelligence membrane_observation membrane_sanitizers)
+target_include_directories(membrane_adaptive PUBLIC tools/membrane-run)
+
 # Milestone H3 (runtime-aware plan assessment): classifies -- never
 # applies -- a Planner v2 plan or an explicit request against one
 # runtime's capability matrix (runtime_plan_assessment.h's own top
@@ -1048,6 +1056,14 @@ if(MEMBRANE_BUILD_TESTS)
   target_include_directories(test_action PRIVATE
     ${CMAKE_SOURCE_DIR}/tests/unit)
   add_test(NAME test_action COMMAND test_action)
+
+  # Milestone K: adaptive policy/history/decision tests -- synthetic
+  # timelines with injected timestamps, no sleeps, no host.
+  add_executable(test_adaptive tools/membrane-run/test_adaptive.c)
+  target_link_libraries(test_adaptive PRIVATE membrane_adaptive)
+  target_include_directories(test_adaptive PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_adaptive COMMAND test_adaptive)
 
   # Phase 21: the bounded apply-time fallback controller's own tests --
   # llama-free (synthetic apply_fn/refresh_fn test doubles), plus a

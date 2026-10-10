@@ -70,7 +70,7 @@ changes. See [`docs/observability.md`](docs/observability.md).
 ## From advice to action (explicit, never automatic)
 
 ```
-plan  ->  observe  ->  advise  ->  apply
+plan  ->  observe  ->  advise  ->  apply  ->  adapt
 ```
 
 ```bash
@@ -84,6 +84,15 @@ terminal). It only creates an action when a runtime has a real control
 primitive and a target value is explicit, re-checks live state right before
 changing anything, rolls back what it can on failure, and keeps a local audit
 log. See [`docs/active-control.md`](docs/active-control.md).
+
+The last step, **adapt**, is opt-in and off by default: `membrane adaptive
+enable` starts a bounded controller inside `membrane serve` that watches for
+*sustained* measured memory pressure and, in `recommend` mode, only suggests
+one least-disruptive step with its reasoning; only if you explicitly choose
+`--mode apply` may it act, within the action classes you allowed, through the
+same validated pipeline as `membrane apply` (with cooldown, a rate limit,
+anti-thrashing and your manual changes always winning). See
+[`docs/adaptive-runtime.md`](docs/adaptive-runtime.md).
 
 ## Chat from your terminal
 

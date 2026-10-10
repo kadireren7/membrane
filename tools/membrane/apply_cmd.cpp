@@ -320,6 +320,12 @@ class native_backend : public apply_backend
 					r->generating = !pinned && !evictable;
 					r->size_bytes = m.value("estimated_model_bytes",
 							(uint64_t)0);
+					if (m.contains("gpu_layers") && m["gpu_layers"]
+						.is_number_integer())
+					{
+						r->gpu_layers_known = 1;
+						r->gpu_layers = m["gpu_layers"].get<int>();
+					}
 				}
 			return (true);
 		}
@@ -956,6 +962,91 @@ static bool	default_intelligence(const std::string &runtime,
 	return (membrane_advise_collect(runtime, snap.get(), &caps, intel, err));
 }
 
+typedef std::function<bool(const std::string &,
+	membrane_memory_intelligence_t *, std::string *)>	intel_fn_t;
+
+/* ---- execution: stale-plan guards, then the transaction engine, then the
+ * audit record. Shared by `membrane apply --yes` and the adaptive
+ * controller (Milestone K), so both go through the SAME checks. */
+static void	execute_plan(apply_backend *backend, const std::string &runtime,
+				apply_report_t *rp, const membrane_apply_io_t &io,
+				const intel_fn_t &get_intel, const json &audit_extra)
+{
+	apply_report_t	&r = *rp;
+	std::string		err;
+	struct { const std::string &runtime; } o = {runtime};
+
+	/* ---- execution: stale-plan guards, then the transaction engine -- */
+	r.dry_run = false;
+	r.attempted = true;
+	r.after.assign(r.plan.action_count, "");
+	{
+		std::unique_ptr<membrane_memory_intelligence_t>	fresh(
+				new membrane_memory_intelligence_t());
+		char	missing[MEMBRANE_INTEL_CODE_MAX] = "";
+
+		if (!get_intel(o.runtime, fresh.get(), &err)
+			|| !membrane_action_recommendations_still_hold(&r.plan,
+				fresh.get(), missing, sizeof(missing)))
+		{
+			r.result.status = MEMBRANE_APPLY_STALE_PRECONDITION;
+			snprintf(r.result.detail, sizeof(r.result.detail), "the "
+				"recommendation '%s' no longer holds; nothing was changed "
+				"-- rerun `membrane advise` / `membrane apply`",
+				missing[0] ? missing : "?");
+		}
+		else
+		{
+			exec_ctx_t					ctx = {backend, &r.plan,
+				&r.after};
+			membrane_action_executor_t	ex = {&ctx, ex_read, ex_exec,
+				ex_rollback};
+
+			membrane_action_run(&r.plan, &ex, &r.result);
+		}
+	}
+	r.status = membrane_apply_status_name(r.result.status);
+	r.detail = r.result.detail;
+
+	/* Audit (J12): only when something could have changed. */
+	bool	touched = r.result.status != MEMBRANE_APPLY_STALE_PRECONDITION
+		&& r.result.status != MEMBRANE_APPLY_REFUSED;
+	json	rec;
+	std::string	audit_path = io.audit_path.empty()
+		? membrane_apply_audit_path() : io.audit_path;
+
+	rec["timestamp"] = now_utc();
+	rec["runtime"] = r.runtime;
+	rec["status"] = r.status;
+	rec["success"] = r.result.status == MEMBRANE_APPLY_APPLIED;
+	rec["confirmation"] = r.confirmation;
+	rec["detail"] = r.detail;
+	rec["source"] = "user";
+	for (auto it = audit_extra.begin(); it != audit_extra.end(); ++it)
+		rec[it.key()] = it.value();
+	rec["actions"] = json::array();
+	for (size_t i = 0; i < r.plan.action_count; ++i)
+	{
+		const membrane_action_t	&a = r.plan.actions[i];
+		json					reasons = json::array();
+
+		if (a.source_recommendation[0])
+			reasons.push_back(a.source_recommendation);
+		rec["actions"].push_back({{"action", membrane_action_code_name(a.code)},
+			{"model", nullable(a.model)}, {"before", nullable(a.current,
+				a.current_known != 0)}, {"requested", a.requested},
+			{"after", i < r.after.size() && !r.after[i].empty()
+				? json(r.after[i]) : json(nullptr)},
+			{"outcome", membrane_action_outcome_name(r.result.outcome[i])},
+			{"error", r.result.error[i][0] ? json(r.result.error[i])
+				: json(nullptr)},
+			{"reason_codes", reasons}});
+	}
+	if (touched && !write_audit(audit_path, rec))
+		r.notes.push_back("the local audit log could not be written ("
+			+ audit_path + ")");
+}
+
 int	membrane_apply_cmd_dispatch_ex(const std::vector<std::string> &args,
 		bool want_json, const membrane_apply_io_t &io)
 {
@@ -1101,78 +1192,117 @@ int	membrane_apply_cmd_dispatch_ex(const std::vector<std::string> &args,
 		return (fail_closed ? MEMBRANE_EXIT_CLI_ERROR : MEMBRANE_EXIT_SUCCESS);
 	}
 
-	/* ---- execution: stale-plan guards, then the transaction engine -- */
-	r.dry_run = false;
-	r.attempted = true;
-	r.after.assign(r.plan.action_count, "");
-	{
-		std::unique_ptr<membrane_memory_intelligence_t>	fresh(
-				new membrane_memory_intelligence_t());
-		char	missing[MEMBRANE_INTEL_CODE_MAX] = "";
-
-		if (!get_intel(o.runtime, fresh.get(), &err)
-			|| !membrane_action_recommendations_still_hold(&r.plan,
-				fresh.get(), missing, sizeof(missing)))
-		{
-			r.result.status = MEMBRANE_APPLY_STALE_PRECONDITION;
-			snprintf(r.result.detail, sizeof(r.result.detail), "the "
-				"recommendation '%s' no longer holds; nothing was changed "
-				"-- rerun `membrane advise` / `membrane apply`",
-				missing[0] ? missing : "?");
-		}
-		else
-		{
-			exec_ctx_t					ctx = {backend.get(), &r.plan,
-				&r.after};
-			membrane_action_executor_t	ex = {&ctx, ex_read, ex_exec,
-				ex_rollback};
-
-			membrane_action_run(&r.plan, &ex, &r.result);
-		}
-	}
-	r.status = membrane_apply_status_name(r.result.status);
-	r.detail = r.result.detail;
-
-	/* Audit (J12): only when something could have changed. */
-	bool	touched = r.result.status != MEMBRANE_APPLY_STALE_PRECONDITION
-		&& r.result.status != MEMBRANE_APPLY_REFUSED;
-	json	rec;
-	std::string	audit_path = io.audit_path.empty()
-		? membrane_apply_audit_path() : io.audit_path;
-
-	rec["timestamp"] = now_utc();
-	rec["runtime"] = r.runtime;
-	rec["status"] = r.status;
-	rec["success"] = r.result.status == MEMBRANE_APPLY_APPLIED;
-	rec["confirmation"] = r.confirmation;
-	rec["detail"] = r.detail;
-	rec["actions"] = json::array();
-	for (size_t i = 0; i < r.plan.action_count; ++i)
-	{
-		const membrane_action_t	&a = r.plan.actions[i];
-		json					reasons = json::array();
-
-		if (a.source_recommendation[0])
-			reasons.push_back(a.source_recommendation);
-		rec["actions"].push_back({{"action", membrane_action_code_name(a.code)},
-			{"model", nullable(a.model)}, {"before", nullable(a.current,
-				a.current_known != 0)}, {"requested", a.requested},
-			{"after", i < r.after.size() && !r.after[i].empty()
-				? json(r.after[i]) : json(nullptr)},
-			{"outcome", membrane_action_outcome_name(r.result.outcome[i])},
-			{"error", r.result.error[i][0] ? json(r.result.error[i])
-				: json(nullptr)},
-			{"reason_codes", reasons}});
-	}
-	if (touched && !write_audit(audit_path, rec))
-		r.notes.push_back("the local audit log could not be written ("
-			+ audit_path + ")");
+	execute_plan(backend.get(), o.runtime, &r, io, get_intel, json::object());
 	if (want_json)
 		printf("%s\n", report_json(r).dump().c_str());
 	else
 		print_human(r);
 	return (r.result.status == MEMBRANE_APPLY_APPLIED
 		? MEMBRANE_EXIT_SUCCESS : MEMBRANE_EXIT_RUNTIME_ERROR);
+}
+
+static apply_backend	*make_backend(const std::string &runtime,
+							const membrane_apply_io_t *io)
+{
+	if (runtime == MEMBRANE_RUNTIME_ID_NATIVE)
+		return (new native_backend(io));
+	if (runtime == MEMBRANE_RUNTIME_ID_OLLAMA)
+		return (new ollama_backend());
+	return (NULL);
+}
+
+bool	membrane_apply_surface(const std::string &runtime,
+			membrane_apply_surface_t *surface)
+{
+	std::unique_ptr<apply_backend>	b(make_backend(runtime, NULL));
+
+	if (!b)
+		return (false);
+	b->fill_surface(surface);
+	return (true);
+}
+
+bool	membrane_apply_read_live(const std::string &runtime,
+			membrane_apply_live_t *live, std::string *err)
+{
+	std::unique_ptr<apply_backend>	b(make_backend(runtime, NULL));
+
+	if (!b)
+	{
+		*err = "unknown runtime '" + runtime + "'";
+		return (false);
+	}
+	return (b->read_live(live, err));
+}
+
+bool	membrane_apply_execute(const membrane_apply_request_t &rq,
+			const membrane_apply_io_t &io, membrane_apply_outcome_t *out,
+			std::string *err)
+{
+	std::unique_ptr<apply_backend>	backend(make_backend(rq.runtime, &io));
+	std::unique_ptr<apply_report_t>	rp(new apply_report_t());
+	apply_report_t					&r = *rp;
+	std::unique_ptr<membrane_memory_intelligence_t>	intel(
+			new membrane_memory_intelligence_t());
+	intel_fn_t	get_intel = io.intelligence ? io.intelligence
+		: intel_fn_t(default_intelligence);
+	membrane_apply_surface_t		surface;
+	membrane_apply_live_t			live;
+	membrane_action_validation_t	validation;
+	s_apply_opts					o;
+
+	*out = membrane_apply_outcome_t();
+	if (!backend)
+	{
+		*err = "unknown runtime '" + rq.runtime + "'";
+		return (false);
+	}
+	o.runtime = rq.runtime;
+	o.req = rq.req;
+	o.model = rq.req.model;
+	memset(&r.plan, 0, sizeof(r.plan));
+	memset(&r.result, 0, sizeof(r.result));
+	memset(&validation, 0, sizeof(validation));
+	r.runtime = rq.runtime;
+	r.confirmation = rq.source == "adaptive" ? "adaptive_policy" : "yes_flag";
+	backend->fill_surface(&surface);
+	if (!get_intel(rq.runtime, intel.get(), err))
+		return (false);
+	if (!backend->read_live(&live, err))
+		return (false);
+	out->runtime_reachable = live.runtime_reachable != 0;
+	if (!live.runtime_reachable)
+	{
+		out->status = "refused";
+		out->detail = "the runtime is not reachable; nothing can be applied";
+		return (true);
+	}
+	if (o.req.context[0] || o.req.kv_precision[0] || o.req.kv_placement[0]
+		|| o.req.gpu_layers[0])
+		backend->validate(live, o, &validation);
+	membrane_action_compile(intel.get(), &surface, &live, &o.req, &validation,
+		&r.plan);
+	r.recs = json::array();
+	if (r.plan.action_count == 0)
+	{
+		out->status = "nothing_to_apply";
+		out->report = report_json(r);
+		return (true);
+	}
+	r.dry_run = false;
+	r.attempted = true;
+	r.after.assign(r.plan.action_count, "");
+	json	extra = rq.audit_extra;
+
+	extra["source"] = rq.source;
+	execute_plan(backend.get(), rq.runtime, &r, io, get_intel, extra);
+	out->attempted = true;
+	out->status = r.status;
+	out->detail = r.detail;
+	out->action_count = r.plan.action_count;
+	out->applied = r.result.status == MEMBRANE_APPLY_APPLIED;
+	out->report = report_json(r);
+	return (true);
 }
 
 int	membrane_apply_cmd_dispatch(const std::vector<std::string> &args,

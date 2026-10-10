@@ -163,6 +163,23 @@ target_link_libraries(membrane_chat_finish_reason PUBLIC membrane_sanitizers)
 target_include_directories(membrane_chat_finish_reason PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 
+# Milestone K: the adaptive controller (adaptive_controller.h) -- one thread
+# inside `membrane serve`, driving the pure membrane_adaptive layer and the
+# J apply pipeline.
+add_library(membrane_adaptive_controller STATIC adaptive_controller.cpp)
+set_target_properties(membrane_adaptive_controller PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_adaptive_controller PUBLIC membrane_sanitizers
+  membrane_adaptive membrane_apply_cmd membrane_advise_cmd
+  membrane_server_config Threads::Threads)
+target_include_directories(membrane_adaptive_controller PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+target_include_directories(membrane_adaptive_controller PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
 add_library(membrane_server STATIC server.cpp)
 set_target_properties(membrane_server PROPERTIES
   CXX_STANDARD 17
@@ -170,7 +187,7 @@ set_target_properties(membrane_server PROPERTIES
 target_link_libraries(membrane_server PUBLIC membrane_registry_core
   membrane_runtime_session membrane_cpp_httplib membrane_product_cli
   membrane_utf8_stream membrane_chat_finish_reason membrane_server_config
-  llama)
+  membrane_adaptive_controller llama)
 target_include_directories(membrane_server PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_server PRIVATE
@@ -556,6 +573,19 @@ target_include_directories(membrane_apply_cmd PUBLIC
 target_include_directories(membrane_apply_cmd PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
 
+# Milestone K: `membrane adaptive status|enable|disable`.
+add_library(membrane_adaptive_cmd STATIC adaptive_cmd.cpp)
+set_target_properties(membrane_adaptive_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_adaptive_cmd PUBLIC membrane_sanitizers
+  membrane_adaptive_controller membrane_adaptive membrane_server_config
+  membrane_cli_shared membrane_cpp_httplib membrane_product_cli)
+target_include_directories(membrane_adaptive_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+
 add_executable(membrane main.cpp model_cmd.cpp)
 set_target_properties(membrane PROPERTIES
   CXX_STANDARD 17
@@ -567,7 +597,7 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_setup_cmd membrane_model_catalog membrane_download_manager
   membrane_variant_selector membrane_use_cmd membrane_chat_cmd
   membrane_plan_cmd membrane_runtime_cmd membrane_observe_cmd
-  membrane_advise_cmd membrane_apply_cmd
+  membrane_advise_cmd membrane_apply_cmd membrane_adaptive_cmd
   membrane_service_state membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -848,6 +878,35 @@ if(MEMBRANE_BUILD_TESTS)
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
   add_test(NAME test_advise_cmd COMMAND test_advise_cmd)
+
+  # Milestone K: the adaptive controller tick (fake clock, fake
+  # observations, fake executor) and the `membrane adaptive` CLI.
+  add_executable(test_adaptive_controller test_adaptive_controller.cpp)
+  set_target_properties(test_adaptive_controller PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_adaptive_controller PRIVATE
+    membrane_adaptive_controller membrane_runtime_adapters
+    membrane_product_cli)
+  target_include_directories(test_adaptive_controller PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_adaptive_controller COMMAND test_adaptive_controller)
+
+  add_executable(test_adaptive_cmd test_adaptive_cmd.cpp)
+  set_target_properties(test_adaptive_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_adaptive_cmd PRIVATE membrane_adaptive_cmd
+    membrane_runtime_adapters membrane_product_cli membrane_cpp_httplib)
+  target_include_directories(test_adaptive_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${CMAKE_SOURCE_DIR}/tools/membrane-run
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
+    ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+  add_test(NAME test_adaptive_cmd COMMAND test_adaptive_cmd)
 
   # Milestone J: `membrane apply` -- dry-run/consent/stale/rollback/audit
   # behavior against in-process mock native and Ollama servers (no real

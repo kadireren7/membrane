@@ -3,6 +3,7 @@
 
 # include <cstdint>
 # include <string>
+# include <vector>
 
 /*
  * Mega Phase B, PR B1: a small, persistent server config -- Section 8 of
@@ -51,6 +52,29 @@ bool	membrane_server_overrides_equal(const membrane_server_overrides_t &a,
 std::string	membrane_server_overrides_validate(
 			const membrane_server_overrides_t &o);
 
+/*
+ * Milestone K: the persisted adaptive-runtime policy (docs/adaptive-
+ * runtime.md). OPT-IN: a missing block, or enabled=false, means adaptive
+ * control does nothing. Written by `membrane adaptive enable|disable`,
+ * never required to be hand-edited. Value semantics (mode names, class
+ * names, ranges) are validated by adaptive.h when the controller builds
+ * its policy; here only the JSON types are checked, and a bad type fails
+ * the whole load (fail closed).
+ */
+typedef struct s_membrane_server_adaptive
+{
+	bool		present = false;
+	bool		enabled = false;
+	std::string	mode = "recommend";			/* observe|recommend|apply */
+	std::string	runtime = "membrane-native";
+	int32_t		interval_s = 30;
+	int32_t		cooldown_s = 600;
+	std::vector<std::string>	allow = {"context", "kv_precision"};
+	std::string	min_pressure = "warning";
+	int32_t		max_actions_per_window = 2;
+	bool		auto_restore = false;
+}	membrane_server_adaptive_t;
+
 typedef struct s_membrane_server_config
 {
 	int32_t		schema_version;		/* == 1 today */
@@ -65,6 +89,7 @@ typedef struct s_membrane_server_config
 									 * exists yet to consult it */
 	membrane_server_overrides_t	overrides;	/* Milestone J; absent = all
 									 * automatic */
+	membrane_server_adaptive_t	adaptive;	/* Milestone K; absent = off */
 }	membrane_server_config_t;
 
 typedef struct s_membrane_server_config_error

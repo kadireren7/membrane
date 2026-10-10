@@ -5,6 +5,9 @@
 # include <string>
 # include <vector>
 
+# include <nlohmann/json.hpp>
+
+# include "action.h"
 # include "memory_intelligence.h"
 # include "plan_cmd.h"
 
@@ -59,6 +62,45 @@ int	membrane_apply_cmd_dispatch_ex(const std::vector<std::string> &args,
 		bool want_json, const membrane_apply_io_t &io);
 int	membrane_apply_cmd_dispatch(const std::vector<std::string> &args,
 		bool want_json);
+
+/*
+ * Milestone K: the non-printing entry the adaptive controller uses. It runs
+ * EXACTLY the pipeline `membrane apply --yes` runs after consent -- live
+ * read, Planner v2 validation of SET_* values, the J compiler, the
+ * stale-plan guards, the transaction engine, rollback and the audit
+ * record -- so adaptive control has no mutation path of its own. The
+ * caller supplies consent by policy (mode = apply); `source` and
+ * `audit_extra` (reason chain) are written into the audit record.
+ */
+typedef struct s_membrane_apply_request
+{
+	std::string					runtime;
+	membrane_action_request_t	req;
+	std::string					source = "user";
+	nlohmann::json				audit_extra = nlohmann::json::object();
+}	membrane_apply_request_t;
+
+typedef struct s_membrane_apply_outcome
+{
+	bool			runtime_reachable = false;
+	bool			attempted = false;		/* a mutation was attempted */
+	bool			applied = false;		/* status == applied */
+	std::string		status;					/* membrane_apply_status_name */
+	std::string		detail;
+	size_t			action_count = 0;
+	nlohmann::json	report = nlohmann::json::object();
+}	membrane_apply_outcome_t;
+
+/* false (with *err) only if the request could not even be set up (unknown
+ * runtime, unreadable state). A refused / stale / failed apply returns
+ * true with the outcome describing it. */
+bool	membrane_apply_execute(const membrane_apply_request_t &r,
+			const membrane_apply_io_t &io, membrane_apply_outcome_t *out,
+			std::string *err);
+bool	membrane_apply_read_live(const std::string &runtime,
+			membrane_apply_live_t *live, std::string *err);
+bool	membrane_apply_surface(const std::string &runtime,
+			membrane_apply_surface_t *surface);
 
 /* Resolves the local audit log path: MEMBRANE_APPLY_AUDIT_PATH, else
  * $XDG_STATE_HOME/membrane/actions.jsonl, else

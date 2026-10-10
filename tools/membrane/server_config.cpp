@@ -129,6 +129,67 @@ static std::string	overrides_from_json(const json &j,
 	return (membrane_server_overrides_validate(*o));
 }
 
+static json	adaptive_to_json(const membrane_server_adaptive_t &a)
+{
+	json	j;
+
+	j["enabled"] = a.enabled;
+	j["mode"] = a.mode;
+	j["runtime"] = a.runtime;
+	j["interval_s"] = a.interval_s;
+	j["cooldown_s"] = a.cooldown_s;
+	j["allow"] = a.allow;
+	j["min_pressure"] = a.min_pressure;
+	j["max_actions_per_window"] = a.max_actions_per_window;
+	j["auto_restore"] = a.auto_restore;
+	return (j);
+}
+
+/* Type-checks only; "" on success. */
+static std::string	adaptive_from_json(const json &j,
+						membrane_server_adaptive_t *a)
+{
+	*a = membrane_server_adaptive_t();
+	if (!j.is_object())
+		return ("adaptive must be an object");
+	a->present = true;
+	for (auto it = j.begin(); it != j.end(); ++it)
+	{
+		const std::string	&k = it.key();
+		const json			&v = it.value();
+
+		if (k == "enabled" && v.is_boolean())
+			a->enabled = v.get<bool>();
+		else if (k == "mode" && v.is_string())
+			a->mode = v.get<std::string>();
+		else if (k == "runtime" && v.is_string())
+			a->runtime = v.get<std::string>();
+		else if (k == "min_pressure" && v.is_string())
+			a->min_pressure = v.get<std::string>();
+		else if (k == "interval_s" && v.is_number_integer())
+			a->interval_s = v.get<int32_t>();
+		else if (k == "cooldown_s" && v.is_number_integer())
+			a->cooldown_s = v.get<int32_t>();
+		else if (k == "max_actions_per_window" && v.is_number_integer())
+			a->max_actions_per_window = v.get<int32_t>();
+		else if (k == "auto_restore" && v.is_boolean())
+			a->auto_restore = v.get<bool>();
+		else if (k == "allow" && v.is_array())
+		{
+			a->allow.clear();
+			for (const auto &e : v)
+			{
+				if (!e.is_string())
+					return ("adaptive.allow must be an array of strings");
+				a->allow.push_back(e.get<std::string>());
+			}
+		}
+		else
+			return ("adaptive." + k + " is unknown or has a bad type");
+	}
+	return ("");
+}
+
 membrane_server_config_t	membrane_server_config_defaults(void)
 {
 	membrane_server_config_t	cfg;
@@ -218,6 +279,18 @@ bool	membrane_server_config_load(const std::string &path,
 			return (false);
 		}
 	}
+	if (root.contains("adaptive"))
+	{
+		std::string	why = adaptive_from_json(root["adaptive"], &out->adaptive);
+
+		if (!why.empty())
+		{
+			err->set = true;
+			err->code = "INVALID_ADAPTIVE";
+			err->message = std::string("'") + path + "': " + why;
+			return (false);
+		}
+	}
 	return (true);
 }
 
@@ -246,6 +319,8 @@ bool	membrane_server_config_save(const std::string &path,
 		}
 		root["overrides"] = overrides_to_json(cfg.overrides);
 	}
+	if (cfg.adaptive.present)
+		root["adaptive"] = adaptive_to_json(cfg.adaptive);
 
 	membrane_fs_error_t	fs_err;
 

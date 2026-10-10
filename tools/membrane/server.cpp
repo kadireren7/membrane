@@ -34,6 +34,7 @@
 #include "chat_finish_reason.h"
 #include "fs_util.h"
 #include "server_config.h"
+#include "adaptive_controller.h"
 
 #include <sys/stat.h>
 
@@ -2571,6 +2572,14 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	svr.Post("/membrane/v1/models/unload", [&](const httplib::Request &rq,
 			httplib::Response &rs)
 		{ handle_unload_model(&state, rq, rs); });
+	/* Milestone K: the (opt-in, off by default) adaptive controller lives in
+	 * THIS process -- one owner of runtime state. Its status is exposed on
+	 * the same loopback admin namespace; it is read-only. */
+	membrane_adaptive_controller_t	adaptive(membrane_adaptive_default_deps());
+
+	svr.Get("/membrane/v1/adaptive", [&](const httplib::Request &,
+			httplib::Response &rs)
+		{ rs.set_content(adaptive.status_json().dump(), "application/json"); });
 	svr.Get("/membrane/v1/capabilities", [&](const httplib::Request &rq,
 			httplib::Response &rs) { handle_capabilities(&state, rq, rs); });
 
@@ -2605,6 +2614,7 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 	 * an instrumented build) but the process never exited. httplib's own
 	 * wait_until_ready() is the correct, race-free primitive for this. */
 	svr.wait_until_ready();
+	adaptive.start();
 	while (!g_stop_requested.load() && svr.is_running())
 	{
 		struct timespec	ts = {0, 100000000L};	/* 100ms poll -- Section
@@ -2613,6 +2623,8 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 
 		nanosleep(&ts, NULL);
 	}
+	adaptive.stop();		/* before the listener and the models go away: the
+							 * controller talks to this very server */
 	svr.stop();
 	if (listener.joinable())
 		listener.join();	/* Mega Phase E, PR E4, Section 6/29 of the

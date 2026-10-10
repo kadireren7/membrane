@@ -168,6 +168,9 @@ typedef struct s_membrane_apply_resident
 	int			pinned;
 	int			generating;
 	uint64_t	size_bytes;		/* estimated or reported; 0 = unknown */
+	int			gpu_layers_known;	/* load-time GPU layers the runtime
+								 * reports for this model */
+	int			gpu_layers;
 }	membrane_apply_resident_t;
 
 /* Live control-relevant state of one runtime (what is true NOW). */

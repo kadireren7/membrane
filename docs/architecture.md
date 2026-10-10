@@ -225,3 +225,23 @@ to 512 concurrent sequences with real shared-resource contention (link,
 device, quant-engine queues), never re-touching the raw trace. The
 predictor's precision/recall is measured against ground truth every step
 — it is never assumed correct.
+
+## E. Product control loop (Milestones G-K)
+
+The product layer sits above the research stack and is a strictly layered,
+mostly pure pipeline:
+
+```
+plan      Planner v2 (membrane_plan_t)                    read-only
+observe   provenance-labeled snapshot (observation.h)      read-only
+advise    findings + recommendations (memory_intelligence) read-only, pure
+apply     action compiler + transaction engine (action.h)  mutating, explicit
+adapt     policy/history/decision (adaptive.h) + one controller thread
+          inside `membrane serve`; its only mutation path is `apply`
+```
+
+Each layer consumes the one above's output and never recomputes it; each pure
+layer (`memory_intelligence`, `action`, `adaptive`) is llama-free, takes time
+and state as parameters, and is unit-tested with synthetic fixtures. See
+[observability.md](observability.md), [memory-intelligence.md](memory-intelligence.md),
+[active-control.md](active-control.md) and [adaptive-runtime.md](adaptive-runtime.md).
