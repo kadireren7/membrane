@@ -1,5 +1,11 @@
 # Memory intelligence (Milestone I3)
 
+> **Productization update:** `membrane advise` now prints a short view by
+> default (status, main finding, recommended action, why); the full findings
+> list described below is `membrane advise --verbose`. `--json` is
+> unchanged. Applying advice is a separate, explicit step:
+> [active-control.md](active-control.md).
+
 > **MEMBRANE's recommendations are advisory. No configuration is
 > automatically changed.** `membrane advise` never starts/stops a service,
 > loads/unloads/switches a model, changes context/GPU-layers/KV-precision/
@@ -9,7 +15,8 @@
 > and produces findings and recommendations -- text, not action.
 
 This completes Milestone I (`observe` -> facts, `advise` -> interpretation).
-Milestone J, not started, is where MEMBRANE may one day apply anything.
+Milestone J (`membrane apply`, [active-control.md](active-control.md)) is
+where a recommendation can be applied -- only on explicit request.
 
 ## 1. What memory intelligence means
 

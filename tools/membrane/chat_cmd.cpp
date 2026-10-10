@@ -1,4 +1,6 @@
 #include "chat_cmd.h"
+#include "model_resolve.h"
+#include "model_views.h"
 
 #include <cerrno>
 #include <csignal>
@@ -453,9 +455,40 @@ int	membrane_chat_cmd_dispatch(const std::vector<std::string> &args,
 		cfg.port = o.port;
 	if (cfg.default_model.empty())
 	{
+		/* Final productization (P3): no clear default => offer a choice on a
+		 * terminal instead of a dead end. */
+		membrane_resolve_io_t	rio = membrane_resolve_io_for_terminal();
+
+		if (rio.interactive)
+		{
+			std::vector<membrane_model_row_t>	rows;
+
+			membrane_model_rows_installed(&rows, true);
+			if (!rows.empty())
+			{
+				int	pick = membrane_model_pick("Choose a model to chat with",
+						rows, rio);
+
+				if (pick < 0)
+				{
+					printf("Cancelled.\n");
+					return (MEMBRANE_EXIT_CLI_ERROR);
+				}
+				int	rc = membrane_use_cmd_dispatch({rows[(size_t)pick].id},
+						false);
+
+				if (rc != MEMBRANE_EXIT_SUCCESS)
+					return (rc);
+				if (!config_path.empty())
+					membrane_server_config_load(config_path, &cfg, &cfg_err);
+			}
+		}
+	}
+	if (cfg.default_model.empty())
+	{
 		printf("No model is selected.\n\n");
-		printf("Discover available models:\n  membrane model search\n\n");
-		printf("Select one:\n  membrane use MODEL\n");
+		printf("See what is installed:\n  membrane models\n\n");
+		printf("Choose one:\n  membrane use\n");
 		return (MEMBRANE_EXIT_MODEL_ERROR);
 	}
 

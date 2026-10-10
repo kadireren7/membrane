@@ -21,6 +21,46 @@ Three ways to get `membrane-run` installed, easiest first:
 All three produce the same binary behavior; they differ only in how the
 files get onto disk (and, for Option C, whether root is needed at all).
 
+## Which `membrane` am I running? (install, reinstall, upgrade)
+
+A common trap: you build new code, but the shell still runs an older
+`/usr/bin/membrane` from a package. `membrane doctor` reports it:
+
+```
+! [WARN] installation   you are running /home/me/membrane/build/tools/membrane/membrane,
+                        but `membrane` on your PATH is /usr/bin/membrane. Use the one you intend.
+! [WARN] installation   a NEWER build exists in this source tree (...), built 2026-10-11 09:12;
+                        you are running one built 2026-09-10 14:03.
+```
+
+Check by hand: `which -a membrane` (every copy on PATH), `membrane --version`,
+`dpkg -s membrane | grep Version`.
+
+| You are... | Do this |
+|---|---|
+| installing from a release | `sudo apt install ./membrane_<version>_amd64.deb` (Option A). Upgrading is the same command with the newer file; your registry and `server.json` are left untouched. |
+| building from source to **try** it | run the build-tree binary by path: `./build/tools/membrane/membrane` (and `membrane-run` next to it in `build/tools/membrane-run/`). Nothing is installed. |
+| building from source to **replace** the installed one | `cmake --install build --prefix <prefix>` (Option B/C), or build a `.deb` ([below](#building-a-deb-package-yourself)) and `sudo apt install ./that.deb`. Then `membrane doctor` should show no PATH warning. |
+
+There is deliberately no `membrane upgrade` command: it could not honestly
+work across a package manager, a source install and a user-local prefix, and
+a command that guesses which one you have would do harm. `doctor` tells you
+exactly what you have; the table above tells you what to run.
+
+Keep one build directory per configuration you actually use (for example
+`build-cpu`, `build-vulkan`); the doctor looks at every `build*` directory in
+your source tree when it checks for a newer local build.
+
+## GPU backends: Vulkan and CUDA
+
+Vulkan is the broad GPU backend on Linux (NVIDIA, AMD, Intel) and is what the
+official package uses. CUDA is an **optional** NVIDIA-only build; it does not
+replace Vulkan, and NVIDIA users do not need it. A CUDA-linked build on a
+machine without the CUDA runtime fails with
+`error while loading shared libraries: libcudart.so.12`; `membrane doctor`
+names that library and says so -- it is an environment problem, and the fix is
+to install the CUDA runtime or use the Vulkan/CPU build.
+
 ## Option A — install a `.deb` package
 
 **Package policy** (decided Phase 30, `results/release-artifacts/manifest.json`):
@@ -51,7 +91,7 @@ in the README rather than hidden. Once you have a
 `membrane_<version>_amd64.deb` file (downloaded, or built yourself):
 
 ```bash
-sudo apt install ./membrane_0.8.0_amd64.deb
+sudo apt install ./membrane_<version>_amd64.deb
 ```
 
 (`apt install ./file.deb`, not `dpkg -i`, so apt resolves the package's

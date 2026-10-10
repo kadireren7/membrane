@@ -317,6 +317,20 @@ out from under an in-progress generation, and never evicts a pinned one
 — see "Multi-model residency" below for the real selection/eviction
 policy this endpoint now goes through.
 
+### `POST /membrane/v1/models/unload` (Milestone J, internal/admin only)
+
+Body `{"model": NAME}`. Closes ONE resident model through the same slot
+machinery model switching uses. Fail-closed: a pinned model is `409
+MODEL_PINNED`, a model with a generation in flight is `409 MODEL_BUSY`, a
+model that is not resident is `409 MODEL_NOT_RESIDENT` — it never waits and
+never evicts anything else. Loopback admin namespace like activate/pin; used
+by `membrane apply` ([active-control.md](active-control.md)).
+
+### `GET /membrane/v1/adaptive` (Milestone K, internal/admin only)
+
+The adaptive controller's live state (read-only), used by `membrane
+adaptive status` ([adaptive-runtime.md](adaptive-runtime.md)).
+
 ### `POST /membrane/v1/models/pin` / `.../unpin` (PR E2, internal/admin only)
 
 Same admin namespace as `.../activate` above. Body: `{"model": "NAME"}`.
@@ -500,7 +514,9 @@ SSE `data: {"error": {...}}` event — see "Streaming" above.
 | 400 | `CTX_TOO_SMALL_FOR_PROMPT` | the prompt is far larger (raw byte length, a cheap pre-tokenization check) than the model's own real maximum context — rejected before an expensive real tokenization attempt (PR D8, Section 15: a real, disclosed PR D7 finding that an extremely oversized prompt could make the server unresponsive for minutes on a memory-constrained host, root-caused and fixed this phase) |
 | 503 | `MODEL_SWITCH_BUSY` | a switch to a different model was requested, but a request against the currently-loaded model is still decoding and didn't drain within a bounded (~5s) wait (PR E1) — the current model is left fully intact and still serving; retry shortly |
 | 503 | `RESIDENCY_EXHAUSTED` | multi-model residency (PR E2): every resident slot is either pinned or actively generating, so no slot is available to load a not-yet-resident model — see "Multi-model residency" above |
-| 409 | `MODEL_NOT_RESIDENT` | multi-model residency (PR E2): `POST /membrane/v1/models/pin`/`.../unpin` was called for a model that is not currently resident — pin/unpin only applies to an already-loaded model |
+| 409 | `MODEL_NOT_RESIDENT` | multi-model residency (PR E2): `POST /membrane/v1/models/pin`/`.../unpin` (and, Milestone J, `.../unload`) was called for a model that is not currently resident — these only apply to an already-loaded model |
+| 409 | `MODEL_PINNED` | Milestone J: `POST /membrane/v1/models/unload` named a pinned model — never unloaded silently; unpin it first |
+| 409 | `MODEL_BUSY` | Milestone J: `POST /membrane/v1/models/unload` named a model with a generation in flight — refused, never waited on; retry once it is idle |
 
 ## Client integration (PR B4)
 

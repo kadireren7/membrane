@@ -1,4 +1,6 @@
 #include "use_cmd.h"
+#include "model_resolve.h"
+#include "model_views.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -118,12 +120,8 @@ static bool	parse_use_args(const std::vector<std::string> &args,
 			return (false);
 		}
 	}
-	if (o->name.empty())
-	{
-		*err = "usage: membrane use MODEL [--quant QUANT] [--yes]";
-		return (false);
-	}
-	return (true);
+	return (true);			/* an empty name opens the picker (a terminal) or
+							 * explains what to do (no terminal) */
 }
 
 static bool	doctor_gpu_available(void)
@@ -212,6 +210,75 @@ int	membrane_use_cmd_dispatch(const std::vector<std::string> &args,
 	{
 		print_err(want_json, reg_err.code, reg_err.message);
 		return (MEMBRANE_EXIT_MODEL_ERROR);
+	}
+
+	/* Final productization (P3/P4). No model named: pick one on a terminal.
+	 * A name that matches nothing exactly: match it forgivingly (prefix,
+	 * substring, typo) but NEVER act on a guess without the user confirming
+	 * it -- `use` can download and load. */
+	{
+		membrane_resolve_io_t	rio = membrane_resolve_io_for_terminal();
+
+		rio.interactive = rio.interactive && !want_json;
+		if (o.name.empty())
+		{
+			std::vector<membrane_model_row_t>	rows;
+			std::string							title = "Installed models";
+
+			membrane_model_rows_installed(&rows, true);
+			if (rows.empty())
+			{
+				membrane_model_rows_catalog(&rows);
+				title = "Models you can install";
+			}
+			if (!rio.interactive)
+			{
+				std::string	msg = "no model given. Usage: membrane use MODEL "
+					"[--quant QUANT] [--yes]. ";
+
+				msg += rows.empty() ? "Nothing to choose from." : "Run it "
+					"on a terminal to pick from a list, or name one of: ";
+				for (size_t i = 0; i < rows.size() && i < 6; ++i)
+					msg += (i ? ", " : "") + rows[i].id;
+				print_err(want_json, "CLI_ERROR", msg);
+				return (MEMBRANE_EXIT_CLI_ERROR);
+			}
+			int	pick = membrane_model_pick(title, rows, rio);
+
+			if (pick < 0)
+			{
+				printf("Cancelled. Nothing was changed.\n");
+				return (MEMBRANE_EXIT_CLI_ERROR);
+			}
+			o.name = rows[(size_t)pick].id;
+		}
+		else if (membrane_registry_find(reg, o.name) == NULL)
+		{
+			membrane_catalog_t	cat0 = membrane_catalog_load();
+
+			if (membrane_catalog_resolve(cat0, o.name) == NULL)
+			{
+				std::vector<membrane_model_cand_t>	cands
+					= membrane_model_candidates(true);
+				membrane_resolve_result_t			rr
+					= membrane_model_resolve(o.name, cands, "membrane use",
+						rio);
+
+				if (rr.status == MEMBRANE_RESOLVE_EXACT
+					|| rr.status == MEMBRANE_RESOLVE_CONFIRMED)
+					o.name = rr.id;
+				else if (rr.status == MEMBRANE_RESOLVE_DECLINED)
+				{
+					printf("Cancelled. Nothing was changed.\n");
+					return (MEMBRANE_EXIT_CLI_ERROR);
+				}
+				else if (rr.status == MEMBRANE_RESOLVE_NEEDS_CHOICE)
+				{
+					print_err(want_json, "AMBIGUOUS_MODEL", rr.message);
+					return (MEMBRANE_EXIT_CLI_ERROR);
+				}
+			}
+		}
 	}
 
 	/* Section 23: resolution precedence -- (1) an exact, already-
@@ -489,7 +556,19 @@ int	membrane_use_cmd_dispatch(const std::vector<std::string> &args,
 	if (currently_active)
 	{
 		result["active_model"] = resolved_name;
-		result["backend"] = status_json.value("backend", std::string("?"));
+		{
+			/* the backend is a per-resident-model fact in /v1/status
+			 * (resident_models[].backend), not a top-level field -- the
+			 * old top-level read always printed "?" */
+			std::string	backend = "unknown";
+
+			if (status_json.contains("resident_models")
+				&& status_json["resident_models"].is_array())
+				for (const auto &m : status_json["resident_models"])
+					if (m.value("model", std::string()) == resolved_name)
+						backend = m.value("backend", std::string("unknown"));
+			result["backend"] = backend;
+		}
 		result["result"] = "already_active";
 		if (want_json)
 			printf("%s\n", result.dump().c_str());

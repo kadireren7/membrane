@@ -747,12 +747,26 @@ static void	test_real_empty_env_read_only(void)
 		"no service unit directory created");
 
 	/* Human mode also succeeds and prints no recommendation section. */
-	out = capture_dispatch({}, false, &rc);
+	out = capture_dispatch({"--verbose"}, false, &rc);
 	TEST_ASSERT(rc == MEMBRANE_EXIT_SUCCESS, "human mode exits 0");
 	TEST_ASSERT(out.find("Observation") != std::string::npos
 		&& out.find("[measured]") != std::string::npos, "human output");
 	TEST_ASSERT(out.find("ecommend") == std::string::npos,
 		"no recommendations in I1");
+	/* P9: the default human output is the compact status screen */
+	out = capture_dispatch({}, false, &rc);
+	TEST_ASSERT(rc == MEMBRANE_EXIT_SUCCESS && out.find("System")
+			!= std::string::npos && out.find("Runtime") != std::string::npos
+		&& out.find("Model") != std::string::npos
+		&& out.find("Memory") != std::string::npos
+		&& out.find("Health") != std::string::npos
+		&& out.find("observe --verbose") != std::string::npos,
+		"compact status screen: System / Runtime / Model / Memory / Health");
+	TEST_ASSERT(out.find("[measured]") == std::string::npos
+		&& out.find('\033') == std::string::npos, "no provenance wall, no "
+			"ANSI in redirected output");
+	TEST_ASSERT(out.find("ecommend") == std::string::npos,
+		"still no recommendations");
 }
 
 /* L + M + K: a reachable mock native server with a resident model --

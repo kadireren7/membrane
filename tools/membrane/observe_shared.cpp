@@ -1,4 +1,5 @@
 #include "observe_shared.h"
+#include "ui.h"
 
 #include <cstdio>
 
@@ -372,4 +373,142 @@ void	membrane_observe_print_human(const membrane_observation_snapshot_t &s)
 	printf("\nHeadroom (raw, no reserve subtracted)\n");
 	line_u64("RAM:", s.ram_headroom_bytes, true);
 	line_u64("VRAM:", s.vram_headroom_bytes, true);
+}
+
+/* ---- P9: the compact status screen ------------------------------------ */
+
+static std::string	pct_of(const membrane_obs_u64_t &part,
+					const membrane_obs_u64_t &whole)
+{
+	char	buf[16];
+
+	if (!part.known || !whole.known || whole.value == 0)
+		return ("");
+	snprintf(buf, sizeof(buf), "%.0f%%", 100.0 * (double)part.value
+		/ (double)whole.value);
+	return (buf);
+}
+
+static std::string	short_bytes(uint64_t b)
+{
+	char	buf[32];
+
+	if (b >= (1ull << 30))
+		snprintf(buf, sizeof(buf), "%.1f GiB", (double)b / (double)(1ull << 30));
+	else
+		snprintf(buf, sizeof(buf), "%.0f MiB", (double)b / (double)(1ull << 20));
+	return (buf);
+}
+
+static std::string	unknown_text(void)
+{
+	return (membrane_ui_paint(MEMBRANE_UI_DIM, "unknown"));
+}
+
+static const char	*prov_tag(const membrane_obs_u64_t &f)
+{
+	return (f.provenance == MEMBRANE_OBS_PROV_ESTIMATED ? " (estimate)" : "");
+}
+
+void	membrane_observe_print_status(const membrane_observation_snapshot_t &s)
+{
+	size_t	known;
+	size_t	total;
+
+	membrane_obs_snapshot_count(&s, &known, &total);
+	printf("%s\n", membrane_ui_paint(MEMBRANE_UI_BOLD, "System").c_str());
+	if (!s.runtime_observable)
+	{
+		printf("  The %s runtime is unavailable: it could not be observed.\n",
+			s.runtime_id);
+		printf("\nNext:\n  membrane serve                start the local "
+			"server\n  membrane doctor               find out what is "
+			"wrong\n");
+		return ;
+	}
+	if (s.ram_total_bytes.known)
+		printf("  %-9s %s total, %s available (%s)\n", "Memory",
+			short_bytes(s.ram_total_bytes.value).c_str(),
+			s.ram_available_bytes.known
+				? short_bytes(s.ram_available_bytes.value).c_str() : "?",
+			pct_of(s.ram_available_bytes, s.ram_total_bytes).c_str());
+	else
+		printf("  %-9s %s\n", "Memory", unknown_text().c_str());
+	if (s.gpu_device_count.known && s.gpu_device_count.value > 0)
+		printf("  %-9s %s (%s), %s total, %s free\n", "GPU",
+			s.gpu_device_description.known ? s.gpu_device_description.value
+				: s.gpu_device_name.known ? s.gpu_device_name.value : "?",
+			s.gpu_backend.known ? s.gpu_backend.value : "?",
+			s.vram_total_bytes.known
+				? short_bytes(s.vram_total_bytes.value).c_str() : "?",
+			s.vram_free_bytes.known
+				? short_bytes(s.vram_free_bytes.value).c_str() : "?");
+	else
+		printf("  %-9s %s\n", "GPU", membrane_ui_paint(MEMBRANE_UI_DIM,
+			"none detected (CPU only)").c_str());
+	printf("\n%s\n", membrane_ui_paint(MEMBRANE_UI_BOLD, "Runtime").c_str());
+	printf("  %-9s %s\n", "Runtime", s.runtime_id);
+	printf("  %-9s %s%s%s\n", "Server", s.server_reachable.known
+		&& s.server_reachable.value ? membrane_ui_paint(MEMBRANE_UI_OK,
+			"running").c_str() : membrane_ui_paint(MEMBRANE_UI_DIM,
+			s.server_reachable.known ? "not running" : "unknown").c_str(),
+		s.server_endpoint.known ? "  " : "", s.server_endpoint.known
+			? membrane_ui_paint(MEMBRANE_UI_DIM, s.server_endpoint.value)
+				.c_str() : "");
+	if (s.service_installed.known)
+		printf("  %-9s %s\n", "Service", s.service_installed.value
+			? (s.service_active.known && s.service_active.value
+				? "installed, active" : "installed, stopped")
+			: "not installed");
+	printf("\n%s\n", membrane_ui_paint(MEMBRANE_UI_BOLD, "Model").c_str());
+	printf("  %-9s %s\n", "Default", s.configured_model.known
+		? s.configured_model.value : "none selected");
+	if (s.resident_model_count.known && s.resident_model_count.value > 0)
+		for (size_t i = 0; i < s.resident_model_len; ++i)
+		{
+			const membrane_obs_resident_model_t	&r = s.resident_models[i];
+
+			printf("  %-9s %s", i ? "" : "Loaded", r.name.known
+				? r.name.value : "?");
+			if (r.backend.known)
+				printf("  (%s", r.backend.value);
+			if (r.kv_precision.known)
+				printf("%s KV %s", r.backend.known ? "," : "  (",
+					r.kv_precision.value);
+			if (r.backend.known || r.kv_precision.known)
+				printf(")");
+			printf("\n");
+		}
+	else
+		printf("  %-9s %s\n", "Loaded", membrane_ui_paint(MEMBRANE_UI_DIM,
+			s.resident_model_count.known ? "nothing loaded right now"
+				: "unknown").c_str());
+	if (s.context_planned.known)
+		printf("  %-9s planned %llu%s%s\n", "Context",
+			(unsigned long long)s.context_planned.value,
+			prov_tag(s.context_planned), s.context_model_max.known
+				? (", model maximum " + std::to_string(
+					(unsigned long long)s.context_model_max.value)).c_str()
+				: "");
+	if (s.kv_planned_precision.known)
+		printf("  %-9s planned %s%s%s\n", "KV cache",
+			s.kv_planned_precision.value, s.kv_estimated_bytes.known
+			? (", about " + short_bytes(s.kv_estimated_bytes.value)
+				+ " (estimate, not live usage)").c_str() : "", "");
+	printf("\n%s\n", membrane_ui_paint(MEMBRANE_UI_BOLD, "Memory").c_str());
+	printf("  %-9s %s free of %s\n", "RAM", s.ram_headroom_bytes.known
+		? short_bytes(s.ram_headroom_bytes.value).c_str() : "?",
+		s.ram_total_bytes.known ? short_bytes(s.ram_total_bytes.value).c_str()
+			: "?");
+	if (s.vram_total_bytes.known)
+		printf("  %-9s %s free of %s\n", "VRAM", s.vram_headroom_bytes.known
+			? short_bytes(s.vram_headroom_bytes.value).c_str() : "?",
+			short_bytes(s.vram_total_bytes.value).c_str());
+	printf("\n%s\n", membrane_ui_paint(MEMBRANE_UI_BOLD, "Health").c_str());
+	printf("  %-9s %s -- %zu of %zu facts known; the rest are shown as "
+		"\"unknown\", never as 0\n", "Telemetry",
+		s.status == MEMBRANE_OBS_STATUS_COMPLETE ? "complete" : "partial",
+		known, total);
+	printf("\nNext:\n  membrane advise               what these numbers "
+		"mean\n  membrane observe --verbose    every fact, with its source\n");
 }

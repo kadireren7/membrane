@@ -550,6 +550,7 @@ int	membrane_observe_cmd_dispatch(const std::vector<std::string> &args,
 			bool want_json)
 {
 	std::string	runtime_id = MEMBRANE_RUNTIME_ID_NATIVE;
+	bool		verbose = false;
 
 	for (size_t i = 0; i < args.size(); ++i)
 	{
@@ -558,9 +559,14 @@ int	membrane_observe_cmd_dispatch(const std::vector<std::string> &args,
 			runtime_id = args[++i];
 			continue ;
 		}
+		if (args[i] == "--verbose" || args[i] == "-v")
+		{
+			verbose = true;
+			continue ;
+		}
 		print_err(want_json, "CLI_ERROR", "unknown option '" + args[i]
 			+ "' -- usage: membrane observe [--runtime membrane-native] "
-			"[--json]");
+			"[--verbose] [--json]");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
 	std::unique_ptr<membrane_observation_snapshot_t>	s(
@@ -598,8 +604,10 @@ int	membrane_observe_cmd_dispatch(const std::vector<std::string> &args,
 	}
 	if (want_json)
 		printf("%s\n", membrane_observe_snapshot_json(*s).dump().c_str());
-	else
+	else if (verbose)
 		membrane_observe_print_human(*s);
+	else
+		membrane_observe_print_status(*s);
 	return (s->status == MEMBRANE_OBS_STATUS_UNAVAILABLE
 		? MEMBRANE_EXIT_RUNTIME_ERROR : MEMBRANE_EXIT_SUCCESS);
 }

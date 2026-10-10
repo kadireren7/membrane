@@ -41,7 +41,7 @@ Face repository — never scraped, never anonymous. Each family records:
   documents exactly how: a real `?blobs=true` API call for filenames/
   sizes/checksums, a real `curl -sIL` for the resolved download URL).
 
-This phase's catalog covers 3 families (SmolLM2-135M-Instruct,
+This catalog now covers 9 families -- see "Categories" below. The original 3 (SmolLM2-135M-Instruct,
 SmolLM2-360M-Instruct, Qwen2.5-1.5B-Instruct) — models this project
 already has real compatibility evidence for
 (`docs/compatibility.json`). Broader family expansion (Mistral, Phi,
@@ -126,3 +126,39 @@ repo, real SHA-256 match, real GGUF validation, real idempotent re-run
 (skips the download, re-verifies checksum), real corruption detection
 (a same-size, tampered file is refused, never silently accepted), and
 real uninstall (file + registry entry both removed).
+
+
+## Categories, evidence labels and recommendations (productization pass)
+
+Every family carries `tags`, a plain `purpose`, a license, and a
+`tested_status`:
+
+| `tested_status` | Meaning |
+|---|---|
+| `validated` | MEMBRANE has a compatibility-matrix row and real runs for it |
+| `smoke-tested` | loaded and answered a chat on a real host, no more |
+| `metadata-only` | listed from upstream metadata (sizes, SHA-256, license verified against the Hugging Face API on the recorded date); **never run by MEMBRANE** |
+
+A tag such as `multilingual` or `long-context` is **the upstream card's
+claim**, not a MEMBRANE measurement, and the `purpose` text says so. Nothing
+here claims model quality.
+
+| Category | Families |
+|---|---|
+| tiny / smoke test | SmolLM2-135M-Instruct, SmolLM2-360M-Instruct, Qwen2.5-0.5B-Instruct |
+| general chat | Qwen2.5-1.5B-Instruct, Llama-3.2-1B-Instruct, Gemma-2-2B-it, Phi-3.5-mini-instruct |
+| multilingual (per upstream) | Qwen2.5 family, Llama-3.2-1B, Phi-3.5-mini |
+| coding | Qwen2.5-Coder-1.5B-Instruct |
+| reasoning | DeepSeek-R1-Distill-Qwen-1.5B |
+| long context (per upstream) | Llama-3.2-1B, Phi-3.5-mini |
+
+Sizes are deliberately modest (the largest default download is about
+2.4 GB). Licenses differ (Apache-2.0, MIT, the Llama 3.2 Community License,
+Gemma Terms of Use): the catalog shows each one; you accept the model's
+license, not MEMBRANE's.
+
+`membrane models recommend` combines **measured** RAM, the variant selector's
+fit check, and these labels. "Expected fit" compares file size with available
+RAM (an estimate; KV cache not included). Within a category it suggests the
+validated model first, then the largest variant that still fits comfortably --
+a stated rule, not a quality ranking.

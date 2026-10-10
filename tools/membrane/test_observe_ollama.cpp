@@ -700,10 +700,14 @@ static void	test_end_to_end_one_model(void)
 	TEST_ASSERT(j["context"]["active"]["value"] == 4096, "top-level active "
 		"context filled for the single loaded model");
 
-	out = capture_dispatch({"--runtime", "ollama"}, false, &rc);
+	out = capture_dispatch({"--runtime", "ollama", "--verbose"}, false, &rc);
 	TEST_ASSERT(out.find("qwen2.5:7b") != std::string::npos
 		&& out.find("runtime_reported") != std::string::npos,
-		"human output shows the model and its provenance");
+		"verbose human output shows the model and its provenance");
+	out = capture_dispatch({"--runtime", "ollama"}, false, &rc);
+	TEST_ASSERT(out.find("qwen2.5:7b") != std::string::npos
+		&& out.find("runtime_reported") == std::string::npos,
+		"compact human output shows the model without the provenance wall");
 }
 
 static void	test_malformed_ps_non2xx_oversized(void)

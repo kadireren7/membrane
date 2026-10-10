@@ -24,6 +24,7 @@
 #include "runtime_ollama.h"
 #include "server_config.h"
 #include "status_client.h"
+#include "ui.h"
 
 using json = nlohmann::json;
 
@@ -837,10 +838,69 @@ static json	report_json(const apply_report_t &r)
 	return (j);
 }
 
+/* P11: mutation is never shown as an innocuous green tick. The headline
+ * says in words which of these it is: a dry run, a change that was made, a
+ * partial change, a rollback, or a failure -- and green is used only when
+ * every requested change was made. */
+static void	print_headline(const apply_report_t &r)
+{
+	std::string	text;
+	membrane_ui_style_t	st = MEMBRANE_UI_DIM;
+
+	if (r.dry_run)
+	{
+		if (r.plan.action_count == 0)
+			text = "Nothing to apply.";
+		else
+		{
+			text = "DRY RUN: nothing was changed. These changes WOULD be "
+				"made with --yes.";
+			st = MEMBRANE_UI_INFO;
+		}
+	}
+	else if (r.status == "applied")
+	{
+		text = "CHANGED: " + std::to_string(r.plan.action_count)
+			+ " change(s) were made to the running system.";
+		st = MEMBRANE_UI_OK;
+	}
+	else if (r.status == "partially_applied")
+	{
+		text = "PARTLY APPLIED: some changes were made and could not be "
+			"undone (listed below).";
+		st = MEMBRANE_UI_WARN;
+	}
+	else if (r.status == "rolled_back")
+	{
+		text = "ROLLED BACK: a step failed and every change was undone. "
+			"Nothing is changed.";
+		st = MEMBRANE_UI_WARN;
+	}
+	else if (r.status == "rollback_failed")
+	{
+		text = "COULD NOT FULLY UNDO: a step failed and an undo failed too. "
+			"Check the state below by hand.";
+		st = MEMBRANE_UI_ERR;
+	}
+	else if (r.status == "stale_precondition")
+	{
+		text = "NOT APPLIED: the situation changed since this was planned. "
+			"Nothing was changed.";
+		st = MEMBRANE_UI_WARN;
+	}
+	else if (r.status == "failed" || r.status == "refused")
+	{
+		text = "COULD NOT APPLY. Nothing was changed.";
+		st = MEMBRANE_UI_ERR;
+	}
+	else
+		text = "Nothing to apply.";
+	printf("%s\n", membrane_ui_paint(st, text).c_str());
+}
+
 static void	print_human(const apply_report_t &r)
 {
-	printf("Apply (%s)\n", r.dry_run ? "dry run -- nothing was changed"
-		: "executed");
+	print_headline(r);
 	printf("  Runtime: %s\n", r.runtime.c_str());
 	for (size_t i = 0; i < r.recs.size(); ++i)
 		printf("  Recommendation: %s (%s)\n",
@@ -852,17 +912,40 @@ static void	print_human(const apply_report_t &r)
 	for (size_t i = 0; i < r.plan.action_count; ++i)
 	{
 		const membrane_action_t	&a = r.plan.actions[i];
+		std::string				tag = "will change";
 
-		printf("  %zu. %s\n", i + 1, a.summary);
+		if (r.attempted)
+		{
+			switch (r.result.outcome[i])
+			{
+				case MEMBRANE_OUTCOME_APPLIED:
+					tag = membrane_ui_paint(MEMBRANE_UI_OK, "changed");
+					break ;
+				case MEMBRANE_OUTCOME_ROLLED_BACK:
+					tag = membrane_ui_paint(MEMBRANE_UI_WARN, "rolled back");
+					break ;
+				case MEMBRANE_OUTCOME_FAILED:
+					tag = membrane_ui_paint(MEMBRANE_UI_ERR, "FAILED");
+					break ;
+				case MEMBRANE_OUTCOME_ROLLBACK_FAILED:
+					tag = membrane_ui_paint(MEMBRANE_UI_ERR,
+						"UNDO FAILED");
+					break ;
+				default:
+					tag = membrane_ui_paint(MEMBRANE_UI_DIM, "not run");
+					break ;
+			}
+		}
+		else
+			tag = membrane_ui_paint(MEMBRANE_UI_INFO, tag);
+		printf("  %zu. [%s] %s\n", i + 1, tag.c_str(), a.summary);
 		printf("      Risk: %s | reversible: %s | origin: %s\n",
 			membrane_action_risk_name(a.risk), a.reversible ? "yes" : "no",
 			membrane_action_origin_name(a.origin));
 		if (a.reason[0])
 			printf("      Why: %s\n", a.reason);
-		if (r.attempted)
-			printf("      Result: %s%s%s\n", membrane_action_outcome_name(
-					r.result.outcome[i]), r.result.error[i][0] ? " -- " : "",
-				r.result.error[i]);
+		if (r.attempted && r.result.error[i][0])
+			printf("      Error: %s\n", r.result.error[i]);
 	}
 	if (r.plan.unapplied_count > 0)
 		printf("\nNot applied (advisory only)\n");
@@ -874,7 +957,9 @@ static void	print_human(const apply_report_t &r)
 	printf("\nStatus: %s%s%s\n", r.status.c_str(),
 		r.detail.empty() ? "" : " -- ", r.detail.c_str());
 	if (r.dry_run && r.plan.action_count > 0)
-		printf("Nothing was changed. Re-run with --yes to apply.\n");
+		printf("Next: re-run with --yes to apply, or change the request.\n");
+	else if (r.dry_run)
+		printf("Next: membrane advise   to see what could be improved.\n");
 }
 
 /* ------------------------------------------------------------------ */

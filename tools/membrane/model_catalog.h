@@ -81,6 +81,18 @@ typedef struct s_membrane_catalog_family
 								 * NOT_YET_VALIDATED vocabulary */
 	std::string	compatibility_evidence;	/* pointer to the real evidence,
 								 * e.g. "docs/compatibility.json MC-01" */
+	/* Final productization (P6): what the model is FOR and how much MEMBRANE
+	 * actually knows about it. Never a quality claim by reputation. */
+	std::vector<std::string>	tags;		/* e.g. tiny, general, coding,
+								 * reasoning, multilingual, long-context --
+								 * "per the upstream card" unless MEMBRANE
+								 * itself validated it */
+	std::string	purpose;		/* one or two plain sentences */
+	std::string	tested_status;	/* "validated" (docs/compatibility.json
+								 * row + real runs), "smoke-tested" (loaded
+								 * and answered a chat on a real host), or
+								 * "metadata-only" (listed, never run by
+								 * MEMBRANE) */
 	std::string	recorded_at;	/* ISO8601 date this entry's sizes/
 								 * license were last verified against
 								 * the real upstream repo */

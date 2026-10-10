@@ -12,6 +12,7 @@
 #include "observe_ollama.h"
 #include "product_cli.h"
 #include "runtime_capabilities.h"
+#include "ui.h"
 
 using json = nlohmann::json;
 
@@ -154,6 +155,77 @@ static void	print_human(const membrane_memory_intelligence_t &r)
 	}
 }
 
+/* P10: lead with what matters -- status, the main finding, the one thing to
+ * do, why -- not thirty lines. --verbose keeps the full report. */
+static void	print_status_view(const membrane_memory_intelligence_t &r)
+{
+	const char	*st = membrane_intel_status_name(r.status);
+	std::string	word = r.status == MEMBRANE_INTEL_STATUS_OK ? "Healthy"
+		: r.status == MEMBRANE_INTEL_STATUS_NOTICE ? "Healthy (with a notice)"
+		: r.status == MEMBRANE_INTEL_STATUS_WARNING ? "Warning"
+		: r.status == MEMBRANE_INTEL_STATUS_CRITICAL ? "Critical"
+		: "Unknown";
+	membrane_ui_style_t	style = r.status == MEMBRANE_INTEL_STATUS_WARNING
+		? MEMBRANE_UI_WARN : r.status == MEMBRANE_INTEL_STATUS_CRITICAL
+		? MEMBRANE_UI_ERR : r.status == MEMBRANE_INTEL_STATUS_INSUFFICIENT_DATA
+		? MEMBRANE_UI_DIM : MEMBRANE_UI_OK;
+
+	(void)st;
+	printf("Memory status: %s\n", membrane_ui_paint(style, word).c_str());
+	if (r.status == MEMBRANE_INTEL_STATUS_INSUFFICIENT_DATA)
+	{
+		printf("\nMEMBRANE could not measure enough to judge memory "
+			"pressure on %s.\n\nNext:\n  membrane doctor               "
+			"find out what is missing\n", r.runtime_id);
+		return ;
+	}
+	/* the main finding: the highest-severity one (findings are already in
+	 * ranked order, so the first of the top severity) */
+	const membrane_intel_finding_t	*main = NULL;
+
+	for (size_t i = 0; i < r.finding_count; ++i)
+		if (main == NULL || r.findings[i].severity > main->severity)
+			main = &r.findings[i];
+	if (main != NULL && main->severity >= MEMBRANE_INTEL_SEVERITY_NOTICE)
+	{
+		std::string	mark = main->severity >= MEMBRANE_INTEL_SEVERITY_CRITICAL
+			? membrane_ui_sym_err() : membrane_ui_sym_warn();
+
+		printf("\n%s %s\n", mark.c_str(), main->summary);
+	}
+	else
+		printf("\n%s Nothing needs attention.\n",
+			membrane_ui_sym_ok().c_str());
+	const membrane_intel_recommendation_t	*rec = NULL;
+
+	for (size_t i = 0; i < r.recommendation_count; ++i)
+		if (strcmp(r.recommendations[i].code,
+				MEMBRANE_INTEL_REC_NO_ACTION_NEEDED) != 0)
+		{
+			rec = &r.recommendations[i];
+			break ;
+		}
+	if (rec != NULL)
+	{
+		printf("\nRecommendation:\n  %s\n", rec->action);
+		printf("  %s\n", membrane_ui_paint(MEMBRANE_UI_DIM,
+			rec->applicability == MEMBRANE_INTEL_APPLICABILITY_CONTROLLABLE
+			? "MEMBRANE can apply this on this runtime (see `membrane apply`)."
+			: "Advice only: this runtime does not let MEMBRANE apply it.")
+				.c_str());
+	}
+	if (main != NULL && main->severity >= MEMBRANE_INTEL_SEVERITY_NOTICE
+		&& main->evidence_count > 0)
+		printf("\nWhy:\n  %s\n", main->evidence[0]);
+	printf("\nNext:\n");
+	if (rec != NULL
+		&& rec->applicability == MEMBRANE_INTEL_APPLICABILITY_CONTROLLABLE)
+		printf("  membrane apply                preview what could be "
+			"changed (changes nothing)\n");
+	printf("  membrane advise --verbose     every finding with its "
+		"evidence and source\n");
+}
+
 /* ------------------------------------------------------------------ */
 /* Dispatch                                                             */
 /* ------------------------------------------------------------------ */
@@ -215,6 +287,7 @@ int	membrane_advise_cmd_dispatch(const std::vector<std::string> &args,
 			bool want_json)
 {
 	std::string	runtime_id = MEMBRANE_RUNTIME_ID_NATIVE;
+	bool		verbose = false;
 
 	for (size_t i = 0; i < args.size(); ++i)
 	{
@@ -223,9 +296,14 @@ int	membrane_advise_cmd_dispatch(const std::vector<std::string> &args,
 			runtime_id = args[++i];
 			continue ;
 		}
+		if (args[i] == "--verbose" || args[i] == "-v")
+		{
+			verbose = true;
+			continue ;
+		}
 		print_err(want_json, "CLI_ERROR", "unknown option '" + args[i]
 			+ "' -- usage: membrane advise [--runtime membrane-native] "
-			"[--json]");
+			"[--verbose] [--json]");
 		return (MEMBRANE_EXIT_CLI_ERROR);
 	}
 	std::unique_ptr<membrane_observation_snapshot_t>	s(
@@ -244,8 +322,10 @@ int	membrane_advise_cmd_dispatch(const std::vector<std::string> &args,
 	if (want_json)
 		printf("%s\n", membrane_advise_result_json(*s, *intel).dump()
 			.c_str());
-	else
+	else if (verbose)
 		print_human(*intel);
+	else
+		print_status_view(*intel);
 	return (s->status == MEMBRANE_OBS_STATUS_UNAVAILABLE
 		? MEMBRANE_EXIT_RUNTIME_ERROR : MEMBRANE_EXIT_SUCCESS);
 }

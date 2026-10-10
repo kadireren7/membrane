@@ -72,3 +72,19 @@ pipeline (`.zip`/`.msi`/`.pkg`/Homebrew) has been built and validated
 from an actual release artifact yet (Sections 20/21 of the D8 task:
 "do not publish unless the exact artifact itself was validated"). Both
 remain source-build-only, exactly as disclosed since PR D4/D5.
+
+
+## Runtime support matrix (Milestone L)
+
+What MEMBRANE can do with each inference **runtime** (not backend):
+
+| Runtime | Inspect / list models | Observe | Advise | Apply (change state) | Adaptive | Orchestration (`membrane run`) |
+|---|---|---|---|---|---|---|
+| membrane-native | yes | yes | yes | yes: context, KV precision/placement, GPU layers (via `server.json` overrides, next load), unload, pin/unpin, activate | yes (opt-in) | yes, with a Planner v2 plan |
+| Ollama (v0.34.3 audited) | yes | yes (`/api/ps`) | yes | **unload only** (explicit `--unload`; `keep_alive=0`); no persistent context/GPU/KV control exists | observe / recommend only | yes, from reported facts (no Planner-grade accuracy) |
+| vLLM (v0.31.0 audited) | yes | not implemented | not implemented | **none** (model/context/KV fixed at launch) | no | yes, as a resident, read-only candidate |
+
+Evidence: Ollama and vLLM are tested against in-process mock servers that
+follow the audited response shapes; no real Ollama or vLLM daemon was run for
+this milestone. Multi-GPU: topology and device visibility only; no
+distributed-execution claim ([orchestration.md](orchestration.md)).

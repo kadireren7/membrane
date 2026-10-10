@@ -263,7 +263,9 @@ set_target_properties(membrane_doctor_cmd PROPERTIES
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_doctor_cmd PUBLIC membrane_sanitizers
   membrane_registry_core membrane_server_config membrane_subprocess
-  membrane_status_client membrane_service_state membrane_product_cli)
+  membrane_status_client membrane_service_state membrane_product_cli
+  membrane_ui membrane_adaptive membrane_adaptive_controller
+  membrane_runtime_adapters)
 target_include_directories(membrane_doctor_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_doctor_cmd PRIVATE
@@ -361,7 +363,8 @@ set_target_properties(membrane_use_cmd PROPERTIES
 target_link_libraries(membrane_use_cmd PUBLIC membrane_sanitizers
   membrane_registry_core membrane_server_config membrane_model_catalog
   membrane_variant_selector membrane_status_client membrane_doctor_cmd
-  membrane_service_state membrane_cli_shared membrane_product_cli llama)
+  membrane_service_state membrane_cli_shared membrane_product_cli
+  membrane_models_cmd llama)
 target_include_directories(membrane_use_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_use_cmd PRIVATE
@@ -389,7 +392,7 @@ target_link_libraries(membrane_plan_cmd PUBLIC membrane_sanitizers
   membrane_gpu_device membrane_runtime_session membrane_kv_store_telemetry
   membrane_plan membrane_plan_v2_resolver membrane_product_cli
   membrane_runtime_plan_assessment membrane_runtime_adapters
-  membrane_runtime_cmd llama)
+  membrane_runtime_cmd membrane_ui llama)
 target_include_directories(membrane_plan_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane)
 target_include_directories(membrane_plan_cmd PRIVATE
@@ -480,7 +483,8 @@ set_target_properties(membrane_observe_shared PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_observe_shared PUBLIC membrane_sanitizers
-  membrane_observation membrane_gpu_device membrane_runtime_session llama)
+  membrane_observation membrane_gpu_device membrane_runtime_session
+  membrane_ui llama)
 target_include_directories(membrane_observe_shared PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -544,7 +548,7 @@ set_target_properties(membrane_advise_cmd PROPERTIES
 target_link_libraries(membrane_advise_cmd PUBLIC membrane_sanitizers
   membrane_memory_intelligence membrane_observation membrane_observe_cmd
   membrane_observe_ollama membrane_runtime_capabilities membrane_product_cli
-  llama)
+  membrane_ui llama)
 target_include_directories(membrane_advise_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -565,7 +569,7 @@ target_link_libraries(membrane_apply_cmd PUBLIC membrane_sanitizers
   membrane_action membrane_advise_cmd membrane_plan_cmd
   membrane_runtime_adapters membrane_status_client membrane_server_config
   membrane_cli_shared membrane_observation membrane_runtime_capabilities
-  membrane_product_cli llama)
+  membrane_product_cli membrane_ui llama)
 target_include_directories(membrane_apply_cmd PUBLIC
   ${CMAKE_SOURCE_DIR}/tools/membrane
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -600,6 +604,52 @@ set_target_properties(membrane_ui PROPERTIES
 target_link_libraries(membrane_ui PUBLIC membrane_sanitizers)
 target_include_directories(membrane_ui PUBLIC ${CMAKE_SOURCE_DIR}/tools/membrane)
 
+# Final productization: pure model-name matcher (exact -> prefix -> substring
+# -> fuzzy) and the numbered picker, both dependency-free.
+add_library(membrane_model_match STATIC model_match.cpp picker.cpp)
+set_target_properties(membrane_model_match PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_model_match PUBLIC membrane_sanitizers membrane_ui)
+target_include_directories(membrane_model_match PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+
+# Final productization: model rows (registry + catalog + live service), the
+# safe resolver (exact / suggest / pick), and `membrane models`.
+add_library(membrane_models_cmd STATIC model_views.cpp model_resolve.cpp
+  models_cmd.cpp)
+set_target_properties(membrane_models_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_models_cmd PUBLIC membrane_sanitizers
+  membrane_model_match membrane_ui membrane_model_catalog
+  membrane_variant_selector membrane_registry_core membrane_server_config
+  membrane_status_client membrane_cli_shared membrane_runtime_session
+  membrane_product_cli llama)
+target_include_directories(membrane_models_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+target_include_directories(membrane_models_cmd PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
+# Final productization: bare `membrane` status screen (dashboard_cmd.h).
+add_library(membrane_dashboard_cmd STATIC dashboard_cmd.cpp)
+set_target_properties(membrane_dashboard_cmd PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_dashboard_cmd PUBLIC membrane_sanitizers
+  membrane_models_cmd membrane_advise_cmd membrane_adaptive_controller
+  membrane_adaptive membrane_gpu_device membrane_service_state
+  membrane_status_client membrane_server_config membrane_ui
+  membrane_product_cli llama)
+target_include_directories(membrane_dashboard_cmd PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane
+  ${CMAKE_SOURCE_DIR}/tools/membrane-run
+  ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+target_include_directories(membrane_dashboard_cmd PRIVATE
+  ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
+
 # Milestone K: `membrane adaptive status|enable|disable`.
 add_library(membrane_adaptive_cmd STATIC adaptive_cmd.cpp)
 set_target_properties(membrane_adaptive_cmd PROPERTIES
@@ -625,7 +675,7 @@ target_link_libraries(membrane PRIVATE membrane_registry_core
   membrane_variant_selector membrane_use_cmd membrane_chat_cmd
   membrane_plan_cmd membrane_runtime_cmd membrane_observe_cmd
   membrane_advise_cmd membrane_apply_cmd membrane_adaptive_cmd membrane_ui
-  membrane_orchestrate_cmd
+  membrane_orchestrate_cmd membrane_models_cmd membrane_dashboard_cmd
   membrane_service_state membrane_cli_shared llama)
 target_include_directories(membrane PRIVATE
   ${CMAKE_SOURCE_DIR}/tools/membrane-run
@@ -906,6 +956,46 @@ if(MEMBRANE_BUILD_TESTS)
     ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/third_party/llama.cpp/ggml/include)
   add_test(NAME test_advise_cmd COMMAND test_advise_cmd)
+
+  add_executable(test_model_match test_model_match.cpp)
+  set_target_properties(test_model_match PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_model_match PRIVATE membrane_model_match)
+  target_include_directories(test_model_match PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_model_match COMMAND test_model_match)
+
+  add_executable(test_model_resolve test_model_resolve.cpp)
+  set_target_properties(test_model_resolve PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_model_resolve PRIVATE membrane_models_cmd)
+  target_include_directories(test_model_resolve PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_model_resolve COMMAND test_model_resolve)
+
+  add_executable(test_dashboard_cmd test_dashboard_cmd.cpp)
+  set_target_properties(test_dashboard_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_dashboard_cmd PRIVATE membrane_dashboard_cmd)
+  target_include_directories(test_dashboard_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+  add_test(NAME test_dashboard_cmd COMMAND test_dashboard_cmd)
+
+  add_executable(test_models_cmd test_models_cmd.cpp)
+  set_target_properties(test_models_cmd PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_models_cmd PRIVATE membrane_models_cmd)
+  target_include_directories(test_models_cmd PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit
+    ${MEMBRANE_NLOHMANN_JSON_INCLUDE_DIR})
+  target_compile_definitions(test_models_cmd PRIVATE
+    MEMBRANE_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  add_test(NAME test_models_cmd COMMAND test_models_cmd)
 
   add_executable(test_ui test_ui.cpp)
   set_target_properties(test_ui PROPERTIES

@@ -52,5 +52,9 @@ nlohmann::json	membrane_observe_snapshot_json(
 					const membrane_observation_snapshot_t &s);
 
 void	membrane_observe_print_human(const membrane_observation_snapshot_t &s);
+/* P9: the same snapshot as a compact status screen (System / Runtime /
+ * Model / Memory / Health). The full per-field report with provenance and
+ * sources stays behind --verbose; machines use --json. */
+void	membrane_observe_print_status(const membrane_observation_snapshot_t &s);
 
 #endif

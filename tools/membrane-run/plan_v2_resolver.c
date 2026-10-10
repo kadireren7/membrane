@@ -25,9 +25,13 @@ static void	resolve_joint_candidate(const membrane_plan_v2_variant_t *vreq,
 	creq.host_available_known = req->host_available_known;
 	creq.device_free_bytes = req->device_free_bytes;
 	creq.device_total_bytes = req->device_total_bytes;
+	membrane_plan_hardware_input_t	hw;
+
+	hw.backend = req->device_backend;
+	hw.device_name = req->device_label;
 	membrane_ctxrec_resolve(&creq, &rec);
 	membrane_plan_assemble(&rec, &creq, &vreq->ctxrec_meta, &vreq->identity,
-		&vreq->variant, NULL, plan);
+		&vreq->variant, &hw, plan);
 }
 
 static void	resolve_coarse_candidate(const membrane_plan_v2_variant_t *vreq,

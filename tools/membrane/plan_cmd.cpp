@@ -1,4 +1,5 @@
 #include "plan_cmd.h"
+#include "ui.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -68,6 +69,7 @@ struct s_plan_opts
 									 * `membrane plan` has no flag */
 	int			kv_placement_mode = MEMBRANE_JOINT_PLACEMENT_DEFAULT;
 	std::string	runtime;	/* Milestone H3: --runtime ID ("" = none) */
+	bool		verbose = false;	/* P8: the full pre-productization report */
 };
 
 static bool	parse_plan_opts(const std::vector<std::string> &args,
@@ -142,6 +144,11 @@ static bool	parse_plan_opts(const std::vector<std::string> &args,
 			}
 			continue ;
 		}
+		if (a == "--verbose" || a == "-v")
+		{
+			o->verbose = true;
+			continue ;
+		}
 		if ((a == "--quant" || a == "--variant") && i + 1 < args.size())
 		{
 			o->want_quant = true;
@@ -165,7 +172,7 @@ static bool	parse_plan_opts(const std::vector<std::string> &args,
 	{
 		*err = "usage: membrane plan MODEL [--ctx auto|N] [--kv "
 			"native|q8|q5|adaptive] [--gpu-layers all|auto|N] "
-			"[--quant QUANT] [--runtime RUNTIME_ID]";
+			"[--quant QUANT] [--runtime RUNTIME_ID] [--verbose]";
 		return (false);
 	}
 	return (true);
@@ -455,9 +462,17 @@ static void	build_v2_request(const std::vector<s_variant_spec> &specs,
 				const s_plan_opts &opts, bool have_gpu_device,
 				const membrane_host_meminfo_t &meminfo,
 				uint64_t device_free_bytes, uint64_t device_total_bytes,
-				membrane_plan_v2_request_t *out)
+				membrane_plan_v2_request_t *out,
+				const membrane_gpu_device_info_t *device = NULL)
 {
 	memset(out, 0, sizeof(*out));
+	if (device != NULL)
+	{
+		snprintf(out->device_backend, sizeof(out->device_backend), "%s",
+			device->backend);
+		snprintf(out->device_label, sizeof(out->device_label), "%s",
+			device->description[0] ? device->description : device->name);
+	}
 	out->host_total_bytes = meminfo.total_bytes;
 	out->host_available_bytes = meminfo.available_bytes;
 	out->host_available_known = meminfo.ok;
@@ -742,6 +757,8 @@ static void	render_json_v2(const membrane_plan_v2_result_t &res)
 }
 
 static void	render_human_v2(const membrane_plan_v2_result_t &res);
+static void	render_concise_v2(const membrane_plan_v2_result_t &res,
+				const s_plan_opts &opts);
 
 /* Milestone H3: without --runtime, exactly the pre-H3 output. With
  * --runtime membrane-native, the SAME Planner v2 result is classified
@@ -754,8 +771,10 @@ static int	render_plan_result(const membrane_plan_v2_result_t &res,
 	{
 		if (want_json)
 			render_json_v2(res);
-		else
+		else if (opts.verbose)
 			render_human_v2(res);
+		else
+			render_concise_v2(res, opts);
 		return (MEMBRANE_EXIT_SUCCESS);
 	}
 	if (res.candidate_count == 0)
@@ -767,6 +786,163 @@ static int	render_plan_result(const membrane_plan_v2_result_t &res,
 	return (membrane_runtime_plan_native(res.has_selected
 			? res.candidates[res.selected_index] : res.candidates[0],
 		plan_v2_json(res), want_json));
+}
+
+/* P8: the plan, answered in plain language -- what model, will it fit, on
+ * what hardware, what MEMBRANE will do, why, any warning. Everything else is
+ * behind --verbose (the full per-variant report) or --json. */
+static std::string	gib_label(uint64_t bytes)
+{
+	char	buf[32];
+
+	snprintf(buf, sizeof(buf), "%.1f GiB", (double)bytes
+		/ (1024.0 * 1024 * 1024));
+	return (buf);
+}
+
+/* A stable reason code -> one plain sentence. The raw `detail` text of a
+ * reason is sometimes itself a code (e.g. CANDIDATE_SELECTED); it is only
+ * shown when it already reads as a sentence. */
+static std::string	plain_reason(const membrane_plan_reason_t &r)
+{
+	static const struct { const char *code; const char *text; }	tbl[] = {
+		{"CONTEXT_CAPPED_BY_HOST_MEMORY", "The context is limited by the "
+			"RAM available."},
+		{"CONTEXT_CAPPED_BY_VRAM", "The context is limited by GPU memory."},
+		{"GPU_LAYERS_CAPPED_BY_VRAM", "Not every layer fits in GPU memory, "
+			"so some stay on the CPU."},
+		{"KV_Q8_SELECTED_FOR_HEADROOM", "The KV cache is stored as q8 to "
+			"save memory."},
+		{"KV_Q5_SELECTED_FOR_HEADROOM", "The KV cache is stored as q5 to "
+			"save memory."},
+		{"USER_OVERRIDE_PRESERVED", "Your explicit setting was kept."},
+		{"MODEL_VARIANT_ESTIMATE_ONLY", "This variant is an estimate from "
+			"catalog sizes."},
+		{"CONTEXT_REDUCED_FOR_FIT", "The context was reduced so the plan "
+			"fits."},
+		{"KV_PRECISION_REDUCED_FOR_FIT", "The KV cache precision was "
+			"lowered so the plan fits."},
+		{"GPU_LAYERS_REDUCED_FOR_FIT", "Fewer layers go to the GPU so the "
+			"plan fits."},
+		{"HOST_MEMORY_LIMIT", "RAM is the limiting resource."},
+		{"VRAM_LIMIT", "GPU memory is the limiting resource."},
+		{"USER_FORCED_VARIANT", "You chose this variant."},
+		{"NO_FEASIBLE_PLAN", "No plan fits this machine."},
+		{"FULL_GPU_OFFLOAD_FEASIBLE", "The whole model fits on the GPU."},
+		{"CPU_ONLY_PLAN", "No GPU is used: the model runs on the CPU."},
+		{"MODEL_METADATA_UNAVAILABLE", "The model file's metadata could not "
+			"be read, so this is an estimate."}};
+
+	for (const auto &t : tbl)
+		if (strcmp(r.code, t.code) == 0)
+			return (t.text);
+	if (strchr(r.detail, ' ') != NULL)
+		return (r.detail);
+	return ("");
+}
+
+static void	render_concise_v2(const membrane_plan_v2_result_t &res,
+				const s_plan_opts &opts)
+{
+	if (res.candidate_count == 0)
+	{
+		printf("No candidate variants were evaluated.\n");
+		return ;
+	}
+	const membrane_plan_t	&p = res.has_selected
+			? res.candidates[res.selected_index] : res.candidates[0];
+
+	printf("%s%s\n\n", membrane_ui_paint(MEMBRANE_UI_BOLD,
+			p.identity.display_name).c_str(), p.identity.installed
+		? "" : membrane_ui_paint(MEMBRANE_UI_DIM, "  (not installed: "
+			"catalog metadata only)").c_str());
+	if (!res.feasible)
+		printf("  %-9s %s %s\n", "Fit", membrane_ui_sym_err().c_str(),
+			membrane_ui_paint(MEMBRANE_UI_ERR, "No: this model is not "
+				"expected to fit this computer").c_str());
+	else if (p.decisions.has_decisions)
+		printf("  %-9s %s %s\n", "Fit", membrane_ui_sym_ok().c_str(),
+			membrane_ui_paint(MEMBRANE_UI_OK, "Yes: expected to fit").c_str());
+	else
+		printf("  %-9s %s %s\n", "Fit", membrane_ui_sym_warn().c_str(),
+			membrane_ui_paint(MEMBRANE_UI_WARN, "Probably (an estimate from "
+				"file sizes only)").c_str());
+	if (p.hardware.device_known)
+		printf("  %-9s %s (%s), %s VRAM; %s RAM\n", "Hardware",
+			p.hardware.device_name[0] ? p.hardware.device_name : "GPU",
+			p.hardware.backend[0] ? p.hardware.backend : "unknown backend",
+			gib_label(p.hardware.device_total_bytes).c_str(),
+			p.hardware.host_available_known ? gib_label(
+				p.hardware.host_total_bytes).c_str() : "unknown");
+	else
+		printf("  %-9s CPU only (no GPU detected); %s RAM\n", "Hardware",
+			p.hardware.host_available_known ? gib_label(
+				p.hardware.host_total_bytes).c_str() : "unknown");
+	if (p.decisions.has_decisions)
+	{
+		std::string	layers = p.decisions.gpu_layers == 0 ? "CPU only"
+			: p.decisions.gpu_layers < 0 ? "all layers on the GPU"
+			: std::to_string(p.decisions.gpu_layers) + " layers on the GPU";
+
+		std::string	place = kv_placement_label(p.decisions.kv_placement);
+
+		printf("  %-9s %s, context %llu, %s, KV cache %s%s\n", "Plan",
+			variant_label(p), (unsigned long long)p.decisions.context,
+			layers.c_str(), kv_precision_label(p.decisions.kv_precision),
+			place == "default" ? "" : (" on " + place).c_str());
+	}
+	else
+		printf("  %-9s %s (no context/GPU/KV plan: no measured model "
+			"metadata)\n", "Plan", variant_label(p));
+	if (res.has_selected && p.reason_count > 0)
+	{
+		bool	first = true;
+
+		for (size_t i = 0; i < p.reason_count && i < 3; ++i)
+		{
+			std::string	t = plain_reason(p.reasons[i]);
+
+			if (t.empty())
+				continue ;
+			printf("  %-9s - %s\n", first ? "Why" : "", t.c_str());
+			first = false;
+		}
+	}
+	bool	warned = false;
+
+	if (p.identity.variant_estimate_only)
+	{
+		printf("  %-9s %s This variant is a catalog estimate; install it for "
+			"a measured plan.\n", "Warning", membrane_ui_sym_warn().c_str());
+		warned = true;
+	}
+	if (res.feasible && p.feasibility.host_headroom_known
+		&& p.hardware.host_total_bytes > 0
+		&& p.feasibility.host_headroom_bytes * 10 < p.hardware.host_total_bytes)
+	{
+		printf("  %-9s %s Little memory headroom left after this plan (%s "
+			"free).\n", warned ? "" : "Warning", membrane_ui_sym_warn().c_str(),
+			gib_label(p.feasibility.host_headroom_bytes).c_str());
+		warned = true;
+	}
+	if (!res.feasible && p.feasibility.limiting_resource[0] != '\0')
+		printf("  %-9s %s Limited by: %s\n", "Problem",
+			membrane_ui_sym_err().c_str(), p.feasibility.limiting_resource);
+	if (res.alternative_count > 0)
+	{
+		const membrane_plan_t	&alt
+				= res.candidates[res.alternative_indices[0]];
+
+		printf("  %-9s %s also fits\n", "Other", variant_label(alt));
+	}
+	printf("\nNext:\n");
+	if (res.feasible)
+		printf("  membrane use %s\n", opts.name.c_str());
+	else
+		printf("  membrane models recommend     see models that fit\n");
+	printf("  membrane plan %s --verbose   every detail\n",
+		opts.name.c_str());
+	(void)warned;
 }
 
 static void	render_human_v2(const membrane_plan_v2_result_t &res)
@@ -1006,7 +1182,7 @@ static bool	resolve_installed_model_v2(const std::string &name,
 	membrane_plan_v2_request_t	req;
 
 	build_v2_request(specs, opts, gpu_index >= 0, meminfo, device_free_bytes,
-		device_total_bytes, &req);
+		device_total_bytes, &req, gpu_index >= 0 ? &devices[gpu_index] : NULL);
 	membrane_plan_v2_resolve(&req, res);
 	*rc = MEMBRANE_EXIT_SUCCESS;
 	return (true);

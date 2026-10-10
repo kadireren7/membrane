@@ -292,6 +292,12 @@ static void	test_native_human_output(void)
 	int				rc;
 	std::string		out = capture_dispatch({}, false, &rc);
 
+	/* P10: the default human output leads with status, finding, advice */
+	TEST_ASSERT(out.find("Memory status:") != std::string::npos
+		&& out.find("advise --verbose") != std::string::npos
+		&& out.find("Findings") == std::string::npos,
+		"compact view: status first, no finding wall");
+	out = capture_dispatch({"--verbose"}, false, &rc);
 	TEST_ASSERT(out.find("Memory intelligence") != std::string::npos,
 		"human header present");
 	TEST_ASSERT(out.find("Runtime:") != std::string::npos, "runtime line");

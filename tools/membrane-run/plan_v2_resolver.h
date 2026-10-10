@@ -146,6 +146,14 @@ typedef struct s_membrane_plan_v2_request
 	int				host_available_known;
 	uint64_t		device_free_bytes;
 	uint64_t		device_total_bytes;
+	/* Display facts of the device the figures above came from (backend
+	 * registry name, e.g. "Vulkan", and the device's description). They
+	 * only label the plan; "" leaves the plan's hardware block unlabeled.
+	 * (A real defect fixed in the productization pass: they used to be
+	 * dropped, so the human output printed an empty "Backend:"/"Device:"
+	 * line next to a perfectly detected GPU.) */
+	char			device_backend[64];
+	char			device_label[128];
 
 	/* Part 8 (deterministic selection policy): candidate QUALITY order
 	 * is this array's own order, highest-quality-first -- the caller is

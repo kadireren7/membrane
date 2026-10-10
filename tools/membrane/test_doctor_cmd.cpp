@@ -79,8 +79,14 @@ static void	test_empty_environment_is_ok_except_hardware(void)
 {
 	s_isolated_env	env;
 	json			root;
+
+	/* a development build tree keeps membrane-run in a sibling directory,
+	 * which the doctor now finds; pin an unusable one so this test stays
+	 * hermetic wherever it runs */
+	setenv("MEMBRANE_RUN_EXEC_PATH", "/nonexistent/membrane-run", 1);
 	std::string		overall = membrane_doctor_collect(&root);
 
+	unsetenv("MEMBRANE_RUN_EXEC_PATH");
 	TEST_ASSERT(root["schema_version"] == 1, "schema_version is 1");
 	TEST_ASSERT(root.contains("membrane_version"), "membrane_version present");
 	/* hardware WARNs (no membrane-run binary reachable in this test
@@ -89,7 +95,7 @@ static void	test_empty_environment_is_ok_except_hardware(void)
 	 * isolated environment is OK. */
 	TEST_ASSERT(overall == "WARN", "overall is WARN (only hardware)");
 	TEST_ASSERT(find_check(root, "hardware")["status"] == "WARN",
-		"hardware check WARNs when membrane-run can't be located");
+		"hardware check WARNs when membrane-run can't be run");
 	TEST_ASSERT(find_check(root, "registry")["status"] == "OK",
 		"registry check OK on an empty, isolated registry");
 	TEST_ASSERT(find_check(root, "registry")["detail"]["count"] == 0,

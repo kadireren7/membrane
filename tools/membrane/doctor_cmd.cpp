@@ -21,8 +21,17 @@
 #include "status_client.h"
 #include "service_state.h"
 #include "product_cli.h"
+#include "ui.h"
+#include "adaptive.h"
+#include "adaptive_controller.h"
+#include "runtime_adapter.h"
+#include "membrane/dirent_compat.h"
 
 using json = nlohmann::json;
+
+#ifndef S_ISREG
+# define S_ISREG(m)	(((m) & S_IFMT) == S_IFREG)	/* MSVC has no S_ISREG */
+#endif
 
 /*
  * See doctor_cmd.h's own top comment for the full contract.
@@ -92,18 +101,198 @@ static bool	resolve_membrane_run_path(std::string *out_path)
 	struct stat	st;
 
 	if (stat(candidate.c_str(), &st) != 0)
-		return (false);
+	{
+		/* a development build tree keeps the two binaries in sibling
+		 * directories: build/tools/membrane/membrane and
+		 * build/tools/membrane-run/membrane-run */
+		std::string	sibling = self_path.substr(0, slash)
+			+ "/../membrane-run/membrane-run";
+
+		if (stat(sibling.c_str(), &st) != 0)
+			return (false);
+		candidate = sibling;
+	}
 	*out_path = candidate;
 	return (true);
+}
+
+/* P15: a REAL problem found by hand -- the source tree and build contained
+ * new functionality while /usr/bin/membrane was still an older installed
+ * binary, and nothing said so. This check reports exactly what is running,
+ * what the package manager thinks is installed, what `membrane` means on
+ * PATH, and -- when run from inside a source checkout -- whether a newer
+ * local build exists. It never "upgrades" anything. */
+static std::string	path_lookup(const char *name)
+{
+	const char	*path = getenv("PATH");
+	std::string	p = path != NULL ? path : "";
+	size_t		pos = 0;
+
+	while (pos <= p.size())
+	{
+		size_t		e = p.find(':', pos);
+		std::string	dir = p.substr(pos, e == std::string::npos
+				? std::string::npos : e - pos);
+
+		if (!dir.empty())
+		{
+			std::string	cand = dir + "/" + name;
+			struct stat	st;
+
+			if (stat(cand.c_str(), &st) == 0 && S_ISREG(st.st_mode)
+#ifndef _WIN32
+				&& access(cand.c_str(), X_OK) == 0
+#endif
+				)
+				return (cand);
+		}
+		if (e == std::string::npos)
+			break ;
+		pos = e + 1;
+	}
+	return ("");
+}
+
+static std::string	canonical(const std::string &p)
+{
+#ifndef _WIN32
+	char	buf[4096];
+
+	if (realpath(p.c_str(), buf) != NULL)
+		return (buf);
+#endif
+	return (p);
+}
+
+static std::string	time_label(time_t t)
+{
+	char		buf[32];
+	struct tm	tmv;
+
+#ifdef _WIN32
+	localtime_s(&tmv, &t);
+#else
+	localtime_r(&t, &tmv);
+#endif
+	strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &tmv);
+	return (buf);
+}
+
+static bool	find_source_root(std::string *root)
+{
+	char	cwd[4096];
+
+#ifndef _WIN32
+	if (getcwd(cwd, sizeof(cwd)) == NULL)
+		return (false);
+#else
+	return (false);
+#endif
+	std::string	dir = cwd;
+
+	for (int up = 0; up < 8 && !dir.empty(); ++up)
+	{
+		struct stat	st;
+
+		if (stat((dir + "/CMakeLists.txt").c_str(), &st) == 0
+			&& stat((dir + "/tools/membrane/main.cpp").c_str(), &st) == 0)
+		{
+			*root = dir;
+			return (true);
+		}
+		size_t	slash = dir.find_last_of('/');
+
+		if (slash == std::string::npos || slash == 0)
+			break ;
+		dir = dir.substr(0, slash);
+	}
+	return (false);
 }
 
 static s_doctor_check	check_installation(void)
 {
 	s_doctor_check	c;
+	std::string		exe;
+	std::string		on_path = path_lookup("membrane");
+	std::string		warn;
+	struct stat		st;
+	time_t			exe_mtime = 0;
 
 	c.name = "installation";
 	c.status = MEMBRANE_DOCTOR_STATUS_OK;
-	c.detail = {{"membrane_version", MEMBRANE_VERSION}};
+	membrane_resolve_own_exe_path(&exe);
+	if (!exe.empty() && stat(exe.c_str(), &st) == 0)
+		exe_mtime = st.st_mtime;
+	c.detail = {{"membrane_version", MEMBRANE_VERSION},
+		{"executable", exe.empty() ? json(nullptr) : json(exe)},
+		{"built_at", exe_mtime ? json(time_label(exe_mtime)) : json(nullptr)},
+		{"path_resolves_to", on_path.empty() ? json(nullptr) : json(on_path)}};
+	/* the package manager's view (Debian-family only; best effort) */
+#ifdef __linux__
+	if (exe.compare(0, 5, "/usr/") == 0)
+	{
+		membrane_subprocess_result_t	r;
+
+		if (membrane_run_subprocess({"dpkg-query", "-W", "-f=${Version}",
+				"membrane"}, &r, 3) && r.exit_code == 0
+			&& !r.stdout_output.empty())
+			c.detail["installed_package_version"] = r.stdout_output;
+	}
+#endif
+	if (!exe.empty() && !on_path.empty()
+		&& canonical(exe) != canonical(on_path))
+		warn = "you are running " + exe + ", but `membrane` on your PATH is "
+			+ on_path + ". Use the one you intend.";
+	/* inside a source checkout: is there a NEWER local build than this? */
+	std::string	root;
+
+	if (find_source_root(&root))
+	{
+		c.detail["source_tree"] = root;
+		std::string	newest;
+		time_t		newest_mtime = 0;
+		DIR			*d = opendir(root.c_str());
+
+		if (d != NULL)
+		{
+			struct dirent	*e;
+
+			while ((e = readdir(d)) != NULL)
+			{
+				std::string	name = e->d_name;
+
+				if (name.compare(0, 5, "build") != 0)
+					continue ;
+				std::string	cand = root + "/" + name + "/tools/membrane/"
+					"membrane";
+				struct stat	cs;
+
+				if (stat(cand.c_str(), &cs) == 0 && S_ISREG(cs.st_mode)
+					&& cs.st_mtime > newest_mtime)
+				{
+					newest = cand;
+					newest_mtime = cs.st_mtime;
+				}
+			}
+			closedir(d);
+		}
+		if (!newest.empty() && canonical(newest) != canonical(exe)
+			&& newest_mtime > exe_mtime + 60)
+		{
+			c.detail["newer_local_build"] = {{"path", newest},
+				{"built_at", time_label(newest_mtime)}};
+			warn += (warn.empty() ? "" : " ") + std::string("a NEWER build "
+				"exists in this source tree (") + newest + ", built "
+				+ time_label(newest_mtime) + "); you are running one built "
+				+ time_label(exe_mtime) + ". If you expected newer "
+				"behavior, run that binary directly or reinstall.";
+		}
+	}
+	if (!warn.empty())
+	{
+		c.status = MEMBRANE_DOCTOR_STATUS_WARN;
+		c.detail["message"] = warn;
+	}
 	return (c);
 }
 
@@ -133,6 +322,31 @@ static s_doctor_check	check_hardware(void)
 		c.status = MEMBRANE_DOCTOR_STATUS_WARN;
 		c.detail = {{"message", "membrane-run --doctor --json did not "
 			"complete successfully"}};
+		/* P18: a runtime library the build was linked against is missing
+		 * (typically libcudart.so.12 on a CUDA-linked build). That is an
+		 * environment problem, not a MEMBRANE logic failure -- say so. */
+		const std::string	&err = result.stderr_output;
+		size_t				at = err.find("error while loading shared "
+			"libraries: ");
+
+		if (at != std::string::npos)
+		{
+			size_t		b = at + std::string("error while loading shared "
+				"libraries: ").size();
+			size_t		e = err.find(':', b);
+			std::string	lib = err.substr(b, e == std::string::npos
+				? std::string::npos : e - b);
+
+			c.detail["missing_library"] = lib;
+			c.detail["message"] = "membrane-run cannot start: the shared "
+				"library '" + lib + "' is missing. That is the GPU runtime "
+				"this build was linked against, not a MEMBRANE logic error. "
+				"Install it" + std::string(lib.find("cuda") != std::string::npos
+				|| lib.find("cublas") != std::string::npos
+				? " (CUDA toolkit runtime), or use the Vulkan build -- "
+					"Vulkan works for NVIDIA GPUs without CUDA" : "")
+				+ ", or use a CPU build.";
+		}
 		return (c);
 	}
 	try
@@ -149,6 +363,19 @@ static s_doctor_check	check_hardware(void)
 			{"host_available_bytes",
 				run_doctor.value("host_available_bytes", 0ULL)},
 		};
+		/* P18: say WHY there is no GPU backend instead of leaving users to
+		 * guess whether MEMBRANE or their setup is at fault. Vulkan is the
+		 * broad Linux GPU backend; CUDA is an optional NVIDIA one -- CUDA
+		 * does not replace Vulkan. */
+		if (!run_doctor.value("gpu_backend_available", false))
+			c.detail["backend_note"] = "this build has no GPU backend "
+				"compiled in (CPU only). GPU builds: Vulkan (broad, Linux) "
+				"or the optional CUDA build for NVIDIA.";
+		else if (run_doctor.value("gpu_devices_found", 0) == 0)
+			c.detail["backend_note"] = "a GPU backend is compiled in, but no "
+				"GPU device was found (driver missing, or no supported "
+				"device). Vulkan needs a working Vulkan driver; CUDA needs "
+				"the NVIDIA driver and CUDA runtime.";
 		/* A real, low-memory warning -- matches host_memory_guard.h's
 		 * own conservative spirit, never a hard failure (a small model
 		 * may still fit fine). */
@@ -457,6 +684,55 @@ static s_doctor_check	check_model_lifecycle(bool http_reachable,
 	return (c);
 }
 
+/* Optional external runtimes are INFORMATION, never a problem: a runtime
+ * you do not run is not a fault. Each is probed once, bounded, read-only. */
+static s_doctor_check	check_runtimes(void)
+{
+	s_doctor_check	c;
+	json			list = json::array();
+
+	c.name = "runtimes";
+	c.status = MEMBRANE_DOCTOR_STATUS_OK;
+	for (size_t i = 0; i < membrane_runtime_registry_count(); ++i)
+	{
+		const membrane_runtime_adapter_t	*a = membrane_runtime_registry_at(i);
+		membrane_runtime_descriptor_t		d;
+
+		a->describe(&d);
+		list.push_back({{"id", d.id}, {"available",
+			d.availability == MEMBRANE_RUNTIME_AVAILABILITY_AVAILABLE},
+			{"version", d.version_known ? json(d.version) : json(nullptr)}});
+	}
+	c.detail = {{"runtimes", list}};
+	return (c);
+}
+
+static s_doctor_check	check_adaptive(void)
+{
+	s_doctor_check					c;
+	std::string						path = membrane_server_config_resolve_path();
+	membrane_server_config_t		cfg = membrane_server_config_defaults();
+	membrane_server_config_error_t	err;
+	membrane_adaptive_policy_t		pol;
+
+	c.name = "adaptive";
+	c.status = MEMBRANE_DOCTOR_STATUS_OK;
+	if (!path.empty())
+		membrane_server_config_load(path, &cfg, &err);
+	std::string	why = membrane_adaptive_policy_from_config(cfg.adaptive, &pol);
+
+	if (!why.empty())
+	{
+		c.status = MEMBRANE_DOCTOR_STATUS_WARN;
+		c.detail = {{"mode", "off"}, {"message", "the saved adaptive settings "
+			"are invalid, so adaptive control is OFF: " + why}};
+		return (c);
+	}
+	c.detail = {{"mode", membrane_adaptive_mode_name(
+		membrane_adaptive_effective_mode(&pol))}};
+	return (c);
+}
+
 std::string	membrane_doctor_collect(json *out_root)
 {
 	std::vector<s_doctor_check>	checks;
@@ -480,6 +756,8 @@ std::string	membrane_doctor_collect(json *out_root)
 	checks.push_back(http_check);
 	checks.push_back(check_model_lifecycle(
 			http_check.detail.value("reachable", false), http_check.detail));
+	checks.push_back(check_runtimes());
+	checks.push_back(check_adaptive());
 
 	std::string	overall = MEMBRANE_DOCTOR_STATUS_OK;
 
@@ -497,27 +775,144 @@ std::string	membrane_doctor_collect(json *out_root)
 	return (overall);
 }
 
+/* P17: one line per check, an overall verdict, and what to do next.
+ * Details are behind --verbose / --json. */
+static std::string	summary_of(const json &c)
+{
+	const std::string	n = c["name"];
+	const json			&d = c["detail"];
+
+	if (d.contains("message"))
+		return (d["message"].get<std::string>());
+	if (n == "installation")
+		return (std::string("membrane ") + d.value("membrane_version",
+			std::string("?")) + (d["executable"].is_string()
+			? " at " + d["executable"].get<std::string>() : ""));
+	if (n == "hardware")
+		return (d.value("cpu", std::string("unknown CPU")) + "; "
+			+ (d.value("gpu_backend_available", false)
+				? std::to_string(d.value("gpu_devices_found", 0))
+					+ " GPU device(s)"
+				: std::string("CPU only (no GPU backend in this build)")));
+	if (n == "registry")
+		return (std::to_string(d.value("count", 0)) + " model(s) installed");
+	if (n == "default_model")
+		return (d.value("configured", false) ? d.value("name",
+			std::string("")) : std::string("none selected"));
+	if (n == "config")
+		return (d.value("listen_address", std::string("127.0.0.1")) + ":"
+			+ std::to_string(d.value("port", 0)));
+	if (n == "service")
+		return (d.value("installed", false) ? (d.value("active", false)
+			? "installed, running" : "installed, stopped")
+			: "not installed (optional)");
+	if (n == "http")
+		return (d.value("reachable", false) ? "server answering at "
+			+ d.value("endpoint", std::string("")) : "server not running");
+	if (n == "model_lifecycle")
+		return ("default model " + (d.contains("default_model")
+			&& d["default_model"].is_string() ? d["default_model"]
+				.get<std::string>() : std::string("(none)")));
+	if (n == "runtimes")
+	{
+		std::string	s;
+
+		for (const auto &r : d["runtimes"])
+			if (r.value("available", false))
+				s += (s.empty() ? "" : ", ") + r["id"].get<std::string>();
+		return (s.empty() ? "no runtimes answering" : s + " available");
+	}
+	if (n == "adaptive")
+		return ("adaptive control: " + d.value("mode", std::string("off")));
+	return ("");
+}
+
+static std::string	next_action(const json &root)
+{
+	for (const auto &c : root["checks"])
+	{
+		const std::string	n = c["name"];
+		const std::string	st = c["status"];
+
+		if (st == MEMBRANE_DOCTOR_STATUS_OK)
+			continue ;
+		if (n == "installation" && c["detail"].contains("newer_local_build"))
+			return ("run the newer build directly: " + c["detail"]
+				["newer_local_build"]["path"].get<std::string>());
+		if (n == "installation" && c["detail"].contains("path_resolves_to"))
+			return ("run `which -a membrane` and use the intended binary");
+		if (n == "hardware" && c["detail"].contains("missing_library"))
+			return ("install the missing library " + c["detail"]
+				["missing_library"].get<std::string>() + ", or use the "
+				"Vulkan/CPU build");
+		if (n == "registry")
+			return ("membrane models recommend");
+		if (n == "default_model" || n == "model_lifecycle")
+			return ("membrane use");
+		if (n == "service")
+			return ("membrane service install");
+		if (n == "config" || n == "adaptive")
+			return ("fix or remove the offending settings in the server "
+				"config, then run `membrane doctor` again");
+	}
+	bool	running = false;
+
+	for (const auto &c : root["checks"])
+		if (c["name"] == "http" && c["detail"].value("reachable", false))
+			running = true;
+	return (running ? "membrane chat" : "membrane serve");
+}
+
 int	membrane_doctor_cmd_dispatch(const std::vector<std::string> &args,
 				bool want_json)
 {
-	(void)args;
-
+	bool		verbose = false;
 	json		root;
+
+	for (const auto &a : args)
+		if (a == "--verbose" || a == "-v")
+			verbose = true;
 	std::string	overall = membrane_doctor_collect(&root);
 
 	if (want_json)
 		printf("%s\n", root.dump().c_str());
 	else
 	{
-		printf("MEMBRANE doctor -- overall: %s\n\n", overall.c_str());
+		bool	ok = overall == MEMBRANE_DOCTOR_STATUS_OK;
+		bool	err = overall == MEMBRANE_DOCTOR_STATUS_ERROR;
+
+		printf("%s\n\n", membrane_ui_paint(MEMBRANE_UI_BOLD,
+			"MEMBRANE doctor").c_str());
 		for (const auto &c : root["checks"])
 		{
-			printf("[%s] %s\n", c["status"].get<std::string>().c_str(),
-				c["name"].get<std::string>().c_str());
-			if (c["detail"].contains("message"))
-				printf("    %s\n",
-					c["detail"]["message"].get<std::string>().c_str());
+			const std::string	st = c["status"];
+			std::string			mark = st == MEMBRANE_DOCTOR_STATUS_OK
+				? membrane_ui_sym_ok() : st == MEMBRANE_DOCTOR_STATUS_WARN
+				? membrane_ui_sym_warn() : membrane_ui_sym_err();
+
+			/* ASCII fallback spells the status out ("[OK]"), unicode uses
+			 * the symbol alone -- never both */
+			if (!membrane_ui_unicode())
+				mark = membrane_ui_paint(st == MEMBRANE_DOCTOR_STATUS_OK
+					? MEMBRANE_UI_OK : st == MEMBRANE_DOCTOR_STATUS_WARN
+					? MEMBRANE_UI_WARN : MEMBRANE_UI_ERR, "[" + st + "]");
+			printf("  %s %-16s %s\n", mark.c_str(),
+				c["name"].get<std::string>().c_str(),
+				summary_of(c).c_str());
+			if (verbose)
+				for (auto it = c["detail"].begin(); it != c["detail"].end();
+					++it)
+					if (it.key() != "message")
+						printf("        %s: %s\n", it.key().c_str(),
+							it.value().dump().c_str());
 		}
+		printf("\nOverall: %s\n", membrane_ui_paint(ok ? MEMBRANE_UI_OK
+			: err ? MEMBRANE_UI_ERR : MEMBRANE_UI_WARN, ok ? "OK"
+			: err ? "ERROR" : "WARNING").c_str());
+		printf("Next: %s\n", next_action(root).c_str());
+		if (!verbose)
+			printf("(membrane doctor --verbose for every detail; --json for "
+				"machines)\n");
 	}
 	return (overall == MEMBRANE_DOCTOR_STATUS_ERROR
 		? MEMBRANE_EXIT_RUNTIME_ERROR : MEMBRANE_EXIT_SUCCESS);

@@ -20,6 +20,8 @@
 #include "advise_cmd.h"
 #include "adaptive_cmd.h"
 #include "ui.h"
+#include "dashboard_cmd.h"
+#include "models_cmd.h"
 #include "orchestrate_cmd.h"
 #include "apply_cmd.h"
 #include "runtime_cmd.h"
@@ -42,8 +44,30 @@ using json = nlohmann::json;
 
 static void	print_usage(FILE *out)
 {
-	fprintf(out, "membrane %s -- MEMBRANE control CLI\n\n", MEMBRANE_VERSION);
-	fprintf(out, "Usage:\n");
+	fprintf(out, "membrane %s -- hardware-aware memory intelligence and "
+		"control for local LLM inference\n\n", MEMBRANE_VERSION);
+	fprintf(out, "Start here:\n");
+	fprintf(out, "  membrane                           a status screen with "
+		"the next step\n");
+	fprintf(out, "  membrane models                    what is installed "
+		"(also: models available, models recommend)\n");
+	fprintf(out, "  membrane use [MODEL]               install/select a "
+		"model (a numbered list on a terminal)\n");
+	fprintf(out, "  membrane chat                      talk to it\n");
+	fprintf(out, "  membrane doctor                    check that "
+		"everything works\n\n");
+	fprintf(out, "Understand memory (read-only):  plan -> observe -> "
+		"advise\n");
+	fprintf(out, "Change things (explicit):       apply (dry run by "
+		"default)   adaptive (opt-in)\n");
+	fprintf(out, "Pick a runtime:                 run MODEL   runtime "
+		"list|inspect\n");
+	fprintf(out, "Serve to apps:                  serve | service ... "
+		"(OpenAI-compatible API, loopback only)\n\n");
+	fprintf(out, "Human output is the default; add --json for machines and "
+		"--verbose for every detail. Docs: docs/quickstart.md, "
+		"docs/cli-reference.md\n\n");
+	fprintf(out, "All commands:\n");
 	fprintf(out, "  membrane model add NAME PATH      register a local "
 		"GGUF model under NAME\n");
 	fprintf(out, "  membrane model remove NAME        unregister NAME\n");
@@ -89,6 +113,9 @@ static void	print_usage(FILE *out)
 	fprintf(out, "  membrane adaptive status|enable|disable\n"
 		"                                     OPT-IN bounded runtime "
 		"adaptation (off by default; see adaptive options)\n");
+	fprintf(out, "  membrane models [available|recommend]\n"
+		"                                     installed models; the "
+		"catalog; what suits this computer\n");
 	fprintf(out, "  membrane run MODEL                 choose the runtime that "
 		"fits MODEL on this machine, say why, then use it (see run options)\n");
 	fprintf(out, "  membrane chat [MODEL]              interactive "
@@ -280,10 +307,9 @@ int	main(int argc, char **argv)
 		i++;
 	}
 	if (args.empty())
-	{
-		print_usage(stderr);
-		return (MEMBRANE_EXIT_CLI_ERROR);
-	}
+		return (membrane_dashboard_cmd_dispatch(want_json));
+	if (args[0] == "help")
+		return (print_usage(stdout), MEMBRANE_EXIT_SUCCESS);
 	if (args[0] == "model")
 	{
 		std::vector<std::string>	model_args(args.begin() + 1,
@@ -323,6 +349,12 @@ int	main(int argc, char **argv)
 				args.end());
 
 		return (membrane_advise_cmd_dispatch(advise_args, want_json));
+	}
+	if (args[0] == "models")
+	{
+		std::vector<std::string>	models_args(args.begin() + 1, args.end());
+
+		return (membrane_models_cmd_dispatch(models_args, want_json));
 	}
 	if (args[0] == "run")
 	{

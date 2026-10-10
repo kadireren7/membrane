@@ -1,5 +1,10 @@
 # Observation layer (Milestone I1 + I2)
 
+> **Productization update:** the default human output of `membrane observe`
+> is now a compact status screen (System / Runtime / Model / Memory /
+> Health). The full field-by-field report with provenance and sources
+> described below is `membrane observe --verbose`; `--json` is unchanged.
+
 > **Milestone I3 update:** recommendations now exist, as a SEPARATE
 > command -- `membrane advise` -- see
 > [memory-intelligence.md](memory-intelligence.md). `membrane observe`

@@ -1,4 +1,15 @@
-# Ollama runtime adapter (Milestone H2 + I2, read-only)
+# Ollama runtime adapter (Milestone H2 + I2, read-only; J adds one explicit unload)
+
+> **Milestone J update.** Exactly one state-changing call now exists, used
+> only by an explicit `membrane apply --runtime ollama --unload NAME --yes`:
+> `POST /api/generate {"model": NAME, "keep_alive": 0}` -- upstream's
+> documented "unload a model" request (`docs/faq.mdx` at v0.34.3). It has no
+> prompt, so it is not inference, and the allowlist admits `/api/generate`
+> only for that exact body. Ollama has no persistent context / GPU-layer /
+> KV control (those are per-request or start-time settings), so `apply`
+> reports them as advisory-only. Details: [active-control.md](active-control.md).
+> Everything below describes the read-only H2/I2 surface, which is
+> unchanged.
 
 > **Neither H2 nor I2 sends inference requests or changes Ollama state.**
 > The adapter discovers a local Ollama daemon, reads its version, lists its
