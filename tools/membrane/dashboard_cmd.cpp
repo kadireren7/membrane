@@ -1,5 +1,6 @@
 #include "dashboard_cmd.h"
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -109,12 +110,24 @@ int	membrane_dashboard_cmd_dispatch(bool want_json)
 		size_t						n = membrane_gpu_list_devices(devs,
 				MEMBRANE_GPU_MAX_DEVICES);
 
-		for (size_t i = 0; i < n && d->gpu[0] == '\0'; ++i)
+		std::string	names;
+		size_t		gpus = 0;
+
+		/* every GPU is shown (a discrete + an integrated one is common);
+		 * never just "the first" */
+		for (size_t i = 0; i < n; ++i)
 			if (devs[i].type == MEMBRANE_DEV_TYPE_GPU
 				|| devs[i].type == MEMBRANE_DEV_TYPE_IGPU)
-				snprintf(d->gpu, sizeof(d->gpu), "%s (%s)",
-					devs[i].description[0] ? devs[i].description
-						: devs[i].name, devs[i].backend);
+			{
+				gpus++;
+				if (gpus <= 2)
+					names += std::string(gpus > 1 ? ", " : "")
+						+ (devs[i].description[0] ? devs[i].description
+							: devs[i].name) + " (" + devs[i].backend + ")";
+			}
+		if (gpus > 2)
+			names += ", +" + std::to_string(gpus - 2) + " more";
+		set(d->gpu, sizeof(d->gpu), names);
 	}
 	{
 		membrane_adaptive_policy_t	pol;

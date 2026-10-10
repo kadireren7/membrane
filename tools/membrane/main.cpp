@@ -6,6 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "llama.h"
+
 #include "model_cmd.h"
 #include "server.h"
 #include "server_config.h"
@@ -283,6 +285,15 @@ int	main(int argc, char **argv)
 		return (membrane_chat_cmd_dispatch(chat_args, false));
 	}
 	bool						no_color = false;
+
+	/* Backend/device enumeration chatter ("ggml_vulkan: Found 2 Vulkan
+	 * devices", "register_backend: ...") is engine logging, not product
+	 * output: silence it for every command except `serve` (where it is
+	 * useful in a log). MEMBRANE_LOG=1 turns it back on anywhere. */
+	if (!(argc >= 2 && std::string(argv[1]) == "serve")
+		&& getenv("MEMBRANE_LOG") == NULL)
+		llama_log_set([](enum ggml_log_level, const char *, void *) {},
+			NULL);
 
 	for (int k = 1; k < argc; ++k)
 		if (std::string(argv[k]) == "--no-color")

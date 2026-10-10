@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -200,6 +201,14 @@ static void	test_recommend(void)
 					"weights only") != std::string::npos
 			&& r["tested_status"].is_string(), "each carries its evidence "
 				"and the basis of the fit estimate");
+	{
+		std::set<std::string>	ids;
+
+		for (const auto &r : j["recommendations"])
+			TEST_ASSERT(ids.insert(r["id"].get<std::string>()).second,
+				"each model is listed once, even if it wins several "
+				"categories");
+	}
 	std::string	again = capture({"recommend"}, true, &rc);
 	json		j2 = json::parse(again);
 

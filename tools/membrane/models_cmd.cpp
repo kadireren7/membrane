@@ -257,6 +257,20 @@ static int	cmd_recommend(bool want_json)
 			titles.push_back(c.title);
 		}
 	}
+	/* one model can win several categories (e.g. general + multilingual):
+	 * list it once, naming every category it was suggested for */
+	for (size_t i = 0; i < picked.size(); ++i)
+		for (size_t k = i + 1; k < picked.size();)
+		{
+			if (picked[k].row.id == picked[i].row.id)
+			{
+				titles[i] += ", " + titles[k];
+				picked.erase(picked.begin() + (long)k);
+				titles.erase(titles.begin() + (long)k);
+			}
+			else
+				++k;
+		}
 	if (want_json)
 	{
 		json	arr = json::array();

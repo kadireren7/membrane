@@ -145,7 +145,7 @@ here claims model quality.
 
 | Category | Families |
 |---|---|
-| tiny / smoke test | SmolLM2-135M-Instruct, SmolLM2-360M-Instruct, Qwen2.5-0.5B-Instruct |
+| tiny / smoke test | SmolLM2-135M-Instruct, SmolLM2-360M-Instruct (both `validated`), Qwen2.5-0.5B-Instruct (`smoke-tested`: downloaded, checksum-verified, loaded and answered a chat during v1.1.0 acceptance) |
 | general chat | Qwen2.5-1.5B-Instruct, Llama-3.2-1B-Instruct, Gemma-2-2B-it, Phi-3.5-mini-instruct |
 | multilingual (per upstream) | Qwen2.5 family, Llama-3.2-1B, Phi-3.5-mini |
 | coding | Qwen2.5-Coder-1.5B-Instruct |

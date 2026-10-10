@@ -40,6 +40,8 @@ void		membrane_ui_force(bool color, bool unicode);
 void		membrane_ui_unforce(void);
 
 bool		membrane_ui_color(void);
+/* stdout is a terminal (independent of color/NO_COLOR decisions) */
+bool		membrane_ui_is_tty(void);
 bool		membrane_ui_unicode(void);
 
 /* text wrapped in the style's escape codes iff color is on */

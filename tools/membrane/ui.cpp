@@ -68,6 +68,7 @@ void	membrane_ui_unforce(void)
 	membrane_ui_configure(false);
 }
 
+bool	membrane_ui_is_tty(void) { return (MEMBRANE_UI_ISATTY(1) != 0); }
 bool	membrane_ui_color(void) { return (g_color); }
 bool	membrane_ui_unicode(void) { return (g_unicode); }
 

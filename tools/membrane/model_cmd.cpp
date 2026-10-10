@@ -1,4 +1,5 @@
 #include "model_cmd.h"
+#include "ui.h"
 #include "registry_core.h"
 #include "membrane/clock_compat.h"
 
@@ -603,6 +604,7 @@ struct s_install_progress_ctx
 {
 	bool		is_json;
 	struct timespec	last_print;
+	int			last_decile;	/* non-terminal output: a line per 10% */
 };
 
 static void	install_progress_cb(uint64_t downloaded, uint64_t total,
@@ -612,6 +614,22 @@ static void	install_progress_cb(uint64_t downloaded, uint64_t total,
 
 	if (ctx->is_json || total == 0)
 		return ;
+	if (!membrane_ui_is_tty())
+	{
+		/* a log or a pipe: \r redraws are noise there -- one plain line
+		 * per 10% instead */
+		int	decile = (int)(10.0 * (double)downloaded / (double)total);
+
+		if (decile > ctx->last_decile)
+		{
+			ctx->last_decile = decile;
+			printf("  %d%% (%llu / %llu MiB)\n", decile * 10,
+				(unsigned long long)(downloaded / (1024 * 1024)),
+				(unsigned long long)(total / (1024 * 1024)));
+			fflush(stdout);
+		}
+		return ;
+	}
 	struct timespec	now;
 
 	clock_gettime(CLOCK_MONOTONIC, &now);

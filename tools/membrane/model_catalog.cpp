@@ -188,8 +188,8 @@ static const char *MEMBRANE_CATALOG_JSON = R"JSON(
         "general",
         "multilingual"
       ],
-      "purpose": "Smallest Qwen2.5 chat model: fast and light, modest answer quality. Upstream lists multilingual support.",
-      "tested_status": "metadata-only",
+      "purpose": "Smallest Qwen2.5 chat model: fast and light, modest answer quality. Upstream lists multilingual support. Loaded and answered a chat on the maintainer's machine (Q8_0, Vulkan integrated GPU) during v1.1.0 acceptance.",
+      "tested_status": "smoke-tested",
       "chat_template_status": "present",
       "compatibility_status": "NOT_YET_VALIDATED",
       "compatibility_evidence": "architecture 'qwen2' - see docs/compatibility.json; this exact model has not been validated by MEMBRANE",
