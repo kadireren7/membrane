@@ -17,6 +17,7 @@
 #include "registry_core.h"
 #include "server_config.h"
 #include "fs_util.h"
+#include "platform_paths.h"
 #include "subprocess.h"
 #include "status_client.h"
 #include "service_state.h"
@@ -130,13 +131,18 @@ static std::string	path_lookup(const char *name)
 
 	while (pos <= p.size())
 	{
-		size_t		e = p.find(':', pos);
+		size_t		e = p.find(membrane_path_list_separator(
+				membrane_platform_current()), pos);
 		std::string	dir = p.substr(pos, e == std::string::npos
 				? std::string::npos : e - pos);
 
 		if (!dir.empty())
 		{
+#ifdef _WIN32
+			std::string	cand = dir + "/" + name + ".exe";
+#else
 			std::string	cand = dir + "/" + name;
+#endif
 			struct stat	st;
 
 			if (stat(cand.c_str(), &st) == 0 && S_ISREG(st.st_mode)
@@ -296,6 +302,49 @@ static s_doctor_check	check_installation(void)
 	return (c);
 }
 
+/* Milestone M: where this binary runs and where it keeps things. Static
+ * per-platform facts plus the resolved directories -- never a probe. The
+ * evidence strings say what has actually been validated on each OS. */
+static s_doctor_check	check_platform(void)
+{
+	s_doctor_check		c;
+	membrane_platform_t	p = membrane_platform_current();
+	const char			*evidence;
+	const char			*gpu;
+	const char			*mgr;
+
+	c.name = "platform";
+	c.status = MEMBRANE_DOCTOR_STATUS_OK;
+	switch (p)
+	{
+		case MEMBRANE_PLATFORM_WINDOWS:
+			evidence = "CPU inference validated in CI; GPU backends are not "
+				"validated on real Windows hardware";
+			gpu = "none claimed";
+			mgr = "Task Scheduler (schtasks)";
+			break ;
+		case MEMBRANE_PLATFORM_MACOS:
+			evidence = "CPU and Metal validated in CI (no real-hardware "
+				"validation of Metal)";
+			gpu = "Metal";
+			mgr = "launchd";
+			break ;
+		default:
+			evidence = "CPU and Vulkan validated on real hardware; CUDA "
+				"validated on real hardware in an earlier release";
+			gpu = "Vulkan, CUDA (when built in)";
+			mgr = "systemd --user";
+	}
+	c.detail = {{"os", membrane_platform_name(p)},
+		{"arch", membrane_arch_name()},
+		{"data_dir", membrane_path_display(membrane_data_dir())},
+		{"config_dir", membrane_path_display(membrane_config_dir())},
+		{"state_dir", membrane_path_display(membrane_state_dir())},
+		{"service_manager", mgr}, {"gpu_backends", gpu},
+		{"evidence", evidence}};
+	return (c);
+}
+
 /* Section 5/9: orchestrates the EXISTING membrane-run --doctor --json
  * (Phase 29's own hardware/host-memory diagnostic) via a real subprocess
  * call -- never a second CPU/GPU/RAM detection implementation. */
@@ -410,8 +459,9 @@ static s_doctor_check	check_registry(json *out_models_for_reuse)
 	if (registry_path.empty())
 	{
 		c.status = MEMBRANE_DOCTOR_STATUS_ERROR;
-		c.detail = {{"message", "neither XDG_DATA_HOME nor HOME is set -- "
-			"cannot locate the model registry"}};
+		c.detail = {{"message", "could not determine the data directory "
+			"(set HOME/USERPROFILE, or XDG_DATA_HOME) -- cannot locate the "
+			"model registry"}};
 		return (c);
 	}
 	if (!membrane_registry_load(registry_path, &reg, &err))
@@ -505,7 +555,7 @@ static s_doctor_check	check_config(void)
 	if (config_path.empty())
 	{
 		c.status = MEMBRANE_DOCTOR_STATUS_ERROR;
-		c.detail = {{"message", "neither XDG_CONFIG_HOME nor HOME is set"}};
+		c.detail = {{"message", "could not determine the config directory (set HOME/USERPROFILE, or XDG_CONFIG_HOME)"}};
 		return (c);
 	}
 	if (!membrane_server_config_load(config_path, &cfg, &cfg_err))
@@ -739,6 +789,7 @@ std::string	membrane_doctor_collect(json *out_root)
 	json							models;
 
 	checks.push_back(check_installation());
+	checks.push_back(check_platform());
 	checks.push_back(check_hardware());
 	checks.push_back(check_registry(&models));
 	checks.push_back(check_default_model(models));
@@ -788,6 +839,10 @@ static std::string	summary_of(const json &c)
 		return (std::string("membrane ") + d.value("membrane_version",
 			std::string("?")) + (d["executable"].is_string()
 			? " at " + d["executable"].get<std::string>() : ""));
+	if (n == "platform")
+		return (d.value("os", std::string("?")) + " "
+			+ d.value("arch", std::string("?")) + "; data in "
+			+ d.value("data_dir", std::string("?")));
 	if (n == "hardware")
 		return (d.value("cpu", std::string("unknown CPU")) + "; "
 			+ (d.value("gpu_backend_available", false)
@@ -840,7 +895,9 @@ static std::string	next_action(const json &root)
 			return ("run the newer build directly: " + c["detail"]
 				["newer_local_build"]["path"].get<std::string>());
 		if (n == "installation" && c["detail"].contains("path_resolves_to"))
-			return ("run `which -a membrane` and use the intended binary");
+			return (membrane_platform_current() == MEMBRANE_PLATFORM_WINDOWS
+				? "run `where membrane` and use the intended binary"
+				: "run `which -a membrane` and use the intended binary");
 		if (n == "hardware" && c["detail"].contains("missing_library"))
 			return ("install the missing library " + c["detail"]
 				["missing_library"].get<std::string>() + ", or use the "

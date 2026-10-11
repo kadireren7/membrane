@@ -42,7 +42,7 @@ target_link_libraries(membrane_cpp_httplib PUBLIC Threads::Threads)
 # own top comment) -- registry_core.cpp, server_config.cpp, and
 # service_cmd.cpp's unit-file write all link this instead of each carrying
 # their own copy.
-add_library(membrane_fs_util STATIC fs_util.cpp)
+add_library(membrane_fs_util STATIC fs_util.cpp platform_paths.cpp)
 set_target_properties(membrane_fs_util PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
@@ -328,12 +328,20 @@ target_include_directories(membrane_model_catalog PRIVATE
 # FindCURL module -- no new vendored dependency, a real system library
 # already linked by countless other Debian packages.
 find_package(CURL REQUIRED)
+add_library(membrane_sha256 STATIC sha256.cpp)
+set_target_properties(membrane_sha256 PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON)
+target_link_libraries(membrane_sha256 PUBLIC membrane_sanitizers)
+target_include_directories(membrane_sha256 PUBLIC
+  ${CMAKE_SOURCE_DIR}/tools/membrane)
+
 add_library(membrane_download_manager STATIC download_manager.cpp)
 set_target_properties(membrane_download_manager PROPERTIES
   CXX_STANDARD 17
   CXX_STANDARD_REQUIRED ON)
 target_link_libraries(membrane_download_manager PUBLIC membrane_sanitizers
-  membrane_fs_util membrane_subprocess CURL::libcurl)
+  membrane_sha256 membrane_fs_util membrane_subprocess CURL::libcurl)
 
 # Mega Phase D, PR D2: hardware-aware variant selection (variant_
 # selector.h's own top comment) -- pure, reuses the existing, already-
@@ -996,6 +1004,23 @@ if(MEMBRANE_BUILD_TESTS)
   target_compile_definitions(test_models_cmd PRIVATE
     MEMBRANE_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   add_test(NAME test_models_cmd COMMAND test_models_cmd)
+
+  add_executable(test_platform_paths test_platform_paths.cpp)
+  set_target_properties(test_platform_paths PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_platform_paths PRIVATE membrane_fs_util)
+  target_include_directories(test_platform_paths PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_platform_paths COMMAND test_platform_paths)
+
+  add_executable(test_sha256 test_sha256.cpp)
+  set_target_properties(test_sha256 PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON)
+  target_link_libraries(test_sha256 PRIVATE membrane_sha256)
+  target_include_directories(test_sha256 PRIVATE ${CMAKE_SOURCE_DIR}/tests/unit)
+  add_test(NAME test_sha256 COMMAND test_sha256)
 
   add_executable(test_ui test_ui.cpp)
   set_target_properties(test_ui PROPERTIES

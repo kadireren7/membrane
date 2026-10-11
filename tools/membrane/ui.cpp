@@ -6,6 +6,7 @@
 
 #ifdef _WIN32
 # include <io.h>
+# include <windows.h>
 # define MEMBRANE_UI_ISATTY(fd)	_isatty(fd)
 #else
 # include <unistd.h>
@@ -17,6 +18,26 @@
 static bool	g_color = false;
 static bool	g_unicode = false;
 static bool	g_forced = false;
+
+/* Windows: ANSI escapes are only interpreted when the console has virtual-
+ * terminal processing enabled (Windows 10+ conhost / Windows Terminal).
+ * Turn it on for stdout; if that is impossible, color stays off rather than
+ * printing raw escape sequences. Other platforms: always capable. */
+static bool	enable_ansi_if_needed(void)
+{
+#ifdef _WIN32
+	HANDLE	h = GetStdHandle(STD_OUTPUT_HANDLE);
+	DWORD	mode = 0;
+
+	if (h == INVALID_HANDLE_VALUE || h == NULL || !GetConsoleMode(h, &mode))
+		return (false);
+	if (mode & 0x0004)	/* ENABLE_VIRTUAL_TERMINAL_PROCESSING */
+		return (true);
+	return (SetConsoleMode(h, mode | 0x0004) != 0);
+#else
+	return (true);
+#endif
+}
 
 static bool	env_set(const char *name)
 {
@@ -46,7 +67,8 @@ void	membrane_ui_configure(bool no_color_flag)
 		return ;
 	tty = MEMBRANE_UI_ISATTY(1) != 0;
 	g_color = tty && !no_color_flag && !env_set("NO_COLOR")
-		&& !(term != NULL && strcmp(term, "dumb") == 0);
+		&& !(term != NULL && strcmp(term, "dumb") == 0)
+		&& enable_ansi_if_needed();
 	/* unicode symbols only on a terminal that is known to render UTF-8 */
 	g_unicode = tty && !env_set("MEMBRANE_ASCII")
 		&& !(term != NULL && (strcmp(term, "dumb") == 0

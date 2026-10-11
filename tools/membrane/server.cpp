@@ -2479,7 +2479,7 @@ int	membrane_server_run(const membrane_server_options_t &opts)
 
 	if (registry_path.empty())
 	{
-		fprintf(stderr, "membrane serve: neither XDG_DATA_HOME nor HOME "
+		fprintf(stderr, "membrane serve: neither XDG_DATA_HOME nor HOME/USERPROFILE "
 			"is set -- cannot locate the model registry\n");
 		return (1);
 	}

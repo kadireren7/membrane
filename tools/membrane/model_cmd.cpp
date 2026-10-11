@@ -127,7 +127,7 @@ static int	cmd_add(const std::vector<std::string> &args, bool want_json)
 
 	if (registry_path.empty())
 	{
-		print_err(want_json, "IO_ERROR", "neither XDG_DATA_HOME nor HOME "
+		print_err(want_json, "IO_ERROR", "neither XDG_DATA_HOME nor HOME/USERPROFILE "
 			"is set -- cannot locate the registry file");
 		return (MEMBRANE_EXIT_MODEL_ERROR);
 	}
@@ -369,7 +369,7 @@ static int	cmd_use(const std::vector<std::string> &args, bool want_json)
 	if (config_path.empty())
 	{
 		print_err(want_json, "IO_ERROR", "neither XDG_CONFIG_HOME nor "
-			"HOME is set");
+			"HOME/USERPROFILE is set");
 		return (MEMBRANE_EXIT_MODEL_ERROR);
 	}
 	if (!membrane_server_config_load(config_path, &cfg, &cfg_err))
@@ -830,7 +830,7 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 
 	if (install_dir.empty())
 	{
-		print_err(want_json, "IO_ERROR", "neither XDG_DATA_HOME nor HOME "
+		print_err(want_json, "IO_ERROR", "neither XDG_DATA_HOME nor HOME/USERPROFILE "
 			"is set -- cannot locate the models install directory");
 		return (MEMBRANE_EXIT_MODEL_ERROR);
 	}
