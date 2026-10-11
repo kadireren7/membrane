@@ -1311,7 +1311,7 @@ jobs:
       - name: Install to a prefix and build the portable archive
         run: |
           cmake --install build-metal-smoke --prefix "$PWD/install-macos-smoke"
-          VER=$(sed -n 's/^#define MEMBRANE_VERSION "\(.*\)"/\1/p' tools/membrane-run/product_cli.h)
+          VER=$(sed -n 's/^# *define MEMBRANE_VERSION "\(.*\)"/\1/p' tools/membrane-run/product_cli.h)
           echo "MEMBRANE_PKG_VERSION=$VER" >> "$GITHUB_ENV"
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python3 scripts/package-portable.py \
             --os macos --arch arm64 --version "$VER" \
@@ -1489,7 +1489,7 @@ jobs:
       # (never the build tree, never the vcpkg-provided DLL directories).
       - name: Build portable ZIP
         run: |
-          VER=$(sed -n 's/^#define MEMBRANE_VERSION "\(.*\)"/\1/p' tools/membrane-run/product_cli.h)
+          VER=$(sed -n 's/^# *define MEMBRANE_VERSION "\(.*\)"/\1/p' tools/membrane-run/product_cli.h)
           echo "MEMBRANE_PKG_VERSION=$VER" >> "$GITHUB_ENV"
           SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python3 scripts/package-portable.py \
             --os windows --arch x86_64 --version "$VER" \

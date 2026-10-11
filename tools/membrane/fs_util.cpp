@@ -1,4 +1,5 @@
 #include "fs_util.h"
+#include "platform_paths.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -55,11 +56,17 @@ static bool	platform_atomic_replace(const char *from, const char *to)
 }
 #endif
 
-bool	membrane_mkdir_parents(const std::string &dir,
+bool	membrane_mkdir_parents(const std::string &dir_in,
 			membrane_fs_error_t *err)
 {
 	std::string	partial;
 	size_t		pos = 0;
+#ifdef _WIN32
+	/* Windows callers may hand in either separator. */
+	const std::string	dir = membrane_path_normalize(dir_in);
+#else
+	const std::string	&dir = dir_in;
+#endif
 
 	if (dir.empty())
 		return (true);
@@ -77,7 +84,23 @@ bool	membrane_mkdir_parents(const std::string &dir,
 		if (!component.empty())
 		{
 			partial += component;
-			if (platform_mkdir(partial.c_str()) != 0 && errno != EEXIST)
+#ifdef _WIN32
+			/* A drive ("C:") is not creatable -- mkdir("C:") fails with
+			 * EACCES even though it exists. */
+			if (partial.size() == 2 && partial[1] == ':')
+			{
+				partial += "/";
+				if (next == std::string::npos)
+					break ;
+				pos = next + 1;
+				continue ;
+			}
+#endif
+			struct stat	existing;
+
+			if (platform_mkdir(partial.c_str()) != 0 && errno != EEXIST
+				&& !(stat(partial.c_str(), &existing) == 0
+					&& (existing.st_mode & S_IFMT) == S_IFDIR))
 			{
 				err->set = true;
 				err->code = "IO_ERROR";
@@ -98,7 +121,11 @@ bool	membrane_atomic_write_file(const std::string &path,
 			const std::string &content, membrane_fs_error_t *err)
 {
 	*err = membrane_fs_error_t();
+#ifdef _WIN32
+	size_t		slash = path.find_last_of("/\\");
+#else
 	size_t		slash = path.find_last_of('/');
+#endif
 	std::string	dir = slash == std::string::npos ? "." : path.substr(0, slash);
 
 	if (!membrane_mkdir_parents(dir, err))

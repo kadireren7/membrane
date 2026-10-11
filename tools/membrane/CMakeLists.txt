@@ -696,8 +696,16 @@ target_include_directories(membrane PRIVATE
 # convention so it works outside the build tree without LD_LIBRARY_PATH.
 file(RELATIVE_PATH MEMBRANE_RPATH_TO_LIBDIR
   "${CMAKE_INSTALL_FULL_BINDIR}" "${CMAKE_INSTALL_FULL_LIBDIR}")
+# Milestone M: "$ORIGIN" is ELF-only. On macOS dyld ignores it, so the
+# installed (and packaged) binary could not find its sibling dylibs -- found
+# by running the extracted portable archive, which no earlier job did.
+if(APPLE)
+  set(MEMBRANE_CLI_RPATH_ORIGIN "@loader_path")
+else()
+  set(MEMBRANE_CLI_RPATH_ORIGIN "$ORIGIN")
+endif()
 set_target_properties(membrane PROPERTIES
-  INSTALL_RPATH "$ORIGIN/${MEMBRANE_RPATH_TO_LIBDIR}"
+  INSTALL_RPATH "${MEMBRANE_CLI_RPATH_ORIGIN}/${MEMBRANE_RPATH_TO_LIBDIR}"
   BUILD_WITH_INSTALL_RPATH FALSE
   SKIP_BUILD_RPATH FALSE)
 install(TARGETS membrane RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
