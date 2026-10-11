@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "version": "1.2.0",
+  "label": "REAL",
+  "summary": "macOS and Windows become real install targets: official unsigned portable archives, native data locations, product-owned SHA-256, platform doctor check, and a fresh-user acceptance sequence run against the extracted artifact on all three operating systems.",
+  "semver_rationale": "Additive: new official artifacts and one new doctor check; API v1, --json shapes, server.json and Linux data locations unchanged. Minor release.",
+  "platform_matrix": {
+    "linux_cpu": {
+      "state": "VALIDATED_CI",
+      "note": "every CI job; extracted .deb acceptance"
+    },
+    "linux_vulkan": {
+      "state": "VALIDATED_REAL",
+      "note": "maintainer's machine, one integrated + one discrete GPU"
+    },
+    "linux_cuda": {
+      "state": "VALIDATED_REAL",
+      "note": "earlier release; CI compile-only"
+    },
+    "macos_cpu": {
+      "state": "VALIDATED_CI",
+      "note": "extracted archive acceptance on macos-14"
+    },
+    "macos_metal": {
+      "state": "VALIDATED_CI",
+      "note": "paravirtualized Metal device; function not performance"
+    },
+    "windows_cpu": {
+      "state": "VALIDATED_CI",
+      "note": "extracted ZIP acceptance + Task Scheduler lifecycle on windows-latest"
+    },
+    "windows_cuda": {
+      "state": "NOT_VALIDATED"
+    },
+    "windows_vulkan": {
+      "state": "NOT_VALIDATED"
+    }
+  },
+  "package_matrix": {
+    "official_linux_amd64_deb": {
+      "state": "VALIDATED_CI",
+      "note": "membrane_1.2.0_amd64.deb + membrane-cpu, built by scripts/build-release.sh from the tagged commit; extracted .deb passed package-acceptance in CI"
+    },
+    "windows_package": {
+      "state": "VALIDATED_CI",
+      "artifact": "membrane_1.2.0_windows_x86_64.zip",
+      "signed": false,
+      "note": "built by scripts/package-portable.py in the windows-support-smoke CI job from the release commit"
+    },
+    "macos_package": {
+      "state": "VALIDATED_CI",
+      "artifact": "membrane_1.2.0_macos_arm64.tar.gz",
+      "signed": false,
+      "notarized": false,
+      "note": "built by scripts/package-portable.py in the macos-metal-smoke CI job from the release commit"
+    },
+    "real_upgrade_test": {
+      "label": "REAL",
+      "result": "A copy of the maintainer's real v1.1.0 registry and server.json were left byte-IDENTICAL after 14 read-only commands (status screen, doctor, models, models available, models recommend, plan, observe, advise, apply without --yes, adaptive status, run --explain, model list, status, --version); no state/audit directory was created, and the platform-native path rule still resolved the existing Linux directories. Done with a cmake-install of the merged code (before the version-string bump), not the .deb; `apply` exited 4 because no server was running, so there was nothing to apply."
+    }
+  },
+  "host_memory": {
+    "linux": "/proc/meminfo MemTotal/MemAvailable",
+    "macos": "sysctl hw.memsize + host_statistics64 (free+inactive pages)",
+    "windows": "GlobalMemoryStatusEx",
+    "unknown_is_not_zero": true,
+    "note": "already native since v1.0.0; documentation corrected"
+  },
+  "bugs_found_by_running_real_packages": [
+    "Windows mkdir of drive-rooted paths ('C:') failed with EACCES",
+    "installed macOS membrane used $ORIGIN rpath, which dyld ignores",
+    "Windows ZIP lacked curl/zlib DLLs (fixed with vcpkg applocal deps install)"
+  ],
+  "security": {
+    "loopback_default": true,
+    "cors_headers": false,
+    "firewall_changes": false,
+    "note": "acceptance asserts no Access-Control-Allow-Origin header on every OS"
+  },
+  "known_limitations": [
+    "macOS and Windows archives are unsigned and not notarized; Gatekeeper/SmartScreen warn",
+    "real-hardware validation exists only for Linux; macOS and Windows are hosted-CI validated",
+    "Windows GPU backends (CUDA, Vulkan) are not validated and not shipped; the ZIP is a CPU build",
+    "macOS Metal evidence is a paravirtualized device: functional, not performance",
+    "no Intel-Mac, Windows-on-Arm, installer-format or package-manager artifacts",
+    "adaptive pressure behavior is validated by a synthetic timeline, not induced hardware pressure",
+    "Ollama and vLLM were tested against mock servers, not live daemons",
+    "no multi-GPU execution or distributed orchestration",
+    "CXL and FPGA remain research only"
+  ]
+}
