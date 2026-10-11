@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "policy_version": 1,
-  "phase": "31-stable-release (policy first decided in phase 30-first-run-polish, unchanged since); product_version/debian_version bumped to 1.1.0 in the v1.1.0 release prep (earlier: 1.0.0 in Mega Phase E, PR E6) -- packaging policy itself unchanged",
-  "product_version": "1.1.0",
-  "debian_version": "1.1.0",
+  "phase": "31-stable-release (policy first decided in phase 30-first-run-polish, unchanged since); product_version/debian_version bumped to 1.2.0 in the v1.2.0 release prep (portable Windows/macOS artifacts added; Linux package policy itself unchanged)",
+  "product_version": "1.2.0",
+  "debian_version": "1.2.0",
   "debian_version_mapping_rule": "replace every '-' with '~' (CMakeLists.txt: string(REPLACE \"-\" \"~\" ...) applied to MEMBRANE_VERSION from tools/membrane-run/product_cli.h) -- Debian Policy 5.6.12, so a prerelease always sorts before its eventual stable release. A stable version has no hyphen, so the rule is a no-op here: '0.3.0' in, '0.3.0' out (confirmed directly: the built package's own Version: field reads exactly '0.3.0', no ~rc suffix).",
   "decision": {
     "id": "one-official-vulkan-enabled-package",
@@ -72,10 +72,14 @@
     }
   ],
   "stable_release": {
-    "version": "1.1.0",
+    "version": "1.2.0",
     "released": true,
-    "filename": "membrane_1.1.0_amd64.deb",
-    "note": "Current stable. The build commit and test evidence live in results/release-v1.1.0/readiness.json; the package checksums are published as the SHA256SUMS release asset, built from the exact tagged commit -- not duplicated here (this file stays the POLICY document). Earlier value of this field was stale (0.8.0 while v1.0.0 was already the stable release); corrected."
+    "filename": "membrane_1.2.0_amd64.deb",
+    "portable": [
+      "membrane_1.2.0_macos_arm64.tar.gz",
+      "membrane_1.2.0_windows_x86_64.zip"
+    ],
+    "note": "Current stable. The build commit and test evidence live in results/release-v1.2.0/readiness.json; checksums are published as the SHA256SUMS release asset, built from the exact tagged commit -- not duplicated here (this file stays the POLICY document)."
   },
   "portable_artifacts": [
     {

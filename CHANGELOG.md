@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.2.0] — 2026-10-11 — macOS and Windows as real product platforms
+
+Additive over v1.1.0 (API v1, `--json` shapes, `server.json` and Linux data
+locations unchanged). Release notes:
+[docs/release-v1.2.0.md](docs/release-v1.2.0.md); upgrade:
+[docs/upgrade-v1.1-to-v1.2.md](docs/upgrade-v1.1-to-v1.2.md).
+
+- **Official portable packages** (unsigned): `membrane_<version>_macos_arm64.tar.gz`
+  and `membrane_<version>_windows_x86_64.zip`, built by
+  `scripts/package-portable.py` in CI from the release commit, alongside the
+  existing Linux `.deb` packages. SHA256SUMS and SBOMs published.
+- **Package acceptance** (`scripts/package-acceptance.sh`): the fresh-user
+  sequence (version, status, doctor, catalog, real tiny-model download, plan
+  with measured RAM, serve, `/health`, `/v1/models`, chat, observe, advise,
+  apply dry run, adaptive status, `run --explain`, shutdown) runs in CI
+  against the extracted `.deb`, ZIP and macOS archive.
+- **Native paths**: macOS `~/Library/Application Support/membrane`, Windows
+  `%LOCALAPPDATA%\membrane`; Linux unchanged; `XDG_*` wins everywhere; an
+  existing legacy directory keeps being used (nothing is moved).
+- **Product-owned SHA-256** replaces the `sha256sum` subprocess.
+- **doctor**: `platform` check; Windows PATH/`.exe` lookup.
+- Fixes found by running the real packages: Windows `mkdir` of drive-rooted
+  paths, macOS installed RPATH (`@loader_path`), Windows console ANSI.
+- Host RAM reading was already native on all three OSes since v1.0.0
+  (`/proc/meminfo`, `sysctl`+`host_statistics64`, `GlobalMemoryStatusEx`); the
+  documentation that still called it a gap was corrected.
+
 ## [1.1.0] — 2026-10-11 — plan -> observe -> advise -> apply -> adapt
 
 Additive over v1.0.0 (API v1, `--json` shapes and existing registries/configs

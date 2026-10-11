@@ -147,12 +147,12 @@ running? `membrane doctor` says.
 | Control | [Active control](docs/active-control.md) · [Adaptive runtime](docs/adaptive-runtime.md) · [Orchestration](docs/orchestration.md) |
 | Runtimes and API | [Support matrix](docs/support-matrix.md) · [API contract](docs/api-contract.md) · [Client compatibility](docs/client-compatibility.md) · [Integrations](docs/integrations.md) |
 | Trust | [Security model](docs/security-model.md) · [Model quality](docs/model-quality.md) · [Direct CLI, build options and measured results](docs/direct-cli-and-results.md) |
-| Project | [Brand](docs/brand.md) · [Release v1.1.0](docs/release-v1.1.0.md) · [Changelog](CHANGELOG.md) |
+| Project | [Brand](docs/brand.md) · [Release v1.2.0](docs/release-v1.2.0.md) · [Changelog](CHANGELOG.md) |
 
 ## Status and limitations
 
-Release: latest stable tag `v1.1.0` ([notes](docs/release-v1.1.0.md),
-[upgrading from v1.0](docs/upgrade-v1.0-to-v1.1.md)). Everything in it is additive:
+Release: latest stable tag `v1.2.0` ([notes](docs/release-v1.2.0.md),
+[upgrading from v1.1](docs/upgrade-v1.1-to-v1.2.md)). Everything in it is additive:
 the OpenAI-compatible API v1, the `--json` shapes and existing configs are unchanged.
 
 - The OpenAI-compatible API is a subset, not the complete API.

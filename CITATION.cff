@@ -9,7 +9,7 @@ authors:
   - family-names: Altıntaş
     given-names: Kadir Eren
 repository-code: "https://github.com/kadireren7/membrane"
-version: "1.1.0"
+version: "1.2.0"
 date-released: "2026-10-11"
 license: Apache-2.0
 abstract: >-
@@ -45,7 +45,7 @@ abstract: >-
   (`membrane doctor` for diagnostics); independent multi-host validation
   beyond the maintainer's own development hardware and GitHub-hosted CI
   remains limited as of this release. This citation targets the latest
-  stable release, v1.1.0; the repository's main branch may contain
+  stable release, v1.2.0; the repository's main branch may contain
   development changes beyond it. Archived experiments, negative
   results, and benchmark/FPGA/CXL simulation provenance live in the
   companion repository kadireren7/membrane-research.
