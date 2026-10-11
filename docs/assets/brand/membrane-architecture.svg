@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="372" viewBox="0 0 640 372" role="img" aria-label="MEMBRANE sits between applications and local runtimes: clients and the CLI above, the plan, observe, advise, apply and adapt layer in the middle, the native, Ollama and vLLM runtimes below, and CPU, RAM, GPU and VRAM at the bottom."><title>MEMBRANE architecture</title>
+<style>
+.bg{fill:#fff}.box{fill:#f6f8fa;stroke:#d0d7de;stroke-width:1.5}.core{fill:#fff;stroke:#0F766E;stroke-width:2.5}.t{fill:#0D1117;font:600 15px system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}.s{fill:#57606a;font:13px system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif}.ar{stroke:#57606a;stroke-width:1.5;fill:none}.ah{fill:#57606a}.k{fill:#0F766E;font:700 15px system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;letter-spacing:.12em}
+@media (prefers-color-scheme:dark){.bg{fill:#0D1117}.box{fill:#161b22;stroke:#30363d}.core{fill:#0D1117;stroke:#2DD4BF}.t{fill:#E6EDF3}.s{fill:#9da7b3}.ar{stroke:#9da7b3}.ah{fill:#9da7b3}.k{fill:#2DD4BF}}
+</style>
+<rect class="bg" width="640" height="372"/>
+<rect class="box" x="60" y="16" width="520" height="58" rx="8"/>
+<text class="t" x="320" y="42" text-anchor="middle">Apps, CLI, OpenAI-compatible clients</text>
+<text class="s" x="320" y="62" text-anchor="middle">membrane chat, curl, openai SDKs</text>
+<path class="ar" d="M320 76V96"/><path class="ah" d="M314 94L320 104L326 94z"/>
+<rect class="core" x="60" y="106" width="520" height="92" rx="8"/>
+<text class="k" x="320" y="134" text-anchor="middle">MEMBRANE</text>
+<text class="t" x="320" y="162" text-anchor="middle">Plan · Observe · Advise · Apply · Adapt</text>
+<text class="s" x="320" y="184" text-anchor="middle">read-only until you say so; adaptive is off by default</text>
+<path class="ar" d="M320 200V220"/><path class="ah" d="M314 218L320 228L326 218z"/>
+<rect class="box" x="60" y="230" width="160" height="56" rx="8"/><text class="t" x="140" y="254" text-anchor="middle">Native</text><text class="s" x="140" y="274" text-anchor="middle">control</text>
+<rect class="box" x="240" y="230" width="160" height="56" rx="8"/><text class="t" x="320" y="254" text-anchor="middle">Ollama</text><text class="s" x="320" y="274" text-anchor="middle">observe, one unload</text>
+<rect class="box" x="420" y="230" width="160" height="56" rx="8"/><text class="t" x="500" y="254" text-anchor="middle">vLLM</text><text class="s" x="500" y="274" text-anchor="middle">read-only</text>
+<path class="ar" d="M320 288V308"/><path class="ah" d="M314 306L320 316L326 306z"/>
+<rect class="box" x="60" y="318" width="520" height="40" rx="8"/>
+<text class="t" x="320" y="343" text-anchor="middle">CPU · RAM · GPU · VRAM</text>
+</svg>

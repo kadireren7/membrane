@@ -25,7 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = REPO_ROOT / "results" / "cli-ux" / "validation.json"
 PRODUCT_CLI_CPP_PATH = REPO_ROOT / "tools" / "membrane-run" / "product_cli.cpp"
 MAIN_CPP_PATH = REPO_ROOT / "tools" / "membrane-run" / "main.cpp"
-README_PATH = REPO_ROOT / "README.md"
+README_PATH = REPO_ROOT / "docs" / "direct-cli-and-results.md"  # the Quick Start moved out of the README (brand/README refresh)
 
 FAILURES = []
 CHECK_COUNT = 0
@@ -270,7 +270,7 @@ def _c13():
 	return len(bad) == 0, "; ".join(bad) if bad else f"reason_code {code!r} consistent"
 
 
-@check("README's Quick Start section documents both a minimal (no --auto) "
+@check("direct-cli doc's Quick Start section documents both a minimal (no --auto) "
 	"and an --auto invocation, in that order")
 def _c14():
 	readme = README_PATH.read_text()
