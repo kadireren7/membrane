@@ -1,25 +1,126 @@
 # Install
 
-This covers getting from zero to an installed `membrane-run` binary, and
-removing it again. For CLI flag semantics see `membrane-run --help` and
-the README; for the KV precision/placement mechanism see
-`docs/live-runtime.md` and `docs/kv-residency.md`.
+MEMBRANE: hardware-aware memory intelligence and control for local LLM
+inference. Pick your operating system.
 
-Linux only — this has not been verified on macOS or Windows.
-Debian-family only (Ubuntu / Pop!_OS / Debian) for the `.deb` path below
-— no Fedora/RPM, Arch, Flatpak, Snap, or AppImage packaging exists.
+| OS | Official artifact | Validated backend | Section |
+|---|---|---|---|
+| Linux (Debian family, amd64) | `membrane_<version>_amd64.deb` | CPU, Vulkan (real hardware); CUDA is a source-build option | [Linux](#linux) |
+| macOS (Apple Silicon, arm64) | `membrane_<version>_macos_arm64.tar.gz` | CPU and Metal (CI; the CI GPU is paravirtualized) | [macOS](#macos) |
+| Windows (x86_64) | `membrane_<version>_windows_x86_64.zip` | CPU (CI). GPU backends are not validated on real Windows hardware | [Windows](#windows) |
 
-Three ways to get `membrane-run` installed, easiest first:
+The macOS and Windows archives are **unsigned** (no Apple Developer ID
+signature or notarization, no Windows code-signing certificate). Each section
+says what your OS will show and how to proceed safely. Verify every download
+against `SHA256SUMS` from the same release page first.
 
-- **Option A** — install a `.deb` package (Ubuntu/Debian/Pop!_OS, no
-  manual CMake).
-- **Option B** — build from source and `cmake --install` to a system
-  prefix.
-- **Option C** — build from source and install to a user-local prefix,
-  no root needed.
+After installing, on any OS the first steps are the same:
 
-All three produce the same binary behavior; they differ only in how the
-files get onto disk (and, for Option C, whether root is needed at all).
+```
+membrane            # a status screen and the next step
+membrane doctor     # checks installation, hardware, models, service
+membrane use        # pick a model (a partial name works)
+membrane chat
+```
+
+MEMBRANE needs no `sha256sum`, `shasum` or any other external tool: model
+downloads are verified with a SHA-256 implementation built into the product.
+The local server listens on `127.0.0.1` only; installing never opens a port or
+touches a firewall.
+
+Where MEMBRANE keeps its files (`membrane doctor` prints the exact paths):
+
+| | Models and registry | Settings (`server.json`) | Audit log |
+|---|---|---|---|
+| Linux | `~/.local/share/membrane` | `~/.config/membrane` | `~/.local/state/membrane` |
+| macOS | `~/Library/Application Support/membrane` | same directory | `~/Library/Application Support/membrane/state` |
+| Windows | `%LOCALAPPDATA%\membrane` | `%LOCALAPPDATA%\membrane\config` | `%LOCALAPPDATA%\membrane\state` |
+
+`XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME`, when set, win on every
+OS. If you already had a registry in the older `~/.local/share/membrane` (a
+source build on macOS or Windows before v1.2), MEMBRANE keeps using it. Nothing
+is moved or copied, ever.
+
+## macOS
+
+Apple Silicon (arm64), macOS 14 or newer is what CI builds and runs. Intel
+Macs have no official artifact.
+
+```bash
+# download membrane_<version>_macos_arm64.tar.gz and SHA256SUMS from the release page
+shasum -a 256 -c SHA256SUMS --ignore-missing
+tar -xzf membrane_<version>_macos_arm64.tar.gz
+cd membrane_<version>_macos_arm64
+./bin/membrane --version
+./bin/membrane doctor
+export PATH="$PWD/bin:$PATH"       # optional; add to ~/.zshrc to keep it
+```
+
+**Gatekeeper.** The archive is not signed or notarized. Files downloaded with
+a browser carry a quarantine flag and macOS may refuse to open
+`bin/membrane` ("cannot be opened because the developer cannot be verified").
+Only if you downloaded it from the official release page and the checksum
+matched, remove the flag from the extracted folder:
+
+```bash
+xattr -dr com.apple.quarantine .
+```
+
+Downloading with `curl` does not set the flag. Build from source if you would
+rather not run an unsigned binary.
+
+The Metal backend is used automatically when a GPU device is found;
+`membrane doctor` says whether it is. Background service: `membrane service
+install` creates a `launchd` agent (`~/Library/LaunchAgents`); `membrane
+service status|start|stop|uninstall` manage it. Remove MEMBRANE by deleting
+the extracted folder (your models stay under Application Support).
+
+Source build: Xcode command line tools and CMake, then
+`cmake -S . -B build -DMEMBRANE_ENABLE_LLAMA=ON -DGGML_METAL=ON
+-DCMAKE_BUILD_TYPE=Release && cmake --build build -j --target membrane
+membrane-run`. Details: [macos-metal.md](macos-metal.md).
+
+## Windows
+
+Windows 10/11, x86_64.
+
+```powershell
+# download membrane_<version>_windows_x86_64.zip and SHA256SUMS from the release page
+(Get-FileHash .\membrane_<version>_windows_x86_64.zip -Algorithm SHA256).Hash
+# compare with the matching line in SHA256SUMS
+Expand-Archive .\membrane_<version>_windows_x86_64.zip -DestinationPath .
+cd .\membrane_<version>_windows_x86_64
+.\bin\membrane.exe --version
+.\bin\membrane.exe doctor
+$env:Path = "$PWD\bin;$env:Path"      # this session; add to your user PATH to keep it
+```
+
+**SmartScreen.** The ZIP and its `.exe` files are not code-signed, so Windows
+SmartScreen may show "Windows protected your PC". If you got the file from the
+official release page and the SHA-256 matched, choose *More info*, then *Run
+anyway*; or right-click the ZIP, open *Properties*, tick *Unblock*, before
+extracting. Build from source if you would rather not run an unsigned binary.
+
+MEMBRANE runs on the CPU on Windows. The GPU backends (CUDA, Vulkan) are not
+validated on real Windows hardware, and the official ZIP is a CPU build; do not
+expect GPU offload from it. The background service uses the Windows Task
+Scheduler (`membrane service install|start|status|stop|uninstall`), which
+needs no administrator rights and runs as you. Remove MEMBRANE by deleting the
+extracted folder (your models stay under `%LOCALAPPDATA%\membrane`).
+
+Source build (Visual Studio 2022, CMake, vcpkg for curl and zlib): see
+[windows-support.md](windows-support.md).
+
+## Linux
+
+Everything below is Linux-specific (Debian-family `.deb`, source builds,
+user-local prefix). No Fedora/RPM, Arch, Flatpak, Snap or AppImage packaging
+exists.
+
+Three ways to get `membrane` installed on Linux, easiest first: **Option A**,
+a `.deb` (no manual CMake); **Option B**, build from source and install to a
+system prefix; **Option C**, build from source into a user-local prefix, no
+root. All three give the same binary behavior.
 
 ## Which `membrane` am I running? (install, reinstall, upgrade)
 

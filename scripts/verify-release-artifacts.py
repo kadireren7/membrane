@@ -44,7 +44,8 @@ CHECK_COUNT = 0
 FORBIDDEN_PLATFORM_PATTERNS = (
 	r"dnf install", r"yum install", r"\.rpm\b(?!.{0,40}(no|not|never|none|does not))",
 	r"pacman -S", r"flatpak install", r"snap install",
-	r"\.dmg\b", r"\.exe\b", r"\.msi\b", r"brew install membrane",
+	r"\.dmg\b", r"\.msi\b", r"\.pkg\b", r"brew install membrane",
+	r"winget install", r"choco install",
 )
 
 

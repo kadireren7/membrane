@@ -1103,6 +1103,19 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # Milestone M: static consistency of the cross-platform docs, manifest and
+  # packaging wiring (no build).
+  platform-support-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify platform support docs, manifest and packaging wiring
+        run: python3 scripts/verify-platform-support.py
+
   # Mega Phase E, PR E6: release-v080-check (Mega Phase D, PR D8) is
   # RETIRED from CI as of this PR, exactly as its own comment predicted
   # ("expected to need the same retirement once a future release
@@ -1407,7 +1420,8 @@ jobs:
           cmake -S . -B build-windows-smoke \
             -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x64-windows
+            -DVCPKG_TARGET_TRIPLET=x64-windows \
+            -DX_VCPKG_APPLOCAL_DEPS_INSTALL=ON
 
       - name: Build
         run: |
@@ -1514,6 +1528,17 @@ jobs:
         run: |
           PKG="$(cygpath -u "$RUNNER_TEMP")/unzipped/membrane_${MEMBRANE_PKG_VERSION}_windows_x86_64"
           scripts/package-acceptance.sh "$PKG/bin" "$MEMBRANE_PKG_VERSION"
+
+      - name: Service lifecycle from the extracted ZIP (Task Scheduler)
+        run: |
+          PKG="$(cygpath -u "$RUNNER_TEMP")/unzipped/membrane_${MEMBRANE_PKG_VERSION}_windows_x86_64"
+          M="$PKG/bin/membrane.exe"
+          "$M" service install --exec-path "$PKG/bin/membrane.exe"
+          "$M" service start
+          sleep 3
+          "$M" service status
+          "$M" service stop
+          "$M" service uninstall
 
       - name: Upload Windows portable ZIP
         uses: actions/upload-artifact@v4
