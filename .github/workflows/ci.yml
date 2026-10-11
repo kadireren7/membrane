@@ -1040,6 +1040,18 @@ jobs:
           path: build-vulkan-install/membrane_*.deb
           if-no-files-found: error
 
+      # Milestone M: the fresh-user acceptance sequence against the ACTUAL
+      # official .deb (extracted, never the build tree): version, status
+      # screen, doctor, catalog, a real tiny-model download with the
+      # product's own SHA-256, plan with measured host RAM, serve, /health,
+      # /v1/models, one chat completion, no CORS header, observe, advise,
+      # apply (dry run), adaptive status, run --explain, shutdown.
+      - name: Package acceptance (extracted official .deb)
+        run: |
+          rm -rf /tmp/membrane-deb-x
+          dpkg-deb -x build-vulkan-install/membrane_*.deb /tmp/membrane-deb-x
+          ACCEPT_OPENAI=1 scripts/package-acceptance.sh /tmp/membrane-deb-x/usr/bin
+
   # Mega Phase C, PR C2: smoke-tests the release AUTOMATION SCRIPT
   # itself (scripts/build-release.sh) end to end -- real configure/
   # build/cpack, real SBOM generation, real SHA256SUMS -- on every push/
@@ -1090,6 +1102,19 @@ jobs:
           name: release-candidate-smoke-artifacts
           path: dist/
           if-no-files-found: error
+
+  # Milestone M: static consistency of the cross-platform docs, manifest and
+  # packaging wiring (no build).
+  platform-support-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify platform support docs, manifest and packaging wiring
+        run: python3 scripts/verify-platform-support.py
 
   # Mega Phase E, PR E6: release-v080-check (Mega Phase D, PR D8) is
   # RETIRED from CI as of this PR, exactly as its own comment predicted
@@ -1292,6 +1317,40 @@ jobs:
           ./build-metal-smoke/tools/membrane/membrane service stop
           ./build-metal-smoke/tools/membrane/membrane service uninstall
 
+      # Milestone M: install to a prefix, build the portable archive with
+      # the release script, unpack it into a clean directory and run the
+      # acceptance sequence from there (Metal build, real generation
+      # happens above; this proves the packaged binaries and native paths).
+      - name: Install to a prefix and build the portable archive
+        run: |
+          cmake --install build-metal-smoke --prefix "$PWD/install-macos-smoke"
+          VER=$(sed -n 's/^# *define MEMBRANE_VERSION "\(.*\)"/\1/p' tools/membrane-run/product_cli.h)
+          echo "MEMBRANE_PKG_VERSION=$VER" >> "$GITHUB_ENV"
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python3 scripts/package-portable.py \
+            --os macos --arch arm64 --version "$VER" \
+            --prefix install-macos-smoke --commit "$GITHUB_SHA" --out-dir dist-portable
+
+      - name: Unpack the archive into a clean directory
+        run: |
+          rm -rf "$RUNNER_TEMP/unpacked" && mkdir -p "$RUNNER_TEMP/unpacked"
+          tar -xzf dist-portable/membrane_${MEMBRANE_PKG_VERSION}_macos_arm64.tar.gz -C "$RUNNER_TEMP/unpacked"
+          PKG="$RUNNER_TEMP/unpacked/membrane_${MEMBRANE_PKG_VERSION}_macos_arm64"
+          test -f "$PKG/README.txt" && test -f "$PKG/LICENSE" && test -f "$PKG/PACKAGE-INFO.json"
+          otool -L "$PKG/bin/membrane" | head -20
+          env -i "$PKG/bin/membrane" --version
+
+      - name: Package acceptance (extracted archive, native macOS paths)
+        run: |
+          ACCEPT_OPENAI=1 scripts/package-acceptance.sh \
+            "$RUNNER_TEMP/unpacked/membrane_${MEMBRANE_PKG_VERSION}_macos_arm64/bin" "$MEMBRANE_PKG_VERSION"
+
+      - name: Upload macOS portable archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: membrane-macos-arm64
+          path: dist-portable/*.tar.gz
+          if-no-files-found: error
+
   # Mega Phase D, PR D5: validates the committed real-Windows evidence
   # (results/windows-support/validation.json) and a handful of source-
   # level regression guards (the MSVC /W4 flag guard, the four compat
@@ -1361,7 +1420,8 @@ jobs:
           cmake -S . -B build-windows-smoke \
             -DMEMBRANE_ENABLE_LLAMA=ON -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x64-windows
+            -DVCPKG_TARGET_TRIPLET=x64-windows \
+            -DX_VCPKG_APPLOCAL_DEPS_INSTALL=ON
 
       - name: Build
         run: |
@@ -1436,3 +1496,53 @@ jobs:
           ./install-windows-smoke/bin/membrane.exe service status
           ./install-windows-smoke/bin/membrane.exe service stop
           ./install-windows-smoke/bin/membrane.exe service uninstall
+
+      # Milestone M: the portable release archive, built by the same
+      # script the release uses, then exercised the way a user would:
+      # expanded with PowerShell into a clean directory and run from there
+      # (never the build tree, never the vcpkg-provided DLL directories).
+      - name: Build portable ZIP
+        run: |
+          VER=$(sed -n 's/^# *define MEMBRANE_VERSION "\(.*\)"/\1/p' tools/membrane-run/product_cli.h)
+          echo "MEMBRANE_PKG_VERSION=$VER" >> "$GITHUB_ENV"
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) python3 scripts/package-portable.py \
+            --os windows --arch x86_64 --version "$VER" \
+            --prefix install-windows-smoke --commit "$GITHUB_SHA" --out-dir dist-portable
+
+      - name: Expand the ZIP with PowerShell into a clean directory
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist-portable -Filter *.zip | Select-Object -First 1
+          Expand-Archive -Path $zip.FullName -DestinationPath "$env:RUNNER_TEMP\unzipped"
+          Get-ChildItem "$env:RUNNER_TEMP\unzipped" -Recurse | Select-Object -First 40 FullName
+
+      - name: Packaged membrane.exe starts with a minimal PATH
+        run: |
+          PKG="$(cygpath -u "$RUNNER_TEMP")/unzipped/membrane_${MEMBRANE_PKG_VERSION}_windows_x86_64"
+          test -f "$PKG/README.txt" && test -f "$PKG/LICENSE" && test -f "$PKG/PACKAGE-INFO.json"
+          env PATH="/c/Windows/System32:/c/Windows" "$PKG/bin/membrane.exe" --version
+          env PATH="/c/Windows/System32:/c/Windows" "$PKG/bin/membrane.exe" models available | head -5
+          env PATH="/c/Windows/System32:/c/Windows" "$PKG/bin/membrane.exe" doctor || true
+
+      - name: Package acceptance (extracted ZIP, native Windows paths)
+        run: |
+          PKG="$(cygpath -u "$RUNNER_TEMP")/unzipped/membrane_${MEMBRANE_PKG_VERSION}_windows_x86_64"
+          ACCEPT_OPENAI=1 scripts/package-acceptance.sh "$PKG/bin" "$MEMBRANE_PKG_VERSION"
+
+      - name: Service lifecycle from the extracted ZIP (Task Scheduler)
+        run: |
+          PKG="$(cygpath -u "$RUNNER_TEMP")/unzipped/membrane_${MEMBRANE_PKG_VERSION}_windows_x86_64"
+          M="$PKG/bin/membrane.exe"
+          "$M" service install --exec-path "$PKG/bin/membrane.exe"
+          "$M" service start
+          sleep 3
+          "$M" service status
+          "$M" service stop
+          "$M" service uninstall
+
+      - name: Upload Windows portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: membrane-windows-x86_64
+          path: dist-portable/*.zip
+          if-no-files-found: error

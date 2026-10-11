@@ -1219,7 +1219,7 @@ bool	membrane_plan_resolve_installed_v2(const std::string &name,
 	if (registry_path.empty())
 	{
 		*err_code = "IO_ERROR";
-		*err_message = "neither XDG_DATA_HOME nor HOME is set";
+		*err_message = "neither XDG_DATA_HOME nor HOME/USERPROFILE is set";
 		return (false);
 	}
 	if (!membrane_registry_load(registry_path, &reg, &reg_err))
@@ -1365,7 +1365,7 @@ int	membrane_plan_cmd_dispatch(const std::vector<std::string> &args,
 
 	if (registry_path.empty())
 	{
-		print_err(want_json, "IO_ERROR", "neither XDG_DATA_HOME nor HOME "
+		print_err(want_json, "IO_ERROR", "neither XDG_DATA_HOME nor HOME/USERPROFILE "
 			"is set");
 		return (MEMBRANE_EXIT_MODEL_ERROR);
 	}

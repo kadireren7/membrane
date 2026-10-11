@@ -1,78 +1,66 @@
-Platform / backend support matrix — v0.8.0
+# Platform support matrix
 
-Mega Phase D, PR D8. Evidence states used below:
+Evidence labels, strictest first:
 
-- **VALIDATED_REAL** — a real, physical (or real cloud-VM) device was
-  used to produce this evidence directly (a human/agent-run command, or
-  a CI job running on real hardware, e.g. a real per-PR generation).
-- **VALIDATED_CI** — the SAME real validation runs automatically on
-  every PR via a named CI job (so it is continuously re-verified, not a
-  one-time snapshot) — a subset of VALIDATED_REAL, called out
-  separately here specifically because "ran once, in the past" and
-  "runs on every single change" are different strengths of claim.
-- **CONFIGURATION_ONLY** — compiles/configures correctly; no real
-  runtime execution evidence exists.
-- **NOT_VALIDATED** — not attempted, reason given.
-- **UNSUPPORTED** — a real, confirmed incompatibility.
+- **real hardware**: a physical device (or a real cloud VM) ran it, by a
+  person or a CI job on that hardware.
+- **CI**: runs automatically on GitHub-hosted runners on every pull request.
+  Real execution, but on virtualized infrastructure.
+- **compile only**: builds and links; nothing was run on a device.
+- **not validated**: not attempted. Never claimed.
+- **unsupported**: known not to work.
 
-Never write "supported" where only compilation succeeded — see
-`scripts/verify-release-v0.8.0.py`'s own overclaim checks.
+"Supported" is not a single column here, on purpose. A platform is *packaged*
+when the release ships an artifact that was extracted and run by the
+acceptance test (`scripts/package-acceptance.sh`) in CI; a backend is
+*validated* only at the strength written below.
 
-## Platform × backend matrix
+## Platforms and packages
 
-| Platform | Backend | State | Evidence |
+| Platform | Official artifact | Architecture | Signed | Package acceptance test |
+|---|---|---|---|---|
+| Linux | `membrane_<version>_amd64.deb` (Vulkan-enabled, runs CPU-only) and `membrane-cpu_<version>_amd64.deb` | amd64 | n/a (checksums in `SHA256SUMS`) | CI: the extracted `.deb` |
+| macOS | `membrane_<version>_macos_arm64.tar.gz` | arm64 (Apple Silicon) | **no** (unsigned, not notarized) | CI: the extracted archive |
+| Windows | `membrane_<version>_windows_x86_64.zip` | x86_64 | **no** (unsigned) | CI: the extracted ZIP |
+
+No Intel-Mac artifact (CI has no x86_64 macOS runner in use), no Windows on Arm,
+no `.pkg`, `.msi`, Homebrew, winget or Chocolatey package: none was built and
+tested, so none is offered.
+
+## Platform x backend matrix
+
+| Platform | Backend | Evidence | Notes |
 |---|---|---|---|
-| Linux | CPU | VALIDATED_CI | Every CI job in this project (`build-and-test`, sanitizers, `packaging-smoke`, etc.) — the default backend, exercised on every single commit. |
-| Linux | Vulkan | VALIDATED_REAL | This project's own real dev host (AMD Ryzen 5 5600H w/ integrated Radeon Graphics + a real discrete NVIDIA GTX 1650, both enumerated via Vulkan) — `results/v0.3/gpu-vulkan-validation.json`, `results/v0.4/adaptive_vulkan_matrix.jsonl`, reconfirmed this phase (`results/release-v0.8.0/readiness.json`). `packaging-smoke`'s own Vulkan leg additionally compiles/installs it on every PR (CI has no real GPU there — build/install only). |
-| Linux | CUDA | VALIDATED_REAL | This project's own real dev host's real NVIDIA GTX 1650 (Turing, compute 7.5) with a real, locally-installed CUDA 12.6 toolkit — `results/cuda-backend/validation.json` (Mega Phase D, PR D3), reconfirmed this phase (`results/release-v0.8.0/readiness.json`). `cuda-backend-build-smoke` additionally compiles it on every PR against a real CUDA toolkit on `ubuntu-latest` — **compile-only, no GPU on that runner** (explicit in the job's own name and its `Built binary reports CUDA compiled in (no device present)` step). |
-| macOS | CPU | VALIDATED_CI (bundled with the Metal job) | `macos-metal-smoke` (`macos-14` hosted runner) runs `--doctor`/`--list-devices` and real launchd lifecycle on every PR; the job's own real generation step passes `--gpu-layers auto`, so it is not a CPU-*only*-forced configuration — see the Metal row below for the actual generation evidence. |
-| macOS | Metal | VALIDATED_CI | `macos-metal-smoke` — real device enumeration, real HTTPS model download, real generation (`--gpu-layers auto`) on every PR. **Real but paravirtualized**: the device is GitHub's own `MTL0 (Apple Paravirtual device)`, real Apple Silicon cloud infrastructure but not bare-metal GPU access (confirmed by the device's own self-reported name) — no performance claim should be drawn from its throughput, only functional correctness. `results/macos-metal/validation.json` (Mega Phase D, PR D4). |
-| Windows | CPU | VALIDATED_CI | `windows-support-smoke` (`windows-latest` hosted runner) — real install, real device enumeration, real HTTPS model download, real generation, real Task Scheduler service lifecycle, on every PR. `results/windows-support/validation.json` (Mega Phase D, PR D5). |
-| Windows | CUDA | NOT_VALIDATED | No discrete GPU exists on the `windows-latest` hosted runner (confirmed directly, not inferred) and no other real Windows+NVIDIA environment is available to this project. Never claimed. |
-| Windows | Vulkan | NOT_VALIDATED | Same reasoning as Windows CUDA — no discrete GPU on the CI runner, no other real Windows GPU environment available. |
+| Linux | CPU | CI, on every job | The default backend. |
+| Linux | Vulkan | **real hardware** | Real dev host with an integrated AMD GPU and a discrete NVIDIA GTX 1650 (`results/v0.3/gpu-vulkan-validation.json`, `results/v0.4/adaptive_vulkan_matrix.jsonl`). One machine, not a claim about every GPU. |
+| Linux | CUDA | **real hardware** (earlier release) and compile only in CI | GTX 1650 with CUDA 12.6 (`results/cuda-backend/validation.json`). CI compiles it against a real toolkit but has no GPU. Source-build option, not in the official package. |
+| macOS | CPU | CI | Real generation from the extracted archive. |
+| macOS | Metal | CI | Real generation (`--gpu-layers auto`) on GitHub's macOS runner; the device is `Apple Paravirtual device`, so this proves function, not performance, and is not bare-metal GPU validation. |
+| Windows | CPU | CI | Real model download, generation, server, API and Task Scheduler lifecycle from the extracted ZIP. |
+| Windows | CUDA | **not validated** | No Windows NVIDIA hardware available. Not shipped, not claimed. |
+| Windows | Vulkan | **not validated** | Same. Not shipped, not claimed. |
 
-## Known, still-true platform gaps (re-verified this phase)
+## Known platform limits
 
-- **`--ctx auto` has no real host-RAM reading on Windows or macOS** —
-  `host_memory_guard.c`'s real memory reader is `/proc/meminfo`-based
-  (Linux-only); re-confirmed by source read this phase (no `_WIN32`/
-  `__APPLE__` branch exists in that file). On macOS this makes `--ctx
-  auto` fail closed entirely (`PLANNER_REJECTED_ALL`); on Windows the
-  GPU/KV auto-selection path still works (it doesn't need a host-RAM
-  fact when there's no GPU to reason about), but a real context-SIZING
-  decision would hit the identical gap. Extending `host_memory_guard.c`
-  to real platform-native memory APIs (`GlobalMemoryStatusEx`/
-  `sysctl hw.memsize`) is real, disclosed future work, not attempted
-  this phase (Section 15 of the D8 task: this phase's own long-context
-  fix is a different, narrower issue — see `docs/server.md`'s new
-  `CTX_TOO_SMALL_FOR_PROMPT` row — not a general host-RAM-probing fix).
-- **No official Windows or macOS package exists** — see "Package
-  policy" below; source build only on both platforms.
-- **Checksum verification degrades gracefully on stock macOS** — no
-  `sha256sum` preinstalled; real size/GGUF validation still happens,
-  real checksum verification needs `brew install coreutils` separately
-  (unchanged from PR D4).
-- **CUDA/Vulkan real hardware evidence is single-GPU** — one real
-  device each (GTX 1650 for both), not a claim about any other NVIDIA/
-  AMD/Intel GPU generation.
+- GPU evidence is single-device per backend (GTX 1650 for Vulkan/CUDA; one
+  virtualized Metal device).
+- macOS and Windows artifacts are unsigned: Gatekeeper and SmartScreen will
+  warn. Signing and notarization can be added to the release workflow later;
+  none is faked now. See [install.md](install.md).
+- There is one real-hardware environment for Linux; macOS and Windows are
+  validated on hosted CI only.
+- Only Linux has a real-hardware GPU result. Do not read "validated" on macOS
+  or Windows as a GPU-performance statement.
 
-## Package policy (v0.8.0)
+## Package policy
 
-Only Linux ships an official package this release, matching the
-platform evidence above exactly:
-
-- `membrane_0.8.0_amd64.deb` — Vulkan-enabled, the official asset.
-- `membrane-cpu_0.8.0_amd64.deb` — CPU-only variant, also official
-  (unchanged policy since v0.3.0/v0.4.0, `results/release-artifacts/
-  manifest.json`).
-
-No Windows or macOS package this release — real per-PR CI validation
-exists for both platforms (see the matrix above), but no packaging
-pipeline (`.zip`/`.msi`/`.pkg`/Homebrew) has been built and validated
-from an actual release artifact yet (Sections 20/21 of the D8 task:
-"do not publish unless the exact artifact itself was validated"). Both
-remain source-build-only, exactly as disclosed since PR D4/D5.
-
+`membrane` (the Vulkan-enabled `.deb`) is the official Linux package; it runs
+correctly CPU-only and uses a GPU only when asked. `membrane-cpu` is a
+CPU-only variant for people who want to avoid the `libvulkan1` dependency.
+The Windows ZIP and macOS archive are portable: extract, run, delete to
+remove. They contain only `bin/` (and `lib/` on macOS), `LICENSE`, the
+third-party license text, `README.txt` and `PACKAGE-INFO.json`. See
+[results/release-artifacts/manifest.json](../results/release-artifacts/manifest.json).
 
 ## Runtime support matrix (Milestone L)
 
@@ -82,9 +70,46 @@ What MEMBRANE can do with each inference **runtime** (not backend):
 |---|---|---|---|---|---|---|
 | membrane-native | yes | yes | yes | yes: context, KV precision/placement, GPU layers (via `server.json` overrides, next load), unload, pin/unpin, activate | yes (opt-in) | yes, with a Planner v2 plan |
 | Ollama (v0.34.3 audited) | yes | yes (`/api/ps`) | yes | **unload only** (explicit `--unload`; `keep_alive=0`); no persistent context/GPU/KV control exists | observe / recommend only | yes, from reported facts (no Planner-grade accuracy) |
-| vLLM (v0.31.0 audited) | yes | not implemented | not implemented | **none** (model/context/KV fixed at launch) | no | yes, as a resident, read-only candidate |
+| vLLM (v0.31.0 audited) | yes | inspect only (health, models, load) | not implemented | **none** (model/context/KV fixed at launch) | no | yes, as a resident, read-only candidate |
 
 Evidence: Ollama and vLLM are tested against in-process mock servers that
 follow the audited response shapes; no real Ollama or vLLM daemon was run for
 this milestone. Multi-GPU: topology and device visibility only; no
 distributed-execution claim ([orchestration.md](orchestration.md)).
+
+**Runtime availability depends on the platform, and MEMBRANE does not hide
+that.** The adapters are generic, and each only ever talks HTTP to
+`127.0.0.1`; whether a given runtime exists on your machine is up to that
+runtime:
+
+| Runtime | Linux | macOS | Windows |
+|---|---|---|---|
+| membrane-native | packaged (`.deb`) | packaged (archive) | packaged (ZIP, CPU) |
+| Ollama | adapter tested against mocks; the daemon is separate software | same | same |
+| vLLM | adapter tested against mocks; vLLM's own support is Linux-first (NVIDIA/AMD GPUs) | not a supported vLLM platform upstream for GPU serving; the adapter simply reports "not reachable" | same |
+
+`membrane run` and `doctor` detect runtimes by trying their loopback API, not
+by looking for a binary in a platform-specific location, so there is no
+Linux-path assumption. MEMBRANE never installs, launches or controls Ollama or
+vLLM.
+
+## Cross-platform behavior (same code, different facts)
+
+Planning, observation, advice, `apply` and the adaptive controller have one
+implementation. Platform differences enter only through measured facts and
+runtime capabilities:
+
+| Area | Linux | macOS | Windows |
+|---|---|---|---|
+| Host RAM total/available | `/proc/meminfo` (`MemTotal`, `MemAvailable`) | `sysctl hw.memsize`; available = free + inactive pages from `host_statistics64` | `GlobalMemoryStatusEx` (`ullTotalPhys`, `ullAvailPhys`) |
+| Swap reported | yes | no (`unknown`) | no (`unknown`) |
+| Unreadable memory | `unknown`, never `0` | same | same |
+| SHA-256 for downloads | built in | built in | built in |
+| Service manager | `systemd --user` | `launchd` | Task Scheduler |
+| `apply`: native controls | context, KV precision/placement, GPU layers, unload, pin, activate | same (capability-gated by the runtime) | same (capability-gated by the runtime) |
+| GPU facts | Vulkan/CUDA when built in | Metal | none claimed |
+
+The macOS "available" figure counts free plus inactive pages. It is a
+reasonable estimate of memory that can be reclaimed without swapping, but it
+is not identical to Linux `MemAvailable`; observations are labeled with their
+source (`mach_host_statistics64`) so the difference is visible.

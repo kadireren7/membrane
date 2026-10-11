@@ -263,7 +263,7 @@ static int	cmd_install(const std::vector<std::string> &args, bool want_json)
 			"the LaunchAgents directory");
 # else
 		print_err(want_json, "IO_ERROR", "neither XDG_CONFIG_HOME nor "
-			"HOME is set -- cannot locate the systemd --user unit "
+			"HOME/USERPROFILE is set -- cannot locate the systemd --user unit "
 			"directory");
 # endif
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);
@@ -420,7 +420,7 @@ static int	cmd_uninstall(bool want_json)
 		print_err(want_json, "IO_ERROR", "HOME is not set");
 # else
 		print_err(want_json, "IO_ERROR", "neither XDG_CONFIG_HOME nor "
-			"HOME is set");
+			"HOME/USERPROFILE is set");
 # endif
 		return (MEMBRANE_EXIT_RUNTIME_ERROR);
 	}

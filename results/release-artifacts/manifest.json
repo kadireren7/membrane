@@ -76,5 +76,61 @@
     "released": true,
     "filename": "membrane_1.1.0_amd64.deb",
     "note": "Current stable. The build commit and test evidence live in results/release-v1.1.0/readiness.json; the package checksums are published as the SHA256SUMS release asset, built from the exact tagged commit -- not duplicated here (this file stays the POLICY document). Earlier value of this field was stale (0.8.0 while v1.0.0 was already the stable release); corrected."
-  }
+  },
+  "portable_artifacts": [
+    {
+      "role": "official-portable",
+      "os": "macos",
+      "architecture": "arm64",
+      "filename_pattern": "membrane_<version>_macos_arm64.tar.gz",
+      "backend_capability": "Metal-enabled build with CPU fallback (CI-validated; the CI GPU is paravirtualized)",
+      "signed": false,
+      "notarized": false,
+      "built_by": "scripts/package-portable.py via the macos-metal-smoke CI job (macos-14), from the exact release commit",
+      "acceptance_test": "scripts/package-acceptance.sh against the extracted archive",
+      "contents": [
+        "bin/membrane",
+        "bin/membrane-run",
+        "lib/*.dylib",
+        "LICENSE",
+        "licenses/llama.cpp-LICENSE",
+        "README.txt",
+        "PACKAGE-INFO.json"
+      ],
+      "not_included": [
+        "model files",
+        "tests",
+        "build tree",
+        "sources",
+        "research results"
+      ]
+    },
+    {
+      "role": "official-portable",
+      "os": "windows",
+      "architecture": "x86_64",
+      "filename_pattern": "membrane_<version>_windows_x86_64.zip",
+      "backend_capability": "CPU only (no GPU backend compiled in; GPU backends are not validated on real Windows hardware)",
+      "signed": false,
+      "built_by": "scripts/package-portable.py via the windows-support-smoke CI job (windows-latest), from the exact release commit",
+      "acceptance_test": "scripts/package-acceptance.sh and the Task Scheduler lifecycle against the extracted ZIP",
+      "contents": [
+        "bin/membrane.exe",
+        "bin/membrane-run.exe",
+        "bin/*.dll",
+        "LICENSE",
+        "licenses/llama.cpp-LICENSE",
+        "README.txt",
+        "PACKAGE-INFO.json"
+      ],
+      "not_included": [
+        "model files",
+        "tests",
+        "build tree",
+        "sources",
+        "research results"
+      ]
+    }
+  ],
+  "not_offered": "No OS installer packages, no third-party package-manager entries (Homebrew, winget, Chocolatey), no Intel macOS or Windows-on-Arm artifact: none was built and tested."
 }

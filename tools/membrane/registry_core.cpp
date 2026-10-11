@@ -1,5 +1,6 @@
 #include "registry_core.h"
 #include "fs_util.h"
+#include "platform_paths.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -25,15 +26,9 @@ using json = nlohmann::json;
 
 std::string	membrane_registry_default_path(void)
 {
-	const char	*xdg_data_home = getenv("XDG_DATA_HOME");
+	std::string	dir = membrane_data_dir();
 
-	if (xdg_data_home != NULL && xdg_data_home[0] != '\0')
-		return (std::string(xdg_data_home) + "/membrane/models.json");
-	std::string	home = membrane_resolve_home_dir();
-
-	if (!home.empty())
-		return (home + "/.local/share/membrane/models.json");
-	return ("");
+	return (dir.empty() ? "" : dir + "/models.json");
 }
 
 std::string	membrane_registry_resolve_path(void)
@@ -51,15 +46,9 @@ std::string	membrane_registry_models_install_dir(void)
 
 	if (override_dir != NULL && override_dir[0] != '\0')
 		return (std::string(override_dir));
-	const char	*xdg_data_home = getenv("XDG_DATA_HOME");
+	std::string	dir = membrane_data_dir();
 
-	if (xdg_data_home != NULL && xdg_data_home[0] != '\0')
-		return (std::string(xdg_data_home) + "/membrane/models");
-	std::string	home = membrane_resolve_home_dir();
-
-	if (!home.empty())
-		return (home + "/.local/share/membrane/models");
-	return ("");
+	return (dir.empty() ? "" : dir + "/models");
 }
 
 static void	set_err(membrane_registry_error_t *err, const char *code,

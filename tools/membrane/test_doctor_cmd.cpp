@@ -104,6 +104,19 @@ static void	test_empty_environment_is_ok_except_hardware(void)
 		"default_model check OK with none configured");
 	TEST_ASSERT(find_check(root, "config")["status"] == "OK",
 		"config check OK on a missing (defaults-to) config file");
+	/* Milestone M: the platform check reports the OS, architecture and the
+	 * resolved directories, and never fails. */
+	json	plat = find_check(root, "platform");
+
+	TEST_ASSERT(plat["status"] == "OK", "platform check is informational");
+	TEST_ASSERT(plat["detail"]["os"].is_string()
+		&& plat["detail"]["arch"].is_string()
+		&& plat["detail"]["service_manager"].is_string()
+		&& plat["detail"]["evidence"].is_string(),
+		"platform detail names os/arch/service manager/evidence");
+	TEST_ASSERT(plat["detail"]["data_dir"].is_string()
+		&& plat["detail"]["config_dir"].is_string()
+		&& plat["detail"]["state_dir"].is_string(), "directories reported");
 }
 
 static void	test_stale_model_warns(void)

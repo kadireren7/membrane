@@ -68,8 +68,8 @@ not a complete OpenAI API.
 ## Quick start
 
 ```bash
-sudo apt install ./membrane_1.1.0_amd64.deb   # from the Releases page
-membrane use                                  # pick a model (a partial name works)
+sudo apt install ./membrane_<version>_amd64.deb   # Linux; macOS/Windows: extract the archive (see Install)
+membrane use                                      # pick a model (a partial name works)
 membrane chat
 ```
 
@@ -125,13 +125,18 @@ hardware picture but does not execute across multiple GPUs. Details:
 
 ## Install
 
-Ubuntu/Debian: download `membrane_<version>_amd64.deb` from the
-[Releases page](https://github.com/kadireren7/membrane/releases) and
-`sudo apt install ./membrane_<version>_amd64.deb`. It is Vulkan-enabled and runs
-correctly CPU-only. A CPU-only `membrane-cpu` package also exists as a validation
-artifact. Build from source, and Windows/macOS (CI-validated, no official package):
-[install](docs/install.md), [support matrix](docs/support-matrix.md).
-Not sure which `membrane` you are running? `membrane doctor` says.
+| OS | Download from the [Releases page](https://github.com/kadireren7/membrane/releases) | Validated backend |
+|---|---|---|
+| Linux (Debian family, amd64) | `membrane_<version>_amd64.deb`, then `sudo apt install ./membrane_<version>_amd64.deb` | CPU, Vulkan |
+| macOS (Apple Silicon) | `membrane_<version>_macos_arm64.tar.gz`, extract and run `bin/membrane` | CPU, Metal (CI) |
+| Windows (x86_64) | `membrane_<version>_windows_x86_64.zip`, extract and run `bin\membrane.exe` | CPU (CI) |
+
+The macOS and Windows archives are unsigned, so Gatekeeper or SmartScreen may
+warn; verify the checksum against `SHA256SUMS` first. A CPU-only
+`membrane-cpu` `.deb` also exists. Steps for each OS, building from source and
+the support matrix: [install](docs/install.md),
+[support matrix](docs/support-matrix.md). Not sure which `membrane` you are
+running? `membrane doctor` says.
 
 ## Documentation
 
@@ -151,7 +156,7 @@ Release: latest stable tag `v1.1.0` ([notes](docs/release-v1.1.0.md),
 the OpenAI-compatible API v1, the `--json` shapes and existing configs are unchanged.
 
 - The OpenAI-compatible API is a subset, not the complete API.
-- Official packages are Linux `.deb` only; Windows and macOS are source builds.
+- macOS and Windows archives are unsigned; Windows is CPU only, and GPU backends there are not validated on real hardware.
 - Ollama and vLLM support was validated against mock servers that follow the audited
   API shapes, not live daemons. Adaptive behavior was validated on a synthetic timeline.
 - Model quality depends on the model you choose; MEMBRANE manages the runtime, not

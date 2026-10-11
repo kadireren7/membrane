@@ -1,5 +1,6 @@
 #include "server_config.h"
 #include "fs_util.h"
+#include "platform_paths.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -15,15 +16,9 @@ std::string	membrane_server_config_resolve_path(void)
 
 	if (override_path != NULL && override_path[0] != '\0')
 		return (std::string(override_path));
-	const char	*xdg_config_home = getenv("XDG_CONFIG_HOME");
+	std::string	dir = membrane_config_dir();
 
-	if (xdg_config_home != NULL && xdg_config_home[0] != '\0')
-		return (std::string(xdg_config_home) + "/membrane/server.json");
-	std::string	home = membrane_resolve_home_dir();
-
-	if (!home.empty())
-		return (home + "/.config/membrane/server.json");
-	return ("");
+	return (dir.empty() ? "" : dir + "/server.json");
 }
 
 bool	membrane_server_overrides_empty(const membrane_server_overrides_t &o)

@@ -1,4 +1,5 @@
 #include "download_manager.h"
+#include "sha256.h"
 #include "fs_util.h"
 #include "subprocess.h"
 
@@ -81,48 +82,14 @@ bool	membrane_compute_sha256(const std::string &path, std::string *out_hex,
 			membrane_download_error_t *err)
 {
 	*err = membrane_download_error_t();
-	membrane_subprocess_result_t	res;
-
-	if (!membrane_run_subprocess({"sha256sum", path}, &res, 120))
+	/* Product-owned SHA-256 (sha256.h): no external tool, same code on
+	 * every platform. */
+	if (!membrane_sha256_file(path, out_hex))
 	{
-		set_err(err, "IO_ERROR", "could not spawn sha256sum");
+		set_err(err, "IO_ERROR", "could not read " + path
+			+ " to compute its SHA-256");
 		return (false);
 	}
-	if (res.exit_code == 127)
-	{
-		set_err(err, "TOOL_UNAVAILABLE", "sha256sum is not available in "
-			"this environment -- checksum verification skipped");
-		return (false);
-	}
-	if (res.exit_code != 0)
-	{
-		set_err(err, "IO_ERROR", "sha256sum exited " + std::to_string(
-			res.exit_code) + ": " + res.stderr_output);
-		return (false);
-	}
-	/* Output is "<hex>  <path>\n" -- the hex digest is always exactly
-	 * 64 lowercase hex characters, real coreutils behavior, not
-	 * guessed. GNU coreutils' own documented "escaped filename" mode
-	 * prepends a literal '\' before the hash whenever the FILENAME
-	 * argument itself contains a backslash or newline (escaping those
-	 * characters within the filename in the rest of the line) -- a
-	 * real, first-attempt Windows CI finding: every real Windows path
-	 * contains backslashes, so this mode is not a rare edge case there,
-	 * it is the NORMAL case, and skipping it silently corrupted the
-	 * parsed hash by one character on that platform (this file's own
-	 * checksum verification failed on every real Windows install
-	 * before this fix, not just some). */
-	std::string	out = res.stdout_output;
-
-	if (!out.empty() && out[0] == '\\')
-		out.erase(0, 1);
-	if (out.size() < 64)
-	{
-		set_err(err, "IO_ERROR", "unexpected sha256sum output: "
-			+ res.stdout_output);
-		return (false);
-	}
-	*out_hex = out.substr(0, 64);
 	return (true);
 }
 

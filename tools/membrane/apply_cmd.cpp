@@ -17,6 +17,7 @@
 #include "advise_cmd.h"
 #include "cli_shared.h"
 #include "fs_util.h"
+#include "platform_paths.h"
 #include "observation.h"
 #include "plan_cmd.h"
 #include "product_cli.h"
@@ -693,13 +694,9 @@ std::string	membrane_apply_audit_path(void)
 
 	if (ov != NULL && ov[0] != '\0')
 		return (ov);
-	const char	*xdg = getenv("XDG_STATE_HOME");
+	std::string	dir = membrane_state_dir();
 
-	if (xdg != NULL && xdg[0] != '\0')
-		return (std::string(xdg) + "/membrane/actions.jsonl");
-	std::string	home = membrane_resolve_home_dir();
-
-	return (home.empty() ? "" : home + "/.local/state/membrane/actions.jsonl");
+	return (dir.empty() ? "" : dir + "/actions.jsonl");
 }
 
 #define AUDIT_MAX_BYTES	(1024 * 1024)

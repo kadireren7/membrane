@@ -202,7 +202,7 @@ int	membrane_use_cmd_dispatch(const std::vector<std::string> &args,
 
 	if (registry_path.empty())
 	{
-		print_err(want_json, "IO_ERROR", "neither XDG_DATA_HOME nor HOME "
+		print_err(want_json, "IO_ERROR", "neither XDG_DATA_HOME nor HOME/USERPROFILE "
 			"is set");
 		return (MEMBRANE_EXIT_MODEL_ERROR);
 	}
@@ -443,7 +443,7 @@ int	membrane_use_cmd_dispatch(const std::vector<std::string> &args,
 	if (config_path.empty())
 	{
 		print_err(want_json, "IO_ERROR", "neither XDG_CONFIG_HOME nor "
-			"HOME is set");
+			"HOME/USERPROFILE is set");
 		return (MEMBRANE_EXIT_MODEL_ERROR);
 	}
 	if (!membrane_server_config_load(config_path, &cfg, &cfg_err))

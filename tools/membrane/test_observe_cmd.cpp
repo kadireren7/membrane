@@ -489,6 +489,48 @@ static void	test_platform_without_swap(void)
 		"RAM still measured via the platform's own API");
 }
 
+/* Milestone M: identical host facts from any platform's probe produce the
+ * same snapshot values and status; only the provenance source differs. No
+ * Linux-specific assumption can leak into what the observation layer derives
+ * from the facts (this is also what lets advise/adaptive stay one policy). */
+static void	test_platform_parity(void)
+{
+	static const char	*sources[] = {"proc_meminfo", "mach_host_statistics64",
+		"GlobalMemoryStatusEx"};
+	uint64_t			total[3], avail[3], used[3], headroom[3];
+	int					status[3];
+
+	for (int i = 0; i < 3; ++i)
+	{
+		membrane_observe_inputs_t	in = full_inputs();
+
+		in.meminfo_source = sources[i];
+		in.swap_supported = (i == 0);
+		membrane_observation_snapshot_t	*s = build(in);
+
+		TEST_ASSERT(s->ram_total_bytes.known && s->ram_available_bytes.known
+			&& s->ram_used_bytes.known && s->ram_headroom_bytes.known,
+			"host RAM is a known fact on every platform's probe");
+		TEST_ASSERT(s->ram_total_bytes.provenance == MEMBRANE_OBS_PROV_MEASURED,
+			"RAM is measured, never estimated, on every platform");
+		TEST_ASSERT(strcmp(s->ram_total_bytes.source, sources[i]) == 0,
+			"source names the platform's own API");
+		total[i] = s->ram_total_bytes.value;
+		avail[i] = s->ram_available_bytes.value;
+		used[i] = s->ram_used_bytes.value;
+		headroom[i] = s->ram_headroom_bytes.value;
+		status[i] = (int)s->status;
+		TEST_ASSERT(i == 0 ? s->swap_total_bytes.known
+			: !s->swap_total_bytes.known, "swap known only where the OS "
+			"exposes it; unknown (not 0) elsewhere");
+	}
+	for (int i = 1; i < 3; ++i)
+		TEST_ASSERT(total[i] == total[0] && avail[i] == avail[0]
+			&& used[i] == used[0] && headroom[i] == headroom[0]
+			&& status[i] == status[0],
+			"same facts -> same derived values and status on every platform");
+}
+
 /* I: no GPU. */
 static void	test_no_gpu(void)
 {
@@ -958,6 +1000,7 @@ int	main(void)
 	test_measured_vs_estimated();
 	test_measured_ram();
 	test_platform_without_swap();
+	test_platform_parity();
 	test_no_gpu();
 	test_no_active_model();
 	test_service_inactive();
