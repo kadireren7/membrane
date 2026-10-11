@@ -733,7 +733,7 @@ jobs:
         run: |
           cmake --build build-cpu-install -j2 --target membrane-run \
             membrane test_runtime_session test_registry_core test_server \
-            test_setup_cmd test_observe_cmd
+            test_setup_cmd test_observe_cmd test_runtime_plan
 
       # Mega Phase A, PR A1: this is the ONLY CI coverage test_runtime_
       # session gets (same pre-existing gap fallback-controller-tests
@@ -763,7 +763,7 @@ jobs:
       - name: Test runtime-session core, model registry, HTTP server, and setup
         run: |
           ctest --test-dir build-cpu-install --output-on-failure \
-            -R '^test_runtime_session$|^test_registry_core$|^test_server$|^test_setup_cmd$|^test_observe_cmd$'
+            -R '^test_runtime_session$|^test_registry_core$|^test_server$|^test_setup_cmd$|^test_observe_cmd$|^test_runtime_plan$'
 
       - name: CPU install to temp prefix
         run: |
