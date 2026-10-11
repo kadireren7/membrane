@@ -118,6 +118,16 @@ HDRS="$(curl -sS -D - -o /dev/null -H 'Origin: http://evil.example' "http://127.
 echo "$HDRS" | grep -qi 'access-control-allow-origin' && fail "server sent a CORS header"
 ok "no CORS header"
 
+if [ -n "${ACCEPT_OPENAI:-}" ]; then
+	step "7b. official Python openai SDK (models.list, chat, streaming) against the packaged server"
+	python3 -m venv "$WORK/venv"
+	if [ -x "$WORK/venv/Scripts/python.exe" ]; then PY="$WORK/venv/Scripts/python.exe"; else PY="$WORK/venv/bin/python"; fi
+	"$PY" -m pip install --quiet --disable-pip-version-check openai >/dev/null
+	"$PY" "$(dirname "$0")/client-compat/test-openai-python.py" \
+		--base-url "http://127.0.0.1:$PORT/v1" --model "$NAME" || fail "openai SDK harness"
+	ok "openai SDK harness"
+fi
+
 step "8. observe / advise / apply (dry run) / adaptive / run --explain"
 "$M" observe --json > "$WORK/observe.json"
 RAM="$(jget "d['host_memory']['total_bytes']['known']" < "$WORK/observe.json")"

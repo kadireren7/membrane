@@ -1050,7 +1050,7 @@ jobs:
         run: |
           rm -rf /tmp/membrane-deb-x
           dpkg-deb -x build-vulkan-install/membrane_*.deb /tmp/membrane-deb-x
-          scripts/package-acceptance.sh /tmp/membrane-deb-x/usr/bin
+          ACCEPT_OPENAI=1 scripts/package-acceptance.sh /tmp/membrane-deb-x/usr/bin
 
   # Mega Phase C, PR C2: smoke-tests the release AUTOMATION SCRIPT
   # itself (scripts/build-release.sh) end to end -- real configure/
@@ -1341,7 +1341,7 @@ jobs:
 
       - name: Package acceptance (extracted archive, native macOS paths)
         run: |
-          scripts/package-acceptance.sh \
+          ACCEPT_OPENAI=1 scripts/package-acceptance.sh \
             "$RUNNER_TEMP/unpacked/membrane_${MEMBRANE_PKG_VERSION}_macos_arm64/bin" "$MEMBRANE_PKG_VERSION"
 
       - name: Upload macOS portable archive
@@ -1527,7 +1527,7 @@ jobs:
       - name: Package acceptance (extracted ZIP, native Windows paths)
         run: |
           PKG="$(cygpath -u "$RUNNER_TEMP")/unzipped/membrane_${MEMBRANE_PKG_VERSION}_windows_x86_64"
-          scripts/package-acceptance.sh "$PKG/bin" "$MEMBRANE_PKG_VERSION"
+          ACCEPT_OPENAI=1 scripts/package-acceptance.sh "$PKG/bin" "$MEMBRANE_PKG_VERSION"
 
       - name: Service lifecycle from the extracted ZIP (Task Scheduler)
         run: |
