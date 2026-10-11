@@ -162,18 +162,15 @@ def _c8():
 	return ok, "UTF-16LE conversion wired in" if ok else "not found"
 
 
-@check("regression guard: download_manager.cpp strips a leading "
-	"backslash from sha256sum output before parsing (the real "
-	"Windows-path-escaping checksum-corruption bug)")
+@check("regression guard: download_manager.cpp verifies checksums with the "
+	"product-owned SHA-256 (sha256.h), never an external sha256sum -- the "
+	"Windows backslash-escaping parse bug this check used to guard cannot "
+	"exist because no tool output is parsed any more")
 def _c9():
 	text = DOWNLOAD_MANAGER_CPP.read_text()
-	# The real source line is: if (!out.empty() && out[0] == '\\')
-	# -- a C++ char literal for a single backslash (source bytes: two
-	# literal backslash characters between the quotes). This Python
-	# string needs four backslash characters to represent that same
-	# two-backslash byte sequence.
-	ok = "out[0] == '\\\\'" in text
-	return ok, "backslash-stripping present" if ok else "not found"
+	ok = ("membrane_sha256_file" in text
+		and '"sha256sum"' not in text)
+	return ok, "internal SHA-256, no sha256sum" if ok else "not found"
 
 
 @check("regression guard: no CUDA/Metal/Windows-specific string leaked "
