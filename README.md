@@ -16,10 +16,65 @@ Plan, observe, advise, apply, and adapt local model workloads across runtimes.
 
 </div>
 
+MEMBRANE picks a local model that fits your computer, shows what memory is doing,
+and serves it through a local chat and an OpenAI-compatible API. It sits on top of
+runtimes such as llama.cpp, Ollama and vLLM; it does not replace them.
+
+## Install & start
+
+**[Download the latest release](https://github.com/kadireren7/membrane/releases/latest)**,
+then pick the one file for your computer (`<version>` is the release number, currently `1.2.0`):
+
+| Platform | Download |
+|---|---|
+| Linux (Debian / Ubuntu / Pop!_OS, amd64) | `membrane_<version>_amd64.deb` |
+| macOS (Apple Silicon) | `membrane_<version>_macos_arm64.tar.gz` |
+| Windows (x86_64) | `membrane_<version>_windows_x86_64.zip` |
+
+**Linux.** Install the downloaded file with `apt` (it resolves dependencies; a plain
+double-click or `dpkg -i` may not):
+
 ```bash
-membrane use      # pick a model that fits this machine
-membrane chat     # talk to it
+cd ~/Downloads
+sudo apt install ./membrane_1.2.0_amd64.deb
+membrane --version
 ```
+
+This is the normal build: it includes Vulkan support and still works CPU-only. If you
+want a CPU-only package, `membrane-cpu_<version>_amd64.deb` installs the same way.
+
+**macOS.** Extract the archive and run the bundled binary (add `bin` to your `PATH`
+if you like):
+
+```bash
+tar -xzf membrane_1.2.0_macos_arm64.tar.gz
+./membrane_1.2.0_macos_arm64/bin/membrane --version
+```
+
+**Windows.** Extract the ZIP (right-click, *Extract All*) and run it from PowerShell:
+
+```powershell
+.\membrane_1.2.0_windows_x86_64\bin\membrane.exe --version
+```
+
+The macOS and Windows archives are currently **unsigned**, so Gatekeeper or SmartScreen
+may warn the first time: see [install](docs/install.md) for what to do, and verify the
+file against `SHA256SUMS` from the same release page.
+
+**Then, on any platform:**
+
+```bash
+membrane            # status screen and the next step
+membrane doctor     # check the installation and your hardware
+membrane use        # pick and download a model
+membrane chat       # start chatting
+```
+
+You do not need to know model IDs: `membrane use` shows a list, and a partly typed name
+gets a "Did you mean?" you confirm. `membrane setup` is the guided first run including
+the background service. More: [quickstart](docs/quickstart.md),
+[install](docs/install.md) (all platforms, building from source),
+[support matrix](docs/support-matrix.md).
 
 ## What MEMBRANE does
 
@@ -65,23 +120,6 @@ supported runtimes. It does not replace them, and it does not modify llama.cpp.
 It is also not a model (a small model is still a small model), not a web UI, and
 not a complete OpenAI API.
 
-## Quick start
-
-```bash
-sudo apt install ./membrane_<version>_amd64.deb   # Linux; macOS/Windows: extract the archive (see Install)
-membrane use                                      # pick a model (a partial name works)
-membrane chat
-```
-
-`membrane doctor` checks the installation, hardware, models and service in one
-pass and names the next step. `membrane setup` is the guided first run, including
-the background service. Step by step: [quickstart](docs/quickstart.md).
-
-You do not need to memorize model IDs. `membrane use` offers a list on a terminal;
-a loosely typed name gets a "Did you mean?" that you confirm, and MEMBRANE never
-acts on a guess without asking. `membrane models` lists what is installed,
-`membrane models available` the catalog, `membrane models recommend` what fits.
-
 ## Core commands
 
 | Command | What it does |
@@ -122,21 +160,6 @@ hardware picture but does not execute across multiple GPUs. Details:
 - No authentication: the server binds to loopback, and that is the security boundary.
 - No claim that it makes any runtime faster; measured results are scoped and listed in
   [direct-cli-and-results](docs/direct-cli-and-results.md).
-
-## Install
-
-| OS | Download from the [Releases page](https://github.com/kadireren7/membrane/releases) | Validated backend |
-|---|---|---|
-| Linux (Debian family, amd64) | `membrane_<version>_amd64.deb`, then `sudo apt install ./membrane_<version>_amd64.deb` | CPU, Vulkan |
-| macOS (Apple Silicon) | `membrane_<version>_macos_arm64.tar.gz`, extract and run `bin/membrane` | CPU, Metal (CI) |
-| Windows (x86_64) | `membrane_<version>_windows_x86_64.zip`, extract and run `bin\membrane.exe` | CPU (CI) |
-
-The macOS and Windows archives are unsigned, so Gatekeeper or SmartScreen may
-warn; verify the checksum against `SHA256SUMS` first. A CPU-only
-`membrane-cpu` `.deb` also exists. Steps for each OS, building from source and
-the support matrix: [install](docs/install.md),
-[support matrix](docs/support-matrix.md). Not sure which `membrane` you are
-running? `membrane doctor` says.
 
 ## Documentation
 
