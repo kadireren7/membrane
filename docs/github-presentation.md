@@ -7,25 +7,17 @@ actually reports (see below) are suggested.
 
 ## Suggested repository description
 
-> Research prototype for LLM KV-cache memory: mixed-precision tiering,
-> exact sparse retrieval, near-memory/CXL simulation, bit-exact CPU
-> quantization, and a synthesizable FPGA datapath — all measured against
-> committed, SHA-256-verified artifacts.
-
-(Under GitHub's ~350-character description limit; states scope and
-"measured against committed artifacts" up front rather than a marketing
-tagline.)
+> Hardware-aware memory intelligence and control for local LLM inference.
 
 ## Suggested topics
 
-`llm-inference` `kv-cache` `quantization` `fpga` `verilator` `cxl`
-`near-memory-computing` `discrete-event-simulation` `llama-cpp`
-`systemverilog` `research` `memory-management`
+`local-llm` `inference` `ai-infrastructure` `llama-cpp` `ollama` `vllm` `kv-cache`
+`gpu` `memory-optimization`
 
-(Kept to real, specific, searchable technical terms this repository
-actually implements — no `ai` / `machine-learning` catch-alls that would
-mismatch what's actually here, and nothing implying a product, e.g. no
-`inference-server` or `production`.)
+(Real, searchable terms for what the project is now. Nothing implying a hosted
+service, distributed execution, or production CXL/FPGA support. These are
+suggestions: applying them needs repository-settings access this tooling does
+not use.)
 
 ## README badges
 
