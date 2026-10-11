@@ -22,6 +22,7 @@
 #include "runtime_adapter.h"
 #include "runtime_capabilities.h"
 #include "runtime_ollama.h"
+#include "runtime_vllm.h"
 #include "runtime_plan_assessment.h"
 #include "test_helpers.h"
 
@@ -717,8 +718,13 @@ static void	test_cli_ollama_errors(void)
 		&& json::parse(out)["planning_level"] == "unavailable"
 		&& json::parse(out)["assessment"]["actionability"] == "unsupported",
 		"unreachable -> printed assessment, unsupported, exit 4");
+	/* vLLM is a real (read-only) adapter since Milestone L: an unreachable
+	 * endpoint is a runtime error, no longer a CLI "reserved" error. */
+	setenv(MEMBRANE_VLLM_ENDPOINT_ENV, "http://127.0.0.1:1", 1);
 	run_plan({"x", "--runtime", "vllm"}, true, &rc);
-	TEST_ASSERT(rc == MEMBRANE_EXIT_CLI_ERROR, "vllm stays reserved");
+	TEST_ASSERT(rc != MEMBRANE_EXIT_CLI_ERROR && rc != MEMBRANE_EXIT_SUCCESS,
+		"vllm is a real runtime: unreachable -> runtime/model error, not a CLI error");
+	unsetenv(MEMBRANE_VLLM_ENDPOINT_ENV);
 	run_plan({"x", "--runtime", "nope"}, true, &rc);
 	TEST_ASSERT(rc == MEMBRANE_EXIT_CLI_ERROR, "unknown runtime");
 }
