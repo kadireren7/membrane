@@ -269,7 +269,29 @@ membrane_status_t	membrane_attntrace2_read_entries(FILE *f,
 		free(stored);
 	}
 	else
+	{
+		/* On the uncompressed path `stored` IS the decode buffer, so its
+		 * allocated length -- stored_payload_size, straight out of the
+		 * file -- must actually cover the n * 3 bytes read below (the
+		 * checksum first, then the decode loop). header_bounds_ok()
+		 * validates step_count/n_layer/n_head/top_k but never
+		 * stored_payload_size, and the header CRC only proves that field
+		 * arrived intact, not that it agrees with the geometry. Without
+		 * this check a file declaring compressed=0 with an understated
+		 * stored_payload_size reads past the end of that allocation --
+		 * a real heap-buffer-overflow, reproduced under ASan from a
+		 * crafted 3-byte payload. The compressed path above needs no
+		 * equivalent guard: it decodes into its own n * 3 buffer and
+		 * already rejects compact_len != n * 3. This is the same check
+		 * membrane_attntrace3_decode_chunk_buf() applies to its own
+		 * uncompressed chunks. */
+		if ((size_t)h->stored_payload_size != n * 3)
+		{
+			free(stored);
+			return (MEMBRANE_ERR_CORRUPT_DATA);
+		}
 		compact = stored;
+	}
 	if (membrane_block_checksum(compact, n * 3) != h->payload_checksum)
 	{
 		free(compact);
