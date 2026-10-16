@@ -1,4 +1,24 @@
 #define _POSIX_C_SOURCE 200809L
+/*
+ * Darwin's <sys/cdefs.h> lowers __DARWIN_C_LEVEL from its own default
+ * __DARWIN_C_FULL down to the plain POSIX level the moment
+ * _POSIX_C_SOURCE is defined, and several Darwin headers gate real
+ * declarations on __DARWIN_C_LEVEL >= __DARWIN_C_FULL -- so on macOS
+ * the line above takes declarations AWAY instead of adding them.
+ * struct rusage's own ru_maxrss (read at the bottom of main() for the
+ * peak-RSS line) is one of them: below FULL, <sys/resource.h> replaces
+ * every BSD field after ru_utime/ru_stime with an opaque
+ * `long ru_opaque[14]`, so the plain documented build
+ * (`cmake --build build -j`) failed outright on macOS with "no member
+ * named 'ru_maxrss' in 'struct rusage'". _DARWIN_C_SOURCE restores
+ * Darwin's own default level without giving up the _POSIX_C_SOURCE
+ * line above, which is what glibc genuinely needs (strict -std=c11
+ * hides POSIX there entirely). Apple-only; no effect on any other
+ * target.
+ */
+#if defined(__APPLE__)
+# define _DARWIN_C_SOURCE
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,19 +57,34 @@
  *   - real allocation/free call counts across the timed region, via
  *     linker --wrap=malloc/free/calloc/realloc -- an actual measurement,
  *     not a code-inspection claim, of item 6's "measure malloc/free
- *     count" requirement
+ *     count" requirement. --wrap is a GNU ld/gold/lld feature that
+ *     Apple's own ld does not implement at all, so on a linker without
+ *     it the counters are compiled out and reported as unavailable
+ *     (see QBENCH_HAVE_WRAP below and this tool's own CMakeLists.txt)
+ *     rather than silently printing an unmeasured 0.
  *   - peak RSS (getrusage ru_maxrss) -- process-lifetime cumulative,
  *     not scoped to one timed region; disclosed as such
  *   - derived throughput: ns/block, GB/s (input bytes/sec), element/s
  */
 
+/* Defined unconditionally: the measurement loop reads these either
+ * way, and they stay a truthful 0 when no wrapper ever runs -- a value
+ * main() labels as unmeasured rather than reporting as a real
+ * allocation count. */
+static volatile long	g_alloc_count = 0;
+static volatile long	g_free_count = 0;
+
+/* QBENCH_HAVE_WRAP is defined by this tool's own CMakeLists.txt only
+ * when the real linker in use actually accepts -Wl,--wrap (probed
+ * there, not guessed from the compiler name). Without it everything
+ * below would be a guaranteed link failure -- __real_* is synthesized
+ * by the linker's own --wrap handling and exists nowhere else. */
+#ifdef QBENCH_HAVE_WRAP
+
 extern void	*__real_malloc(size_t n);
 extern void	__real_free(void *p);
 extern void	*__real_calloc(size_t a, size_t b);
 extern void	*__real_realloc(void *p, size_t n);
-
-static volatile long	g_alloc_count = 0;
-static volatile long	g_free_count = 0;
 
 void	*__wrap_malloc(size_t n)
 {
@@ -75,6 +110,8 @@ void	*__wrap_realloc(void *p, size_t n)
 	g_alloc_count++;
 	return (__real_realloc(p, n));
 }
+
+#endif	/* QBENCH_HAVE_WRAP */
 
 static double	g_ns_per_tick = 0.0;
 
@@ -376,6 +413,11 @@ int	main(int argc, char **argv)
 			g_ns_per_tick, 1.0 / g_ns_per_tick);
 	else
 		printf("tsc calibration unavailable on this platform\n");
+#ifndef QBENCH_HAVE_WRAP
+	printf("note: this linker has no --wrap support (Apple's ld, for "
+		"one) -- the allocs/frees columns below are NOT measured here "
+		"and stay 0.\n");
+#endif
 	printf("note: no `perf` binary available in this environment -- "
 		"IPC, branch-misses, cache-misses are NOT measured here.\n\n");
 	printf("%-14s %-8s %6s %5s/%-5s %12s %12s %10s %8s %6s %6s\n",
